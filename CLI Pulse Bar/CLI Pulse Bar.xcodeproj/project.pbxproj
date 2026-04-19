@@ -19,6 +19,7 @@
 		A10011 /* SettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10011 /* SettingsTab.swift */; };
 		A10012 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10012 /* Assets.xcassets */; };
 		A10020 /* ProviderConfigEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10020 /* ProviderConfigEditor.swift */; };
+		A10021 /* NoAutoFillFields.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10021 /* NoAutoFillFields.swift */; };
 		A20001 /* CLIPulseApp_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20001 /* CLIPulseApp_iOS.swift */; };
 		A20006 /* iOSMainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20002 /* iOSMainView.swift */; };
 		A20007 /* iOSLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20003 /* iOSLoginView.swift */; };
@@ -28,6 +29,13 @@
 		A20011 /* iOSAlertsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20007 /* iOSAlertsTab.swift */; };
 		A20012 /* iOSSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20008 /* iOSSettingsTab.swift */; };
 		A20013 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B20009 /* Assets.xcassets */; };
+		A20020 /* CLIPulseIntentCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20020 /* CLIPulseIntentCache.swift */; };
+		A20021 /* GetStatusIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20021 /* GetStatusIntent.swift */; };
+		A20022 /* GetProviderQuotaIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20022 /* GetProviderQuotaIntent.swift */; };
+		A20023 /* RefreshWidgetIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20023 /* RefreshWidgetIntent.swift */; };
+		A20024 /* CLIPulseShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20024 /* CLIPulseShortcuts.swift */; };
+		A40020 /* CLIPulseIntentCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20020 /* CLIPulseIntentCache.swift */; };
+		A40023 /* RefreshWidgetIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20023 /* RefreshWidgetIntent.swift */; };
 		A30001 /* CLIPulseApp_Watch.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30001 /* CLIPulseApp_Watch.swift */; };
 		A30002 /* WatchMainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30002 /* WatchMainView.swift */; };
 		A30003 /* WatchLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30003 /* WatchLoginView.swift */; };
@@ -135,6 +143,7 @@
 		B10013 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B10014 /* CLI_Pulse_Bar.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CLI_Pulse_Bar.entitlements; sourceTree = "<group>"; };
 		B10020 /* ProviderConfigEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderConfigEditor.swift; sourceTree = "<group>"; };
+		B10021 /* NoAutoFillFields.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoAutoFillFields.swift; sourceTree = "<group>"; };
 		B20001 /* CLIPulseApp_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIPulseApp_iOS.swift; sourceTree = "<group>"; };
 		B20002 /* iOSMainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSMainView.swift; sourceTree = "<group>"; };
 		B20003 /* iOSLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSLoginView.swift; sourceTree = "<group>"; };
@@ -146,6 +155,11 @@
 		B20009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B20010 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B20011 /* CLI_Pulse_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CLI_Pulse_iOS.entitlements; sourceTree = "<group>"; };
+		B20020 /* CLIPulseIntentCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Intents/CLIPulseIntentCache.swift; sourceTree = "<group>"; };
+		B20021 /* GetStatusIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Intents/GetStatusIntent.swift; sourceTree = "<group>"; };
+		B20022 /* GetProviderQuotaIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Intents/GetProviderQuotaIntent.swift; sourceTree = "<group>"; };
+		B20023 /* RefreshWidgetIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Intents/RefreshWidgetIntent.swift; sourceTree = "<group>"; };
+		B20024 /* CLIPulseShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Intents/CLIPulseShortcuts.swift; sourceTree = "<group>"; };
 		B30001 /* CLIPulseApp_Watch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIPulseApp_Watch.swift; sourceTree = "<group>"; };
 		B30002 /* WatchMainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchMainView.swift; sourceTree = "<group>"; };
 		B30003 /* WatchLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchLoginView.swift; sourceTree = "<group>"; };
@@ -254,6 +268,7 @@
 				B10010 /* AlertsTab.swift */,
 				B10011 /* SettingsTab.swift */,
 				B10020 /* ProviderConfigEditor.swift */,
+				B10021 /* NoAutoFillFields.swift */,
 				B10012 /* Assets.xcassets */,
 				B10013 /* Info.plist */,
 				B10014 /* CLI_Pulse_Bar.entitlements */,
@@ -284,6 +299,11 @@
 				B20006 /* iOSSessionsTab.swift */,
 				B20007 /* iOSAlertsTab.swift */,
 				B20008 /* iOSSettingsTab.swift */,
+				B20020 /* CLIPulseIntentCache.swift */,
+				B20021 /* GetStatusIntent.swift */,
+				B20022 /* GetProviderQuotaIntent.swift */,
+				B20023 /* RefreshWidgetIntent.swift */,
+				B20024 /* CLIPulseShortcuts.swift */,
 				B30021 /* PhoneSessionManager.swift */,
 				B20009 /* Assets.xcassets */,
 				B20010 /* Info.plist */,
@@ -548,6 +568,7 @@
 				A10010 /* AlertsTab.swift in Sources */,
 				A10011 /* SettingsTab.swift in Sources */,
 				A10020 /* ProviderConfigEditor.swift in Sources */,
+				A10021 /* NoAutoFillFields.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -563,6 +584,11 @@
 				A20010 /* iOSSessionsTab.swift in Sources */,
 				A20011 /* iOSAlertsTab.swift in Sources */,
 				A20012 /* iOSSettingsTab.swift in Sources */,
+				A20020 /* CLIPulseIntentCache.swift in Sources */,
+				A20021 /* GetStatusIntent.swift in Sources */,
+				A20022 /* GetProviderQuotaIntent.swift in Sources */,
+				A20023 /* RefreshWidgetIntent.swift in Sources */,
+				A20024 /* CLIPulseShortcuts.swift in Sources */,
 				A30021 /* PhoneSessionManager.swift in Sources */,
 				A30025 /* TeamView.swift in Sources */,
 			);
@@ -595,6 +621,8 @@
 				A40005 /* LockScreenWidget.swift in Sources */,
 				A30023 /* WatchComplicationWidget.swift in Sources */,
 				A40006 /* WidgetTheme.swift in Sources */,
+				A40020 /* CLIPulseIntentCache.swift in Sources */,
+				A40023 /* RefreshWidgetIntent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -738,7 +766,7 @@
 				CODE_SIGN_ENTITLEMENTS = "CLI Pulse Bar/CLI_Pulse_Bar.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 29;
+				CURRENT_PROJECT_VERSION = 30;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "CLI Pulse Bar/Info.plist";
@@ -746,7 +774,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.9.1;
+				MARKETING_VERSION = 1.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -763,7 +791,7 @@
 				CODE_SIGN_ENTITLEMENTS = "CLI Pulse Bar/CLI_Pulse_Bar.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 29;
+				CURRENT_PROJECT_VERSION = 30;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "CLI Pulse Bar/Info.plist";
@@ -771,7 +799,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.9.1;
+				MARKETING_VERSION = 1.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -787,7 +815,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "CLI Pulse Bar iOS/CLI_Pulse_iOS.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 29;
+				CURRENT_PROJECT_VERSION = 30;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "CLI Pulse Bar iOS/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -795,7 +823,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.9.1;
+				MARKETING_VERSION = 1.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse";
 				PRODUCT_NAME = "CLI Pulse";
 				SDKROOT = iphoneos;
@@ -814,7 +842,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "CLI Pulse Bar iOS/CLI_Pulse_iOS.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 29;
+				CURRENT_PROJECT_VERSION = 30;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "CLI Pulse Bar iOS/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -822,7 +850,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.9.1;
+				MARKETING_VERSION = 1.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse";
 				PRODUCT_NAME = "CLI Pulse";
 				SDKROOT = iphoneos;
@@ -842,14 +870,14 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "CLI Pulse Bar Watch/CLI_Pulse_Watch.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 29;
+				CURRENT_PROJECT_VERSION = 30;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "CLI Pulse Bar Watch/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.9.1;
+				MARKETING_VERSION = 1.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse.watchkitapp";
 				PRODUCT_NAME = "CLI Pulse Watch";
 				SDKROOT = watchos;
@@ -869,14 +897,14 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "CLI Pulse Bar Watch/CLI_Pulse_Watch.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 29;
+				CURRENT_PROJECT_VERSION = 30;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "CLI Pulse Bar Watch/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.9.1;
+				MARKETING_VERSION = 1.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse.watchkitapp";
 				PRODUCT_NAME = "CLI Pulse Watch";
 				SDKROOT = watchos;
@@ -897,7 +925,7 @@
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = "CLI Pulse Widgets/CLI_Pulse_Widgets.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 29;
+				CURRENT_PROJECT_VERSION = 30;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "CLI Pulse Widgets/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -906,7 +934,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.9.1;
+				MARKETING_VERSION = 1.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse.widgets";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -925,7 +953,7 @@
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = "CLI Pulse Widgets/CLI_Pulse_Widgets.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 29;
+				CURRENT_PROJECT_VERSION = 30;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "CLI Pulse Widgets/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -934,7 +962,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.9.1;
+				MARKETING_VERSION = 1.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse.widgets";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -962,7 +990,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.9.1;
+				MARKETING_VERSION = 1.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse.helper";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -987,7 +1015,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.9.1;
+				MARKETING_VERSION = 1.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse.helper";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
