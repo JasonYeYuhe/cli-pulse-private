@@ -43,6 +43,12 @@ internal final class DataRefreshManager {
         let sendNotification: (AlertRecord) -> Void
         let afterRefresh: () -> Void
         let handleTokenExpired: (String) -> Void
+        /// v1.9.3: returns the set of alert IDs the user resolved/snoozed
+        /// locally so we don't re-fire them.
+        let activeSuppressedAlertIDs: () async -> Set<String>
+        /// v1.9.4: signal when the cost scan came up empty because the
+        /// sandbox blocked the scanner roots → prompt user via banner.
+        let setNeedsFolderAccess: (Bool) async -> Void
     }
 
     private let api: APIClient
@@ -110,6 +116,18 @@ internal final class DataRefreshManager {
             let helperResults = Self.readHelperCollectorResults()
             localResults.append(contentsOf: helperResults)
 
+            // NOTE: intentionally do NOT dedup localResults here. The in-order
+            // merge inside `mergeCloudWithLocal` preserves metadata via
+            // `result.usage.metadata ?? existing.metadata` as successive
+            // results for the same provider arrive — so main-app-set metadata
+            // (e.g. supports_quota: true) survives even when a later helper
+            // result has metadata == nil. A pre-merge dedup that kept only the
+            // helper row dropped the metadata and made Codex fall off the
+            // "quota provider" display branch (v1.9.4 regression — fixed by
+            // removing that pre-merge dedup). Upsert-level dedup still
+            // happens inside `APIClient.syncProviderQuotas` to avoid the
+            // Postgres 21000 ON CONFLICT error.
+
             let (resolvedProviders, supplementedProviders) = Self.mergeCloudWithLocal(
                 cloud: providerData,
                 local: localResults
@@ -120,11 +138,15 @@ internal final class DataRefreshManager {
                 Task { await api.syncProviderQuotas(localResults) }
             }
 
-            // Scan local JSONL logs for precise token counts and costs (non-blocking)
-            let costScanData = await Task.detached {
-                CostUsageScanner.scan()
-            }.value
+            // Scan local JSONL logs for precise token counts and costs.
+            // v1.9.4: uses the sandbox-aware entry point so bookmarks are
+            // resolved on the main actor before the enumerator runs.
+            let costScanData = await CostUsageScanner.scanAsync()
             let scanResult: CostUsageScanResult? = costScanData.entries.isEmpty ? nil : costScanData
+            // Surface the "grant folder access" banner when a scan came back
+            // empty AND at least one core scan root still lacks a bookmark.
+            let needsAccess = Self.needsFolderAccessNudge(scanIsEmpty: scanResult == nil)
+            await callbacks.setNeedsFolderAccess(needsAccess)
 
             // Sync completed days to Supabase (non-blocking, best-effort)
             if let scanResult {
@@ -134,8 +156,11 @@ internal final class DataRefreshManager {
             #if DEBUG
             Self.dumpMergeDiagnostic(cloud: providerData, local: localResults, merged: resolvedProviders)
             #endif
+
+            // v1.9.3: bridge JSONL scan → per-provider cost/token fields.
+            let costAdjustedProviders = Self.applyCostScan(to: resolvedProviders, scan: scanResult)
             #else
-            let resolvedProviders = providerData
+            let costAdjustedProviders = providerData
             let supplementedProviders: Set<String> = []
             let scanResult: CostUsageScanResult? = nil
             #endif
@@ -153,7 +178,28 @@ internal final class DataRefreshManager {
                 currentTierName: context.currentTierName
             )
 
-            let newAlerts = alertData.filter { alert in
+            // v1.9.3: synthesise local quota-depletion alerts and merge them
+            // into the alerts feed alongside cloud-supplied alerts. Stable IDs
+            // (quota-<provider>-<tier>-<threshold>) prevent duplicates because
+            // `previousAlertIDs` is updated every cycle below. Locally-resolved
+            // or snoozed IDs are filtered via `activeSuppressedAlertIDs`.
+            #if os(macOS)
+            var augmentedAlerts = alertData
+            let suppressedIDs = await callbacks.activeSuppressedAlertIDs()
+            let quotaAlertDicts = AlertGenerator.evaluateQuotaAlerts(providers: costAdjustedProviders)
+            let existingIDs = Set(alertData.map(\.id))
+            for dict in quotaAlertDicts {
+                if let rec = AlertGenerator.makeAlertRecord(from: dict),
+                   !existingIDs.contains(rec.id),
+                   !suppressedIDs.contains(rec.id) {
+                    augmentedAlerts.append(rec)
+                }
+            }
+            #else
+            let augmentedAlerts = alertData
+            #endif
+
+            let newAlerts = augmentedAlerts.filter { alert in
                 !alert.is_resolved && !previousAlertIDs.contains(alert.id)
             }
             if context.notificationsEnabled {
@@ -161,7 +207,7 @@ internal final class DataRefreshManager {
                     callbacks.sendNotification(alert)
                 }
             }
-            previousAlertIDs = Set(alertData.map(\.id))
+            previousAlertIDs = Set(augmentedAlerts.map(\.id))
 
             // Evaluate budget alerts server-side (non-blocking, best-effort)
             Task {
@@ -171,10 +217,10 @@ internal final class DataRefreshManager {
             callbacks.applyPayload(
                 RefreshPayload(
                     dashboard: dashboardData,
-                    providers: resolvedProviders,
+                    providers: costAdjustedProviders,
                     sessions: sessionData,
                     devices: deviceData,
-                    alerts: alertData,
+                    alerts: augmentedAlerts,
                     locallySupplementedProviders: supplementedProviders,
                     tierLimitWarning: warning,
                     lastRefresh: Date(),
@@ -240,11 +286,12 @@ internal final class DataRefreshManager {
         let collectorResults = await runCollectors(providerConfigs: context.providerConfigs)
         let scanResult = await Task.detached { LocalScanner.shared.scan() }.value
 
-        // Scan local JSONL logs for precise token counts and costs
-        let costScanData = await Task.detached {
-            CostUsageScanner.scan()
-        }.value
+        // Scan local JSONL logs for precise token counts and costs.
+        // v1.9.4: sandbox-aware (resolves bookmarks on main actor first).
+        let costScanData = await CostUsageScanner.scanAsync()
         let costScanResult: CostUsageScanResult? = costScanData.entries.isEmpty ? nil : costScanData
+        let needsAccess = Self.needsFolderAccessNudge(scanIsEmpty: costScanResult == nil)
+        await callbacks.setNeedsFolderAccess(needsAccess)
 
         // Sync completed days to Supabase (non-blocking, best-effort)
         if let costScanResult {
@@ -269,7 +316,9 @@ internal final class DataRefreshManager {
             mergedProviders[result.usage.provider] = result.usage
         }
 
-        let providers = mergedProviders.values.sorted { $0.today_usage > $1.today_usage }
+        let providersRaw = mergedProviders.values.sorted { $0.today_usage > $1.today_usage }
+        // v1.9.3: bridge JSONL scan → per-provider cost/token fields.
+        let providers = Self.applyCostScan(to: providersRaw, scan: costScanResult)
         let devices = [DeviceRecord(
             id: "local",
             name: ProcessInfo.processInfo.hostName,
@@ -282,7 +331,16 @@ internal final class DataRefreshManager {
             cpu_usage: nil,
             memory_usage: nil
         )]
-        let alerts: [AlertRecord] = []
+        // v1.9.3: include local quota-depletion alerts in local-only mode too.
+        var alerts: [AlertRecord] = []
+        let suppressedIDsLocal = await callbacks.activeSuppressedAlertIDs()
+        let quotaAlertDicts = AlertGenerator.evaluateQuotaAlerts(providers: providers)
+        for dict in quotaAlertDicts {
+            if let rec = AlertGenerator.makeAlertRecord(from: dict),
+               !suppressedIDsLocal.contains(rec.id) {
+                alerts.append(rec)
+            }
+        }
 
         let dashboard = DashboardSummary(
             total_usage_today: providers.reduce(0) { $0 + $1.today_usage },
@@ -409,6 +467,18 @@ internal final class DataRefreshManager {
                 }
             }
 
+            // v1.9.4: always carry a minimal ProviderMetadata on helper-
+            // bridged results. Previously this was nil and a later dedup
+            // step could silently drop the main-app-set metadata that the
+            // Providers card relies on (`supports_quota` drives the
+            // "I/O tokens" display branch). Helper only emits `.quota` kind,
+            // so `supports_quota: true` is safe.
+            let meta = ProviderMetadata(
+                display_name: providerName,
+                category: "cloud",
+                supports_exact_cost: false,
+                supports_quota: true
+            )
             let usage = ProviderUsage(
                 provider: providerName,
                 today_usage: todayUsage, week_usage: weekUsage,
@@ -418,11 +488,48 @@ internal final class DataRefreshManager {
                 plan_type: planType, reset_time: resetTime,
                 tiers: tiers,
                 status_text: statusText ?? "\(100 - remaining)% used",
-                trend: [], recent_sessions: [], recent_errors: []
+                trend: [], recent_sessions: [], recent_errors: [],
+                metadata: meta
             )
             results.append(CollectorResult(usage: usage, dataKind: .quota))
         }
         return results
+    }
+
+    /// v1.9.4: returns true when the cost scan came back empty AND the
+    /// sandbox hasn't been granted access to the scan roots — i.e. the user
+    /// should be nudged to click "Grant access" in Settings. Called on the
+    /// main actor because `BookmarkManager` is `@MainActor`-isolated.
+    #if os(macOS)
+    @MainActor
+    static func needsFolderAccessNudge(scanIsEmpty: Bool) -> Bool {
+        guard scanIsEmpty else { return false }
+        // If at least one core scan root is missing a bookmark, surface the
+        // banner. We check the two Claude variants and the two Codex roots;
+        // nudge the user if ANY key root is unbookmarked (they only need one
+        // to start getting data, but the banner drives them to Settings
+        // where all four are listed).
+        let missing = CostUsageScanner.missingScanRoots()
+        return !missing.isEmpty
+    }
+    #endif
+
+    /// v1.9.4: collapse multiple `CollectorResult`s for the same (provider,
+    /// dataKind) into a single row, keeping the LAST occurrence. Used to
+    /// normalise the main-app + helper result lists before merging or
+    /// uploading — prevents SQLSTATE 21000 on Supabase upserts when the
+    /// same provider's quota row appears twice.
+    nonisolated static func dedupedByProvider(_ results: [CollectorResult]) -> [CollectorResult] {
+        var seen: Set<String> = []
+        var out: [CollectorResult] = []
+        for r in results.reversed() {
+            // Keys by provider name alone — the underlying provider_quotas
+            // table is uniqued on (user_id, provider), and we don't want
+            // `.quota` vs `.credits` for the same provider both going through.
+            let key = r.usage.provider
+            if seen.insert(key).inserted { out.append(r) }
+        }
+        return out.reversed()
     }
 
     nonisolated static func mergeCloudWithLocal(cloud: [ProviderUsage], local: [CollectorResult]) -> ([ProviderUsage], Set<String>) {
@@ -475,6 +582,93 @@ internal final class DataRefreshManager {
         }
 
         return (merged.values.sorted { $0.today_usage > $1.today_usage }, supplemented)
+    }
+
+    /// v1.9.3: project per-provider token / cost from the JSONL scanner back
+    /// into each `ProviderUsage` so cards show real numbers instead of the
+    /// hardcoded `0 / "Unavailable"`. This is the bridge that codexbar uses.
+    ///
+    /// Behaviour:
+    /// - For each provider in the scan, sum today's USD and week-to-date USD.
+    /// - Replace `estimated_cost_today/week` and flip status to `"Estimated"`.
+    /// - Token counts are exposed via `today_usage`/`week_usage` ONLY for
+    ///   non-quota providers (where these fields are token counters); for quota
+    ///   providers (Claude, Codex, Cursor) those fields are utilization %, so
+    ///   we leave them alone.
+    nonisolated static func applyCostScan(to providers: [ProviderUsage], scan: CostUsageScanResult?) -> [ProviderUsage] {
+        guard let scan, !scan.entries.isEmpty else { return providers }
+
+        let cal = Calendar.current
+        let now = Date()
+        let comps = cal.dateComponents([.year, .month, .day], from: now)
+        let todayKey = String(format: "%04d-%02d-%02d", comps.year ?? 1970, comps.month ?? 1, comps.day ?? 1)
+
+        // Roll up by provider.
+        struct Rollup { var todayCost: Double = 0; var weekCost: Double = 0
+                        var todayTokens: Int = 0; var weekTokens: Int = 0 }
+        var rollup: [String: Rollup] = [:]
+        // 7-day rolling window: today + the previous 6 days. Using -6 here
+        // (not -7) because the inclusive `>= weekCutoff` comparison would
+        // otherwise span 8 calendar days.
+        let weekCutoff = cal.date(byAdding: .day, value: -6, to: now)
+            .map { cal.dateComponents([.year, .month, .day], from: $0) }
+            .map { String(format: "%04d-%02d-%02d", $0.year ?? 1970, $0.month ?? 1, $0.day ?? 1) }
+            ?? todayKey
+
+        for entry in scan.entries {
+            var r = rollup[entry.provider, default: Rollup()]
+            // v1.9.4 second revision: uniform `input + output` for every
+            // provider. Cache tokens excluded from the displayed count (cost
+            // still uses full per-component pricing — see `AppState.totalTokens`
+            // for the rationale).
+            let entryTokens = entry.inputTokens + entry.outputTokens
+            if entry.date == todayKey {
+                r.todayCost += entry.costUSD ?? 0
+                r.todayTokens += entryTokens
+            }
+            if entry.date >= weekCutoff {
+                r.weekCost += entry.costUSD ?? 0
+                r.weekTokens += entryTokens
+            }
+            rollup[entry.provider] = r
+        }
+
+        return providers.map { provider in
+            guard let r = rollup[provider.provider] else { return provider }
+
+            let isQuotaProvider = provider.metadata?.supports_quota ?? true
+            let mergedTodayUsage = isQuotaProvider ? provider.today_usage : max(provider.today_usage, r.todayTokens)
+            let mergedWeekUsage = isQuotaProvider ? provider.week_usage : max(provider.week_usage, r.weekTokens)
+
+            // Combine local-scan + cloud cost so multi-device usage isn't
+            // hidden by a smaller local roll-up. `max` avoids double-counting
+            // because both sources represent the same window's total spend
+            // (cloud-side aggregation already includes synced local data).
+            let mergedCostToday = max(r.todayCost, provider.estimated_cost_today)
+            let mergedCostWeek = max(r.weekCost, provider.estimated_cost_week)
+            let statusToday = mergedCostToday > 0 ? "Estimated" : provider.cost_status_today
+            let statusWeek = mergedCostWeek > 0 ? "Estimated" : provider.cost_status_week
+
+            return ProviderUsage(
+                provider: provider.provider,
+                today_usage: mergedTodayUsage,
+                week_usage: mergedWeekUsage,
+                estimated_cost_today: mergedCostToday,
+                estimated_cost_week: mergedCostWeek,
+                cost_status_today: statusToday,
+                cost_status_week: statusWeek,
+                quota: provider.quota,
+                remaining: provider.remaining,
+                plan_type: provider.plan_type,
+                reset_time: provider.reset_time,
+                tiers: provider.tiers,
+                status_text: provider.status_text,
+                trend: provider.trend,
+                recent_sessions: provider.recent_sessions,
+                recent_errors: provider.recent_errors,
+                metadata: provider.metadata
+            )
+        }
     }
 
     nonisolated static func dumpMergeDiagnostic(cloud: [ProviderUsage], local: [CollectorResult], merged: [ProviderUsage]) {
@@ -575,7 +769,24 @@ internal final class DataRefreshManager {
 extension AppState {
     public func refreshAll() async {
         await dataRefreshManager.refreshAll(context: refreshContext(), callbacks: refreshCallbacks())
+        // Let platform bridges (notably iOS's PhoneSessionManager) forward the
+        // freshly-loaded snapshot to the Apple Watch via WCSession. No userInfo
+        // — observers pull the current @Published values from AppState.
+        NotificationCenter.default.post(name: .cliPulseDidRefresh, object: self)
     }
+
+    #if os(macOS)
+    /// v1.9.4: wipe the scanner cache and rebuild it from scratch. Use when
+    /// the user has just granted a new bookmark, since prior sandbox-blocked
+    /// runs may have recorded negative deltas that incremental scanning
+    /// wouldn't undo.
+    public func forceRescanTokenCache() async {
+        let fresh = await CostUsageScanner.forceRescanAsync()
+        costUsageScanResult = fresh.entries.isEmpty ? nil : fresh
+        // Kick a full refresh so provider cards pick up the new data.
+        await refreshAll()
+    }
+    #endif
 
     public func acknowledgeAlert(_ alert: AlertRecord) async {
         if isDemoMode {
@@ -597,6 +808,17 @@ extension AppState {
     }
 
     public func resolveAlert(_ alert: AlertRecord) async {
+        // v1.9.3: locally-generated alerts (id prefix `quota-`) don't exist
+        // server-side, so `api.resolveAlert` would no-op and the alert would
+        // re-fire on the next quota evaluation. Persist a permanent local
+        // suppression instead.
+        if alert.id.hasPrefix("quota-") {
+            suppressAlert(id: alert.id, until: .distantFuture)
+            if let idx = alerts.firstIndex(where: { $0.id == alert.id }) {
+                alerts.remove(at: idx)
+            }
+            return
+        }
         if isDemoMode {
             if let idx = alerts.firstIndex(where: { $0.id == alert.id }) {
                 alerts[idx] = demoUpdateAlert(alerts[idx], isRead: true, isResolved: true)
@@ -612,6 +834,13 @@ extension AppState {
     }
 
     public func snoozeAlert(_ alert: AlertRecord, minutes: Int) async {
+        if alert.id.hasPrefix("quota-") {
+            suppressAlert(id: alert.id, until: Date().addingTimeInterval(Double(minutes) * 60))
+            if let idx = alerts.firstIndex(where: { $0.id == alert.id }) {
+                alerts.remove(at: idx)
+            }
+            return
+        }
         if isDemoMode {
             if let idx = alerts.firstIndex(where: { $0.id == alert.id }) {
                 let until = sharedISO8601Formatter.string(from: Date().addingTimeInterval(Double(minutes) * 60))
@@ -625,6 +854,42 @@ extension AppState {
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    // MARK: - Local alert suppression helpers (v1.9.3)
+
+    /// Persist a local-only suppression for an alert ID. `Date.distantFuture`
+    /// means "never reappear" (until threshold ratchets up, which makes a new ID).
+    public func suppressAlert(id: String, until: Date) {
+        suppressedAlertIDs[id] = until
+        saveSuppressedAlertIDs()
+    }
+
+    /// Currently-active local suppressions (i.e. not expired). Side-effect:
+    /// expired entries are pruned from `suppressedAlertIDs`.
+    public func activeSuppressedAlertIDs(now: Date = Date()) -> Set<String> {
+        var active = Set<String>()
+        var changed = false
+        for (id, until) in suppressedAlertIDs {
+            if until > now {
+                active.insert(id)
+            } else {
+                changed = true
+                suppressedAlertIDs.removeValue(forKey: id)
+            }
+        }
+        if changed { saveSuppressedAlertIDs() }
+        return active
+    }
+
+    public func saveSuppressedAlertIDs() {
+        let payload = suppressedAlertIDs.mapValues { $0.timeIntervalSince1970 }
+        UserDefaults.standard.set(payload, forKey: "cli_pulse_suppressed_alert_ids_v1")
+    }
+
+    public func loadSuppressedAlertIDs() {
+        guard let dict = UserDefaults.standard.dictionary(forKey: "cli_pulse_suppressed_alert_ids_v1") as? [String: Double] else { return }
+        suppressedAlertIDs = dict.mapValues { Date(timeIntervalSince1970: $0) }
     }
 
     public func startRefreshLoop() {
@@ -693,9 +958,16 @@ extension AppState {
                     apiEquivCost: apiCost, subscriptionCost: sub.monthlyCost)
             }.sorted { $0.utilizationPercent > $1.utilizationPercent }
 
-            // Per-model cost breakdown
+            // Per-model cost breakdown. v1.9.4 (second revision): skip the
+            // synthetic `__claude_msg__` bucket — it's a raw-event counter,
+            // not a real model, and would render as a literal "__claude_msg__"
+            // row in the By Model section.
             var modelAgg: [String: (cost: Double, input: Int, output: Int, cached: Int)] = [:]
             for entry in scan.entries {
+                // Use the string literal so this compiles on iOS (where
+                // CostUsageScanner is macOS-only). Kept in sync with the
+                // scanner constant; if it changes, update both places.
+                if entry.model == "__claude_msg__" { continue }
                 let key = entry.model.isEmpty ? entry.provider : entry.model
                 var agg = modelAgg[key, default: (0, 0, 0, 0)]
                 agg.cost += entry.costUSD ?? 0
@@ -874,6 +1146,32 @@ extension AppState {
     func completeRefresh() {
         buildProviderDetails()
         updateCostSummary()
+        // v1.9.4: overwrite server-side dashboard fields that the server
+        // can't know about yet (today's data isn't uploaded via
+        // `syncDailyUsage` until the day rolls over). The local scan IS
+        // today-accurate, so prefer it for the Overview top cards so they
+        // stop disagreeing with the Cost Summary card below.
+        if let dash = dashboard {
+            let localTodayCost = costSummary.todayTotal
+            let localTodayTokens = costSummary.todayTokens
+            if localTodayCost > 0 || localTodayTokens > 0 {
+                dashboard = DashboardSummary(
+                    total_usage_today: localTodayTokens > 0 ? localTodayTokens : dash.total_usage_today,
+                    total_estimated_cost_today: localTodayCost > 0 ? localTodayCost : dash.total_estimated_cost_today,
+                    cost_status: localTodayCost > 0 ? "Estimated" : dash.cost_status,
+                    total_requests_today: dash.total_requests_today,
+                    active_sessions: dash.active_sessions,
+                    online_devices: dash.online_devices,
+                    unresolved_alerts: dash.unresolved_alerts,
+                    provider_breakdown: dash.provider_breakdown,
+                    top_projects: dash.top_projects,
+                    trend: dash.trend,
+                    recent_activity: dash.recent_activity,
+                    risk_signals: dash.risk_signals,
+                    alert_summary: dash.alert_summary
+                )
+            }
+        }
         publishWidgetData()
         Task { await refreshCostForecast() }
         Task { await refreshYieldScore() }
@@ -936,6 +1234,12 @@ extension AppState {
             handleTokenExpired: { [weak self] message in
                 self?.signOut()
                 self?.lastError = message
+            },
+            activeSuppressedAlertIDs: { @MainActor [weak self] in
+                self?.activeSuppressedAlertIDs() ?? []
+            },
+            setNeedsFolderAccess: { @MainActor [weak self] value in
+                self?.needsScannerFolderAccess = value
             }
         )
     }

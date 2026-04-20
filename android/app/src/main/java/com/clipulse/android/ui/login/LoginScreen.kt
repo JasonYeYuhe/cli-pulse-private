@@ -20,32 +20,29 @@ import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.clipulse.android.MainActivity
 import kotlinx.coroutines.launch
 
 @Composable
 fun LoginScreen(
     viewModel: LoginViewModel = hiltViewModel(),
-    oauthCode: String? = null,
+    loginCallback: MainActivity.OAuthCallback? = null,
     onLoggedIn: () -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    /** PKCE verifier stored as composition-local state (survives config changes). */
-    var pendingOAuthVerifier by remember { mutableStateOf<String?>(null) }
-
     LaunchedEffect(Unit) { viewModel.tryRestoreSession() }
     LaunchedEffect(state.isLoggedIn) {
         if (state.isLoggedIn) onLoggedIn()
     }
 
-    // Handle deep-link OAuth callback
-    LaunchedEffect(oauthCode) {
-        val code = oauthCode ?: return@LaunchedEffect
-        val verifier = pendingOAuthVerifier ?: return@LaunchedEffect
-        pendingOAuthVerifier = null
-        viewModel.exchangeOAuthCode(code, verifier)
+    // Handle deep-link OAuth callback (durable — verifier + state already validated by MainActivity).
+    LaunchedEffect(loginCallback) {
+        val cb = loginCallback ?: return@LaunchedEffect
+        viewModel.exchangeOAuthCode(cb.code, cb.codeVerifier)
+        (context as? MainActivity)?.consumePendingCallback()
     }
 
     var email by remember { mutableStateOf("") }
@@ -202,11 +199,7 @@ fun LoginScreen(
                 // GitHub Sign-In via Supabase OAuth PKCE
                 OutlinedButton(
                     onClick = {
-                        val (url, verifier, oauthState) = viewModel.oauthAuthorizeUrl("github")
-                        // Store verifier so we can exchange the code when the deep link returns
-                        pendingOAuthVerifier = verifier
-                        // Set expected state on Activity for CSRF verification
-                        (context as? com.clipulse.android.MainActivity)?.expectedOAuthState = oauthState
+                        val url = viewModel.startOAuthLogin("github")
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                     },
                     modifier = Modifier.fillMaxWidth(),

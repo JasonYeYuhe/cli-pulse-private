@@ -211,7 +211,6 @@ struct SettingsTab: View {
     // MARK: - Pairing
 
     @State private var showSetupGuide = false
-    @State private var editingProviderKind: ProviderKind?
 
     private var pairingSection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1002,10 +1001,6 @@ struct SettingsTab: View {
                 providerSettingsRow(config: config)
             }
         }
-        .sheet(item: $editingProviderKind) { kind in
-            ProviderConfigEditor(kind: kind, state: state, onDismiss: { editingProviderKind = nil })
-                .frame(width: 340, height: 380)
-        }
     }
 
     private func providerSettingsRow(config: ProviderConfig) -> some View {
@@ -1040,7 +1035,9 @@ struct SettingsTab: View {
             }
             Spacer()
             Button {
-                editingProviderKind = config.kind
+                state.editingProviderKind = config.kind
+                NSApp.activate(ignoringOtherApps: true)
+                openWindow(id: "provider-config")
             } label: {
                 Image(systemName: "gear")
                     .font(.system(size: 10))
@@ -1118,6 +1115,48 @@ struct SettingsTab: View {
             Divider()
 
             SectionHeader(title: "Privacy", icon: "lock.shield")
+
+            // v1.9.4: explicit per-field disclosure of what stays on device
+            // vs what syncs to the user's CLI Pulse account. Wording matches
+            // PRIVACY.md and the App Store listing so there's one source of
+            // truth — if we change one, we change all three.
+            VStack(alignment: .leading, spacing: 6) {
+                privacyRow(
+                    icon: "lock.fill",
+                    color: .green,
+                    title: "Provider API keys & cookies",
+                    detail: "Stored only in macOS Keychain · never uploaded"
+                )
+                privacyRow(
+                    icon: "internaldrive.fill",
+                    color: .green,
+                    title: "Session logs (~/.codex/sessions, ~/.claude/projects)",
+                    detail: "Scanned on-device via the folders you grant above"
+                )
+                privacyRow(
+                    icon: "icloud.and.arrow.up.fill",
+                    color: .blue,
+                    title: "Usage metrics (token counts, cost, model names)",
+                    detail: "Synced to your CLI Pulse account for iPhone / Watch"
+                )
+                privacyRow(
+                    icon: "person.crop.circle.fill",
+                    color: .blue,
+                    title: "Your login email",
+                    detail: "Sent to our auth backend so you can sign in"
+                )
+                HStack(spacing: 4) {
+                    Text("Full details:")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                    Link("Privacy Policy", destination: URL(string: "https://jasonyeyuhe.github.io/cli-pulse/privacy.html")!)
+                        .font(.system(size: 9))
+                }
+                .padding(.top, 2)
+            }
+            .padding(8)
+            .background(Color.secondary.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
 
             Toggle(isOn: $state.hidePersonalInfo) {
                 VStack(alignment: .leading, spacing: 1) {
@@ -1318,4 +1357,22 @@ struct SettingsTab: View {
         }
     }
 
+    /// v1.9.4 privacy disclosure row. Green icon = stays on device.
+    /// Blue icon = synced to your CLI Pulse account (for cross-device viewing).
+    private func privacyRow(icon: String, color: Color, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+                .foregroundStyle(color)
+                .frame(width: 12)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 10, weight: .medium))
+                Text(detail)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+    }
 }

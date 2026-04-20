@@ -41,12 +41,17 @@ struct WatchLoginView: View {
 
                         if let token = sessionManager.pendingAuthToken {
                             Button {
-                                state.applyWatchAuth(
-                                    token: token,
-                                    refreshToken: sessionManager.pendingRefreshToken,
-                                    email: sessionManager.pendingAuthEmail ?? "",
-                                    name: sessionManager.pendingAuthName ?? ""
-                                )
+                                let refresh = sessionManager.pendingRefreshToken
+                                let email = sessionManager.pendingAuthEmail ?? ""
+                                let name = sessionManager.pendingAuthName ?? ""
+                                Task {
+                                    await state.applyWatchAuth(
+                                        token: token,
+                                        refreshToken: refresh,
+                                        email: email,
+                                        name: name
+                                    )
+                                }
                             } label: {
                                 Text("Complete Sign In")
                                     .frame(maxWidth: .infinity)

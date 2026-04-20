@@ -45,6 +45,54 @@ class TokenStore(
 
     val isLoggedIn: Boolean get() = isDemoMode || !accessToken.isNullOrBlank()
 
+    // ── Pending OAuth flow (login or link) ─────────────────────────────
+    // Durable across process death / backgrounding so we can complete the browser round-trip.
+
+    /** Pending-flow record. [kind] is "login" or "link". [state] is the CSRF token for the authorize URL. */
+    data class PendingOAuthFlow(
+        val kind: String,
+        val provider: String,
+        val codeVerifier: String,
+        val state: String,
+        val createdAt: Long,
+    )
+
+    /** Max age of a pending flow before it's considered stale. */
+    private val PENDING_TTL_MS = 10 * 60 * 1000L // 10 min
+
+    fun savePendingOAuthFlow(flow: PendingOAuthFlow) {
+        prefs.edit()
+            .putString(KEY_PENDING_KIND, flow.kind)
+            .putString(KEY_PENDING_PROVIDER, flow.provider)
+            .putString(KEY_PENDING_VERIFIER, flow.codeVerifier)
+            .putString(KEY_PENDING_STATE, flow.state)
+            .putLong(KEY_PENDING_CREATED_AT, flow.createdAt)
+            .apply()
+    }
+
+    fun loadPendingOAuthFlow(): PendingOAuthFlow? {
+        val kind = prefs.getString(KEY_PENDING_KIND, null) ?: return null
+        val provider = prefs.getString(KEY_PENDING_PROVIDER, null) ?: return null
+        val verifier = prefs.getString(KEY_PENDING_VERIFIER, null) ?: return null
+        val state = prefs.getString(KEY_PENDING_STATE, null) ?: return null
+        val createdAt = prefs.getLong(KEY_PENDING_CREATED_AT, 0L)
+        if (createdAt == 0L || System.currentTimeMillis() - createdAt > PENDING_TTL_MS) {
+            clearPendingOAuthFlow()
+            return null
+        }
+        return PendingOAuthFlow(kind, provider, verifier, state, createdAt)
+    }
+
+    fun clearPendingOAuthFlow() {
+        prefs.edit()
+            .remove(KEY_PENDING_KIND)
+            .remove(KEY_PENDING_PROVIDER)
+            .remove(KEY_PENDING_VERIFIER)
+            .remove(KEY_PENDING_STATE)
+            .remove(KEY_PENDING_CREATED_AT)
+            .apply()
+    }
+
     /** Atomically update auth tokens + userId in a single write transaction. */
     fun updateAuthState(access: String?, refresh: String?, user: String?) {
         prefs.edit()
@@ -78,5 +126,10 @@ class TokenStore(
         private const val KEY_USER_EMAIL = "user_email"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_DEMO_MODE = "demo_mode"
+        private const val KEY_PENDING_KIND = "pending_oauth_kind"
+        private const val KEY_PENDING_PROVIDER = "pending_oauth_provider"
+        private const val KEY_PENDING_VERIFIER = "pending_oauth_verifier"
+        private const val KEY_PENDING_STATE = "pending_oauth_state"
+        private const val KEY_PENDING_CREATED_AT = "pending_oauth_created_at"
     }
 }

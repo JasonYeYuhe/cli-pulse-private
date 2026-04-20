@@ -2,7 +2,7 @@ import SwiftUI
 import CLIPulseCore
 
 /// Multi-step onboarding wizard shown to new macOS users before authentication.
-/// Steps: Welcome → Features → Sign In → Pair Device (optional)
+/// Steps: Welcome → Features → Privacy (v1.9.4) → Sign In → Pair Device (optional)
 struct OnboardingWizardView: View {
     @EnvironmentObject var state: AppState
     @AppStorage("cli_pulse_onboarding_completed") private var onboardingCompleted = false
@@ -14,7 +14,7 @@ struct OnboardingWizardView: View {
         VStack(spacing: 0) {
             // Step indicator
             HStack(spacing: 6) {
-                ForEach(0..<4) { i in
+                ForEach(0..<5) { i in
                     Circle()
                         .fill(i <= step ? PulseTheme.accent : Color.gray.opacity(0.3))
                         .frame(width: 6, height: 6)
@@ -28,8 +28,9 @@ struct OnboardingWizardView: View {
                 switch step {
                 case 0: welcomeStep
                 case 1: featuresStep
-                case 2: signInStep
-                case 3: pairStep
+                case 2: privacyStep
+                case 3: signInStep
+                case 4: pairStep
                 default: welcomeStep
                 }
             }
@@ -37,8 +38,8 @@ struct OnboardingWizardView: View {
             .animation(.easeInOut(duration: 0.25), value: step)
         }
         .onChange(of: state.isAuthenticated) { isAuth in
-            if isAuth && step == 2 {
-                step = 3
+            if isAuth && step == 3 {
+                step = 4
             }
         }
     }
@@ -119,7 +120,86 @@ struct OnboardingWizardView: View {
         }
     }
 
-    // MARK: - Step 2: Sign In
+    // MARK: - Step 2: Privacy (v1.9.4)
+
+    private var privacyStep: some View {
+        VStack(spacing: 12) {
+            Text("Your data, your control")
+                .font(.headline)
+                .padding(.top, 12)
+
+            Text("Here's exactly what stays on your Mac and what syncs to your account.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+
+            ScrollView {
+                VStack(spacing: 10) {
+                    onboardingPrivacyCard(
+                        icon: "lock.fill",
+                        color: .green,
+                        title: "API keys stay on this Mac",
+                        detail: "Provider API keys and session cookies (OpenAI, Anthropic, Google, etc.) live only in your macOS Keychain. They're used to call those providers directly — never uploaded to us."
+                    )
+                    onboardingPrivacyCard(
+                        icon: "internaldrive.fill",
+                        color: .green,
+                        title: "Session logs scanned on-device",
+                        detail: "CLI Pulse reads ~/.codex/sessions/ and ~/.claude/projects/ locally to compute token counts. File contents never leave your device."
+                    )
+                    onboardingPrivacyCard(
+                        icon: "icloud.and.arrow.up.fill",
+                        color: .blue,
+                        title: "Usage metrics sync with your account",
+                        detail: "Token counts, cost estimates, model names, and dates are sent to your CLI Pulse account so iPhone and Apple Watch can show the same history."
+                    )
+                }
+                .padding(.horizontal, 16)
+            }
+
+            Spacer()
+
+            HStack(spacing: 12) {
+                Button("Back") { step = 1 }
+                    .buttonStyle(.bordered)
+
+                Button {
+                    step = 3
+                } label: {
+                    Text("Continue")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(PulseTheme.accent)
+            }
+            .padding(.horizontal, 40)
+            .padding(.bottom, 20)
+        }
+    }
+
+    private func onboardingPrivacyCard(icon: String, color: Color, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 18))
+                .foregroundStyle(color)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    // MARK: - Step 3: Sign In
 
     private var signInStep: some View {
         VStack(spacing: 12) {
@@ -187,14 +267,14 @@ struct OnboardingWizardView: View {
 
             Spacer()
 
-            Button("Back") { step = 1 }
+            Button("Back") { step = 2 }
                 .buttonStyle(.bordered)
                 .padding(.bottom, 20)
         }
         .padding(.horizontal, 20)
     }
 
-    // MARK: - Step 3: Pair Device
+    // MARK: - Step 4: Pair Device
 
     private var pairStep: some View {
         VStack(spacing: 12) {

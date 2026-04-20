@@ -7,6 +7,10 @@ public extension Notification.Name {
     static let cliPulseDidAuthenticate = Notification.Name("cliPulseDidAuthenticate")
     /// Posted when the user signs out.
     static let cliPulseDidSignOut = Notification.Name("cliPulseDidSignOut")
+    /// Posted by AppState after `refreshAll()` finishes. Listeners (e.g. the
+    /// iOS WCSession bridge) can forward the freshly-loaded dashboard state to
+    /// the paired Apple Watch. No userInfo — observers pull from AppState.
+    static let cliPulseDidRefresh = Notification.Name("cliPulseDidRefresh")
 }
 
 public struct AuthSessionState {
@@ -231,9 +235,79 @@ extension AppState {
     }
 
     /// Build an OAuth URL for a given provider (PKCE flow).
-    public func oauthURL(provider: String) async -> (URL, String)? {
+    /// Returns (url, codeVerifier, state) — caller must validate the returned state matches
+    /// the `state` query param on the callback URL to prevent CSRF.
+    public func oauthURL(provider: String) async -> (URL, String, String)? {
         let redirectTo = "clipulse://auth/callback"
         return await api.oauthAuthorizeURL(provider: provider, redirectTo: redirectTo)
+    }
+
+    // MARK: - Identity Linking
+
+    /// Refresh the list of identities linked to the current user.
+    public func refreshLinkedIdentities() async {
+        guard isAuthenticated, !isDemoMode else {
+            linkedIdentities = []
+            return
+        }
+        do {
+            linkedIdentities = try await api.userIdentities()
+        } catch {
+            // Non-fatal — just log; UI will show empty list
+            linkIdentityError = error.localizedDescription
+        }
+    }
+
+    /// Build a link-identity OAuth authorization URL (PKCE) for Google/GitHub.
+    /// Returns (url, codeVerifier, state). Caller opens in ASWebAuthenticationSession, verifies
+    /// the callback's `state` param matches, then calls `completeLinkIdentity(code:codeVerifier:)`.
+    public func linkIdentityURL(provider: String) async -> (URL, String, String)? {
+        do {
+            let redirectTo = "clipulse://auth/callback"
+            return try await api.linkIdentityAuthorizeURL(provider: provider, redirectTo: redirectTo)
+        } catch {
+            linkIdentityError = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Complete a link-identity flow by exchanging the returned PKCE code.
+    public func completeLinkIdentity(code: String, codeVerifier: String) async {
+        isLinkingIdentity = true
+        linkIdentityError = nil
+        do {
+            try await api.exchangeOAuthCodeForLink(code: code, codeVerifier: codeVerifier)
+            await refreshLinkedIdentities()
+        } catch {
+            linkIdentityError = error.localizedDescription
+        }
+        isLinkingIdentity = false
+    }
+
+    /// Link an Apple identity using an Apple identity token.
+    public func linkAppleIdentity(identityToken: String, nonce: String?) async {
+        isLinkingIdentity = true
+        linkIdentityError = nil
+        do {
+            try await api.linkAppleIdentity(identityToken: identityToken, nonce: nonce)
+            await refreshLinkedIdentities()
+        } catch {
+            linkIdentityError = error.localizedDescription
+        }
+        isLinkingIdentity = false
+    }
+
+    /// Unlink an identity. Supabase refuses to unlink the only remaining identity.
+    public func unlinkIdentity(_ identity: UserIdentity) async {
+        isLinkingIdentity = true
+        linkIdentityError = nil
+        do {
+            try await api.unlinkIdentity(identityId: identity.id)
+            await refreshLinkedIdentities()
+        } catch {
+            linkIdentityError = error.localizedDescription
+        }
+        isLinkingIdentity = false
     }
 
     public func generatePairingCode() async {
@@ -340,6 +414,7 @@ extension AppState {
         userEmail = authState.userEmail
         isPaired = authState.isPaired
         isAuthenticated = true
+        serverOnline = true
 
         // Notify iOS companion to forward auth to watch
         NotificationCenter.default.post(
@@ -352,18 +427,6 @@ extension AppState {
                 "name": authState.userName,
             ]
         )
-    }
-
-    /// Apply auth credentials received from the paired iPhone via WCSession.
-    /// Used on watchOS for passwordless login.
-    public func applyWatchAuth(token: String, refreshToken: String?, email: String, name: String) {
-        Self.persistAuthTokens(access: token, refresh: refreshToken)
-        userName = name
-        userEmail = email
-        isAuthenticated = true
-        isPaired = true
-        startRefreshLoop()
-        Task { await refreshAll() }
     }
 
     func applySignedOutState() {

@@ -57,6 +57,13 @@ public struct ClaudeSnapshot: Sendable {
         self.accountEmail = accountEmail
         self.sourceLabel = sourceLabel
     }
+
+    /// True when at least one of the three quota windows has a parsed value.
+    /// Used by `ClaudeResultBuilder` to decide whether to emit a real quota
+    /// envelope or an "unavailable" placeholder.
+    public var hasAnyUsage: Bool {
+        sessionUsed != nil || weeklyUsed != nil || sonnetUsed != nil || opusUsed != nil
+    }
 }
 
 /// Extra usage / credit info from Claude.
@@ -105,8 +112,27 @@ public enum ClaudeResultBuilder {
         else if tierLower.isEmpty { planType = "Unknown" }
         else { planType = "Unknown" }
 
-        let overallRemaining = snapshot.sessionUsed.map { max(0, 100 - $0) } ?? 100
-        let statusText = snapshot.sessionUsed.map { "\($0)% used" } ?? "Operational"
+        // Be honest: if no strategy populated any of the three quota windows
+        // we used to emit `quota=100, remaining=100, tiers=[]`, which AppState
+        // turned into a misleading "Default 100% left" bar. Now we report
+        // `quota=nil` so the UI can render an "unavailable" placeholder.
+        let hasUsage = snapshot.hasAnyUsage
+        let overallQuota: Int? = hasUsage ? 100 : nil
+        let overallRemaining: Int? = hasUsage ? (snapshot.sessionUsed.map { max(0, 100 - $0) } ?? 100) : nil
+        let statusText: String
+        if let used = snapshot.sessionUsed {
+            statusText = "\(used)% used"
+        } else if hasUsage {
+            statusText = "Operational"
+        } else {
+            statusText = "Quota data unavailable"
+        }
+
+        #if DEBUG
+        if !hasUsage {
+            print("[ClaudeResultBuilder] WARN no usage windows captured (source=\(snapshot.sourceLabel)) — emitting unavailable placeholder")
+        }
+        #endif
 
         let providerUsage = ProviderUsage(
             provider: ProviderKind.claude.rawValue,
@@ -114,7 +140,7 @@ public enum ClaudeResultBuilder {
             week_usage: snapshot.weeklyUsed ?? 0,
             estimated_cost_today: 0, estimated_cost_week: 0,
             cost_status_today: "Unavailable", cost_status_week: "Unavailable",
-            quota: 100, remaining: overallRemaining, plan_type: planType,
+            quota: overallQuota, remaining: overallRemaining, plan_type: planType,
             reset_time: snapshot.sessionReset, tiers: tiers, status_text: statusText,
             trend: [], recent_sessions: [], recent_errors: [],
             metadata: ProviderMetadata(display_name: "Claude", category: "cloud",

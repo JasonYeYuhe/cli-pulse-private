@@ -63,6 +63,38 @@ struct CLIPulseBarApp: App {
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
+
+        // Provider config editor lives in its own window so the system
+        // Keychain AutoFill dialog (if it ever appears) cannot collapse the
+        // MenuBarExtra popover when dismissed.
+        Window("Provider Settings", id: "provider-config") {
+            ProviderConfigWindowContent()
+                .environmentObject(appState)
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+    }
+}
+
+// MARK: - Provider Config Window Content
+
+/// Wraps the provider config editor in a View so the App Scene closure doesn't
+/// need to read `appState.editingProviderKind` directly. Reading a @Published
+/// property from inside a Scene closure can cause the App body to re-evaluate
+/// on every state change, destabilizing MenuBarExtra.
+private struct ProviderConfigWindowContent: View {
+    @EnvironmentObject var state: AppState
+
+    var body: some View {
+        Group {
+            if let kind = state.editingProviderKind {
+                ProviderConfigEditor(kind: kind, state: state)
+            } else {
+                Text("No provider selected")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(minWidth: 340, minHeight: 380)
     }
 }
 

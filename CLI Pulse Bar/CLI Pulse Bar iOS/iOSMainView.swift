@@ -74,10 +74,12 @@ struct iPadSplitView: View {
     var body: some View {
         NavigationSplitView {
             sidebar
+                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 340)
         } detail: {
             detailView
                 .environmentObject(state)
         }
+        .navigationSplitViewStyle(.balanced)
         .tint(PulseTheme.accent)
         .keyboardShortcut(.init("1"), modifiers: .command)
     }

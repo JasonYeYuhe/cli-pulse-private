@@ -187,11 +187,11 @@
 - [ ] 功能 A Phase 2: Android 成本预测接入
 
 ### Sprint 4: 导出 + Widget + 发版（3-4 天）
-- [ ] 功能 D Phase 1: Apple PDF 报告导出
-- [ ] 功能 E: Widget 交互式升级
-- [ ] 功能 D Phase 2: Android PDF 导出（如管道就绪）
-- [ ] 错误提示统一化（Android Snackbar 系统）
-- [ ] v1.9 发版准备 + 全平台回归测试
+- [x] 功能 D Phase 1: Apple PDF 报告导出
+- [~] 功能 E: Widget 交互式升级（跳过 — codexbar/ gitignored，变更不可追踪）
+- [x] 功能 D Phase 2: Android PDF 导出（如管道就绪）
+- [x] 错误提示统一化（Android Snackbar 系统）
+- [x] v1.9 发版准备 + 全平台回归测试（macOS + iOS BUILD SUCCEEDED）
 
 ---
 

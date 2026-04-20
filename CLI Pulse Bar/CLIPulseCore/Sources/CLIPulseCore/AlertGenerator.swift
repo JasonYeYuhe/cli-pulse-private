@@ -130,5 +130,90 @@ public enum AlertGenerator {
 
         return alerts
     }
+
+    /// v1.9.3: Generate quota-depletion alerts when any tier crosses one of
+    /// the configured thresholds. Stable IDs per (provider, tier, threshold)
+    /// keep duplicates from re-firing every refresh.
+    ///
+    /// - thresholds: percentage points at which to fire (default 50/80/95).
+    /// - Returns dictionaries shaped like the other alert generators (compatible
+    ///   with `AlertRecord` decoding upstream).
+    public static func evaluateQuotaAlerts(
+        providers: [ProviderUsage],
+        thresholds: [Int] = [80, 95]
+    ) -> [[String: Any]] {
+        guard !thresholds.isEmpty else { return [] }
+        var alerts: [[String: Any]] = []
+        let now = sharedISO8601Formatter.string(from: Date())
+        let sortedThresholds = thresholds.sorted(by: >) // highest first
+
+        for provider in providers {
+            // If provider ships per-tier data, evaluate each tier; otherwise
+            // fall back to the overall quota/remaining pair.
+            let tiersToCheck: [(name: String, quota: Int, remaining: Int, reset: String?)]
+            if !provider.tiers.isEmpty {
+                tiersToCheck = provider.tiers.compactMap { t in
+                    guard t.quota > 0 else { return nil }
+                    return (t.name, t.quota, t.remaining, t.reset_time)
+                }
+            } else if let q = provider.quota, q > 0, let r = provider.remaining {
+                tiersToCheck = [("Overall", q, r, provider.reset_time)]
+            } else {
+                tiersToCheck = []
+            }
+
+            for tier in tiersToCheck {
+                let usedPct = Int(round(100.0 * Double(tier.quota - tier.remaining) / Double(tier.quota)))
+                guard let crossed = sortedThresholds.first(where: { usedPct >= $0 }) else { continue }
+                let severity = crossed >= 95 ? "Critical" : (crossed >= 80 ? "Warning" : "Info")
+                let stableID = "quota-\(provider.provider)-\(tier.name)-\(crossed)"
+                let resetSuffix = tier.reset != nil ? " (resets \(tier.reset!))" : ""
+                alerts.append([
+                    "id": stableID,
+                    "type": "Quota Warning",
+                    "severity": severity,
+                    "title": "\(provider.provider) \(tier.name) at \(usedPct)%",
+                    "message": "Quota window '\(tier.name)' is \(usedPct)% used (\(tier.remaining)% remaining)\(resetSuffix).",
+                    "created_at": now,
+                    "related_provider": provider.provider,
+                    "source_kind": "quota",
+                    "grouping_key": "Quota Warning:\(provider.provider)",
+                    "suppression_key": stableID,
+                ])
+            }
+        }
+
+        return alerts
+    }
+
+    /// Convert one of the dictionary alerts emitted above into an
+    /// `AlertRecord` so it can flow through `RefreshPayload.alerts` alongside
+    /// cloud-supplied alerts.
+    public static func makeAlertRecord(from dict: [String: Any]) -> AlertRecord? {
+        guard let id = dict["id"] as? String,
+              let type = dict["type"] as? String,
+              let severity = dict["severity"] as? String,
+              let title = dict["title"] as? String,
+              let message = dict["message"] as? String,
+              let createdAt = dict["created_at"] as? String else {
+            return nil
+        }
+        return AlertRecord(
+            id: id, type: type, severity: severity, title: title,
+            message: message, created_at: createdAt,
+            is_read: false, is_resolved: false,
+            acknowledged_at: nil, snoozed_until: nil,
+            related_project_id: nil,
+            related_project_name: dict["related_project_name"] as? String,
+            related_session_id: dict["related_session_id"] as? String,
+            related_session_name: dict["related_session_name"] as? String,
+            related_provider: dict["related_provider"] as? String,
+            related_device_name: dict["related_device_name"] as? String,
+            source_kind: dict["source_kind"] as? String,
+            source_id: dict["source_id"] as? String,
+            grouping_key: dict["grouping_key"] as? String,
+            suppression_key: dict["suppression_key"] as? String
+        )
+    }
 }
 #endif

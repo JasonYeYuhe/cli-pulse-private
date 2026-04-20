@@ -4,11 +4,12 @@ import CLIPulseCore
 import AuthenticationServices
 #endif
 
-/// Sheet editor for per-provider settings (source mode, credentials, account label).
+/// Editor for per-provider settings (source mode, credentials, account label).
+/// Presented in its own Window scene on macOS; dismissed via `@Environment(\.dismiss)`.
 struct ProviderConfigEditor: View {
     let kind: ProviderKind
     @ObservedObject var state: AppState
-    let onDismiss: () -> Void
+    @Environment(\.dismiss) private var dismiss
 
     @State private var sourceMode: SourceType = .auto
     @State private var apiKey: String = ""
@@ -19,6 +20,17 @@ struct ProviderConfigEditor: View {
     @State private var isGeminiConnected: Bool = false
     @State private var isConnecting: Bool = false
     @State private var geminiError: String?
+    @State private var showAPIKey: Bool = false
+    @State private var testState: TestConnectionState = .idle
+    #endif
+
+    #if os(macOS)
+    enum TestConnectionState: Equatable {
+        case idle
+        case testing
+        case success(String)
+        case failure(String)
+    }
     #endif
 
     private var descriptor: ProviderDescriptor {
@@ -65,9 +77,16 @@ struct ProviderConfigEditor: View {
                 Text("Account label")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
-                TextField("e.g. work, personal", text: $accountLabel)
+                #if os(macOS)
+                NoAutoFillTextField(placeholder: "e.g. team-A, dev-box", text: $accountLabel)
+                    .frame(minHeight: 22)
+                    .padding(.vertical, 1)
+                #else
+                TextField("e.g. team-A, dev-box", text: $accountLabel)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 10))
+                    .textContentType(.none)
+                #endif
             }
 
             // API key (only if provider supports api/oauth)
@@ -76,12 +95,43 @@ struct ProviderConfigEditor: View {
                     Text("API key")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
+                    #if os(macOS)
+                    HStack(spacing: 4) {
+                        if showAPIKey {
+                            NoAutoFillTextField(placeholder: "sk-...", text: $apiKey)
+                                .frame(minHeight: 22)
+                        } else {
+                            NoAutoFillSecureField(placeholder: "sk-...", text: $apiKey)
+                                .frame(minHeight: 22)
+                        }
+                        Button {
+                            showAPIKey.toggle()
+                        } label: {
+                            Image(systemName: showAPIKey ? "eye.slash" : "eye")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(showAPIKey ? "Hide key" : "Show key")
+                    }
+                    .padding(.vertical, 1)
+                    #else
                     SecureField("sk-...", text: $apiKey)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 10))
-                    Text("Stored in Keychain, not in app preferences.")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.quaternary)
+                        .textContentType(.none)
+                    #endif
+                    // v1.9.4: surface the privacy guarantee at the exact
+                    // moment the user is about to paste a secret. Matches
+                    // the public "API keys stay on device" claim.
+                    HStack(spacing: 3) {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.green.opacity(0.8))
+                        Text("Stored only in your Mac Keychain. Never uploaded.")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -110,12 +160,24 @@ struct ProviderConfigEditor: View {
                         Text("Manual cookie header")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
+                        #if os(macOS)
+                        NoAutoFillTextField(placeholder: "session=abc123; ...", text: $manualCookieHeader)
+                            .frame(minHeight: 22)
+                    .padding(.vertical, 1)
+                        #else
                         TextField("session=abc123; ...", text: $manualCookieHeader)
                             .textFieldStyle(.roundedBorder)
                             .font(.system(size: 10))
-                        Text("Stored in Keychain, not in app preferences.")
-                            .font(.system(size: 8))
-                            .foregroundStyle(.quaternary)
+                            .textContentType(.none)
+                        #endif
+                        HStack(spacing: 3) {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 8))
+                                .foregroundStyle(.green.opacity(0.8))
+                            Text("Stored only in your Mac Keychain. Never uploaded.")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -125,6 +187,7 @@ struct ProviderConfigEditor: View {
             if kind == .gemini {
                 geminiOAuthSection
             }
+            testConnectionRow
             #endif
 
             // Capabilities summary
@@ -149,13 +212,13 @@ struct ProviderConfigEditor: View {
 
             // Actions
             HStack {
-                Button("Cancel") { onDismiss() }
+                Button("Cancel") { dismiss() }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Save") {
                     save()
-                    onDismiss()
+                    dismiss()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(PulseTheme.accent)
@@ -164,6 +227,11 @@ struct ProviderConfigEditor: View {
         }
         .padding(16)
         .onAppear { loadFromConfig() }
+        #if os(macOS)
+        .onChange(of: apiKey) { _ in testState = .idle }
+        .onChange(of: manualCookieHeader) { _ in testState = .idle }
+        .onChange(of: sourceMode) { _ in testState = .idle }
+        #endif
     }
 
     private func capBadge(_ label: String, active: Bool) -> some View {
@@ -263,6 +331,102 @@ struct ProviderConfigEditor: View {
                         .foregroundStyle(.quaternary)
                 }
             }
+        }
+    }
+
+    // MARK: - Test connection
+
+    @ViewBuilder
+    private var testConnectionRow: some View {
+        HStack(spacing: 6) {
+            Button {
+                testState = .testing
+                Task { await runTest() }
+            } label: {
+                HStack(spacing: 3) {
+                    if case .testing = testState {
+                        ProgressView()
+                            .controlSize(.mini)
+                    } else {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 9))
+                    }
+                    Text("Test connection")
+                        .font(.system(size: 10, weight: .medium))
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(testState == .testing)
+
+            switch testState {
+            case .idle:
+                EmptyView()
+            case .testing:
+                Text("Testing…")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            case .success(let msg):
+                HStack(spacing: 3) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .font(.system(size: 10))
+                    Text(msg)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.green)
+                        .lineLimit(2)
+                }
+            case .failure(let msg):
+                HStack(spacing: 3) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.red)
+                        .font(.system(size: 10))
+                    Text(msg)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
+                }
+            }
+            Spacer()
+        }
+        .padding(.top, 2)
+    }
+
+    @MainActor
+    private func runTest() async {
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let probeConfig = ProviderConfig(
+            kind: kind,
+            isEnabled: true,
+            sourceMode: sourceMode,
+            apiKey: trimmedKey.isEmpty ? nil : trimmedKey,
+            cookieSource: cookieSource,
+            manualCookieHeader: manualCookieHeader.isEmpty ? nil : manualCookieHeader,
+            accountLabel: accountLabel.isEmpty ? nil : accountLabel
+        )
+
+        guard let collector = CollectorRegistry.collector(for: kind, config: probeConfig) else {
+            testState = .failure("No collector available. Check credentials or source mode.")
+            return
+        }
+
+        let start = Date()
+        do {
+            let result = try await collector.collect(config: probeConfig)
+            let ms = Int(Date().timeIntervalSince(start) * 1000)
+            let summary: String
+            switch result.dataKind {
+            case .quota:
+                let rem = result.usage.remaining.map { "\($0)" } ?? "—"
+                summary = "OK (\(ms)ms) remaining: \(rem)"
+            case .credits:
+                summary = "OK (\(ms)ms) credits fetched"
+            case .statusOnly:
+                summary = "OK (\(ms)ms) status reachable"
+            }
+            testState = .success(summary)
+        } catch {
+            testState = .failure(error.localizedDescription)
         }
     }
     #endif

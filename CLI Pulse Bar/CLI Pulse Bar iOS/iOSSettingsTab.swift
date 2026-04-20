@@ -1,4 +1,6 @@
 import SwiftUI
+import AuthenticationServices
+import CryptoKit
 import CLIPulseCore
 
 struct iOSSettingsTab: View {
@@ -35,6 +37,9 @@ struct iOSSettingsTab: View {
                         }
                         .padding(.vertical, 4)
                     }
+
+                    // Linked OAuth identities (Apple / Google / GitHub)
+                    LinkedAccountsSection()
 
                     // Sync Setup Guide (shown when not synced)
                     if !state.isPaired {
@@ -448,5 +453,283 @@ struct iOSSetupStepRow: View {
             Text(text)
                 .font(.subheadline)
         }
+    }
+}
+
+// MARK: - Linked Accounts Section
+
+/// Section for the iOS Settings screen that lets a signed-in user link
+/// additional OAuth identities (Apple / Google / GitHub) to their account.
+///
+/// Backed by Supabase's `/auth/v1/user/identities/authorize` (OAuth providers)
+/// and `/auth/v1/token?grant_type=id_token` with `link_identity: true` (Apple).
+struct LinkedAccountsSection: View {
+    @EnvironmentObject var state: AppState
+    @State private var currentAppleNonce: String?
+    @State private var webAuthSession: ASWebAuthenticationSession?
+    @State private var pendingUnlink: UserIdentity?
+    @State private var localError: String?
+
+    private static let webAuthContextProvider = LinkedAccountsWebAuthContextProvider()
+
+    private struct ProviderOption: Identifiable {
+        let id: String
+        let label: String
+        let iconName: String
+        let tint: Color
+    }
+
+    private let providerOptions: [ProviderOption] = [
+        ProviderOption(id: "apple",  label: "Apple",  iconName: "apple.logo", tint: .primary),
+        ProviderOption(id: "google", label: "Google", iconName: "globe",      tint: .blue),
+        ProviderOption(id: "github", label: "GitHub", iconName: "chevron.left.forwardslash.chevron.right", tint: Color(red: 0.14, green: 0.16, blue: 0.22)),
+    ]
+
+    var body: some View {
+        Section {
+            ForEach(providerOptions) { provider in
+                row(for: provider)
+            }
+            if let message = errorMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        } header: {
+            Text("Linked Accounts")
+        } footer: {
+            Text("Link Apple, Google, or GitHub to sign in with any of them — they all resolve to the same CLI Pulse account.")
+        }
+        .task { await state.refreshLinkedIdentities() }
+        .confirmationDialog(
+            "Unlink this account?",
+            isPresented: Binding(
+                get: { pendingUnlink != nil },
+                set: { if !$0 { pendingUnlink = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingUnlink
+        ) { identity in
+            Button("Unlink \(providerLabel(identity.provider))", role: .destructive) {
+                Task {
+                    localError = nil
+                    await state.unlinkIdentity(identity)
+                    pendingUnlink = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingUnlink = nil }
+        } message: { identity in
+            Text("You won't be able to sign in with \(providerLabel(identity.provider)) anymore. You can relink later.")
+        }
+    }
+
+    // MARK: Row
+
+    @ViewBuilder
+    private func row(for provider: ProviderOption) -> some View {
+        let linked = linkedIdentity(for: provider.id)
+        HStack(spacing: 12) {
+            Image(systemName: provider.iconName)
+                .font(.title3)
+                .foregroundStyle(provider.tint)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(provider.label)
+                    .font(.body)
+                if let email = linked?.email, !email.isEmpty, !state.hidePersonalInfo {
+                    Text(email)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else if linked != nil {
+                    Text("Linked")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                } else {
+                    Text("Not linked")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            actionButton(for: provider, linked: linked)
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private func actionButton(for provider: ProviderOption, linked: UserIdentity?) -> some View {
+        if let linked {
+            Button(role: .destructive) {
+                localError = nil
+                pendingUnlink = linked
+            } label: {
+                Text("Unlink").font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .tint(.red)
+            .disabled(state.isLinkingIdentity || !canUnlink(linked))
+        } else {
+            if provider.id == "apple" {
+                appleLinkButton()
+            } else {
+                Button {
+                    linkOAuthProvider(provider.id)
+                } label: {
+                    Text("Link").font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(provider.tint)
+                .disabled(state.isLinkingIdentity)
+            }
+        }
+    }
+
+    // MARK: Apple link
+
+    @ViewBuilder
+    private func appleLinkButton() -> some View {
+        SignInWithAppleButton(.continue) { request in
+            localError = nil
+            let nonce = randomNonceString()
+            currentAppleNonce = nonce
+            request.requestedScopes = [.email]
+            request.nonce = sha256(nonce)
+        } onCompletion: { result in
+            switch result {
+            case .success(let authorization):
+                guard
+                    let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                    let tokenData = credential.identityToken,
+                    let token = String(data: tokenData, encoding: .utf8)
+                else {
+                    localError = "Apple authorization returned no identity token"
+                    return
+                }
+                Task {
+                    await state.linkAppleIdentity(identityToken: token, nonce: currentAppleNonce)
+                }
+            case .failure(let error):
+                let ns = error as NSError
+                if ns.code == ASAuthorizationError.canceled.rawValue { return }
+                localError = error.localizedDescription
+            }
+        }
+        .signInWithAppleButtonStyle(.whiteOutline)
+        .frame(width: 110, height: 30)
+        .disabled(state.isLinkingIdentity)
+    }
+
+    // MARK: Google / GitHub link
+
+    private func linkOAuthProvider(_ provider: String) {
+        localError = nil
+        Task {
+            guard let (authURL, codeVerifier, expectedState) = await state.linkIdentityURL(provider: provider) else {
+                localError = state.linkIdentityError ?? "Failed to build \(provider) link URL"
+                return
+            }
+            let session = ASWebAuthenticationSession(
+                url: authURL,
+                callbackURLScheme: "clipulse"
+            ) { callbackURL, error in
+                Task { @MainActor in self.webAuthSession = nil }
+                if let error {
+                    if (error as NSError).code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                        return
+                    }
+                    Task { @MainActor in self.localError = error.localizedDescription }
+                    return
+                }
+                guard let callbackURL else {
+                    Task { @MainActor in self.localError = "Link failed: no callback URL" }
+                    return
+                }
+                let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)
+                func readItem(_ name: String) -> String? {
+                    if let v = components?.queryItems?.first(where: { $0.name == name })?.value { return v }
+                    if let fragment = components?.fragment {
+                        var fragComponents = URLComponents()
+                        fragComponents.query = fragment
+                        return fragComponents.queryItems?.first(where: { $0.name == name })?.value
+                    }
+                    return nil
+                }
+                let code = readItem("code")
+                let returnedState = readItem("state")
+                let errorDesc = components?.queryItems?.first(where: { $0.name == "error_description" })?.value
+                    ?? components?.queryItems?.first(where: { $0.name == "error" })?.value
+                guard let code else {
+                    let detail = errorDesc ?? callbackURL.absoluteString
+                    Task { @MainActor in self.localError = "Link failed: \(detail)" }
+                    return
+                }
+                // CSRF: verify the state Supabase echoed back matches what we sent.
+                guard let returnedState, returnedState == expectedState else {
+                    Task { @MainActor in self.localError = "Link failed: state mismatch" }
+                    return
+                }
+                Task {
+                    await state.completeLinkIdentity(code: code, codeVerifier: codeVerifier)
+                }
+            }
+            session.presentationContextProvider = Self.webAuthContextProvider
+            session.prefersEphemeralWebBrowserSession = false
+            self.webAuthSession = session
+            session.start()
+        }
+    }
+
+    // MARK: Helpers
+
+    private func linkedIdentity(for provider: String) -> UserIdentity? {
+        state.linkedIdentities.first { $0.provider == provider }
+    }
+
+    private var errorMessage: String? {
+        if let local = localError, !local.isEmpty { return local }
+        return state.linkIdentityError
+    }
+
+    /// Prevent leaving the account with zero sign-in methods. Email (password + OTP)
+    /// counts as a valid sign-in method on CLI Pulse, so the guard is on total count.
+    private func canUnlink(_ identity: UserIdentity) -> Bool {
+        state.linkedIdentities.count > 1
+    }
+
+    private func providerLabel(_ provider: String) -> String {
+        switch provider {
+        case "apple": return "Apple"
+        case "google": return "Google"
+        case "github": return "GitHub"
+        case "email": return "Email"
+        default: return provider.capitalized
+        }
+    }
+
+    private func randomNonceString(length: Int = 32) -> String {
+        precondition(length > 0)
+        var randomBytes = [UInt8](repeating: 0, count: length)
+        let err = SecRandomCopyBytes(kSecRandomDefault, randomBytes.count, &randomBytes)
+        if err != errSecSuccess { fatalError("Unable to generate nonce.") }
+        let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
+        return String(randomBytes.map { charset[Int($0) % charset.count] })
+    }
+
+    private func sha256(_ input: String) -> String {
+        let data = Data(input.utf8)
+        let hash = SHA256.hash(data: data)
+        return hash.compactMap { String(format: "%02x", $0) }.joined()
+    }
+}
+
+private final class LinkedAccountsWebAuthContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first else {
+            return ASPresentationAnchor()
+        }
+        return window
     }
 }

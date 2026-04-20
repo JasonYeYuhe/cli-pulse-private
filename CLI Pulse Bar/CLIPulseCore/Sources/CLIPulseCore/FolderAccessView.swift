@@ -5,7 +5,9 @@ import AppKit
 /// Settings section for managing folder access permissions.
 /// Users grant access to CLI tool credential directories via NSOpenPanel.
 public struct FolderAccessView: View {
+    @EnvironmentObject var state: AppState
     @State private var statuses: [(directory: BookmarkManager.KnownDirectory, hasAccess: Bool, isInstalled: Bool)] = []
+    @State private var isRescanning = false
 
     public init() {}
 
@@ -22,7 +24,11 @@ public struct FolderAccessView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            ForEach(statuses.filter({ $0.isInstalled }), id: \.directory.id) { item in
+            // v1.9.4: show a row when the dir exists on disk OR when the
+            // entry is flagged `alwaysShow` (sandbox hides session-log dirs
+            // until a bookmark is granted → filter would strip the only way
+            // to grant the bookmark → chicken-and-egg).
+            ForEach(statuses.filter({ $0.isInstalled || $0.directory.alwaysShow }), id: \.directory.id) { item in
                 HStack {
                     Image(systemName: item.hasAccess ? "checkmark.circle.fill" : "exclamationmark.circle")
                         .foregroundStyle(item.hasAccess ? .green : .orange)
@@ -42,6 +48,14 @@ public struct FolderAccessView: View {
                         Text("Granted")
                             .font(.caption)
                             .foregroundStyle(.green)
+                    } else if item.directory.alwaysShow && !item.isInstalled {
+                        // v1.9.4: alwaysShow dirs that don't exist on this Mac
+                        // (e.g. ~/.config/claude/projects when the user doesn't
+                        // use CLAUDE_CONFIG_DIR). Grant would fail; show a
+                        // subtle "Not installed" instead of a dead button.
+                        Text("Not installed")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
                     } else {
                         Button("Grant") {
                             let success = BookmarkManager.shared.requestAccessViaPanel(
@@ -56,7 +70,7 @@ public struct FolderAccessView: View {
                 .padding(.vertical, 2)
             }
 
-            if statuses.filter({ $0.isInstalled && !$0.hasAccess }).count > 1 {
+            if statuses.filter({ ($0.isInstalled || $0.directory.alwaysShow) && !$0.hasAccess }).count > 1 {
                 Divider()
                 Button {
                     grantAll()
@@ -68,6 +82,43 @@ public struct FolderAccessView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+            }
+
+            // v1.9.4: force a full rescan of JSONL logs. Wipes the on-disk
+            // scanner cache and re-parses from scratch. Needed after a
+            // long stretch of sandbox-blocked runs (v1.9.2 / v1.9.3) that
+            // may have recorded negative deltas that normal incremental
+            // scans won't unwind — symptom: token totals stuck lower than
+            // ground-truth.
+            Divider()
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Rescan token cache")
+                        .font(.system(size: 12, weight: .medium))
+                    Text("Rebuild from scratch if totals look wrong")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    Task {
+                        isRescanning = true
+                        defer { isRescanning = false }
+                        await state.forceRescanTokenCache()
+                    }
+                } label: {
+                    if isRescanning {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.clockwise")
+                            Text("Force Rescan")
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isRescanning)
             }
         }
         .onAppear { refreshStatuses() }
@@ -90,12 +141,22 @@ public struct FolderAccessView: View {
 
         if panel.runModal() == .OK, let url = panel.url {
             BookmarkManager.shared.storeBookmark(for: url)
-            // Also store bookmarks for each known subdirectory
-            for status in statuses where status.isInstalled {
+            // After we hold a bookmark to the root, `FileManager.fileExists`
+            // reports truthfully for subdirs. Only store bookmarks for dirs
+            // that ACTUALLY exist — `storeBookmark` on a nonexistent path
+            // logs "scoped bookmarks can only be created for existing files"
+            // and clutters the log even though it's harmless.
+            // (`alwaysShow` governs UI visibility, not bookmark creation.)
+            let rootURL = url
+            let rootStarted = rootURL.startAccessingSecurityScopedResource()
+            defer { if rootStarted { rootURL.stopAccessingSecurityScopedResource() } }
+
+            for status in statuses where status.isInstalled || status.directory.alwaysShow {
                 let subURL = URL(fileURLWithPath: status.directory.expandedPath)
-                if FileManager.default.fileExists(atPath: subURL.path) {
-                    BookmarkManager.shared.storeBookmark(for: subURL)
+                guard FileManager.default.fileExists(atPath: subURL.path) else {
+                    continue
                 }
+                BookmarkManager.shared.storeBookmark(for: subURL)
             }
             refreshStatuses()
         }

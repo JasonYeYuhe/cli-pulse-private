@@ -68,6 +68,18 @@ enum CostUsageCacheIO {
             try? FileManager.default.removeItem(at: tmp)
         }
     }
+
+    /// v1.9.4: wipe all `cost-usage/*.json` caches. Called by the "Force
+    /// Rescan" button after the user grants new bookmarks, because stale
+    /// subtractions from prior sandbox-blocked runs (where `scanClaudeRoot`
+    /// decided the root didn't exist and applied `sign: -1` to all file days)
+    /// can leave the disk cache reporting less than what the JSONLs actually
+    /// contain.
+    static func wipeAll(cacheRoot: URL? = nil) {
+        let root = (cacheRoot ?? defaultCacheRoot()).appendingPathComponent("cost-usage", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: root.path) else { return }
+        try? FileManager.default.removeItem(at: root)
+    }
 }
 
 #endif

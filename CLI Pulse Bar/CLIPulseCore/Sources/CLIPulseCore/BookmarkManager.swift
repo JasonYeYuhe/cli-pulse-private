@@ -28,7 +28,21 @@ public final class BookmarkManager {
         public let id: String
         public let path: String           // e.g. "~/.codex/"
         public let displayName: String    // e.g. "Codex CLI"
-        public let detectionFile: String? // e.g. "auth.json" — nil = always show
+        public let detectionFile: String? // e.g. "auth.json" — nil = check only dir existence
+        /// v1.9.4: when true, this entry is shown in the folder-access UI even
+        /// if the sandbox reports the directory as missing. Use for cost-scan
+        /// dirs (`~/.codex/sessions/` etc.) that the sandbox hides until a
+        /// bookmark is granted. Without this flag, `FolderAccessView` would
+        /// filter them out of the list the user sees, creating a chicken/egg.
+        public let alwaysShow: Bool
+
+        public init(id: String, path: String, displayName: String, detectionFile: String? = nil, alwaysShow: Bool = false) {
+            self.id = id
+            self.path = path
+            self.displayName = displayName
+            self.detectionFile = detectionFile
+            self.alwaysShow = alwaysShow
+        }
 
         public var expandedPath: String {
             (realUserHome() as NSString).appendingPathComponent(
@@ -36,7 +50,9 @@ public final class BookmarkManager {
             )
         }
 
-        /// Check if this directory exists on disk
+        /// Check if this directory exists on disk (unreliable inside the
+        /// sandbox for dirs that haven't been granted a bookmark yet; callers
+        /// that need to always surface an entry should use `alwaysShow`).
         public var isInstalled: Bool {
             if let file = detectionFile {
                 let filePath = (expandedPath as NSString).appendingPathComponent(file)
@@ -54,6 +70,12 @@ public final class BookmarkManager {
         KnownDirectory(id: "clipulse-data", path: "~/.clipulse/", displayName: "CLI Pulse Data", detectionFile: nil),
         KnownDirectory(id: "kilo", path: "~/.local/share/kilo/", displayName: "Kilo CLI", detectionFile: "auth.json"),
         KnownDirectory(id: "jetbrains", path: "~/Library/Application Support/JetBrains/", displayName: "JetBrains IDEs", detectionFile: nil),
+        // v1.9.4: cost/token scanner roots. Sandbox hides these until granted,
+        // so `alwaysShow: true` ensures the user sees the Grant buttons.
+        KnownDirectory(id: "codex-sessions",          path: "~/.codex/sessions/",          displayName: "Codex Session Logs",    detectionFile: nil, alwaysShow: true),
+        KnownDirectory(id: "codex-archived-sessions", path: "~/.codex/archived_sessions/", displayName: "Codex Archived Logs",   detectionFile: nil, alwaysShow: true),
+        KnownDirectory(id: "claude-projects",         path: "~/.claude/projects/",         displayName: "Claude Session Logs",   detectionFile: nil, alwaysShow: true),
+        KnownDirectory(id: "claude-config-projects",  path: "~/.config/claude/projects/",  displayName: "Claude (CONFIG_DIR)",   detectionFile: nil, alwaysShow: true),
     ]
 
     private init() {
@@ -106,10 +128,32 @@ public final class BookmarkManager {
 
     // MARK: - Access Management
 
-    /// Check if we have a bookmark for a directory
+    /// v1.9.4: canonicalize a directory path before using it as a bookmark
+    /// lookup key. macOS symlinks `/var` → `/private/var`, and `NSOpenPanel`
+    /// may return the resolved form while a scanner may construct the raw
+    /// form (or vice versa). Without this normalization, lookups miss.
+    /// Also strips a trailing slash for consistency.
+    public static func canonicalKey(forPath path: String) -> String {
+        let url = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+        var p = url.path
+        if p.count > 1, p.hasSuffix("/") { p.removeLast() }
+        return p
+    }
+
+    /// Check if we have a bookmark for a directory, OR for any ancestor
+    /// directory (a bookmark on `/Users/jason` covers `/Users/jason/.codex/`).
+    /// v1.9.4: walking up matches the read flow in `SandboxFileAccess.read`,
+    /// so the UI shouldn't claim "no access" when a parent grant covers it.
     public func hasAccess(to directoryPath: String) -> Bool {
         let bookmarks = loadBookmarks()
-        return bookmarks[directoryPath] != nil
+        var dir = Self.canonicalKey(forPath: directoryPath)
+        while dir.count > 1 {
+            if bookmarks[dir] != nil { return true }
+            // Also try unnormalized form for back-compat with v1.9.3 entries.
+            if bookmarks[dir + "/"] != nil { return true }
+            dir = (dir as NSString).deletingLastPathComponent
+        }
+        return false
     }
 
     /// Store a bookmark after user grants access via NSOpenPanel
@@ -120,28 +164,47 @@ public final class BookmarkManager {
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             )
+            let key = Self.canonicalKey(forPath: url.path)
             var bookmarks = loadBookmarks()
-            bookmarks[url.path] = bookmarkData
+            bookmarks[key] = bookmarkData
             saveBookmarks(bookmarks)
-            logger.info("Stored bookmark for: \(url.path, privacy: .public)")
+            logger.info("Stored bookmark for: \(key, privacy: .public)")
         } catch {
             logger.error("Failed to create bookmark for \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 
-    /// Resolve a stored bookmark and start accessing the security-scoped resource
+    /// Resolve a stored bookmark and start accessing the security-scoped resource.
+    /// v1.9.4: walks up the directory chain to find a usable ancestor bookmark
+    /// (an `/Users/jason` bookmark covers all its descendants), and on resolve
+    /// failure logs the error WITHOUT auto-removing the bookmark — destructive
+    /// removal masks the underlying problem and bricks the Settings UI by
+    /// flipping rows from Granted to Grant when a transient failure happens.
     @discardableResult
     public func resolveBookmark(for directoryPath: String) -> URL? {
-        // Already active?
-        if let active = activeResources[directoryPath] {
-            return active
-        }
-
         let bookmarks = loadBookmarks()
-        guard let bookmarkData = bookmarks[directoryPath] else {
-            return nil
-        }
+        var dir = Self.canonicalKey(forPath: directoryPath)
+        while dir.count > 1 {
+            // Already active (check both canonical + raw for back-compat)?
+            if let active = activeResources[dir] { return active }
+            if let active = activeResources[dir + "/"] { return active }
 
+            if let data = bookmarks[dir] ?? bookmarks[dir + "/"] {
+                if let url = resolveBookmarkData(data, key: dir, sourcePath: directoryPath) {
+                    return url
+                }
+                // Resolved-but-failed: don't remove; try ancestor instead.
+            }
+            dir = (dir as NSString).deletingLastPathComponent
+        }
+        return nil
+    }
+
+    /// Resolve a single bookmark blob. Returns the active URL on success, or
+    /// nil on any failure (stale, corrupt, scope-start refusal). NEVER mutates
+    /// the stored bookmarks dict — caller decides whether to retry, walk up,
+    /// or clean up.
+    private func resolveBookmarkData(_ bookmarkData: Data, key: String, sourcePath: String) -> URL? {
         do {
             var isStale = false
             let url = try URL(
@@ -152,23 +215,19 @@ public final class BookmarkManager {
             )
 
             if isStale {
-                logger.warning("Bookmark stale for: \(directoryPath, privacy: .public), re-storing")
+                logger.warning("Bookmark stale for: \(key, privacy: .public), re-storing")
                 storeBookmark(for: url)
             }
 
             if url.startAccessingSecurityScopedResource() {
-                activeResources[directoryPath] = url
+                activeResources[key] = url
                 return url
             } else {
-                logger.error("Failed to start accessing security-scoped resource: \(directoryPath, privacy: .public)")
+                logger.error("Failed to start accessing security-scoped resource: \(key, privacy: .public)")
                 return nil
             }
         } catch {
-            logger.error("Failed to resolve bookmark for \(directoryPath, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            // Remove invalid bookmark
-            var bookmarks = loadBookmarks()
-            bookmarks.removeValue(forKey: directoryPath)
-            saveBookmarks(bookmarks)
+            logger.error("Failed to resolve bookmark for \(key, privacy: .public) (sourced from \(sourcePath, privacy: .public)): \(error.localizedDescription, privacy: .public)")
             return nil
         }
     }

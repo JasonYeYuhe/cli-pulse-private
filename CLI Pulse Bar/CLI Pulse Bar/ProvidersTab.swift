@@ -30,6 +30,14 @@ struct ProvidersTab: View {
                         .foregroundStyle(.tertiary)
                 }
 
+                // v1.9.4: first-run nudge when the cost scanner came back
+                // empty because the App Sandbox hasn't been granted access to
+                // `~/.codex/sessions/` / `~/.claude/projects/`. Opens the
+                // Settings tab's Folder Access section on click.
+                if state.needsScannerFolderAccess {
+                    folderAccessBanner
+                }
+
                 // Cost summary bar
                 if state.showCost {
                     costSummaryBar
@@ -49,14 +57,43 @@ struct ProvidersTab: View {
                     )
                 } else {
                     ForEach(sortedDetails) { detail in
-                        EnhancedProviderCard(detail: detail, showCost: state.showCost) {
-                            state.toggleProvider(detail.config.kind)
+                        EnhancedProviderCard(detail: detail, showCost: state.showCost) { newValue in
+                            state.setProviderEnabled(detail.config.kind, isEnabled: newValue)
                         }
                     }
                 }
             }
             .padding(12)
         }
+    }
+
+    private var folderAccessBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "folder.badge.questionmark")
+                .foregroundStyle(.orange)
+                .font(.system(size: 14))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Grant access to see token counts and cost")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("CLI Pulse needs read access to ~/.codex/sessions/ and ~/.claude/projects/")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer()
+            Button("Open Settings") {
+                state.selectedTab = .settings
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private var costSummaryBar: some View {
@@ -91,10 +128,104 @@ struct ProvidersTab: View {
 struct EnhancedProviderCard: View {
     let detail: ProviderDetail
     let showCost: Bool
-    let onToggle: () -> Void
+    let onToggle: (Bool) -> Void
+
+    @EnvironmentObject var state: AppState
 
     private var provider: ProviderUsage { detail.provider }
     private var config: ProviderConfig { detail.config }
+
+    /// v1.9.4: for quota providers (Claude / Codex / Cursor / ...), the raw
+    /// `today_usage` / `week_usage` int fields on `ProviderUsage` carry the
+    /// utilization % (0-100), not tokens. Displaying that raw number next to
+    /// the label "Today" is misleading — "37" looked like a token count.
+    /// Prefer real token counts from the JSONL scan when available.
+    private var isQuotaProvider: Bool { provider.metadata?.supports_quota ?? false }
+
+    @ViewBuilder
+    private func usageColumn(header: String, metric: CardMetric, cost: Double) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(header)
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+            Text(metric.primary)
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .help(metric.breakdownTooltip)
+            if let sub = metric.secondary {
+                Text(sub)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .help(metric.breakdownTooltip)
+            }
+            if showCost {
+                Text(CostFormatter.format(cost))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.green)
+            }
+        }
+    }
+
+    /// v1.9.4 display model:
+    /// - `primary`: the headline number + unit label shown big.
+    /// - `secondary`: optional smaller line below (e.g. I/O token count for Claude).
+    /// - `breakdownTooltip`: long-form hover help text.
+    ///
+    /// Claude leads with deduped assistant-message count because Claude Code's
+    /// own UI does and raw tokens are drowned in ~98% cache_read noise.
+    /// Codex leads with I/O tokens to match OpenAI's dashboard convention.
+    private struct CardMetric {
+        let primary: String           // e.g. "234 msgs" or "3.1M I/O tokens"
+        let secondary: String?        // e.g. "320K I/O tokens"
+        let breakdownTooltip: String
+    }
+
+    private var isClaude: Bool { provider.provider == "Claude" }
+
+    private func metric(for date: Date?, weekRolling: Bool = false) -> CardMetric {
+        let msgs: Int? = {
+            if weekRolling { return state.scanMessagesThisWeek(for: provider.provider) }
+            return state.scanMessages(for: provider.provider, onDate: date ?? Date())
+        }()
+        let tokens: Int? = {
+            if weekRolling { return state.scanTokensThisWeek(for: provider.provider) }
+            return state.scanTokens(for: provider.provider, onDate: date ?? Date())
+        }()
+
+        if isClaude {
+            if let msgs {
+                return CardMetric(
+                    primary: "\(CostFormatter.formatUsage(msgs)) msgs",
+                    secondary: tokens.map { "\(CostFormatter.formatUsage($0)) I/O" },
+                    breakdownTooltip: "Messages = user + assistant log events (including streaming chunks) — matches Claude Code's UI convention. I/O tokens = input + output (excludes cache reads, which are ~98% of Claude's raw token volume, and are billed at a 10% discount)."
+                )
+            }
+            if isQuotaProvider {
+                return CardMetric(primary: "—", secondary: nil,
+                                  breakdownTooltip: "No local Claude scan data for this window yet. Grant access in Settings → CLI Tool Access, then click Force Rescan.")
+            }
+        }
+
+        // Codex and other quota providers: lead with I/O tokens
+        if isQuotaProvider {
+            if let tokens {
+                return CardMetric(
+                    primary: "\(CostFormatter.formatUsage(tokens)) I/O",
+                    secondary: nil,
+                    breakdownTooltip: "Input + output tokens only (matches OpenAI billing convention). Excludes cached input which is billed at 10% rate."
+                )
+            }
+            return CardMetric(primary: "—", secondary: nil,
+                              breakdownTooltip: "No local scan data for this window yet.")
+        }
+
+        // Non-quota providers: token count stored in today_usage/week_usage.
+        let raw = weekRolling ? provider.week_usage : provider.today_usage
+        return CardMetric(
+            primary: CostFormatter.formatUsage(raw),
+            secondary: nil,
+            breakdownTooltip: "Token count reported by the provider's API."
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -132,14 +263,18 @@ struct EnhancedProviderCard: View {
                 }
                 Spacer()
 
-                // Enable/disable toggle
+                // Enable/disable toggle. The binding's `set` forwards the
+                // user's intended boolean (no blind flip) and AppState's
+                // `setProviderEnabled` rebuilds `providerDetails` on the same
+                // tick so the visual updates immediately. See v1.9.3 fix.
                 Toggle("", isOn: Binding(
                     get: { config.isEnabled },
-                    set: { _ in onToggle() }
+                    set: { newValue in onToggle(newValue) }
                 ))
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .labelsHidden()
+                .animation(.easeInOut(duration: 0.15), value: config.isEnabled)
             }
 
             if config.isEnabled {
@@ -161,32 +296,19 @@ struct EnhancedProviderCard: View {
                     quotaBadge
                 }
 
-                // Usage stats
+                // Usage stats — v1.9.4 layout:
+                //   Today:           This Week:
+                //   234 msgs         1,840 msgs        (Claude hero)
+                //   320K I/O tokens  2.4M I/O tokens   (Claude sub)
+                //   $7.40            $461.20           (cost, always)
+                // Codex / other quota providers: primary line is I/O tokens,
+                // no sub line. Hover the primary line for a token-breakdown
+                // tooltip explaining what's included/excluded.
+                let today = metric(for: Date())
+                let week = metric(for: nil, weekRolling: true)
                 HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Today")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-                        Text(CostFormatter.formatUsage(provider.today_usage))
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
-                        if showCost {
-                            Text(CostFormatter.format(provider.estimated_cost_today))
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(.green)
-                        }
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(L10n.providers.thisWeek)
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-                        Text(CostFormatter.formatUsage(provider.week_usage))
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
-                        if showCost {
-                            Text(CostFormatter.format(provider.estimated_cost_week))
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(.green)
-                        }
-                    }
+                    usageColumn(header: "Today", metric: today, cost: provider.estimated_cost_today)
+                    usageColumn(header: L10n.providers.thisWeek, metric: week, cost: provider.estimated_cost_week)
                     Spacer()
                 }
 
@@ -202,13 +324,32 @@ struct EnhancedProviderCard: View {
                             )
                         }
                     }
-                } else if let quota = provider.quota, quota > 0 {
+                } else if let quota = provider.quota,
+                          quota > 0,
+                          // v1.9.3: never synthesise an overall bar for Claude
+                          // here either — its three-tier model means an empty
+                          // tier list signals "data unavailable", not "use the
+                          // overall quota" (matches AppState.buildProviderDetails).
+                          provider.provider != "Claude" {
                     UsageBar(
                         label: "Quota",
                         value: provider.usagePercent,
                         color: usageColor,
                         detail: remainingText
                     )
+                } else if provider.metadata?.supports_quota == true {
+                    // Quota provider with no captured data — surface honestly
+                    // rather than rendering a misleading "100% left" bar.
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.orange.opacity(0.7))
+                        Text("Quota data unavailable — try `/usage` in the CLI")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .padding(.vertical, 2)
                 }
 
                 // Recent sessions

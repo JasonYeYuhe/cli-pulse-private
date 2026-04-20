@@ -80,9 +80,24 @@ class LoginViewModel @Inject constructor(
         }
     }
 
-    /** Build a Supabase OAuth URL for GitHub (or other providers). Returns (url, codeVerifier, state). */
-    fun oauthAuthorizeUrl(provider: String): Triple<String, String, String> =
-        supabase.oauthAuthorizeUrl(provider)
+    /**
+     * Start a login OAuth flow: build the Supabase authorize URL and persist the pending-flow
+     * record (kind/provider/verifier/state) so we survive process death during the browser
+     * round-trip. Returns the URL to open, or null on error.
+     */
+    fun startOAuthLogin(provider: String): String {
+        val (url, verifier, state) = supabase.oauthAuthorizeUrl(provider)
+        tokenStore.savePendingOAuthFlow(
+            TokenStore.PendingOAuthFlow(
+                kind = "login",
+                provider = provider,
+                codeVerifier = verifier,
+                state = state,
+                createdAt = System.currentTimeMillis(),
+            )
+        )
+        return url
+    }
 
     /** Exchange an OAuth authorization code obtained via deep link. */
     fun exchangeOAuthCode(code: String, codeVerifier: String) {
@@ -90,6 +105,9 @@ class LoginViewModel @Inject constructor(
             _state.value = _state.value.copy(isLoading = true, error = null)
             try {
                 supabase.exchangeOAuthCode(code, codeVerifier)
+                // Exchange succeeded — clear the durable pending-flow record so we don't
+                // re-fire stale callbacks. The TTL would eventually clean it up anyway.
+                tokenStore.clearPendingOAuthFlow()
                 _state.value = _state.value.copy(isLoading = false, isLoggedIn = true)
             } catch (e: Exception) {
                 _state.value = _state.value.copy(isLoading = false, error = e.message)

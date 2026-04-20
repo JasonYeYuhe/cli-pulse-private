@@ -529,8 +529,23 @@ public actor APIClient {
     public func providers() async throws -> [ProviderUsage] {
         let providers: [ProviderSummaryPayload] = try await rpc("provider_summary")
         return providers.map { provider in
+            let name = provider.provider ?? ""
+            // v1.9.4: attach a minimal metadata so cloud-only rows (provider
+            // present on server but not locally collected) still render as
+            // quota providers. Previously nil-metadata made `isQuotaProvider`
+            // false in the UI, causing the card to fall back to raw
+            // `today_usage` (which for quota providers is a utilization %).
+            // `supports_quota: true` is a safe default because the server's
+            // `provider_summary` RPC only emits providers that have a quota
+            // or credit model.
+            let meta = ProviderMetadata(
+                display_name: name,
+                category: "cloud",
+                supports_exact_cost: false,
+                supports_quota: true
+            )
             return ProviderUsage(
-                provider: provider.provider ?? "",
+                provider: name,
                 today_usage: provider.today_usage ?? 0,
                 week_usage: provider.total_usage ?? 0,
                 estimated_cost_today: 0,
@@ -545,7 +560,8 @@ public actor APIClient {
                 status_text: "Operational",
                 trend: [],
                 recent_sessions: [],
-                recent_errors: []
+                recent_errors: [],
+                metadata: meta
             )
         }
     }
@@ -895,11 +911,13 @@ public actor APIClient {
     // MARK: - OAuth (Google / GitHub via Supabase)
 
     /// Build the Supabase OAuth authorization URL for a given provider with PKCE.
-    /// Returns (authorizationURL, codeVerifier) — caller opens URL in browser/ASWebAuthenticationSession.
-    public func oauthAuthorizeURL(provider: String, redirectTo: String) -> (URL, String)? {
+    /// Returns (authorizationURL, codeVerifier, state) — the `state` is a CSRF token that
+    /// Supabase echoes back in the redirect; callers must verify it matches before exchanging.
+    public func oauthAuthorizeURL(provider: String, redirectTo: String) -> (URL, String, String)? {
         // Generate PKCE code verifier + challenge
         let verifier = generateCodeVerifier()
         guard let challenge = sha256Base64URL(verifier) else { return nil }
+        let state = String(generateCodeVerifier().prefix(32))
 
         var components = URLComponents(string: "\(supabaseURL)/auth/v1/authorize")
         components?.queryItems = [
@@ -907,9 +925,10 @@ public actor APIClient {
             URLQueryItem(name: "redirect_to", value: redirectTo),
             URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
+            URLQueryItem(name: "state", value: state),
         ]
         guard let url = components?.url else { return nil }
-        return (url, verifier)
+        return (url, verifier, state)
     }
 
     /// Exchange an OAuth authorization code for a Supabase session (PKCE flow).
@@ -1002,6 +1021,166 @@ public actor APIClient {
         )
     }
 
+    // MARK: - Identity Linking
+
+    private struct SupabaseIdentityRecord: Decodable {
+        let identity_id: String?
+        let id: String?
+        let provider: String
+        let email: String?
+        let created_at: String?
+        let identity_data: SupabaseIdentityData?
+    }
+
+    private struct SupabaseIdentityData: Decodable {
+        let email: String?
+    }
+
+    private struct SupabaseUserWithIdentities: Decodable {
+        let identities: [SupabaseIdentityRecord]?
+    }
+
+    /// Fetch the current user's linked identities (provider, email, identity_id).
+    public func userIdentities() async throws -> [UserIdentity] {
+        guard let url = URL(string: "\(supabaseURL)/auth/v1/user") else { throw APIError.invalidResponse }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        guard let token = accessToken else { throw APIError.tokenExpired }
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.httpError(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: String(data: data, encoding: .utf8) ?? "")
+        }
+        let user = try decode(SupabaseUserWithIdentities.self, from: data)
+        return (user.identities ?? []).compactMap { raw in
+            let identityID = raw.identity_id ?? raw.id
+            guard let identityID else { return nil }
+            return UserIdentity(
+                id: identityID,
+                provider: raw.provider,
+                email: raw.identity_data?.email ?? raw.email,
+                createdAt: raw.created_at
+            )
+        }
+    }
+
+    /// Build a Supabase link-identity authorization URL for an OAuth provider (Google, GitHub).
+    /// Requires a valid current session. Returns (authorizationURL, codeVerifier, state).
+    /// The `state` is a CSRF token that Supabase propagates through the OAuth roundtrip and
+    /// echoes back in the redirect — callers must verify it matches before exchanging.
+    public func linkIdentityAuthorizeURL(provider: String, redirectTo: String) async throws -> (URL, String, String) {
+        let verifier = generateCodeVerifier()
+        guard let challenge = sha256Base64URL(verifier) else { throw APIError.invalidResponse }
+        let state = String(generateCodeVerifier().prefix(32))
+        var components = URLComponents(string: "\(supabaseURL)/auth/v1/user/identities/authorize")
+        components?.queryItems = [
+            URLQueryItem(name: "provider", value: provider),
+            URLQueryItem(name: "redirect_to", value: redirectTo),
+            URLQueryItem(name: "code_challenge", value: challenge),
+            URLQueryItem(name: "code_challenge_method", value: "S256"),
+            URLQueryItem(name: "state", value: state),
+            URLQueryItem(name: "skip_http_redirect", value: "true"),
+        ]
+        guard let url = components?.url else { throw APIError.invalidResponse }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        guard let token = accessToken else { throw APIError.tokenExpired }
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.httpError(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: String(data: data, encoding: .utf8) ?? "")
+        }
+        struct AuthorizeResponse: Decodable { let url: String }
+        let payload = try decode(AuthorizeResponse.self, from: data)
+        guard let authURL = URL(string: payload.url) else { throw APIError.invalidResponse }
+        return (authURL, verifier, state)
+    }
+
+    /// Exchange a link-identity PKCE code. Updates the session to reflect the newly linked identity.
+    /// Unlike exchangeOAuthCode, this does not fetch the profile or return an AuthResponse —
+    /// identity linking preserves the current user, so the caller just needs updated tokens.
+    public func exchangeOAuthCodeForLink(code: String, codeVerifier: String) async throws {
+        guard let url = URL(string: "\(supabaseURL)/auth/v1/token?grant_type=pkce") else {
+            throw APIError.invalidResponse
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        struct PKCEExchange: Encodable { let auth_code: String; let code_verifier: String }
+        request.httpBody = try encoder.encode(PKCEExchange(auth_code: code, code_verifier: codeVerifier))
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.httpError(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: String(data: data, encoding: .utf8) ?? "")
+        }
+        let auth = try decode(SupabaseAuthResponse.self, from: data)
+        self.accessToken = auth.access_token
+        if let refresh = auth.refresh_token {
+            self.refreshToken = refresh
+        }
+        onTokenRefreshed?(auth.access_token, auth.refresh_token ?? refreshToken ?? "")
+    }
+
+    /// Link an Apple identity to the current user using an Apple identity token.
+    /// Requires a valid current session.
+    public func linkAppleIdentity(identityToken: String, nonce: String?) async throws {
+        guard let token = accessToken else { throw APIError.tokenExpired }
+        guard let url = URL(string: "\(supabaseURL)/auth/v1/token?grant_type=id_token") else {
+            throw APIError.invalidResponse
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        struct LinkAppleRequest: Encodable {
+            let provider: String
+            let id_token: String
+            let nonce: String?
+            let link_identity: Bool
+        }
+        request.httpBody = try encoder.encode(LinkAppleRequest(
+            provider: "apple",
+            id_token: identityToken,
+            nonce: nonce,
+            link_identity: true
+        ))
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.httpError(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: String(data: data, encoding: .utf8) ?? "")
+        }
+        if let auth = try? decode(SupabaseAuthResponse.self, from: data) {
+            self.accessToken = auth.access_token
+            if let refresh = auth.refresh_token {
+                self.refreshToken = refresh
+            }
+            onTokenRefreshed?(auth.access_token, auth.refresh_token ?? refreshToken ?? "")
+        }
+    }
+
+    /// Unlink a given identity from the current user.
+    public func unlinkIdentity(identityId: String) async throws {
+        guard let token = accessToken else { throw APIError.tokenExpired }
+        let encodedID = Self.sanitizeParam(identityId)
+        guard let url = URL(string: "\(supabaseURL)/auth/v1/user/identities/\(encodedID)") else {
+            throw APIError.invalidResponse
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.httpError(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: String(data: data, encoding: .utf8) ?? "")
+        }
+    }
+
     // PKCE helpers
     private func generateCodeVerifier() -> String {
         var buffer = [UInt8](repeating: 0, count: 32)
@@ -1054,8 +1233,24 @@ public actor APIClient {
     /// Non-throwing — sync failures are logged but not propagated.
     public func syncProviderQuotas(_ results: [CollectorResult]) async {
         guard let userId else { return }
-        let quotaResults = results.filter { $0.dataKind == .quota || $0.dataKind == .credits }
-        guard !quotaResults.isEmpty else { return }
+        let rawQuotaResults = results.filter { $0.dataKind == .quota || $0.dataKind == .credits }
+        guard !rawQuotaResults.isEmpty else { return }
+
+        // v1.9.4: de-duplicate by `provider` key. The upstream scan path
+        // sometimes returns the same provider twice (e.g. main-app Claude
+        // result + helper-bridged Claude result land in the merged list).
+        // Postgres' `ON CONFLICT DO UPDATE` errors out (SQLSTATE 21000 —
+        // "cannot affect row a second time") if a single bulk upsert contains
+        // two rows with the same conflict target. Keep the last occurrence
+        // for each provider since it's typically the freshest merged result.
+        var seen: Set<String> = []
+        var quotaResults: [CollectorResult] = []
+        for r in rawQuotaResults.reversed() {
+            if seen.insert(r.usage.provider).inserted {
+                quotaResults.append(r)
+            }
+        }
+        quotaResults.reverse()
 
         guard let url = URL(string: "\(supabaseURL)/rest/v1/provider_quotas") else { return }
 
@@ -1094,10 +1289,15 @@ public actor APIClient {
         request.httpBody = body
 
         do {
-            let (_, response) = try await session.data(for: request)
+            let (data, response) = try await session.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             if !(200...299).contains(status) {
-                apiLogger.warning("[syncProviderQuotas] failed: HTTP \(status)")
+                // v1.9.4: log response body (truncated) + provider list so
+                // transient 500s don't leave us guessing. Body typically
+                // carries a Postgres error message from PostgREST.
+                let bodyStr = String(data: data.prefix(512), encoding: .utf8) ?? "<non-utf8>"
+                let providers = quotaResults.map { $0.usage.provider }.joined(separator: ",")
+                apiLogger.warning("[syncProviderQuotas] failed: HTTP \(status), providers=[\(providers)], body=\(bodyStr, privacy: .public)")
             }
         } catch {
             apiLogger.warning("[syncProviderQuotas] error: \(error.localizedDescription)")
@@ -1112,11 +1312,16 @@ public actor APIClient {
         guard let userId else { return }
         guard !scanResult.entries.isEmpty else { return }
 
-        // Only sync completed days (exclude today)
+        // Only sync completed days (exclude today).
+        // v1.9.4: also skip the synthetic `__claude_msg__` model bucket — it
+        // carries raw message-event counts, not real model usage, and would
+        // pollute the server-side per-model analytics with a fake model row.
         let cal = Calendar.current
         let todayComps = cal.dateComponents([.year, .month, .day], from: Date())
         let todayKey = String(format: "%04d-%02d-%02d", todayComps.year ?? 1970, todayComps.month ?? 1, todayComps.day ?? 1)
-        let completedEntries = scanResult.entries.filter { $0.date < todayKey }
+        let completedEntries = scanResult.entries.filter {
+            $0.date < todayKey && $0.model != "__claude_msg__"
+        }
         guard !completedEntries.isEmpty else { return }
 
         let metrics: [[String: Any]] = completedEntries.map { entry in

@@ -106,6 +106,15 @@ struct UsageOverviewWidgetView: View {
                     if entry.data.unresolvedAlerts > 0 {
                         WidgetMiniStat(icon: "bell.badge", value: "\(entry.data.unresolvedAlerts)", color: .red)
                     }
+                    Spacer()
+                    if #available(iOS 17.0, *) {
+                        Button(intent: RefreshWidgetIntent()) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .buttonStyle(.plain)
+                        .tint(WidgetTheme.accent)
+                    }
                 }
             }
 
@@ -146,6 +155,14 @@ struct UsageOverviewWidgetView: View {
                 Text(entry.date, style: .time)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                if #available(iOS 17.0, *) {
+                    Button(intent: RefreshWidgetIntent()) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .tint(WidgetTheme.accent)
+                }
             }
 
             // Stats row

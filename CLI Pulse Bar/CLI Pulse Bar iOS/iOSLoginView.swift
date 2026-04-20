@@ -106,11 +106,12 @@ struct iOSLoginView: View {
                             Text(L10n.auth.signInGithub)
                                 .font(.headline)
                         }
+                        .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.primary)
+                    .tint(Color(red: 0.14, green: 0.16, blue: 0.22))
                     .padding(.horizontal)
 
                     if let error = state.lastError {
@@ -179,7 +180,7 @@ struct iOSLoginView: View {
 
     private func signInWithProvider(_ provider: String) {
         Task {
-            guard let (authURL, codeVerifier) = await state.oauthURL(provider: provider) else {
+            guard let (authURL, codeVerifier, expectedState) = await state.oauthURL(provider: provider) else {
                 state.lastError = "Failed to build \(provider) authorization URL"
                 return
             }
@@ -197,10 +198,38 @@ struct iOSLoginView: View {
                     Task { @MainActor in state?.lastError = error.localizedDescription }
                     return
                 }
-                guard let callbackURL,
-                      let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
-                      let code = components.queryItems?.first(where: { $0.name == "code" })?.value else {
-                    Task { @MainActor in state?.lastError = "OAuth sign-in failed: no authorization code" }
+                guard let callbackURL else {
+                    Task { @MainActor in state?.lastError = "OAuth sign-in failed: no callback URL" }
+                    return
+                }
+                #if DEBUG
+                print("[OAuth] callback URL: \(callbackURL.absoluteString)")
+                #endif
+                // Supabase may return the auth code either as a query parameter (?code=...)
+                // or as a URL fragment (#code=...). Try both.
+                let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)
+                func readItem(_ name: String) -> String? {
+                    if let v = components?.queryItems?.first(where: { $0.name == name })?.value { return v }
+                    if let fragment = components?.fragment {
+                        var fragComponents = URLComponents()
+                        fragComponents.query = fragment
+                        return fragComponents.queryItems?.first(where: { $0.name == name })?.value
+                    }
+                    return nil
+                }
+                let code = readItem("code")
+                let returnedState = readItem("state")
+                // Surface any error returned by Supabase/Google for easier debugging.
+                let errorDesc = components?.queryItems?.first(where: { $0.name == "error_description" })?.value
+                    ?? components?.queryItems?.first(where: { $0.name == "error" })?.value
+                guard let code else {
+                    let detail = errorDesc ?? callbackURL.absoluteString
+                    Task { @MainActor in state?.lastError = "OAuth sign-in failed: \(detail)" }
+                    return
+                }
+                // CSRF: verify the state Supabase echoed back matches what we sent.
+                guard let returnedState, returnedState == expectedState else {
+                    Task { @MainActor in state?.lastError = "OAuth sign-in failed: state mismatch" }
                     return
                 }
                 Task {

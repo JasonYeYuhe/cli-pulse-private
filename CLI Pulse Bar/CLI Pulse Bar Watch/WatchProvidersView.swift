@@ -10,7 +10,31 @@ struct WatchProvidersView: View {
 
     var body: some View {
         List {
-            if visibleProviders.isEmpty {
+            if visibleProviders.isEmpty, let err = state.lastError {
+                // Surface real errors instead of hiding as "No provider data".
+                VStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.orange)
+                    Text("Couldn't load providers")
+                        .font(.caption.weight(.semibold))
+                    Text(err)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(3)
+                    Button {
+                        Task { await state.refreshAll() }
+                    } label: {
+                        Label("Retry", systemImage: "arrow.clockwise")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.orange)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+            } else if visibleProviders.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "cpu")
                         .font(.title3)
@@ -48,6 +72,18 @@ struct WatchProviderCard: View {
         PulseTheme.providerColor(provider.provider)
     }
 
+    /// Used-of-quota display value. `today_usage` is "tokens used today",
+    /// which is 0 when the user hasn't run anything yet today. The ring
+    /// shows `(quota - remaining) / quota` (window consumption), so the text
+    /// should match that window math — otherwise the card looks like
+    /// "0 / 100  28%" which is confusingly inconsistent.
+    private var displayedUsage: Int {
+        if let quota = provider.quota, let remaining = provider.remaining {
+            return max(0, quota - remaining)
+        }
+        return provider.today_usage
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             // Progress ring
@@ -75,7 +111,7 @@ struct WatchProviderCard: View {
                     .lineLimit(1)
 
                 HStack(spacing: 4) {
-                    Text(CostFormatter.formatUsage(provider.today_usage))
+                    Text(CostFormatter.formatUsage(displayedUsage))
                         .font(.caption2.weight(.bold).monospacedDigit())
                     if let quota = provider.quota {
                         Text("/ \(CostFormatter.formatUsage(quota))")

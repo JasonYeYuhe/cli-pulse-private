@@ -197,6 +197,20 @@ public struct UserDTO: Codable, Sendable {
     }
 }
 
+public struct UserIdentity: Codable, Sendable, Identifiable, Equatable {
+    public let id: String
+    public let provider: String
+    public let email: String?
+    public let createdAt: String?
+
+    public init(id: String, provider: String, email: String?, createdAt: String?) {
+        self.id = id
+        self.provider = provider
+        self.email = email
+        self.createdAt = createdAt
+    }
+}
+
 // MARK: - Dashboard
 
 public struct DashboardSummary: Codable, Sendable {

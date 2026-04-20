@@ -12,6 +12,28 @@ public struct CostUsageScanResult: Sendable {
         public let cachedTokens: Int
         public let outputTokens: Int
         public let costUSD: Double?
+        /// v1.9.4: deduped assistant-message count for this (day, provider, model).
+        /// Currently only populated for Claude (via JSONL message.id + requestId
+        /// dedup in `parseClaudeFile`). Codex leaves this at 0 — Codex doesn't
+        /// have a stable per-turn identifier we can count off.
+        /// Rationale: Claude Code's own UI leads with "messages" as the hero
+        /// metric since raw token counts (including cache_read) are dominated
+        /// by ~98% cache noise. Messages matches user intuition of "how many
+        /// times did the model reply today".
+        public let messageCount: Int
+
+        public init(date: String, provider: String, model: String,
+                    inputTokens: Int, cachedTokens: Int, outputTokens: Int,
+                    costUSD: Double?, messageCount: Int = 0) {
+            self.date = date
+            self.provider = provider
+            self.model = model
+            self.inputTokens = inputTokens
+            self.cachedTokens = cachedTokens
+            self.outputTokens = outputTokens
+            self.costUSD = costUSD
+            self.messageCount = messageCount
+        }
     }
 
     public let entries: [DailyEntry]
@@ -32,12 +54,17 @@ public struct CostUsageScanResult: Sendable {
         totalCost(for: todayKey)
     }
 
+    /// v1.9.4 (second revision): `input + output` only, matching the
+    /// "I/O tokens" definition used everywhere in the UI. Excludes cache
+    /// tokens (read + creation). Cost is computed elsewhere with full
+    /// per-component pricing, so excluding cache here does NOT affect
+    /// cost accuracy. See `AppState.totalTokens` for rationale.
     public func totalTokens(for date: String) -> Int {
-        entries.filter { $0.date == date }.reduce(0) { $0 + $1.inputTokens + $1.outputTokens + $1.cachedTokens }
+        entries.filter { $0.date == date }.reduce(0) { $0 + $1.inputTokens + $1.outputTokens }
     }
 
     public var totalTokens: Int {
-        entries.reduce(0) { $0 + $1.inputTokens + $1.outputTokens + $1.cachedTokens }
+        entries.reduce(0) { $0 + $1.inputTokens + $1.outputTokens }
     }
 
     /// Total API equivalent cost for a specific provider across all scanned days
@@ -92,6 +119,66 @@ public enum CostUsageScanner {
         return CostUsageScanResult(entries: allEntries)
     }
 
+    // MARK: - Sandbox-aware entry point (v1.9.4)
+
+    /// Cost-scan roots that must be accessible for Codex / Claude token data.
+    /// Listed in priority order — callers that want to prompt the user should
+    /// walk this list and check `BookmarkManager.hasAccess(to:)` for each.
+    public static let sandboxScanRoots: [String] = [
+        // Codex
+        "~/.codex/sessions/",
+        "~/.codex/archived_sessions/",
+        // Claude (both root variants codexbar supports via CLAUDE_CONFIG_DIR)
+        "~/.claude/projects/",
+        "~/.config/claude/projects/",
+    ]
+
+    /// v1.9.4: sandbox-aware version of `scan()` that resolves bookmarks for
+    /// each scan root before running. Delegate to `BookmarkManager` — it
+    /// already calls `startAccessingSecurityScopedResource` + caches the URL
+    /// in `activeResources`, so we must NOT call `startAccessing` ourselves
+    /// (double-start with a single stop leaks the resource).
+    ///
+    /// If the app is NOT sandboxed (or the dir is already accessible via a
+    /// direct read), the resolve call falls through harmlessly; the sync
+    /// `scan()` then reads via `FileManager.default` as before.
+    public static func scanAsync(options: Options = Options()) async -> CostUsageScanResult {
+        // Resolve all cost-scan bookmarks on the main actor. This warms
+        // `BookmarkManager.activeResources` so the subsequent sync scanning
+        // sees the paths as readable.
+        _ = await MainActor.run { () -> [URL?] in
+            let home = realUserHome()
+            return sandboxScanRoots.map { template -> URL? in
+                let expanded = (home as NSString).appendingPathComponent(String(template.dropFirst(2)))
+                return BookmarkManager.shared.resolveBookmark(for: expanded)
+            }
+        }
+        return scan(options: options)
+    }
+
+    /// v1.9.4: nuke the per-provider on-disk caches and trigger a full
+    /// rescan on the next call. Use after granting a new bookmark, since
+    /// prior sandbox-blocked runs may have stored negative deltas that a
+    /// normal incremental scan won't unwind.
+    public static func forceRescanAsync() async -> CostUsageScanResult {
+        CostUsageCacheIO.wipeAll()
+        var opts = Options()
+        opts.forceRescan = true
+        return await scanAsync(options: opts)
+    }
+
+    /// Returns the subset of `sandboxScanRoots` that are missing a bookmark
+    /// AND are expected to hold data (at minimum `~/.codex/sessions/` OR
+    /// `~/.claude/projects/`). Use to drive the first-run folder-access banner.
+    @MainActor
+    public static func missingScanRoots() -> [String] {
+        let home = realUserHome()
+        return sandboxScanRoots.compactMap { template in
+            let expanded = (home as NSString).appendingPathComponent(String(template.dropFirst(2)))
+            return BookmarkManager.shared.hasAccess(to: expanded) ? nil : expanded
+        }
+    }
+
     // MARK: - Convert cache to result entries
 
     private static func entriesFromCodexCache(_ cache: CostUsageCache, range: DayRange) -> [CostUsageScanResult.DailyEntry] {
@@ -127,11 +214,19 @@ public enum CostUsageScanner {
                 let cacheCreate = packed[safeIdx: 2] ?? 0
                 let output = packed[safeIdx: 3] ?? 0
                 let costNanos = packed[safeIdx: 4] ?? 0
-                guard input > 0 || cacheRead > 0 || cacheCreate > 0 || output > 0 else { continue }
+                let msgs = packed[safeIdx: 5] ?? 0
+                // v1.9.4 (second revision): emit a DailyEntry when there's
+                // EITHER real token activity OR the msg-bucket has raw user
+                // + assistant events. The synthetic `claudeMsgBucketModel`
+                // only has msg counts; per-model buckets have tokens +
+                // deduped-zero msgs.
+                guard input > 0 || cacheRead > 0 || cacheCreate > 0 || output > 0 || msgs > 0 else { continue }
                 let cost: Double? = costNanos > 0
                     ? Double(costNanos) / costScale
                     : Pricing.claudeCostUSD(model: model, inputTokens: input, cacheReadInputTokens: cacheRead, cacheCreationInputTokens: cacheCreate, outputTokens: output)
-                result.append(.init(date: day, provider: "Claude", model: model, inputTokens: input, cachedTokens: cacheRead + cacheCreate, outputTokens: output, costUSD: cost))
+                result.append(.init(date: day, provider: "Claude", model: model,
+                                    inputTokens: input, cachedTokens: cacheRead + cacheCreate,
+                                    outputTokens: output, costUSD: cost, messageCount: msgs))
             }
         }
         return result
@@ -710,21 +805,37 @@ public enum CostUsageScanner {
         ]
     }
 
+    /// Synthetic model key used solely to bucket raw message-event counts
+    /// (user + assistant events, including streaming chunks) at the day level.
+    /// Matches the convention Claude Code's own UI uses — see v1.9.4 analysis
+    /// in `docs/PROJECT_FIX_v1.9.4_token_cost_parity.md`. UI code filters
+    /// this key out of per-model breakdowns.
+    static let claudeMsgBucketModel = "__claude_msg__"
+
     private static func parseClaudeFile(fileURL: URL, range: DayRange, startOffset: Int64 = 0) -> ClaudeParseResult {
         var days: [String: [String: [Int]]] = [:]
         var seenKeys: Set<String> = []
         let costScale = 1_000_000_000.0
 
-        func add(dayKey: String, model: String, input: Int, cacheRead: Int, cacheCreate: Int, output: Int, costNanos: Int) {
+        // v1.9.4: packed slot 5 tracks message-event count. For per-model
+        // token buckets it only counts the line that actually contributed
+        // token deltas (deduped). For the synthetic `claudeMsgBucketModel`
+        // bucket it counts every raw event (user + assistant, including
+        // streaming chunks) — this matches what Claude Code's UI displays.
+        func add(dayKey: String, model: String, input: Int, cacheRead: Int, cacheCreate: Int, output: Int, costNanos: Int, msgDelta: Int = 0) {
             guard DayRange.isInRange(dayKey: dayKey, since: range.scanSinceKey, until: range.scanUntilKey) else { return }
-            let normModel = Pricing.normalizeClaudeModel(model)
+            let normModel = (model == Self.claudeMsgBucketModel) ? model : Pricing.normalizeClaudeModel(model)
             var dayModels = days[dayKey] ?? [:]
-            var packed = dayModels[normModel] ?? [0, 0, 0, 0, 0]
+            var packed = dayModels[normModel] ?? [0, 0, 0, 0, 0, 0]
+            // Old caches stored 5 slots. Pad to 6 so existing entries don't
+            // lose their token data when messageCount gets appended.
+            while packed.count < 6 { packed.append(0) }
             packed[0] = (packed[safeIdx: 0] ?? 0) + input
             packed[1] = (packed[safeIdx: 1] ?? 0) + cacheRead
             packed[2] = (packed[safeIdx: 2] ?? 0) + cacheCreate
             packed[3] = (packed[safeIdx: 3] ?? 0) + output
             packed[4] = (packed[safeIdx: 4] ?? 0) + costNanos
+            packed[5] = (packed[safeIdx: 5] ?? 0) + msgDelta
             dayModels[normModel] = packed
             days[dayKey] = dayModels
         }
@@ -734,17 +845,39 @@ public enum CostUsageScanner {
 
         let parsedBytes = (try? scanJsonl(fileURL: fileURL, offset: startOffset, maxLineBytes: maxLineBytes, prefixBytes: prefixBytes, onLine: { line in
             guard !line.bytes.isEmpty, !line.wasTruncated else { return }
-            guard line.bytes.asciiContains(#""type":"assistant""#), line.bytes.asciiContains(#""usage""#) else { return }
+            // Widened from assistant-only to (assistant, user) so message
+            // counting matches Claude Code's UI (which counts every event).
+            let isAssistant = line.bytes.asciiContains(#""type":"assistant""#)
+            let isUser = line.bytes.asciiContains(#""type":"user""#)
+            guard isAssistant || isUser else { return }
 
             guard let obj = (try? JSONSerialization.jsonObject(with: line.bytes)) as? [String: Any],
-                  (obj["type"] as? String) == "assistant",
+                  let type = obj["type"] as? String,
                   let tsText = obj["timestamp"] as? String,
-                  let dayKey = dayKeyFromTimestamp(tsText) ?? dayKeyFromParsedISO(tsText),
+                  let dayKey = dayKeyFromTimestamp(tsText) ?? dayKeyFromParsedISO(tsText) else { return }
+
+            // Every user event contributes to the raw message count. No tokens.
+            if type == "user" {
+                add(dayKey: dayKey, model: Self.claudeMsgBucketModel,
+                    input: 0, cacheRead: 0, cacheCreate: 0, output: 0, costNanos: 0, msgDelta: 1)
+                return
+            }
+
+            // type == "assistant". Count every raw event (incl. streaming
+            // chunks) once against the msg bucket — matches Claude UI 53K/wk
+            // target within ~3%. Tokens still use dedup to avoid double
+            // counting the same message's streaming pieces.
+            add(dayKey: dayKey, model: Self.claudeMsgBucketModel,
+                input: 0, cacheRead: 0, cacheCreate: 0, output: 0, costNanos: 0, msgDelta: 1)
+
+            // Require `usage` field for token accounting.
+            guard line.bytes.asciiContains(#""usage""#),
                   let message = obj["message"] as? [String: Any],
                   let model = message["model"] as? String,
                   let usage = message["usage"] as? [String: Any] else { return }
 
-            // Deduplicate by message.id + requestId
+            // Dedup for TOKENS (not messages): streaming chunks re-report
+            // cumulative usage; counting each chunk would inflate tokens.
             let messageId = message["id"] as? String
             let requestId = obj["requestId"] as? String
             if let messageId, let requestId {
@@ -762,7 +895,7 @@ public enum CostUsageScanner {
 
             let cost = Pricing.claudeCostUSD(model: model, inputTokens: input, cacheReadInputTokens: cacheRead, cacheCreationInputTokens: cacheCreate, outputTokens: output)
             let costNanos = cost.map { Int(($0 * costScale).rounded()) } ?? 0
-            add(dayKey: dayKey, model: model, input: input, cacheRead: cacheRead, cacheCreate: cacheCreate, output: output, costNanos: costNanos)
+            add(dayKey: dayKey, model: model, input: input, cacheRead: cacheRead, cacheCreate: cacheCreate, output: output, costNanos: costNanos, msgDelta: 0)
         })) ?? startOffset
 
         return ClaudeParseResult(days: days, parsedBytes: parsedBytes)

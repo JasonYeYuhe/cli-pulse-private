@@ -16,3 +16,11 @@ data class UserDTO(
     val name: String,
     val email: String,
 )
+
+/** OAuth identity linked to the current Supabase user. */
+data class UserIdentity(
+    val id: String,
+    val provider: String,
+    val email: String?,
+    val createdAt: String?,
+)

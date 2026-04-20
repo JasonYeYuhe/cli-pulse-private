@@ -1,130 +1,162 @@
 # Privacy Policy
 
-**CLI Pulse**  
-**Last Updated: April 2, 2026**
+**CLI Pulse**
+**Last Updated: April 20, 2026**
 
-## Overview
+CLI Pulse is a developer tool for monitoring usage, quotas, and cost across AI
+coding providers (Claude, Codex, Gemini, OpenRouter, and others). Our privacy
+goal is straightforward: **your provider API keys never leave your device**, and
+everything else we sync is kept to the minimum needed for cross-device viewing.
 
-CLI Pulse is a developer tool for monitoring usage, quotas, and activity across
-supported AI coding and CLI providers such as Codex, Claude, Gemini, and other
-integrations added over time.
+This document is the single source of truth for what we collect. If you find
+anything in the app, App Store listing, or GitHub README that contradicts this
+file, **the file wins** — please open an issue.
 
-This Privacy Policy explains what information we collect, how we use it, where
-it is stored, and what choices you have.
+---
 
-## Information We Collect
+## Data-by-data breakdown
 
-### Account Information
+| Data | Stored where | Sent to our server? | Purpose |
+|---|---|---|---|
+| **Provider API keys** (OpenAI, Anthropic, Google, OpenRouter, etc.) | macOS Keychain on this device | ❌ Never | Used locally to call the provider's own API directly |
+| **Provider session cookies** (manual cookie headers) | macOS Keychain on this device | ❌ Never | Used locally as `Cookie` header to the provider |
+| **Bridged OAuth tokens** from `~/.codex/auth.json`, `~/.claude/.credentials.json`, `~/.gemini/oauth_creds.json` | macOS Keychain (app-group shared) | ❌ Never | Shared between the sandboxed main app and the local helper only |
+| **Contents of your `~/.codex/sessions/` and `~/.claude/projects/` JSONL files** | Read on-device via security-scoped bookmarks you explicitly grant | ❌ Never | Scanner computes token counts locally |
+| **Aggregated usage metrics** (per-day token counts, cost estimate, model name, provider name, date) | Supabase, linked to your CLI Pulse account | ✅ Yes | So iPhone and Apple Watch show the same history as your Mac |
+| **Provider quota state** (remaining, limit, plan tier, reset time) | Supabase, linked to your CLI Pulse account | ✅ Yes | So mobile clients display current quotas without running the scanner themselves |
+| **Your CLI Pulse login email** | Supabase Auth | ✅ Yes | Required to authenticate you |
+| **Apple / Google sign-in tokens** (during sign-in) | Not persisted — exchanged once for a Supabase session | ✅ Yes (during sign-in only) | Identity verification with the original OAuth provider |
+| **Supabase session access / refresh token** | macOS Keychain on this device | ❌ Never re-uploaded (only received) | Keeps you signed in |
+| **Device name, OS version, helper version** | Supabase | ✅ Yes | Shows which Macs/iPhones are reporting |
+| **Git activity metadata** (commit hash, HMAC of project path, commit timestamp, merge flag) | Supabase — only when "Track git activity" toggle is ON | ✅ Yes (opt-in only) | Powers the Yield Score feature |
+| **Git commit messages, diffs, file paths, author identity** | — | ❌ Never | Explicitly excluded even when Yield Score is on |
+| **Alerts you resolve locally** (quota depletion alerts) | UserDefaults on this device | ❌ Never | Suppression list to prevent re-firing |
 
-- Email address
-- Authentication identifiers required to sign you in
-- Account profile information returned by the authentication provider
+**The key point:** the two categories of data you'd be most worried about —
+provider API keys and raw session-log contents — never touch our servers, full
+stop.
 
-Depending on the sign-in method you use, authentication may be handled through
-email sign-in, password sign-in, one-time code verification, or Sign in with
-Apple.
+---
 
-### Device and Sync Information
+## How data moves
 
-- Device name, device type, and platform
-- Helper registration metadata
-- Pairing and cloud sync state
-- Last-seen timestamps and helper version
+```
+┌─────────────────────────┐         ┌──────────────────┐
+│  Your Mac               │         │  AI provider     │
+│  ┌─────────────────┐    │         │  (OpenAI,        │
+│  │ API key in      │─── Direct ──▶│  Anthropic,      │
+│  │ macOS Keychain  │    │ HTTPS   │  Google, ...)    │
+│  └─────────────────┘    │         └──────────────────┘
+│                         │
+│  ┌─────────────────┐    │
+│  │ JSONL session   │    │         ┌──────────────────┐
+│  │ logs (local)    │──── read ────│ CLI Pulse        │
+│  └─────────────────┘    │  only   │ Supabase backend │
+│                         │         │                  │
+│  ┌─────────────────┐    │         │ - Email          │
+│  │ Token counts,   │─── HTTPS ───▶│ - Usage numbers  │
+│  │ costs (numbers) │    │         │ - Quota state    │
+│  └─────────────────┘    │         │ - Device list    │
+└─────────────────────────┘         └──────────────────┘
+                                             │
+                                             ▼
+                                     ┌──────────────────┐
+                                     │  Your iPhone /   │
+                                     │  Apple Watch     │
+                                     └──────────────────┘
+```
 
-### Usage and App Data
+The scanner runs entirely on your Mac. Your API key never passes through our
+servers — it goes directly from your Keychain to the provider.
 
-- Provider usage summaries, quota percentages, reset times, and related
-  metadata
-- Session summaries and alert state
-- App settings and provider enablement preferences
-- Subscription status and entitlement information
+---
 
-### Local Provider Detection Data
+## Security practices
 
-On a Mac, the helper may inspect local process state, CLI configuration,
-browser cookies, Keychain items, or other locally available provider session
-artifacts in order to detect supported provider usage and quota information.
+- **macOS Keychain** is used for every secret (provider API keys, manual
+  cookies, Supabase session tokens). Keychain is encrypted at rest, unlocked
+  alongside your login, and inaccessible to other apps.
+- **App Sandbox** is enabled (`com.apple.security.app-sandbox`). File access
+  outside the app container requires security-scoped bookmarks you grant
+  explicitly in Settings → CLI Tool Access.
+- **TLS 1.2+** for every network connection.
+- **Supabase server-side encryption at rest** (AES-256) for the database and
+  storage backing your account. We do **not** currently offer end-to-end
+  encryption — the metrics we store are aggregate numbers, not secrets. See
+  "Roadmap" below.
+- **No third-party analytics SDKs.** We do not ship Google Analytics,
+  Firebase Analytics, Amplitude, Mixpanel, Sentry, Crashlytics, or any
+  similar tool. There is no fingerprinting and no ad network integration.
 
-This local inspection happens on your device. CLI Pulse is designed to sync the
-resulting usage metadata, not raw secrets such as passwords, browser cookies,
-API keys, or refresh tokens.
+---
 
-## How We Use Your Information
+## Your controls
 
-We use collected information to:
+- **Revoke folder access:** Settings → CLI Tool Access → specific directory
+  → remove bookmark.
+- **Disable Yield Score / git tracking:** Settings → Privacy → "Track git
+  activity" toggle. Off by default; the toggle stops uploads immediately.
+- **Delete API keys:** Remove any provider config in Settings → Providers;
+  the Keychain entry is deleted.
+- **Delete your account:** Settings → Account → Delete Account purges the
+  Supabase row and all associated usage metrics.
+- **Export:** Use "Export Report" in the Overview tab to download a PDF or
+  CSV of your own data.
 
-- Authenticate your account
-- Display usage, quota, cost, and alert information inside the app
-- Sync data across your devices when Cloud Sync is enabled
-- Register and manage helper-connected devices
-- Restore subscription entitlements
-- Improve reliability, debugging, and product support
+---
 
-## Data Storage
+## Data retention
 
-CLI Pulse uses a combination of local device storage and hosted backend
-services.
+- Local Keychain entries persist until you delete the provider or the app.
+- On Supabase, your usage metrics are retained while your account is active.
+  Account deletion removes them within 30 days (cascading deletes handled
+  at the database level).
 
-- Some data is stored locally on your device, including helper state and local
-  snapshots used for provider fallback behavior
-- Cloud-synced account, device, session, provider, and settings data may be
-  stored in backend infrastructure operated for CLI Pulse
-- Authentication and database services may be provided through Supabase
+---
 
-## Data Retention
+## Third-party sub-processors
 
-- Local snapshots and helper state remain on your device until removed,
-  overwritten, or unpaired
-- Cloud-synced data may be retained as needed to provide account history,
-  dashboards, alerts, and subscription functionality
-- Retention behavior may change as product tiers and sync features evolve
+- **Supabase (hosted in Tokyo region, Japan)** — provides authentication,
+  Postgres storage, and edge functions for the metrics sync described above.
+- **Apple** — used for Sign in with Apple, App Store payments, and
+  StoreKit-based subscription management. Receipt validation forwards only
+  the StoreKit JWS and product ID.
+- **Google** — used for Sign in with Google at the user's option. Only the
+  ID token and nonce are exchanged during sign-in.
 
-## Data Sharing
+We do not share data with any party not listed above. We do not sell data.
 
-We do not sell your personal information.
+---
 
-We may share data only with the service providers necessary to operate CLI
-Pulse, such as authentication, database, hosting, analytics, notification, and
-subscription infrastructure providers.
+## Children's privacy
 
-## Third-Party Services
+CLI Pulse is a developer tool intended for users 17 or older. We do not
+knowingly collect data from children.
 
-CLI Pulse may rely on third-party services including:
+---
 
-- **Supabase** for authentication and backend data services
-- **Apple** for Sign in with Apple and in-app subscription billing through
-  StoreKit
-- **GitHub Pages** or similar static hosting for public product pages and legal
-  documents
+## Changes to this policy
 
-Supported provider usage data may be derived from local sessions or APIs
-associated with third-party products such as Anthropic, OpenAI, Google, or
-other provider services you use. CLI Pulse does not claim ownership over those
-services or their policies.
+We will update the "Last Updated" date above when this policy changes and
+note material changes in release notes. The authoritative version lives at
+<https://github.com/JasonYeYuhe/cli-pulse/blob/main/PRIVACY.md>.
 
-## Your Choices and Rights
+---
 
-You can:
+## Roadmap: end-to-end encryption
 
-- View data associated with your account inside the app
-- Sign out of the app
-- Disconnect or unpair helper-connected devices
-- Disable notifications at the operating system level
-- Request account deletion from within the app where supported
+We've looked at adding E2EE to the Supabase-stored metrics. Today, the
+sensitive data (API keys, session log contents) already never leaves your
+device, so the marginal privacy gain from encrypting the numeric metrics is
+smaller than it sounds. Implementing E2EE also conflicts with cross-device
+sync, which requires multi-device key management we don't want to ship
+half-built. If you have a specific threat model where E2EE on metrics
+matters to you, please open an issue — we'd rather hear the use case than
+guess.
 
-## Children's Privacy
-
-CLI Pulse is not intended for children under 13, and we do not knowingly
-collect personal information from children.
-
-## Changes to This Policy
-
-We may update this Privacy Policy from time to time. When we do, we will update
-the revision date on this page.
+---
 
 ## Contact
 
-If you have questions about this Privacy Policy, contact:
-
-- `clipulse.support@gmail.com`
-- [https://github.com/jasonyeyuhe/cli-pulse/issues](https://github.com/jasonyeyuhe/cli-pulse/issues)
+- Email: yyyyy.yeyuhe@gmail.com
+- GitHub issues: <https://github.com/JasonYeYuhe/cli-pulse/issues>

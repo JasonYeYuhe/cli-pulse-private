@@ -97,15 +97,21 @@ struct WatchOverviewView: View {
                     }
                 }
 
-                // Provider gauges
-                let topProviders = dash.provider_breakdown
+                // Provider gauges. Use state.providers (ProviderUsage) rather
+                // than dash.provider_breakdown — ProviderBreakdown's `usage`
+                // field mirrors `today_usage` which is 0 when the user hasn't
+                // run anything today, producing a 0% gauge even when the
+                // provider's window is 28% consumed. ProviderUsage carries
+                // the full quota/remaining/today_usage triad so we can render
+                // the window-consumption ring correctly.
+                let topProviders = state.providers
                     .filter { state.enabledProviderNames.contains($0.provider) }
                     .prefix(4)
 
                 if !topProviders.isEmpty {
                     Section(L10n.providers.quota) {
-                        ForEach(Array(topProviders), id: \.provider) { p in
-                            WatchProviderGauge(breakdown: p, showCost: state.showCost)
+                        ForEach(Array(topProviders)) { p in
+                            WatchProviderGauge(provider: p, showCost: state.showCost)
                         }
                     }
                 }
@@ -146,6 +152,32 @@ struct WatchOverviewView: View {
                 }
             } else if state.isLoading {
                 ProgressView("Loading...")
+            } else if let err = state.lastError {
+                // Surface the actual failure instead of hiding behind a
+                // generic "Pull to refresh" — historically a silent 401
+                // here looked identical to a first-launch empty state.
+                VStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.orange)
+                    Text("Couldn't load data")
+                        .font(.caption.weight(.semibold))
+                    Text(err)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(3)
+                    Button {
+                        Task { await state.refreshAll() }
+                    } label: {
+                        Label("Retry", systemImage: "arrow.clockwise")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.orange)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
             } else {
                 VStack(spacing: 6) {
                     Image(systemName: "arrow.clockwise")
@@ -191,37 +223,37 @@ struct WatchCompactMetric: View {
 // MARK: - Provider Gauge
 
 struct WatchProviderGauge: View {
-    let breakdown: ProviderBreakdown
+    let provider: ProviderUsage
     let showCost: Bool
 
-    private var usagePercent: Double {
-        guard let remaining = breakdown.remaining else { return 0 }
-        let total = breakdown.usage + remaining
-        guard total > 0 else { return 0 }
-        return min(1.0, Double(breakdown.usage) / Double(total))
-    }
+    private var usagePercent: Double { provider.usagePercent }
 
-    private var hasQuota: Bool {
-        breakdown.remaining != nil
+    private var hasQuota: Bool { provider.quota != nil }
+
+    private var windowUsed: Int {
+        if let quota = provider.quota, let remaining = provider.remaining {
+            return max(0, quota - remaining)
+        }
+        return provider.today_usage
     }
 
     private var gaugeColor: Color {
-        PulseTheme.providerColor(breakdown.provider)
+        PulseTheme.providerColor(provider.provider)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Image(systemName: ProviderKind(rawValue: breakdown.provider)?.iconName ?? "cpu")
+                Image(systemName: ProviderKind(rawValue: provider.provider)?.iconName ?? "cpu")
                     .font(.caption2)
                     .foregroundStyle(gaugeColor)
                     .frame(width: 14)
-                Text(breakdown.provider)
+                Text(provider.provider)
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
                 Spacer()
-                if showCost && breakdown.estimated_cost > 0 {
-                    Text(CostFormatter.format(breakdown.estimated_cost))
+                if showCost && provider.estimated_cost_today > 0 {
+                    Text(CostFormatter.format(provider.estimated_cost_today))
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.green)
                 }
@@ -239,10 +271,10 @@ struct WatchProviderGauge: View {
             }
 
             HStack {
-                Text(CostFormatter.formatUsage(breakdown.usage))
+                Text(CostFormatter.formatUsage(windowUsed))
                     .font(.caption2.weight(.bold).monospacedDigit())
-                if let remaining = breakdown.remaining {
-                    Text("/ \(CostFormatter.formatUsage(breakdown.usage + remaining))")
+                if let quota = provider.quota {
+                    Text("/ \(CostFormatter.formatUsage(quota))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }

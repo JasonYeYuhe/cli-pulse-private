@@ -3,6 +3,23 @@
 This workspace contains the current `CLI Pulse Bar` app plus a small amount of
 legacy material kept for reference.
 
+## 🔒 Privacy
+
+- **Provider API keys & session cookies** (OpenAI, Anthropic, Google,
+  OpenRouter, ...) are stored only in macOS Keychain and **never uploaded**.
+  They go directly from your device to the provider's own API.
+- **Session log contents** under `~/.codex/sessions/` and `~/.claude/projects/`
+  are scanned **on-device** via security-scoped bookmarks you grant in
+  Settings. File contents never leave your Mac.
+- **Aggregated usage metrics** (token counts, cost estimates, model names,
+  dates) are synced to your CLI Pulse account so iPhone and Apple Watch show
+  the same history. Linked to your user ID; no third-party analytics SDKs.
+- **Yield Score git tracking** is opt-in. When on, only the commit hash, an
+  HMAC of the project path, the commit timestamp, and a merge-commit flag
+  upload. Messages, diffs, file paths, and author identity never upload.
+
+Full data-by-data breakdown: [PRIVACY.md](PRIVACY.md).
+
 ## Current Product Structure
 
 - `CLI Pulse Bar/`

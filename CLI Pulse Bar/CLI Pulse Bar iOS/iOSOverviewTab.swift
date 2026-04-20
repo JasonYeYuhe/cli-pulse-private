@@ -94,10 +94,7 @@ struct iOSOverviewTab: View {
 
     private func metricsGrid(_ dash: DashboardSummary) -> some View {
         let columns = isIPad ? [
-            GridItem(.flexible(), spacing: 10),
-            GridItem(.flexible(), spacing: 10),
-            GridItem(.flexible(), spacing: 10),
-            GridItem(.flexible(), spacing: 10),
+            GridItem(.adaptive(minimum: 180), spacing: 10),
         ] : [
             GridItem(.flexible(), spacing: 10),
             GridItem(.flexible(), spacing: 10),

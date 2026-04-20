@@ -62,12 +62,22 @@ public final class WatchAppState: ObservableObject {
             guard let self, let info = notif.userInfo,
                   let token = info["access_token"] as? String, !token.isEmpty else { return }
             Task { @MainActor in
-                self.applyWatchAuth(
+                await self.applyWatchAuth(
                     token: token,
                     refreshToken: info["refresh_token"] as? String,
                     email: info["email"] as? String ?? "",
                     name: info["name"] as? String ?? ""
                 )
+            }
+        }
+
+        // Re-apply cached fallback when the phone pushes fresh application context.
+        // preferLive=false — the push is authoritative, so overwrite any stale
+        // data the watch has from a prior refresh.
+        NotificationCenter.default.addObserver(forName: .watchDidReceiveContext, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.applyFallbackData(from: WatchSessionManager.shared, preferLive: false)
             }
         }
 
@@ -118,17 +128,26 @@ public final class WatchAppState: ObservableObject {
         lastError = state.lastError
     }
 
-    func applyWatchAuth(token: String, refreshToken: String?, email: String, name: String) {
+    func applyWatchAuth(token: String, refreshToken: String?, email: String, name: String) async {
         KeychainHelper.save(key: "cli_pulse_token", value: token)
         if let rt = refreshToken {
             KeychainHelper.save(key: "cli_pulse_refresh_token", value: rt)
         }
+        // CRITICAL: push the bridged token into the shared APIClient *before* we
+        // flip isAuthenticated and kick off refreshAll(). Without this, every
+        // /rest/v1/rpc/* call goes out without an Authorization header and
+        // Supabase returns 401, leaving the watch silently empty.
+        await api.updateToken(token)
+        await api.updateRefreshToken(refreshToken)
         userName = name
         userEmail = email
         isAuthenticated = true
         isPaired = true
         startRefreshLoop()
-        Task { await refreshAll() }
+        // Apply any cached fallback data immediately so the UI isn't blank
+        // while the first network refresh is in flight.
+        applyFallbackData(from: WatchSessionManager.shared)
+        await refreshAll()
     }
 
     func signOut() {
@@ -251,18 +270,35 @@ public final class WatchAppState: ObservableObject {
 
     // MARK: - WCSession Fallback
 
-    func applyFallbackData(from sessionManager: WatchSessionManager) {
-        if dashboard == nil, let dash = sessionManager.lastReceivedDashboard {
+    /// Merge cached WCSession data into state.
+    ///
+    /// - `preferLive = true` (default): only fill empty/nil fields — used on
+    ///   launch / when cached data is strictly a fallback for a failing live
+    ///   refresh.
+    /// - `preferLive = false`: overwrite current values with the cached
+    ///   snapshot — used when the iPhone just pushed fresh data and we know
+    ///   it's at least as new as whatever the watch has locally.
+    func applyFallbackData(from sessionManager: WatchSessionManager, preferLive: Bool = true) {
+        let overwrite = !preferLive
+        if let dash = sessionManager.lastReceivedDashboard, overwrite || dashboard == nil {
             dashboard = dash
         }
-        if providers.isEmpty, !sessionManager.lastReceivedProviders.isEmpty {
+        if !sessionManager.lastReceivedProviders.isEmpty, overwrite || providers.isEmpty {
             providers = sessionManager.lastReceivedProviders
         }
-        if sessions.isEmpty, !sessionManager.lastReceivedSessions.isEmpty {
+        if !sessionManager.lastReceivedSessions.isEmpty, overwrite || sessions.isEmpty {
             sessions = sessionManager.lastReceivedSessions
         }
-        if alerts.isEmpty, !sessionManager.lastReceivedAlerts.isEmpty {
+        if !sessionManager.lastReceivedAlerts.isEmpty, overwrite || alerts.isEmpty {
             alerts = sessionManager.lastReceivedAlerts
+        }
+        if overwrite {
+            lastRefresh = sessionManager.lastSyncDate ?? lastRefresh
+            // The fresh push came from an authenticated iPhone — if the watch
+            // was showing an old lastError banner from a prior 401 / offline
+            // attempt, clear it.
+            lastError = nil
+            serverOnline = true
         }
     }
 }

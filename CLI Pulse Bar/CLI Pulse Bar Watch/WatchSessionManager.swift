@@ -37,23 +37,6 @@ final class WatchSessionManager: NSObject, ObservableObject {
         session.activate()
     }
 
-    /// Apply fallback data to the AppState when the server is unreachable.
-    @MainActor
-    func applyFallbackData(to state: AppState) {
-        if state.dashboard == nil, let dash = lastReceivedDashboard {
-            state.dashboard = dash
-        }
-        if state.providers.isEmpty, !lastReceivedProviders.isEmpty {
-            state.providers = lastReceivedProviders
-        }
-        if state.sessions.isEmpty, !lastReceivedSessions.isEmpty {
-            state.sessions = lastReceivedSessions
-        }
-        if state.alerts.isEmpty, !lastReceivedAlerts.isEmpty {
-            state.alerts = lastReceivedAlerts
-        }
-    }
-
     // MARK: - Persistence
 
     private func persistData() {
@@ -114,6 +97,10 @@ final class WatchSessionManager: NSObject, ObservableObject {
             if let alerts { self.lastReceivedAlerts = alerts }
             self.lastSyncDate = Date()
             self.persistData()
+            // Let WatchAppState re-apply fallback data into its @Published
+            // properties — without this, an in-flight iPhone push only updates
+            // the cache and views stay empty until the next app launch.
+            NotificationCenter.default.post(name: .watchDidReceiveContext, object: nil)
         }
     }
 }
@@ -132,6 +119,10 @@ extension WatchSessionManager: WCSessionDelegate {
         // Load any previously persisted data on activation
         DispatchQueue.main.async {
             self.loadPersistedData()
+            // Tell WatchAppState to re-apply fallback from whatever we just
+            // loaded from UserDefaults. Covers the case where the watch app
+            // launched while offline and no live context is coming yet.
+            NotificationCenter.default.post(name: .watchDidReceiveContext, object: nil)
         }
         // Process any existing application context
         if !session.receivedApplicationContext.isEmpty {
@@ -201,4 +192,5 @@ extension WatchSessionManager: WCSessionDelegate {
 extension Notification.Name {
     static let watchDidReceiveAuth = Notification.Name("watchDidReceiveAuth")
     static let watchDidReceiveLogout = Notification.Name("watchDidReceiveLogout")
+    static let watchDidReceiveContext = Notification.Name("watchDidReceiveContext")
 }

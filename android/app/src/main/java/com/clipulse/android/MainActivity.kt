@@ -8,18 +8,29 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.clipulse.android.data.remote.TokenStore
 import com.clipulse.android.ui.navigation.AppNavigation
 import com.clipulse.android.ui.theme.CLIPulseTheme
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
-    /** OAuth code extracted from an auth callback deep link. */
-    var pendingOAuthCode by mutableStateOf<String?>(null)
-        private set
+    @Inject lateinit var tokenStore: TokenStore
 
-    /** OAuth state parameter for CSRF verification. Set by LoginScreen before launching browser. */
-    var expectedOAuthState: String? = null
+    /**
+     * OAuth callback payload — kind + code + verifier. Populated only after the deep link's
+     * state matches a pending flow that we launched ourselves. The composable is responsible
+     * for consuming it (via [consumePendingCallback]) once the exchange is complete.
+     */
+    data class OAuthCallback(
+        val kind: String, // "login" or "link"
+        val code: String,
+        val codeVerifier: String,
+    )
+
+    var pendingCallback by mutableStateOf<OAuthCallback?>(null)
+        private set
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -27,7 +38,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             CLIPulseTheme {
-                AppNavigation(oauthCode = pendingOAuthCode)
+                AppNavigation(pendingCallback = pendingCallback)
             }
         }
     }
@@ -37,6 +48,11 @@ class MainActivity : ComponentActivity() {
         handleOAuthDeepLink(intent)
     }
 
+    /** Callers should invoke this after handling the callback to prevent re-firing. */
+    fun consumePendingCallback() {
+        pendingCallback = null
+    }
+
     private fun handleOAuthDeepLink(intent: Intent?) {
         val data = intent?.data ?: return
         // Accept both App Links (https://clipulse.app/auth/callback) and fallback custom scheme
@@ -44,16 +60,26 @@ class MainActivity : ComponentActivity() {
         val isCustom = data.scheme == "clipulse" && data.host == "auth" && data.path == "/callback"
         if (!isHttps && !isCustom) return
 
-        // Verify state parameter to prevent CSRF attacks
-        val state = data.getQueryParameter("state")
-        val expected = expectedOAuthState
-        if (expected != null && state != expected) return // state mismatch — reject
+        val code = data.getQueryParameter("code") ?: return
+        val state = data.getQueryParameter("state") ?: return
 
-        val code = data.getQueryParameter("code")
-        // Validate code is a plausible OAuth authorization code (alphanumeric + common delimiters)
-        if (code != null && code.length in 10..512 && code.matches(Regex("^[A-Za-z0-9_\\-/.+=]+$"))) {
-            pendingOAuthCode = code
-            expectedOAuthState = null // consumed
-        }
+        // Validate code shape (alphanumeric + common delimiters)
+        if (code.length !in 10..512 || !code.matches(Regex("^[A-Za-z0-9_\\-/.+=]+$"))) return
+
+        // Match against the durable pending-flow record. This survives process death
+        // and enforces state binding for both login and link flows.
+        val pending = tokenStore.loadPendingOAuthFlow() ?: return
+        if (pending.state != state) return // state mismatch — reject
+
+        pendingCallback = OAuthCallback(
+            kind = pending.kind,
+            code = code,
+            codeVerifier = pending.codeVerifier,
+        )
+        // The durable pending record is cleared by the screen after a successful exchange
+        // (or it expires via TTL). This lets us survive process death between deep-link
+        // arrival and exchange completion: on relaunch, the callback is re-published from
+        // intent + pending record. Codes are one-shot, but the verifier/state pair stays
+        // consistent across retries until TTL.
     }
 }

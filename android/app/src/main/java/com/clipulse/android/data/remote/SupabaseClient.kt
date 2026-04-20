@@ -578,6 +578,108 @@ class SupabaseClient(
         }
     }
 
+    // ── Identity Linking ──────────────────────────────────
+
+    /** List OAuth identities linked to the current user. */
+    suspend fun userIdentities(): List<UserIdentity> = withContext(Dispatchers.IO) {
+        val json = get("$supabaseUrl/auth/v1/user")
+        val arr = json.optJSONArray("identities") ?: JSONArray()
+        (0 until arr.length()).mapNotNull { i ->
+            val row = arr.optJSONObject(i) ?: return@mapNotNull null
+            val identityId = row.optString("identity_id", null) ?: row.optString("id", null)
+                ?: return@mapNotNull null
+            val provider = row.optString("provider", "") ?: ""
+            val data = row.optJSONObject("identity_data")
+            val email = data?.optString("email", null) ?: row.optString("email", null)
+            val createdAt = row.optString("created_at", null)
+            UserIdentity(id = identityId, provider = provider, email = email, createdAt = createdAt)
+        }
+    }
+
+    /**
+     * Build a Supabase link-identity authorization URL (PKCE) for Google/GitHub.
+     * Requires a valid current session. Returns (authorizationURL, codeVerifier, state).
+     * The `state` is a CSRF token that Supabase propagates through the OAuth roundtrip
+     * and echoes back in the redirect — callers must verify it matches before exchanging.
+     */
+    suspend fun linkIdentityAuthorizeUrl(provider: String): Triple<String, String, String> =
+        withContext(Dispatchers.IO) {
+            val token = tokenStore.accessToken ?: throw ApiError.TokenExpired
+            val verifier = generateCodeVerifier()
+            val challenge = sha256Base64Url(verifier)
+            val state = generateCodeVerifier().take(32)
+            val redirectTo = URLEncoder.encode("https://clipulse.app/auth/callback", "UTF-8")
+            val url = "$supabaseUrl/auth/v1/user/identities/authorize" +
+                "?provider=$provider" +
+                "&redirect_to=$redirectTo" +
+                "&code_challenge=$challenge" +
+                "&code_challenge_method=S256" +
+                "&state=$state" +
+                "&skip_http_redirect=true"
+            val req = Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("apikey", supabaseAnonKey)
+                .addHeader("Authorization", "Bearer $token")
+                .build()
+            val resp = client.newCall(req).execute()
+            resp.use { r ->
+                val responseBody = r.body?.string() ?: ""
+                if (!r.isSuccessful) throw ApiError.Http(r.code, responseBody)
+                val json = JSONObject(responseBody)
+                val authUrl = json.optString("url")
+                if (authUrl.isNullOrEmpty()) throw ApiError.Http(500, "No url in authorize response")
+                Triple(authUrl, verifier, state)
+            }
+        }
+
+    /**
+     * Exchange a link-identity PKCE code. Rotates the session tokens to reflect the
+     * newly linked identity, but does not replace the current user.
+     */
+    suspend fun exchangeOAuthCodeForLink(code: String, codeVerifier: String): Unit =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().apply {
+                put("auth_code", code)
+                put("code_verifier", codeVerifier)
+            }
+            val req = Request.Builder()
+                .url("$supabaseUrl/auth/v1/token?grant_type=pkce")
+                .post(body.toString().toRequestBody(jsonMedia))
+                .addHeader("Content-Type", "application/json")
+                .addHeader("apikey", supabaseAnonKey)
+                .build()
+            val resp = client.newCall(req).execute()
+            resp.use { r ->
+                val responseBody = r.body?.string() ?: ""
+                if (!r.isSuccessful) throw ApiError.Http(r.code, responseBody)
+                val json = JSONObject(responseBody)
+                val at = json.optString("access_token", "")
+                val rt = json.optString("refresh_token", "")
+                if (at.isNotEmpty()) {
+                    tokenStore.accessToken = at
+                    if (rt.isNotEmpty()) tokenStore.refreshToken = rt
+                }
+            }
+        }
+
+    /** Unlink a given identity from the current user. */
+    suspend fun unlinkIdentity(identityId: String): Unit = withContext(Dispatchers.IO) {
+        val token = tokenStore.accessToken ?: throw ApiError.TokenExpired
+        val encodedId = URLEncoder.encode(identityId, "UTF-8")
+        val req = Request.Builder()
+            .url("$supabaseUrl/auth/v1/user/identities/$encodedId")
+            .delete()
+            .addHeader("apikey", supabaseAnonKey)
+            .addHeader("Authorization", "Bearer $token")
+            .build()
+        val resp = client.newCall(req).execute()
+        resp.use { r ->
+            val responseBody = r.body?.string() ?: ""
+            if (!r.isSuccessful) throw ApiError.Http(r.code, responseBody)
+        }
+    }
+
     private fun generateCodeVerifier(): String {
         val bytes = ByteArray(32)
         java.security.SecureRandom().nextBytes(bytes)

@@ -458,7 +458,10 @@ public struct ModelCostDetail: Sendable, Identifiable {
     public let outputTokens: Int
     public let cachedTokens: Int
 
-    public var totalTokens: Int { inputTokens + outputTokens + cachedTokens }
+    /// v1.9.4: "I/O tokens" only. Cached is kept as a separate field for
+    /// detail views but excluded from the headline number for consistency
+    /// with the Providers card and Cost Summary.
+    public var totalTokens: Int { inputTokens + outputTokens }
 }
 
 public struct CostSummary: Sendable {

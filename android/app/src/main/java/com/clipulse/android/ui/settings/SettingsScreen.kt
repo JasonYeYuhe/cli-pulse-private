@@ -1,5 +1,7 @@
 package com.clipulse.android.ui.settings
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -9,21 +11,41 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.clipulse.android.MainActivity
 import com.clipulse.android.R
+import com.clipulse.android.data.model.UserIdentity
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
+    linkCallback: MainActivity.OAuthCallback? = null,
     onSignOut: () -> Unit,
     onManageSubscription: () -> Unit = {},
     onViewDevices: () -> Unit = {},
     onViewTeams: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsState()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var pendingIdentityToUnlink by remember { mutableStateOf<UserIdentity?>(null) }
+
+    // Handle deep-link callback from identity-linking OAuth flow.
+    // The verifier + state have already been validated by MainActivity against the durable
+    // pending-flow record, so we can exchange directly.
+    LaunchedEffect(linkCallback) {
+        val cb = linkCallback ?: return@LaunchedEffect
+        viewModel.completeLinkIdentity(cb.code, cb.codeVerifier)
+        (context as? MainActivity)?.consumePendingCallback()
+    }
 
     Column(
         modifier = Modifier
@@ -64,6 +86,74 @@ fun SettingsScreen(
         }
 
         Spacer(Modifier.height(16.dp))
+
+        // Linked Accounts
+        if (!state.isDemoMode) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Linked Accounts", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Link Google or GitHub to sign in with either — they'll resolve to the same CLI Pulse account.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
+
+                    val externalProviders = listOf("google", "github")
+                    externalProviders.forEach { provider ->
+                        val linked = state.linkedIdentities.firstOrNull { it.provider == provider }
+                        // Prevent leaving the account with zero sign-in methods. Email is a
+                        // valid sign-in method (password + OTP), so total count > 1 is enough.
+                        val totalCount = state.linkedIdentities.size
+                        LinkedAccountRow(
+                            providerLabel = providerDisplayName(provider),
+                            linkedIdentity = linked,
+                            canUnlink = totalCount > 1,
+                            isBusy = state.isLinkingIdentity,
+                            onLink = {
+                                scope.launch {
+                                    val url = viewModel.startLinkIdentity(provider) ?: return@launch
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                }
+                            },
+                            onUnlinkRequest = { pendingIdentityToUnlink = linked },
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+
+                    state.linkIdentityError?.let { err ->
+                        Text(
+                            err,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+        }
+
+        // Confirm unlink dialog
+        pendingIdentityToUnlink?.let { identity ->
+            AlertDialog(
+                onDismissRequest = { pendingIdentityToUnlink = null },
+                title = { Text("Unlink ${providerDisplayName(identity.provider)}?") },
+                text = { Text("You won't be able to sign in with ${providerDisplayName(identity.provider)} anymore. You can relink later.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        viewModel.unlinkIdentity(identity)
+                        pendingIdentityToUnlink = null
+                    }) {
+                        Text("Unlink", color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingIdentityToUnlink = null }) { Text("Cancel") }
+                },
+            )
+        }
 
         // Settings from server (editable)
         val settings = state.settings
@@ -340,4 +430,63 @@ private fun EditableSettingRow(label: String, currentValue: Int, onUpdate: (Int)
             }
         }
     }
+}
+
+@Composable
+private fun LinkedAccountRow(
+    providerLabel: String,
+    linkedIdentity: UserIdentity?,
+    canUnlink: Boolean,
+    isBusy: Boolean,
+    onLink: () -> Unit,
+    onUnlinkRequest: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(providerLabel, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+            if (linkedIdentity != null) {
+                Text(
+                    linkedIdentity.email ?: "Linked",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Text(
+                    "Not linked",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (linkedIdentity != null) {
+            TextButton(
+                onClick = onUnlinkRequest,
+                enabled = canUnlink && !isBusy,
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            ) {
+                Text("Unlink")
+            }
+        } else {
+            OutlinedButton(
+                onClick = onLink,
+                enabled = !isBusy,
+            ) {
+                Text("Link")
+            }
+        }
+    }
+}
+
+private fun providerDisplayName(provider: String): String = when (provider.lowercase()) {
+    "google" -> "Google"
+    "github" -> "GitHub"
+    "apple" -> "Apple"
+    "email" -> "Email"
+    else -> provider.replaceFirstChar { it.uppercase() }
 }

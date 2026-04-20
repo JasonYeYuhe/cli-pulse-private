@@ -3,6 +3,7 @@ package com.clipulse.android.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.clipulse.android.data.model.SettingsSnapshot
+import com.clipulse.android.data.model.UserIdentity
 import com.clipulse.android.data.local.CacheDao
 import com.clipulse.android.data.remote.SupabaseClient
 import com.clipulse.android.data.remote.TokenStore
@@ -25,6 +26,9 @@ data class SettingsUiState(
     val webhookFilterSeverities: List<String> = emptyList(),
     val webhookFilterTypes: List<String> = emptyList(),
     val isDemoMode: Boolean = false,
+    val linkedIdentities: List<UserIdentity> = emptyList(),
+    val isLinkingIdentity: Boolean = false,
+    val linkIdentityError: String? = null,
 )
 
 @HiltViewModel
@@ -45,6 +49,80 @@ class SettingsViewModel @Inject constructor(
 
     init {
         loadSettings()
+        refreshLinkedIdentities()
+    }
+
+    // ── Identity linking ─────────────────────────────
+
+    fun refreshLinkedIdentities() {
+        if (tokenStore.isDemoMode) return
+        viewModelScope.launch {
+            try {
+                val list = supabase.userIdentities()
+                _state.value = _state.value.copy(linkedIdentities = list)
+            } catch (e: Exception) {
+                // Non-fatal — surface via linkIdentityError if something important failed
+                _state.value = _state.value.copy(linkIdentityError = e.message)
+            }
+        }
+    }
+
+    /**
+     * Start a link-identity flow: fetch authorize URL, persist pending-flow record to survive
+     * process death during the browser round-trip. Returns the URL to open or null on error.
+     */
+    suspend fun startLinkIdentity(provider: String): String? {
+        _state.value = _state.value.copy(linkIdentityError = null)
+        return try {
+            val (url, verifier, state) = supabase.linkIdentityAuthorizeUrl(provider)
+            tokenStore.savePendingOAuthFlow(
+                TokenStore.PendingOAuthFlow(
+                    kind = "link",
+                    provider = provider,
+                    codeVerifier = verifier,
+                    state = state,
+                    createdAt = System.currentTimeMillis(),
+                )
+            )
+            url
+        } catch (e: Exception) {
+            _state.value = _state.value.copy(linkIdentityError = e.message ?: "Failed to start link flow")
+            null
+        }
+    }
+
+    fun completeLinkIdentity(code: String, codeVerifier: String) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLinkingIdentity = true, linkIdentityError = null)
+            try {
+                supabase.exchangeOAuthCodeForLink(code, codeVerifier)
+                // Exchange succeeded — clear the durable pending-flow record.
+                tokenStore.clearPendingOAuthFlow()
+                val list = supabase.userIdentities()
+                _state.value = _state.value.copy(isLinkingIdentity = false, linkedIdentities = list)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    isLinkingIdentity = false,
+                    linkIdentityError = e.message ?: "Failed to link identity",
+                )
+            }
+        }
+    }
+
+    fun unlinkIdentity(identity: UserIdentity) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLinkingIdentity = true, linkIdentityError = null)
+            try {
+                supabase.unlinkIdentity(identity.id)
+                val list = supabase.userIdentities()
+                _state.value = _state.value.copy(isLinkingIdentity = false, linkedIdentities = list)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    isLinkingIdentity = false,
+                    linkIdentityError = e.message ?: "Failed to unlink identity",
+                )
+            }
+        }
     }
 
     private fun loadSettings() {

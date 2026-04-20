@@ -16,6 +16,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.clipulse.android.MainActivity
 import com.clipulse.android.ui.alerts.AlertsScreen
 import com.clipulse.android.ui.login.LoginScreen
 import com.clipulse.android.ui.overview.OverviewScreen
@@ -41,12 +42,18 @@ enum class Screen(val route: String, val label: String, val icon: ImageVector) {
 }
 
 @Composable
-fun AppNavigation(oauthCode: String? = null) {
+fun AppNavigation(pendingCallback: MainActivity.OAuthCallback? = null) {
     val navController = rememberNavController()
     var isLoggedIn by remember { mutableStateOf(false) }
 
+    // Only deliver a callback to the screen whose flow-kind matches. A login callback
+    // received while we're on the authenticated stack, or vice versa, is ignored — the
+    // MainActivity has already cleared the pending-flow record.
+    val loginCallback = pendingCallback?.takeIf { it.kind == "login" }
+    val linkCallback = pendingCallback?.takeIf { it.kind == "link" }
+
     if (!isLoggedIn) {
-        LoginScreen(oauthCode = oauthCode, onLoggedIn = { isLoggedIn = true })
+        LoginScreen(loginCallback = loginCallback, onLoggedIn = { isLoggedIn = true })
         return
     }
 
@@ -114,6 +121,7 @@ fun AppNavigation(oauthCode: String? = null) {
             composable(Screen.Alerts.route) { AlertsScreen() }
             composable(Screen.Settings.route) {
                 SettingsScreen(
+                    linkCallback = linkCallback,
                     onSignOut = { isLoggedIn = false },
                     onManageSubscription = { navController.navigate("subscription") },
                     onViewDevices = { navController.navigate("devices") },
