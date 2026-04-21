@@ -12,7 +12,8 @@ CREATE OR REPLACE FUNCTION public.get_track_git_activity(
   p_device_id uuid,
   p_helper_secret text
 ) RETURNS boolean
-LANGUAGE plpgsql SECURITY DEFINER AS $$
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public, extensions AS $$
 DECLARE
   v_user_id uuid;
   v_flag boolean;

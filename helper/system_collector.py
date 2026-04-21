@@ -1361,11 +1361,6 @@ def _collect_memory_usage() -> int:
         if result.returncode != 0:
             return 0
 
-        page_size = 4096
-        page_size_match = re.search(r"page size of (\d+) bytes", result.stdout)
-        if page_size_match:
-            page_size = int(page_size_match.group(1))
-
         values: dict[str, int] = {}
         for line in result.stdout.splitlines():
             if ":" not in line:

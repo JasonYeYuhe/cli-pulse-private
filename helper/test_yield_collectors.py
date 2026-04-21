@@ -6,12 +6,10 @@ construct on the fly so it's deterministic.
 """
 from __future__ import annotations
 
-import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 import user_secret
 import git_collector
@@ -134,7 +132,7 @@ class TestGitCollector(unittest.TestCase):
         # Build a branch + merge to produce a merge commit
         self._make_commit("root")
         self._run_git("checkout", "-q", "-b", "feature")
-        feature_hash = self._make_commit("feature work")
+        self._make_commit("feature work")
         self._run_git("checkout", "-q", "main") if self._run_git("checkout", "-q", "main").returncode == 0 else self._run_git("checkout", "-q", "master")
         self._run_git("merge", "-q", "--no-ff", "feature", "-m", "merge feature")
 

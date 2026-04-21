@@ -28,7 +28,7 @@ begin
 
   return v_result;
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
 -- provider_summary: returns per-provider usage (week-scoped) for the authenticated user
 create or replace function public.provider_summary()
@@ -73,7 +73,7 @@ begin
     where sa.provider is not null or pq.user_id = v_user_id
   );
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
 -- get_user_tier: returns the user's subscription tier (supports admin overrides)
 create or replace function public.get_user_tier()
@@ -101,7 +101,7 @@ begin
 
   return jsonb_build_object('tier', coalesce(v_tier, 'free'));
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
 -- delete_user_account: cascading delete of all user data
 create or replace function public.delete_user_account()
@@ -152,7 +152,7 @@ begin
 
   return jsonb_build_object('status', 'deleted');
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
 -- cleanup_expired_data: delete sessions/alerts/snapshots older than retention period
 -- Restricted to service_role only (pg_cron or admin). Not callable by regular users.
@@ -216,7 +216,7 @@ begin
     'snapshots_deleted', v_total_snapshots
   );
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
 -- evaluate_budget_alerts: check project costs against budget thresholds
 -- Creates alerts for projects exceeding budget, with suppression to prevent spam.
@@ -324,7 +324,7 @@ begin
 
   return jsonb_build_object('alerts_created', v_alert_count);
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
 -- ============================================================
 -- Team Management RPCs
@@ -358,7 +358,7 @@ begin
 
   return jsonb_build_object('team_id', v_team_id, 'name', p_name);
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
 -- team_details: return team info + members + invites
 create or replace function public.team_details(p_team_id uuid)
@@ -398,7 +398,7 @@ begin
 
   return jsonb_build_object('team', v_team, 'members', v_members, 'invites', v_invites);
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
 -- invite_member: send an invite to a team
 create or replace function public.invite_member(p_team_id uuid, p_email text, p_role text default 'member')
@@ -431,7 +431,7 @@ begin
 
   return jsonb_build_object('invite_id', v_invite_id, 'email', p_email);
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
 -- accept_invite: join a team via invite
 create or replace function public.accept_invite(p_invite_id uuid)
@@ -468,7 +468,7 @@ begin
 
   return jsonb_build_object('team_id', v_invite.team_id, 'role', v_invite.role);
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
 -- remove_member: remove a member from a team
 create or replace function public.remove_member(p_team_id uuid, p_user_id uuid)
@@ -502,7 +502,7 @@ begin
 
   return jsonb_build_object('removed', p_user_id);
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
 -- update_member_role: change a member's role (owner only)
 create or replace function public.update_member_role(p_team_id uuid, p_user_id uuid, p_role text)
@@ -524,7 +524,7 @@ begin
 
   return jsonb_build_object('user_id', p_user_id, 'role', p_role);
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
 -- team_usage_summary: aggregated usage for a team
 create or replace function public.team_usage_summary(p_team_id uuid)
@@ -563,4 +563,4 @@ begin
       and s.last_active_at >= v_week_start
   );
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;

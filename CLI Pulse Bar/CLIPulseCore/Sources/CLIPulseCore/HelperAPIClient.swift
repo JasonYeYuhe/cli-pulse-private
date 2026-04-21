@@ -40,6 +40,10 @@ public actor HelperAPIClient {
             "p_system": system,
             "p_helper_version": helperVersion,
         ])
+        if let errorCode = result["error"] as? String {
+            let message = (result["message"] as? String) ?? errorCode
+            throw HelperAPIError.pairingRejected(code: errorCode, message: message)
+        }
         guard let deviceId = result["device_id"] as? String,
               let userId = result["user_id"] as? String,
               let secret = result["helper_secret"] as? String else {
@@ -164,6 +168,7 @@ public enum HelperAPIError: LocalizedError {
     case invalidURL(String)
     case httpError(status: Int, function: String, body: String)
     case parseFailed(String)
+    case pairingRejected(code: String, message: String)
 
     public var errorDescription: String? {
         switch self {
@@ -171,6 +176,7 @@ public enum HelperAPIError: LocalizedError {
         case .invalidURL(let fn): return "Invalid URL for \(fn)"
         case .httpError(let s, let fn, let body): return "HTTP \(s) from \(fn): \(body.prefix(200))"
         case .parseFailed(let msg): return "Parse failed: \(msg)"
+        case .pairingRejected(_, let message): return message
         }
     }
 }

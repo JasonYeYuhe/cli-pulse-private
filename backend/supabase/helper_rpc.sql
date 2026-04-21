@@ -10,7 +10,17 @@
 -- ============================================================
 
 -- Register a helper device via pairing code
--- Called once during pairing; returns a device-scoped secret.
+-- Called once during pairing. Response shape:
+--   success: { device_id, user_id, helper_secret }
+--   failure: { error: <code>, message: <human-readable> }
+--   error codes: rate_limited | invalid_code | too_many_failed_attempts | expired
+-- Brute-force protection (see migrate_v0.16):
+--   Layer 1 — per-code failed_attempts counter (caps guesses at a real code)
+--   Layer 2 — per-IP 10/min window via pairing_attempt_log (caps random
+--             code cycling where the code doesn't exist in pairing_codes)
+-- IMPORTANT: Expected failures RETURN jsonb — they do NOT raise. RAISE would
+-- roll back the pairing_attempt_log insert and failed_attempts bump made
+-- earlier in the function, defeating the counters.
 create or replace function public.register_helper(
   p_pairing_code text,
   p_device_name text,
@@ -25,32 +35,63 @@ declare
   v_expires_at timestamptz;
   v_helper_secret text;
   v_failed_attempts integer;
+  v_ip text;
+  v_ip_attempt_count integer;
 begin
-  -- Validate pairing code exists
+  begin
+    v_ip := nullif(current_setting('request.headers', true), '')::jsonb->>'cf-connecting-ip';
+  exception when others then
+    v_ip := null;
+  end;
+
+  if v_ip is not null then
+    perform pg_advisory_xact_lock(hashtext(v_ip)::bigint);
+  end if;
+
+  delete from public.pairing_attempt_log where attempted_at < now() - interval '1 hour';
+
+  insert into public.pairing_attempt_log (ip_addr) values (v_ip);
+
+  if v_ip is not null then
+    select count(*) into v_ip_attempt_count
+    from public.pairing_attempt_log
+    where ip_addr = v_ip
+      and attempted_at > now() - interval '1 minute';
+
+    if v_ip_attempt_count > 10 then
+      return jsonb_build_object(
+        'error', 'rate_limited',
+        'message', 'Too many pairing attempts — please wait a minute and try again'
+      );
+    end if;
+  end if;
+
   select user_id, expires_at, failed_attempts
   into v_user_id, v_expires_at, v_failed_attempts
   from public.pairing_codes where code = p_pairing_code;
 
   if v_user_id is null then
-    raise exception 'Invalid pairing code';
+    update public.pairing_codes set failed_attempts = failed_attempts + 1
+    where code = p_pairing_code;
+    return jsonb_build_object('error', 'invalid_code', 'message', 'Invalid pairing code');
   end if;
 
-  -- Rate limit: block after 5 failed attempts
   if v_failed_attempts >= 5 then
-    raise exception 'Too many failed attempts — please generate a new pairing code';
+    return jsonb_build_object(
+      'error', 'too_many_failed_attempts',
+      'message', 'Too many failed attempts — please generate a new pairing code'
+    );
   end if;
 
   if v_expires_at < now() then
     update public.pairing_codes set failed_attempts = failed_attempts + 1
     where code = p_pairing_code;
     delete from public.pairing_codes where code = p_pairing_code;
-    raise exception 'Pairing code has expired';
+    return jsonb_build_object('error', 'expired', 'message', 'Pairing code has expired');
   end if;
 
-  -- Generate a device-scoped secret and store only its SHA-256 hash
   v_helper_secret := 'helper_' || encode(gen_random_bytes(32), 'hex');
 
-  -- Truncate inputs to prevent oversized strings
   insert into public.devices (user_id, name, type, system, helper_version, status, helper_secret)
   values (v_user_id, left(p_device_name, 255), left(p_device_type, 50), left(p_system, 255), left(p_helper_version, 20), 'Online', encode(digest(v_helper_secret, 'sha256'), 'hex'))
   returning id into v_device_id;
@@ -60,7 +101,7 @@ begin
 
   return jsonb_build_object('device_id', v_device_id, 'user_id', v_user_id, 'helper_secret', v_helper_secret);
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
 -- Helper heartbeat — requires device secret
 create or replace function public.helper_heartbeat(
@@ -89,7 +130,7 @@ begin
 
   return jsonb_build_object('status', 'ok');
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
 -- Helper sync — upsert sessions, alerts, provider quotas
 -- Requires device secret for authentication
@@ -223,4 +264,4 @@ begin
 
   return jsonb_build_object('sessions_synced', v_session_count, 'alerts_synced', v_alert_count);
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;

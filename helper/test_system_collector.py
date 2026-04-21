@@ -1,7 +1,6 @@
 """Tests for provider quota parsing and collection in system_collector.py."""
 from __future__ import annotations
 import unittest
-from unittest.mock import patch
 from system_collector import (
     _parse_claude_api_response, _parse_claude_usage_output, _infer_claude_plan,
     _parse_gemini_quota_response, _load_gemini_project_id,

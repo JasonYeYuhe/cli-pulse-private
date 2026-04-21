@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import time
 import urllib.error
@@ -12,9 +13,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from system_collector import CollectedAlert, collect_alerts, collect_device_snapshot, collect_sessions, estimate_provider_quotas, estimate_provider_remaining
+from system_collector import CollectedAlert, collect_alerts, collect_device_snapshot, collect_sessions, estimate_provider_quotas
 from git_collector import GitCollector, project_paths_from_sessions
 import user_secret as _user_secret_module
+
+logger = logging.getLogger("cli_pulse.helper")
+
+# Exponential backoff for ingest_commits transient failures, in seconds.
+# Values tuned to give a ~13s worst-case retry window before giving up
+# without dragging out the daemon's main loop.
+INGEST_RETRY_BACKOFFS = (1.0, 3.0, 9.0)
 
 
 CONFIG_PATH = Path.home() / ".cli-pulse-helper.json"
@@ -97,6 +105,61 @@ def supabase_rpc(function_name: str, params: dict[str, Any]) -> Any:
         raise SyncError("Request timed out — check your network connection") from error
 
 
+def _ingest_commits_with_retry(config: "HelperConfig",
+                               payloads: list[dict[str, Any]],
+                               batch_size: int = 200,
+                               backoffs: tuple[float, ...] = INGEST_RETRY_BACKOFFS,
+                               sleep_fn: Any = time.sleep) -> None:
+    """Push commit payloads to `ingest_commits`, retrying each batch with
+    the configured backoff schedule.
+
+    Since v0.18 (PROJECT_FIX_v1.9.6c) the RPC authenticates via device_id +
+    helper_secret (same pattern as helper_sync), because the daemon only
+    has the anon key — no user JWT means `auth.uid()` is NULL and the old
+    1-arg signature always returned "Not authenticated".
+
+    `backoffs` is the sleep schedule BEFORE each retry — so a tuple of
+    length N means 1 initial attempt + N retries = N+1 total attempts.
+    Default (1, 3, 9) therefore means: try, wait 1s, retry, wait 3s,
+    retry, wait 9s, retry — up to 4 attempts per chunk.
+
+    Raises the last SyncError if every attempt fails so the caller can
+    avoid advancing `last_scanned_projects` and the batch gets
+    re-picked-up on the next daemon cycle.
+
+    `sleep_fn` is a hook to skip real sleep in tests.
+    """
+    total_attempts = len(backoffs) + 1
+    for i in range(0, len(payloads), batch_size):
+        chunk = payloads[i:i + batch_size]
+        last_exc: SyncError | None = None
+        for attempt_idx in range(total_attempts):
+            try:
+                supabase_rpc("ingest_commits", {
+                    "p_device_id": config.device_id,
+                    "p_helper_secret": config.helper_secret,
+                    "p_commits": chunk,
+                })
+                last_exc = None
+                break
+            except SyncError as exc:
+                last_exc = exc
+                if attempt_idx < len(backoffs):
+                    delay = backoffs[attempt_idx]
+                    logger.warning(
+                        "ingest_commits chunk %d-%d attempt %d/%d failed: %s (retry in %.1fs)",
+                        i, i + len(chunk), attempt_idx + 1, total_attempts, exc, delay,
+                    )
+                    sleep_fn(delay)
+                else:
+                    logger.error(
+                        "ingest_commits chunk %d-%d attempt %d/%d failed: %s (giving up)",
+                        i, i + len(chunk), attempt_idx + 1, total_attempts, exc,
+                    )
+        if last_exc is not None:
+            raise last_exc
+
+
 def _infer_source_kind(alert: CollectedAlert) -> str:
     if alert.related_session_id:
         return "session"
@@ -116,6 +179,10 @@ def pair(args: argparse.Namespace) -> None:
         "p_system": args.system,
         "p_helper_version": args.helper_version,
     })
+    if isinstance(response, dict) and response.get("error"):
+        raise SyncError(
+            response.get("message") or f"pairing rejected: {response['error']}"
+        )
     config = HelperConfig(
         device_id=response["device_id"],
         user_id=response["user_id"],
@@ -138,7 +205,7 @@ def heartbeat(_: argparse.Namespace) -> None:
         "p_memory_usage": snapshot.memory_usage,
         "p_active_session_count": len(sessions),
     })
-    print("heartbeat sent")
+    logger.debug("heartbeat sent")
 
 
 def sync(_: argparse.Namespace) -> None:
@@ -195,7 +262,7 @@ def sync(_: argparse.Namespace) -> None:
         "p_provider_remaining": {p: q["remaining"] for p, q in provider_quotas.items()},
         "p_provider_tiers": provider_quotas,
     })
-    print(f"synced {response.get('sessions_synced', 0)} sessions")
+    logger.info("synced %s sessions", response.get("sessions_synced", 0))
 
 
 def _fetch_track_git_activity(config: HelperConfig) -> bool:
@@ -242,18 +309,18 @@ def daemon(args: argparse.Namespace) -> None:
     GIT_SCAN_BACKSTOP_SECONDS = 600  # 10 minutes
     env_force_git = os.environ.get("CLI_PULSE_TRACK_GIT") == "1"
     if env_force_git:
-        print("[yield] git activity tracking forced on via CLI_PULSE_TRACK_GIT=1")
+        logger.info("git activity tracking forced on via CLI_PULSE_TRACK_GIT=1")
 
     def _handle_shutdown(signum, _frame):
         nonlocal stopping
         sig_name = signal.Signals(signum).name
-        print(f"\n[{sig_name}] Shutting down gracefully...")
+        logger.info("%s received — shutting down gracefully...", sig_name)
         stopping = True
 
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGHUP, _handle_shutdown)
 
-    print(f"CLI Pulse helper daemon started (interval={interval}s). Press Ctrl+C to stop.")
+    logger.info("CLI Pulse helper daemon started (interval=%ds). Press Ctrl+C to stop.", interval)
     try:
         while not stopping:
             try:
@@ -267,11 +334,11 @@ def daemon(args: argparse.Namespace) -> None:
                 if track_git and git_scanner is None:
                     try:
                         git_scanner = GitCollector(secret=_user_secret_module.load_or_create_secret())
-                        print("[yield] git activity tracking enabled")
+                        logger.info("git activity tracking enabled")
                     except Exception as exc:
-                        print(f"[yield] failed to initialize git tracking: {exc}")
+                        logger.warning("failed to initialize git tracking: %s", exc)
                 elif not track_git and git_scanner is not None:
-                    print("[yield] git activity tracking disabled by user")
+                    logger.info("git activity tracking disabled by user")
                     git_scanner = None
                     last_scanned_projects = frozenset()
                     last_scan_at = 0.0
@@ -287,21 +354,36 @@ def daemon(args: argparse.Namespace) -> None:
                     backstop_due = (now_ts - last_scan_at) >= GIT_SCAN_BACKSTOP_SECONDS
                     if paths and (set_changed or backstop_due):
                         commits = git_scanner.collect(paths)
+                        ingest_ok = True
                         if commits:
+                            # Server caps at 500/batch (see migrate_v0.14 P0-2).
+                            # Shard at 200 to leave headroom for client/server skew.
+                            payloads = [c.to_dict() for c in commits]
                             try:
-                                supabase_rpc("ingest_commits",
-                                             {"p_commits": [c.to_dict() for c in commits]})
-                                print(f"[yield] submitted {len(commits)} commits "
-                                      f"across {len(paths)} project(s)")
+                                _ingest_commits_with_retry(config, payloads, batch_size=200)
+                                logger.info(
+                                    "submitted %d commits across %d project(s)",
+                                    len(commits), len(paths),
+                                )
                             except SyncError as exc:
-                                print(f"[yield] commit submit failed: {exc}")
-                        last_scanned_projects = current_projects
-                        last_scan_at = now_ts
+                                ingest_ok = False
+                                logger.error(
+                                    "commit submit failed after retries: %s "
+                                    "(keeping project set unscanned so next cycle retries)",
+                                    exc,
+                                )
+                        # Only advance the cursor when the submit succeeded.
+                        # Otherwise the current project set stays "unscanned" so
+                        # the commits get picked up again next cycle instead of
+                        # being silently dropped.
+                        if ingest_ok:
+                            last_scanned_projects = current_projects
+                            last_scan_at = now_ts
             except ConfigError:
                 raise  # Fatal config errors should stop the daemon
             except (Exception, SyncError) as exc:
                 # Transient network/API errors — log and retry next cycle
-                print(f"[error] {exc}")
+                logger.error("daemon cycle failed: %s", exc)
             # Sleep in small increments so SIGTERM is handled promptly
             for _ in range(interval):
                 if stopping:
@@ -309,7 +391,7 @@ def daemon(args: argparse.Namespace) -> None:
                 time.sleep(1)
     except KeyboardInterrupt:
         pass
-    print("Daemon stopped.")
+    logger.info("daemon stopped")
 
 
 def run_demo(args: argparse.Namespace) -> None:
@@ -336,7 +418,22 @@ def inspect(_: argparse.Namespace) -> None:
     )
 
 
+def _configure_logging() -> None:
+    """Install a basicConfig once so helper + collector logs reach stderr.
+    Idempotent — skipped if caller has already configured logging."""
+    if logging.getLogger().handlers:
+        return
+    level_name = os.environ.get("CLI_PULSE_LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+
+
 def main() -> None:
+    _configure_logging()
     parser = argparse.ArgumentParser(description="CLI Pulse device helper")
     subparsers = parser.add_subparsers(dest="command", required=True)
 

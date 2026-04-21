@@ -12,7 +12,8 @@
 //   - SSRF protection (HTTPS only, rejects private/loopback IPs)
 //   - 60-second deduplication per alert grouping_key
 
-import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
+// v1.9.7 P1-4: use built-in Deno.serve instead of the legacy
+// `deno.land/std@0.177.0/http/server.ts` import.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const DEDUP_WINDOW_MS = 60_000;
@@ -176,7 +177,7 @@ function buildDiscordPayload(alert: {
   };
 }
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, {
       status: 204,

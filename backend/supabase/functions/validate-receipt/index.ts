@@ -16,7 +16,10 @@
 // Returns:
 //   { "verified": true/false, "tier": "free"|"pro"|"team" }
 
-import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
+// v1.9.7 P1-4: dropped `deno.land/std@0.177.0/http/server.ts` in favor of
+// the built-in `Deno.serve` entrypoint, eliminating a stale external dep.
+// `supabase-js` and `app-store-server-library` version pins are tracked as
+// a follow-up — they need a real deploy sandbox to bisect breaking changes.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   SignedDataVerifier,
@@ -199,7 +202,7 @@ async function verifyGooglePurchase(
 
 // ── Main handler ──
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   // CORS preflight
   if (req.method === "OPTIONS") {
     return new Response(null, {

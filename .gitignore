@@ -12,7 +12,7 @@ __pycache__/
 
 # Xcode
 build/
-*.xcodeproj/xcuserdata/
+xcuserdata/
 *.swiftpm/
 DerivedData/
 
@@ -50,7 +50,7 @@ PROJECT_HEALTH_HANDOFF_*.md
 
 # Supabase local state
 backend/supabase/.temp/
-supabase/
+/supabase/
 
 # Room schema exports (generated, tracked for migration testing)
 # android/app/schemas/

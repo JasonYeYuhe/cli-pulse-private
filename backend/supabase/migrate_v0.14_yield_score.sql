@@ -67,8 +67,16 @@ CREATE POLICY yield_score_daily_owner ON public.yield_score_daily FOR ALL USING 
 --    Splits session-cost aggregation from commit-link aggregation to avoid
 --    double-counting estimated_cost when a session links to multiple commits.
 CREATE OR REPLACE FUNCTION public.recompute_yield_scores_for_user(p_user_id UUID)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public, extensions AS $$
 BEGIN
+  -- Authorization: SECURITY DEFINER preserves JWT context, so auth.uid() is the
+  -- original caller. ingest_commits passes auth.uid() itself → no-op here.
+  -- Direct authenticated-role callers with a foreign UUID are rejected.
+  IF auth.uid() IS NULL OR auth.uid() <> p_user_id THEN
+    RAISE EXCEPTION 'permission denied';
+  END IF;
+
   DELETE FROM public.yield_score_daily WHERE user_id = p_user_id;
 
   WITH session_costs AS (
@@ -105,7 +113,8 @@ $$;
 --    the total per-commit weight equals 1.0, and flags ambiguous commits where
 --    no single session dominates (top weight < 0.6).
 CREATE OR REPLACE FUNCTION public.ingest_commits(p_commits jsonb)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public, extensions AS $$
 DECLARE
   v_user_id UUID := auth.uid();
   v_commit jsonb;
@@ -115,6 +124,14 @@ DECLARE
 BEGIN
   IF v_user_id IS NULL THEN
     RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  -- DoS guard: cap batch size. Legitimate clients shard ≤ 200 per call.
+  IF jsonb_typeof(p_commits) <> 'array' THEN
+    RAISE EXCEPTION 'p_commits must be a JSON array';
+  END IF;
+  IF jsonb_array_length(p_commits) > 500 THEN
+    RAISE EXCEPTION 'batch_too_large';
   END IF;
 
   FOR v_commit IN SELECT * FROM jsonb_array_elements(p_commits) LOOP
