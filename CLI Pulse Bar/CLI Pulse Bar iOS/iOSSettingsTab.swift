@@ -7,6 +7,7 @@ struct iOSSettingsTab: View {
     @EnvironmentObject var state: AppState
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showDeleteConfirmation = false
+    @State private var alertThresholds: AlertThresholds = AlertThresholdsStore.load()
 
     private var isIPad: Bool { horizontalSizeClass == .regular }
 
@@ -212,6 +213,37 @@ struct iOSSettingsTab: View {
                         Toggle(L10n.settings.alertNotifications, isOn: $state.notificationsEnabled)
                         Toggle(L10n.settings.sessionQuotaAlerts, isOn: $state.sessionQuotaNotifications)
                         Toggle(L10n.settings.checkProviderStatus, isOn: $state.checkProviderStatus)
+
+                        Stepper(value: Binding(
+                            get: { alertThresholds.warning },
+                            set: { newValue in
+                                alertThresholds = AlertThresholds.clamped(
+                                    warning: newValue, critical: alertThresholds.critical
+                                )
+                                AlertThresholdsStore.save(alertThresholds)
+                            }
+                        ), in: AlertThresholds.warningRange, step: 5) {
+                            Text("Warning threshold: \(alertThresholds.warning)%")
+                                .monospacedDigit()
+                        }
+                        Stepper(value: Binding(
+                            get: { alertThresholds.critical },
+                            set: { newValue in
+                                alertThresholds = AlertThresholds.clamped(
+                                    warning: alertThresholds.warning, critical: newValue
+                                )
+                                AlertThresholdsStore.save(alertThresholds)
+                            }
+                        ), in: (alertThresholds.warning + 1)...AlertThresholds.criticalUpperBound, step: 5) {
+                            Text("Critical threshold: \(alertThresholds.critical)%")
+                                .monospacedDigit()
+                        }
+                        if alertThresholds != .defaults {
+                            Button("Reset thresholds to defaults") {
+                                alertThresholds = .defaults
+                                AlertThresholdsStore.save(.defaults)
+                            }
+                        }
                     }
 
                     // Integrations (Webhook)

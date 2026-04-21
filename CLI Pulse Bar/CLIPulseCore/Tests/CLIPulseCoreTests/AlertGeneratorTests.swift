@@ -184,6 +184,26 @@ final class AlertGeneratorTests: XCTestCase {
         XCTAssertEqual(alerts[0]["severity"] as? String, "Critical")
     }
 
+    // P1-1: severity should be positional against the provided thresholds,
+    // not against hard-coded 95%/80% cutoffs. When a user configures
+    // [60, 85], a tier at 87% has crossed the "critical" (85) threshold
+    // and must render as Critical — even though 87 < 95.
+    func testQuotaAlertSeverityPositionalForCustomThresholds() {
+        let pHit85 = makeProvider(quota: 100, remaining: 13)  // 87% used
+        let critical = AlertGenerator.evaluateQuotaAlerts(
+            providers: [pHit85], thresholds: [60, 85]
+        )
+        XCTAssertEqual(critical.count, 1)
+        XCTAssertEqual(critical[0]["severity"] as? String, "Critical")
+
+        let pHit60 = makeProvider(quota: 100, remaining: 35)  // 65% used
+        let warning = AlertGenerator.evaluateQuotaAlerts(
+            providers: [pHit60], thresholds: [60, 85]
+        )
+        XCTAssertEqual(warning.count, 1)
+        XCTAssertEqual(warning[0]["severity"] as? String, "Warning")
+    }
+
     func testQuotaAlertFromTiers() {
         let tier = TierDTO(name: "5h Window", quota: 100, remaining: 10)
         let p = makeProvider(tiers: [tier])

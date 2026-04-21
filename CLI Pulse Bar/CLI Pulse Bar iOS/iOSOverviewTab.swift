@@ -294,12 +294,7 @@ struct iOSOverviewTab: View {
     }
 
     private func iOSUtilizationColor(_ percent: Double) -> Color {
-        switch percent {
-        case 200...: return .purple
-        case 100...: return .blue
-        case 50...: return .green
-        default: return .gray
-        }
+        OverviewFormatters.utilizationColor(percent)
     }
 
     // MARK: - Provider Breakdown
@@ -347,31 +342,11 @@ struct iOSOverviewTab: View {
                 Text(L10n.dashboard.topProjects)
                     .font(.subheadline.weight(.semibold))
             }
-
-            if dash.top_projects.isEmpty {
-                Text(L10n.dashboard.noProjects)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            } else {
-                ForEach(dash.top_projects) { project in
-                    HStack {
-                        Text(project.name)
-                            .font(.subheadline.weight(.medium))
-                            .lineLimit(1)
-                        Spacer()
-                        Text(CostFormatter.formatUsage(project.usage))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                        Text(CostFormatter.format(project.estimated_cost))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.green)
-                    }
-                    .padding(.vertical, 2)
-                    if project.id != dash.top_projects.last?.id {
-                        Divider()
-                    }
-                }
-            }
+            TopProjectsList(
+                projects: dash.top_projects,
+                emptyText: L10n.dashboard.noProjects,
+                style: .iOS
+            )
         }
         .padding()
         .background(PulseTheme.cardBackground)
@@ -392,17 +367,7 @@ struct iOSOverviewTab: View {
                     Text(L10n.dashboard.riskSignals)
                         .font(.subheadline.weight(.semibold))
                 }
-
-                ForEach(dash.risk_signals, id: \.self) { signal in
-                    HStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                        Text(signal)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                RiskSignalsList(signals: dash.risk_signals, style: .iOS)
             }
             .padding()
             .background(Color.orange.opacity(0.05))
@@ -422,72 +387,12 @@ struct iOSOverviewTab: View {
                 Text(L10n.dashboard.activity)
                     .font(.subheadline.weight(.semibold))
             }
-
-            let maxValue = trend.map(\.value).max() ?? 1
-            let barCount = trend.count
-
-            GeometryReader { geometry in
-                let spacing: CGFloat = 2
-                let totalSpacing = spacing * CGFloat(max(barCount - 1, 0))
-                let barWidth = barCount > 0 ? (geometry.size.width - totalSpacing) / CGFloat(barCount) : 0
-
-                HStack(alignment: .bottom, spacing: spacing) {
-                    ForEach(Array(trend.enumerated()), id: \.element.id) { _, point in
-                        let fraction = maxValue > 0 ? CGFloat(point.value) / CGFloat(maxValue) : 0
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(PulseTheme.accent.opacity(0.4 + 0.6 * fraction))
-                            .frame(width: max(barWidth, 1), height: max(fraction * geometry.size.height, 2))
-                    }
-                }
-                .frame(maxHeight: .infinity, alignment: .bottom)
-            }
-            .frame(height: 60)
-
-            // Hour labels
-            if trend.count >= 2 {
-                HStack {
-                    Text(hourLabel(trend.first?.timestamp ?? ""))
-                        .font(.caption2)
-                        .foregroundStyle(.quaternary)
-                    Spacer()
-                    if trend.count > 2 {
-                        Text(hourLabel(trend[trend.count / 2].timestamp))
-                            .font(.caption2)
-                            .foregroundStyle(.quaternary)
-                        Spacer()
-                    }
-                    Text(hourLabel(trend.last?.timestamp ?? ""))
-                        .font(.caption2)
-                        .foregroundStyle(.quaternary)
-                }
-            }
+            ActivityTimelineChart(trend: trend, style: .iOS)
         }
         .padding()
         .background(PulseTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal)
-    }
-
-    private func hourLabel(_ timestamp: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: timestamp) {
-            let hf = DateFormatter()
-            hf.dateFormat = "ha"
-            return hf.string(from: date).lowercased()
-        }
-        formatter.formatOptions = [.withInternetDateTime]
-        if let date = formatter.date(from: timestamp) {
-            let hf = DateFormatter()
-            hf.dateFormat = "ha"
-            return hf.string(from: date).lowercased()
-        }
-        if timestamp.count >= 13 {
-            let hourStart = timestamp.index(timestamp.startIndex, offsetBy: 11)
-            let hourEnd = timestamp.index(hourStart, offsetBy: 2)
-            return String(timestamp[hourStart..<hourEnd]) + "h"
-        }
-        return timestamp
     }
 }
 

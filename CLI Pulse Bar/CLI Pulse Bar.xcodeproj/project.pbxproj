@@ -17,6 +17,15 @@
 		A10009 /* SessionsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10009 /* SessionsTab.swift */; };
 		A10010 /* AlertsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10010 /* AlertsTab.swift */; };
 		A10011 /* SettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10011 /* SettingsTab.swift */; };
+		A10041 /* DangerZoneSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10041 /* DangerZoneSection.swift */; };
+		A10042 /* AccountCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10042 /* AccountCardView.swift */; };
+		A10043 /* HowItWorksCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10043 /* HowItWorksCard.swift */; };
+		A10044 /* SubscriptionSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10044 /* SubscriptionSection.swift */; };
+		A10045 /* PairingSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10045 /* PairingSection.swift */; };
+		A10046 /* GeneralSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10046 /* GeneralSection.swift */; };
+		A10047 /* DisplaySection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10047 /* DisplaySection.swift */; };
+		A10048 /* ProviderSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10048 /* ProviderSettingsSection.swift */; };
+		A10049 /* AdvancedSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10049 /* AdvancedSection.swift */; };
 		A10012 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10012 /* Assets.xcassets */; };
 		A10020 /* ProviderConfigEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10020 /* ProviderConfigEditor.swift */; };
 		A10021 /* NoAutoFillFields.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10021 /* NoAutoFillFields.swift */; };
@@ -139,6 +148,15 @@
 		B10009 /* SessionsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsTab.swift; sourceTree = "<group>"; };
 		B10010 /* AlertsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertsTab.swift; sourceTree = "<group>"; };
 		B10011 /* SettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTab.swift; sourceTree = "<group>"; };
+		B10041 /* DangerZoneSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DangerZoneSection.swift; sourceTree = "<group>"; };
+		B10042 /* AccountCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountCardView.swift; sourceTree = "<group>"; };
+		B10043 /* HowItWorksCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HowItWorksCard.swift; sourceTree = "<group>"; };
+		B10044 /* SubscriptionSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionSection.swift; sourceTree = "<group>"; };
+		B10045 /* PairingSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingSection.swift; sourceTree = "<group>"; };
+		B10046 /* GeneralSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSection.swift; sourceTree = "<group>"; };
+		B10047 /* DisplaySection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplaySection.swift; sourceTree = "<group>"; };
+		B10048 /* ProviderSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSettingsSection.swift; sourceTree = "<group>"; };
+		B10049 /* AdvancedSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdvancedSection.swift; sourceTree = "<group>"; };
 		B10012 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B10013 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B10014 /* CLI_Pulse_Bar.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CLI_Pulse_Bar.entitlements; sourceTree = "<group>"; };
@@ -267,6 +285,15 @@
 				B10009 /* SessionsTab.swift */,
 				B10010 /* AlertsTab.swift */,
 				B10011 /* SettingsTab.swift */,
+				B10041 /* DangerZoneSection.swift */,
+				B10042 /* AccountCardView.swift */,
+				B10043 /* HowItWorksCard.swift */,
+				B10044 /* SubscriptionSection.swift */,
+				B10045 /* PairingSection.swift */,
+				B10046 /* GeneralSection.swift */,
+				B10047 /* DisplaySection.swift */,
+				B10048 /* ProviderSettingsSection.swift */,
+				B10049 /* AdvancedSection.swift */,
 				B10020 /* ProviderConfigEditor.swift */,
 				B10021 /* NoAutoFillFields.swift */,
 				B10012 /* Assets.xcassets */,
@@ -567,6 +594,15 @@
 				A10009 /* SessionsTab.swift in Sources */,
 				A10010 /* AlertsTab.swift in Sources */,
 				A10011 /* SettingsTab.swift in Sources */,
+				A10041 /* DangerZoneSection.swift in Sources */,
+				A10042 /* AccountCardView.swift in Sources */,
+				A10043 /* HowItWorksCard.swift in Sources */,
+				A10044 /* SubscriptionSection.swift in Sources */,
+				A10045 /* PairingSection.swift in Sources */,
+				A10046 /* GeneralSection.swift in Sources */,
+				A10047 /* DisplaySection.swift in Sources */,
+				A10048 /* ProviderSettingsSection.swift in Sources */,
+				A10049 /* AdvancedSection.swift in Sources */,
 				A10020 /* ProviderConfigEditor.swift in Sources */,
 				A10021 /* NoAutoFillFields.swift in Sources */,
 			);

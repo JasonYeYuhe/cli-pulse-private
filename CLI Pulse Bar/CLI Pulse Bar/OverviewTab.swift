@@ -413,12 +413,7 @@ struct OverviewTab: View {
     }
 
     private func utilizationColor(_ percent: Double) -> Color {
-        switch percent {
-        case 200...: return .purple
-        case 100...: return .blue
-        case 50...: return .green
-        default: return .gray
-        }
+        OverviewFormatters.utilizationColor(percent)
     }
 
     // MARK: - Provider Breakdown
@@ -533,31 +528,11 @@ struct OverviewTab: View {
     private func topProjects(_ dash: DashboardSummary) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             SectionHeader(title: L10n.dashboard.topProjects, icon: "folder")
-
-            if dash.top_projects.isEmpty {
-                Text(L10n.dashboard.noProjects)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-            } else {
-                ForEach(dash.top_projects) { project in
-                    HStack {
-                        Text(project.name)
-                            .font(.system(size: 11, weight: .medium))
-                            .lineLimit(1)
-                        Spacer()
-                        Text(CostFormatter.formatUsage(project.usage))
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                        Text(CostFormatter.format(project.estimated_cost))
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.green)
-                    }
-                    .padding(.vertical, 2)
-                    if project.id != dash.top_projects.last?.id {
-                        Divider()
-                    }
-                }
-            }
+            TopProjectsList(
+                projects: dash.top_projects,
+                emptyText: L10n.dashboard.noProjects,
+                style: .macOS
+            )
         }
         .padding(10)
         .background(PulseTheme.cardBackground.opacity(0.3))
@@ -569,83 +544,11 @@ struct OverviewTab: View {
     private func activityTimeline(_ trend: [UsagePoint]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             SectionHeader(title: L10n.dashboard.activity, icon: "chart.bar.fill")
-
-            let maxValue = trend.map(\.value).max() ?? 1
-            let barCount = trend.count
-
-            GeometryReader { geometry in
-                let spacing: CGFloat = 1
-                let totalSpacing = spacing * CGFloat(max(barCount - 1, 0))
-                let barWidth = barCount > 0 ? (geometry.size.width - totalSpacing) / CGFloat(barCount) : 0
-
-                HStack(alignment: .bottom, spacing: spacing) {
-                    ForEach(Array(trend.enumerated()), id: \.element.id) { _, point in
-                        let fraction = maxValue > 0 ? CGFloat(point.value) / CGFloat(maxValue) : 0
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(PulseTheme.accent.opacity(0.4 + 0.6 * fraction))
-                            .frame(width: max(barWidth, 1), height: max(fraction * geometry.size.height, 1))
-                    }
-                }
-                .frame(maxHeight: .infinity, alignment: .bottom)
-            }
-            .frame(height: 40)
-
-            // Hour labels
-            if trend.count >= 2 {
-                HStack {
-                    Text(hourLabel(trend.first?.timestamp ?? ""))
-                        .font(.system(size: 7))
-                        .foregroundStyle(.quaternary)
-                    Spacer()
-                    if trend.count > 2 {
-                        Text(hourLabel(trend[trend.count / 2].timestamp))
-                            .font(.system(size: 7))
-                            .foregroundStyle(.quaternary)
-                        Spacer()
-                    }
-                    Text(hourLabel(trend.last?.timestamp ?? ""))
-                        .font(.system(size: 7))
-                        .foregroundStyle(.quaternary)
-                }
-            }
+            ActivityTimelineChart(trend: trend, style: .macOS)
         }
         .padding(10)
         .background(PulseTheme.cardBackground.opacity(0.3))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    private static let isoFormatterFractional: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-
-    private static let isoFormatterBasic: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
-
-    private static let hourFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "ha"
-        return f
-    }()
-
-    private func hourLabel(_ timestamp: String) -> String {
-        if let date = Self.isoFormatterFractional.date(from: timestamp) {
-            return Self.hourFormatter.string(from: date).lowercased()
-        }
-        if let date = Self.isoFormatterBasic.date(from: timestamp) {
-            return Self.hourFormatter.string(from: date).lowercased()
-        }
-        // Last resort: try to extract hour from the timestamp string
-        if timestamp.count >= 13 {
-            let hourStart = timestamp.index(timestamp.startIndex, offsetBy: 11)
-            let hourEnd = timestamp.index(hourStart, offsetBy: 2)
-            return String(timestamp[hourStart..<hourEnd]) + "h"
-        }
-        return timestamp
     }
 
     // MARK: - Risk Signals
@@ -655,17 +558,7 @@ struct OverviewTab: View {
         if !dash.risk_signals.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 SectionHeader(title: L10n.dashboard.riskSignals, icon: "exclamationmark.shield")
-
-                ForEach(dash.risk_signals, id: \.self) { signal in
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.orange)
-                        Text(signal)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                RiskSignalsList(signals: dash.risk_signals, style: .macOS)
             }
             .padding(10)
             .background(Color.orange.opacity(0.05))

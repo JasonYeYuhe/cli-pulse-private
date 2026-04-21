@@ -49,8 +49,30 @@ public final class AppState: ObservableObject {
     /// `AlertGenerator.evaluateQuotaAlerts` until the suppression expires.
     /// `Date.distantFuture` means "never reappear unless threshold ratchets up
     /// (which produces a new ID)". Persisted in UserDefaults.
-    @Published public internal(set) var suppressedAlertIDs: [String: Date] = [:]
-    private static let suppressedAlertsKey = "cli_pulse_suppressed_alert_ids_v1"
+    @Published public internal(set) var suppressedAlertIDs: [String: SuppressionEntry] = [:]
+
+    // v1.10 P2-3 slice 1: the concrete types + pure logic moved to
+    // AlertSuppression.swift. These type aliases + static passthroughs
+    // preserve the existing AppState.SuppressionEntry / AppState.prunedSuppressions
+    // public API surface for all existing callers and tests.
+
+    public typealias SuppressionEntry = AlertSuppression.Entry
+
+    internal static let suppressedAlertsKey   = AlertSuppression.legacyKey
+    internal static let suppressedAlertsV2Key = AlertSuppression.currentKey
+
+    public nonisolated static var permanentSuppressionRetentionDays: Double {
+        AlertSuppression.permanentRetentionDays
+    }
+
+    /// Facade: defers to `AlertSuppression.prune(_:now:retentionDays:)`.
+    public nonisolated static func prunedSuppressions(
+        _ entries: [String: SuppressionEntry],
+        now: Date,
+        retentionDays: Double = AlertSuppression.permanentRetentionDays
+    ) -> (active: Set<String>, kept: [String: SuppressionEntry]) {
+        AlertSuppression.prune(entries, now: now, retentionDays: retentionDays)
+    }
 
     // MARK: - Cost Usage Scan (precise token data from local JSONL logs, macOS only)
     @Published public var costUsageScanResult: CostUsageScanResult?
@@ -108,13 +130,7 @@ public final class AppState: ObservableObject {
 
     public func scanMessagesThisWeek(for provider: String) -> Int? {
         guard let scan = costUsageScanResult, !scan.entries.isEmpty else { return nil }
-        let cal = Calendar.current
-        let now = Date()
-        guard let cutoff = cal.date(byAdding: .day, value: -6, to: now) else { return nil }
-        let cutoffKey: String = {
-            let c = cal.dateComponents([.year, .month, .day], from: cutoff)
-            return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
-        }()
+        let cutoffKey = DateRange.rollingWeekStartYMD(from: Date())
         let total = scan.entries
             .filter { $0.provider == provider && $0.date >= cutoffKey }
             .reduce(0) { $0 + $1.messageCount }
@@ -124,13 +140,7 @@ public final class AppState: ObservableObject {
     /// Tokens for the rolling 7-day window ending now (provider-aware).
     public func scanTokensThisWeek(for provider: String) -> Int? {
         guard let scan = costUsageScanResult, !scan.entries.isEmpty else { return nil }
-        let cal = Calendar.current
-        let now = Date()
-        guard let cutoff = cal.date(byAdding: .day, value: -6, to: now) else { return nil }
-        let cutoffKey: String = {
-            let c = cal.dateComponents([.year, .month, .day], from: cutoff)
-            return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
-        }()
+        let cutoffKey = DateRange.rollingWeekStartYMD(from: Date())
         let filtered = scan.entries.filter { $0.provider == provider && $0.date >= cutoffKey }
         let total = Self.totalTokens(filtered, provider: provider)
         return total > 0 ? total : nil
@@ -387,7 +397,29 @@ public final class AppState: ObservableObject {
     }
 
     public func buildProviderDetails() {
-        providerDetails = providerConfigs.sorted(by: { $0.sortOrder < $1.sortOrder }).compactMap { config in
+        providerDetails = Self.computedProviderDetails(
+            providers: providers,
+            configs: providerConfigs,
+            isLocalMode: isLocalMode,
+            locallySupplementedProviders: locallySupplementedProviders
+        )
+    }
+
+    /// Pure computation extracted from `buildProviderDetails()` for
+    /// P1-6 characterization testing. Maps `(providers, configs,
+    /// isLocalMode, locallySupplementedProviders)` to the ordered
+    /// `[ProviderDetail]` that the instance-side method assigns to
+    /// `self.providerDetails`.
+    ///
+    /// Same ordering contract: sorted by `config.sortOrder`, skipping
+    /// configs with no matching provider usage.
+    public nonisolated static func computedProviderDetails(
+        providers: [ProviderUsage],
+        configs: [ProviderConfig],
+        isLocalMode: Bool,
+        locallySupplementedProviders: Set<String>
+    ) -> [ProviderDetail] {
+        configs.sorted(by: { $0.sortOrder < $1.sortOrder }).compactMap { config in
             guard let usage = providers.first(where: { $0.provider == config.kind.rawValue }) else { return nil }
 
             // Tier rendering rule (v1.9.3):

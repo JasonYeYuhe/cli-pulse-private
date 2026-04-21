@@ -165,7 +165,12 @@ public enum AlertGenerator {
             for tier in tiersToCheck {
                 let usedPct = Int(round(100.0 * Double(tier.quota - tier.remaining) / Double(tier.quota)))
                 guard let crossed = sortedThresholds.first(where: { usedPct >= $0 }) else { continue }
-                let severity = crossed >= 95 ? "Critical" : (crossed >= 80 ? "Warning" : "Info")
+                // Severity is positional, not absolute: the highest configured
+                // threshold the user crossed is Critical; any lower threshold
+                // they configured is Warning. This lets custom thresholds like
+                // [60, 85] mean "60 = Warning, 85 = Critical" instead of
+                // mislabeling both as Warning via a hard 95%/80% cutoff.
+                let severity = (crossed == sortedThresholds.first) ? "Critical" : "Warning"
                 let stableID = "quota-\(provider.provider)-\(tier.name)-\(crossed)"
                 let resetSuffix = tier.reset != nil ? " (resets \(tier.reset!))" : ""
                 alerts.append([

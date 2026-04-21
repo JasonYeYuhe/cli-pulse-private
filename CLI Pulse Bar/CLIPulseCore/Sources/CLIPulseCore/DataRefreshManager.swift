@@ -186,7 +186,10 @@ internal final class DataRefreshManager {
             #if os(macOS)
             var augmentedAlerts = alertData
             let suppressedIDs = await callbacks.activeSuppressedAlertIDs()
-            let quotaAlertDicts = AlertGenerator.evaluateQuotaAlerts(providers: costAdjustedProviders)
+            let quotaAlertDicts = AlertGenerator.evaluateQuotaAlerts(
+                providers: costAdjustedProviders,
+                thresholds: AlertThresholdsStore.load().asArray
+            )
             let existingIDs = Set(alertData.map(\.id))
             for dict in quotaAlertDicts {
                 if let rec = AlertGenerator.makeAlertRecord(from: dict),
@@ -334,7 +337,10 @@ internal final class DataRefreshManager {
         // v1.9.3: include local quota-depletion alerts in local-only mode too.
         var alerts: [AlertRecord] = []
         let suppressedIDsLocal = await callbacks.activeSuppressedAlertIDs()
-        let quotaAlertDicts = AlertGenerator.evaluateQuotaAlerts(providers: providers)
+        let quotaAlertDicts = AlertGenerator.evaluateQuotaAlerts(
+            providers: providers,
+            thresholds: AlertThresholdsStore.load().asArray
+        )
         for dict in quotaAlertDicts {
             if let rec = AlertGenerator.makeAlertRecord(from: dict),
                !suppressedIDsLocal.contains(rec.id) {
@@ -581,7 +587,15 @@ internal final class DataRefreshManager {
             }
         }
 
-        return (merged.values.sorted { $0.today_usage > $1.today_usage }, supplemented)
+        // Sort by today_usage desc, then provider name ascending as a stable
+        // secondary key so equal usage values don't produce jittery UI order.
+        return (
+            merged.values.sorted {
+                if $0.today_usage != $1.today_usage { return $0.today_usage > $1.today_usage }
+                return $0.provider < $1.provider
+            },
+            supplemented
+        )
     }
 
     /// v1.9.3: project per-provider token / cost from the JSONL scanner back
@@ -596,24 +610,25 @@ internal final class DataRefreshManager {
     ///   providers (Claude, Codex, Cursor) those fields are utilization %, so
     ///   we leave them alone.
     nonisolated static func applyCostScan(to providers: [ProviderUsage], scan: CostUsageScanResult?) -> [ProviderUsage] {
+        applyCostScan(to: providers, scan: scan, now: Date())
+    }
+
+    /// Test-visible overload with injectable `now` so characterization tests
+    /// aren't subject to midnight-rollover flakiness. Production callers use
+    /// the no-argument form above, which defers to `Date()`.
+    nonisolated static func applyCostScan(to providers: [ProviderUsage],
+                                          scan: CostUsageScanResult?,
+                                          now: Date) -> [ProviderUsage] {
         guard let scan, !scan.entries.isEmpty else { return providers }
 
-        let cal = Calendar.current
-        let now = Date()
-        let comps = cal.dateComponents([.year, .month, .day], from: now)
-        let todayKey = String(format: "%04d-%02d-%02d", comps.year ?? 1970, comps.month ?? 1, comps.day ?? 1)
+        // v1.10 P2-6: date-window math centralised in `DateRange`.
+        // Rolling week = today + previous 6 days inclusive (= 7 days).
+        let todayKey   = DateRange.ymd(now)
+        let weekCutoff = DateRange.rollingWeekStartYMD(from: now)
 
-        // Roll up by provider.
         struct Rollup { var todayCost: Double = 0; var weekCost: Double = 0
                         var todayTokens: Int = 0; var weekTokens: Int = 0 }
         var rollup: [String: Rollup] = [:]
-        // 7-day rolling window: today + the previous 6 days. Using -6 here
-        // (not -7) because the inclusive `>= weekCutoff` comparison would
-        // otherwise span 8 calendar days.
-        let weekCutoff = cal.date(byAdding: .day, value: -6, to: now)
-            .map { cal.dateComponents([.year, .month, .day], from: $0) }
-            .map { String(format: "%04d-%02d-%02d", $0.year ?? 1970, $0.month ?? 1, $0.day ?? 1) }
-            ?? todayKey
 
         for entry in scan.entries {
             var r = rollup[entry.provider, default: Rollup()]
@@ -742,6 +757,18 @@ internal final class DataRefreshManager {
     #endif
 
     private func scheduleRefresh(using onRefreshRequested: @escaping @MainActor () async -> Void) {
+        // v1.10 P2-7: cancel any in-flight refresh stored in `refreshTask`
+        // before overwriting the handle — prevents a stacked queue when
+        // the scheduleRefresh timer fires during a long fetch.
+        //
+        // Caveat: cooperative cancellation only SIGNALS the previous task;
+        // `onRefreshRequested` checks `Task.isCancelled` once early
+        // (see AppState.refreshAll) but network calls already in flight
+        // complete on their own. Manual user-triggered refreshes from the
+        // menu bar / overview button bypass this path and run their own
+        // unmanaged `Task { await state.refreshAll() }`, so full overlap
+        // prevention requires a bigger audit (tracked separately).
+        refreshTask?.cancel()
         refreshTask = Task { @MainActor in
             await onRefreshRequested()
         }
@@ -856,40 +883,68 @@ extension AppState {
         }
     }
 
-    // MARK: - Local alert suppression helpers (v1.9.3)
+    // MARK: - Local alert suppression helpers (v1.9.3, extended v1.9.7 P1-3)
 
     /// Persist a local-only suppression for an alert ID. `Date.distantFuture`
     /// means "never reappear" (until threshold ratchets up, which makes a new ID).
-    public func suppressAlert(id: String, until: Date) {
-        suppressedAlertIDs[id] = until
+    /// v1.9.7 P1-3: records `dismissedAt = now` so distantFuture entries can
+    /// be recycled after `permanentSuppressionRetentionDays`.
+    public func suppressAlert(id: String, until: Date, now: Date = Date()) {
+        suppressedAlertIDs[id] = SuppressionEntry(until: until, dismissedAt: now)
         saveSuppressedAlertIDs()
     }
 
     /// Currently-active local suppressions (i.e. not expired). Side-effect:
     /// expired entries are pruned from `suppressedAlertIDs`.
+    ///
+    /// Two separate TTL rules:
+    ///   - **Time-boxed** entries (e.g. "snooze for 60 minutes") expire when
+    ///     `now >= until`.
+    ///   - **Permanent** entries (`until == .distantFuture`) expire when
+    ///     `now >= dismissedAt + permanentSuppressionRetentionDays`, so stale
+    ///     IDs don't accumulate in UserDefaults forever.
     public func activeSuppressedAlertIDs(now: Date = Date()) -> Set<String> {
-        var active = Set<String>()
-        var changed = false
-        for (id, until) in suppressedAlertIDs {
-            if until > now {
-                active.insert(id)
-            } else {
-                changed = true
-                suppressedAlertIDs.removeValue(forKey: id)
-            }
-        }
-        if changed { saveSuppressedAlertIDs() }
-        return active
+        let before = suppressedAlertIDs.count
+        let result = Self.prunedSuppressions(suppressedAlertIDs, now: now)
+        suppressedAlertIDs = result.kept
+        if suppressedAlertIDs.count != before { saveSuppressedAlertIDs() }
+        return result.active
     }
 
     public func saveSuppressedAlertIDs() {
-        let payload = suppressedAlertIDs.mapValues { $0.timeIntervalSince1970 }
-        UserDefaults.standard.set(payload, forKey: "cli_pulse_suppressed_alert_ids_v1")
+        // v2 schema: [id: [until_ts, dismissedAt_ts]].
+        let payload = suppressedAlertIDs.mapValues { entry in
+            [entry.until.timeIntervalSince1970, entry.dismissedAt.timeIntervalSince1970]
+        }
+        UserDefaults.standard.set(payload, forKey: Self.suppressedAlertsV2Key)
+        // Clear the old v1 key so it stops re-seeding stale data on downgrade+upgrade.
+        UserDefaults.standard.removeObject(forKey: Self.suppressedAlertsKey)
     }
 
     public func loadSuppressedAlertIDs() {
-        guard let dict = UserDefaults.standard.dictionary(forKey: "cli_pulse_suppressed_alert_ids_v1") as? [String: Double] else { return }
-        suppressedAlertIDs = dict.mapValues { Date(timeIntervalSince1970: $0) }
+        // Prefer v2. Each value is [until_ts, dismissedAt_ts].
+        if let dict = UserDefaults.standard.dictionary(forKey: Self.suppressedAlertsV2Key) as? [String: [Double]] {
+            suppressedAlertIDs = dict.compactMapValues { pair in
+                guard pair.count == 2 else { return nil }
+                return SuppressionEntry(
+                    until: Date(timeIntervalSince1970: pair[0]),
+                    dismissedAt: Date(timeIntervalSince1970: pair[1])
+                )
+            }
+            return
+        }
+        // v1 fallback: [id: until_ts]. No dismissedAt on disk, so stamp it
+        // as "now" — worst case, distantFuture entries get the full 180-day
+        // grace period starting now, which is acceptable for migration.
+        guard let v1Dict = UserDefaults.standard.dictionary(forKey: Self.suppressedAlertsKey) as? [String: Double] else { return }
+        let migratedAt = Date()
+        suppressedAlertIDs = v1Dict.mapValues { ts in
+            SuppressionEntry(
+                until: Date(timeIntervalSince1970: ts),
+                dismissedAt: migratedAt
+            )
+        }
+        saveSuppressedAlertIDs()  // writes v2 + removes v1
     }
 
     public func startRefreshLoop() {
