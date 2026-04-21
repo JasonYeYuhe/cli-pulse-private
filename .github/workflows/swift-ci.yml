@@ -1,0 +1,70 @@
+name: Swift CI
+
+on:
+  push:
+    paths:
+      - 'CLI Pulse Bar/**'
+      - '.github/workflows/swift-ci.yml'
+  pull_request:
+    paths:
+      - 'CLI Pulse Bar/**'
+      - '.github/workflows/swift-ci.yml'
+
+concurrency:
+  group: swift-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-core:
+    name: CLIPulseCore unit tests
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: xcodebuild -version
+
+      - name: Swift test
+        working-directory: CLI Pulse Bar/CLIPulseCore
+        run: swift test --parallel
+
+  build-apps:
+    name: Build ${{ matrix.scheme }}
+    runs-on: macos-14
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scheme: CLI Pulse Bar
+            destination: platform=macOS
+          - scheme: CLI Pulse iOS
+            destination: generic/platform=iOS Simulator
+          - scheme: CLI Pulse Watch
+            destination: generic/platform=watchOS Simulator
+          - scheme: CLI Pulse Widgets
+            destination: platform=macOS
+          - scheme: CLIPulseHelper
+            destination: platform=macOS
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: xcodebuild -version
+
+      - name: Build ${{ matrix.scheme }}
+        working-directory: CLI Pulse Bar
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project "CLI Pulse Bar.xcodeproj" \
+            -scheme "${{ matrix.scheme }}" \
+            -destination "${{ matrix.destination }}" \
+            -configuration Debug \
+            -quiet \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM=""

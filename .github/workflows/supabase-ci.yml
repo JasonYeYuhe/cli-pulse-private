@@ -1,0 +1,31 @@
+name: Supabase CI
+
+on:
+  push:
+    paths:
+      - 'backend/supabase/**'
+      - '.github/workflows/supabase-ci.yml'
+  pull_request:
+    paths:
+      - 'backend/supabase/**'
+      - '.github/workflows/supabase-ci.yml'
+
+concurrency:
+  group: supabase-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  search-path-guard:
+    name: SECURITY DEFINER search_path regression guard (P0-3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check every public SECURITY DEFINER function pins search_path
+        run: python3 backend/supabase/ci_check_search_path.py
