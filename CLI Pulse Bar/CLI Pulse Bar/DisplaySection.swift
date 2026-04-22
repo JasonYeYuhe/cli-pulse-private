@@ -6,6 +6,7 @@ import CLIPulseCore
 /// and the Overview-providers reorder list.
 struct DisplaySection: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var providerState: ProviderState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -87,7 +88,7 @@ struct DisplaySection: View {
                 .foregroundStyle(.tertiary)
 
             List {
-                ForEach(state.providerConfigs) { config in
+                ForEach(providerState.providerConfigs) { config in
                     Button {
                         state.toggleProvider(config.kind)
                     } label: {
@@ -120,7 +121,7 @@ struct DisplaySection: View {
                 }
             }
             .listStyle(.plain)
-            .frame(height: min(CGFloat(state.providerConfigs.count) * 24, 240))
+            .frame(height: min(CGFloat(providerState.providerConfigs.count) * 24, 240))
         }
     }
 }

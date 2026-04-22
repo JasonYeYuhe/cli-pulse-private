@@ -38,9 +38,20 @@ public final class AppState: ObservableObject {
 
     // MARK: - Data
     @Published public var dashboard: DashboardSummary?
-    @Published public var providers: [ProviderUsage] = []
     @Published public var sessions: [SessionRecord] = []
     @Published public var devices: [DeviceRecord] = []
+
+    // v1.10 P2-3 slice 5: extracted into a child ProviderState ObservableObject.
+    // `providers`, `providerConfigs`, `providerDetails`, `costSummary`, and
+    // `editingProviderKind` live on `providerState`; AppState exposes them as
+    // computed forwarders so setProviderEnabled/toggleProvider/DemoDataProvider/
+    // DataRefreshManager-payload-assign compile unchanged.
+    public let providerState = ProviderState()
+
+    public var providers: [ProviderUsage] {
+        get { providerState.providers }
+        set { providerState.providers = newValue }
+    }
 
     // v1.10 P2-3 slice 4: extracted into a child AlertState ObservableObject.
     // `alerts` and `suppressedAlertIDs` now live on `alertState`; AppState
@@ -71,14 +82,26 @@ public final class AppState: ObservableObject {
     @Published public var lastRefresh: Date?
     @Published public var serverOnline = false
     @Published public var isLocalMode = false
-    /// Which provider the standalone "Provider Settings" window is editing, if any.
-    /// Read by the Window scene in `CLIPulseBarApp`; written by Settings → gear buttons.
-    @Published public var editingProviderKind: ProviderKind?
+    /// v1.10 P2-3 slice 5: forwarder to `providerState.editingProviderKind`.
+    public var editingProviderKind: ProviderKind? {
+        get { providerState.editingProviderKind }
+        set { providerState.editingProviderKind = newValue }
+    }
 
     // MARK: - Provider Management
-    @Published public var providerConfigs: [ProviderConfig] = ProviderConfig.defaults()
-    @Published public var providerDetails: [ProviderDetail] = []
-    @Published public var costSummary: CostSummary = CostSummary()
+    /// v1.10 P2-3 slice 5: forwarders to `providerState.*`.
+    public var providerConfigs: [ProviderConfig] {
+        get { providerState.providerConfigs }
+        set { providerState.providerConfigs = newValue }
+    }
+    public var providerDetails: [ProviderDetail] {
+        get { providerState.providerDetails }
+        set { providerState.providerDetails = newValue }
+    }
+    public var costSummary: CostSummary {
+        get { providerState.costSummary }
+        set { providerState.costSummary = newValue }
+    }
     public var locallySupplementedProviders: Set<String> = []
 
     // MARK: - Local alert suppression (v1.9.3)

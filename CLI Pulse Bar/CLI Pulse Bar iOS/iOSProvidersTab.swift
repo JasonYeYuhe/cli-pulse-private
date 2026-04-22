@@ -4,13 +4,14 @@ import CLIPulseCore
 struct iOSProvidersTab: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var authState: AuthState
+    @EnvironmentObject var providerState: ProviderState
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showDisabled = false
 
     private var isIPad: Bool { horizontalSizeClass == .regular }
 
     private var visibleDetails: [ProviderDetail] {
-        state.providerDetails.filter { showDisabled || $0.config.isEnabled }
+        providerState.providerDetails.filter { showDisabled || $0.config.isEnabled }
     }
 
     var body: some View {
@@ -23,7 +24,7 @@ struct iOSProvidersTab: View {
                             .padding(.horizontal)
                     }
 
-                    if visibleDetails.isEmpty && state.providers.isEmpty {
+                    if visibleDetails.isEmpty && providerState.providers.isEmpty {
                         if !authState.isPaired {
                             iOSSyncOnboardingCard()
                                 .environmentObject(state)
@@ -76,7 +77,7 @@ struct iOSProvidersTab: View {
                     }
                 }
                 ToolbarItem(placement: .secondaryAction) {
-                    Text("\(state.providers.count) \(L10n.providers.tracked)")
+                    Text("\(providerState.providers.count) \(L10n.providers.tracked)")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
@@ -93,7 +94,7 @@ struct iOSProvidersTab: View {
                 Text(L10n.dashboard.today)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                Text(CostFormatter.format(state.costSummary.todayTotal))
+                Text(CostFormatter.format(providerState.costSummary.todayTotal))
                     .font(.headline.monospacedDigit())
                     .foregroundStyle(.green)
             }
@@ -101,7 +102,7 @@ struct iOSProvidersTab: View {
                 Text(L10n.dashboard.thirtyDayEst)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                Text(CostFormatter.format(state.costSummary.thirtyDayTotal))
+                Text(CostFormatter.format(providerState.costSummary.thirtyDayTotal))
                     .font(.headline.monospacedDigit())
                     .foregroundStyle(.green)
             }

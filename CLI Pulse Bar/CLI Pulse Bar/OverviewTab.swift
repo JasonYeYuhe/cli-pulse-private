@@ -3,6 +3,7 @@ import CLIPulseCore
 
 struct OverviewTab: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var providerState: ProviderState
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
@@ -83,7 +84,7 @@ struct OverviewTab: View {
             Button {
                 if let url = ExportService.exportCostReportCSV(
                     dashboard: state.dashboard,
-                    providers: state.providers,
+                    providers: providerState.providers,
                     sessions: state.sessions
                 ) {
                     #if os(macOS)
@@ -103,7 +104,7 @@ struct OverviewTab: View {
                 Label("Export Sessions", systemImage: "list.bullet")
             }
             Button {
-                if let url = ExportService.exportProviderSummaryCSV(providers: state.providers) {
+                if let url = ExportService.exportProviderSummaryCSV(providers: providerState.providers) {
                     #if os(macOS)
                     NSWorkspace.shared.activateFileViewerSelecting([url])
                     #endif
@@ -118,7 +119,7 @@ struct OverviewTab: View {
             Button {
                 if let url = ExportService.exportPDFReport(
                     dashboard: state.dashboard,
-                    providers: state.providers,
+                    providers: providerState.providers,
                     sessions: state.sessions,
                     dailyUsage: state.dailyUsage,
                     costForecast: state.costForecast
@@ -206,12 +207,12 @@ struct OverviewTab: View {
             HStack {
                 SectionHeader(title: L10n.dashboard.costSummary, icon: "dollarsign.circle")
                 Spacer()
-                Text(state.costSummary.isPrecise ? "Exact" : "Estimated")
+                Text(providerState.costSummary.isPrecise ? "Exact" : "Estimated")
                     .font(.system(size: 8, weight: .medium))
-                    .foregroundStyle(state.costSummary.isPrecise ? .green : .orange)
+                    .foregroundStyle(providerState.costSummary.isPrecise ? .green : .orange)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
-                    .background((state.costSummary.isPrecise ? Color.green : Color.orange).opacity(0.15))
+                    .background((providerState.costSummary.isPrecise ? Color.green : Color.orange).opacity(0.15))
                     .clipShape(Capsule())
             }
 
@@ -221,26 +222,26 @@ struct OverviewTab: View {
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(CostFormatter.format(state.costSummary.todayTotal))
+                        Text(CostFormatter.format(providerState.costSummary.todayTotal))
                             .font(.system(size: 16, weight: .bold, design: .rounded))
                             .foregroundStyle(.green)
-                        if state.costSummary.todayTokens > 0 {
-                            Text("· \(TokenFormatter.format(state.costSummary.todayTokens)) tokens")
+                        if providerState.costSummary.todayTokens > 0 {
+                            Text("· \(TokenFormatter.format(providerState.costSummary.todayTokens)) tokens")
                                 .font(.system(size: 9))
                                 .foregroundStyle(.tertiary)
                         }
                     }
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(state.costSummary.isPrecise ? "30 Day" : L10n.dashboard.thirtyDayEst)
+                    Text(providerState.costSummary.isPrecise ? "30 Day" : L10n.dashboard.thirtyDayEst)
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(CostFormatter.format(state.costSummary.thirtyDayTotal))
+                        Text(CostFormatter.format(providerState.costSummary.thirtyDayTotal))
                             .font(.system(size: 16, weight: .bold, design: .rounded))
                             .foregroundStyle(.green)
-                        if state.costSummary.thirtyDayTokens > 0 {
-                            Text("· \(TokenFormatter.format(state.costSummary.thirtyDayTokens)) tokens")
+                        if providerState.costSummary.thirtyDayTokens > 0 {
+                            Text("· \(TokenFormatter.format(providerState.costSummary.thirtyDayTokens)) tokens")
                                 .font(.system(size: 9))
                                 .foregroundStyle(.tertiary)
                         }
@@ -250,9 +251,9 @@ struct OverviewTab: View {
             }
 
             // Per-provider breakdown (use 30-day data for richer view when precise)
-            let breakdownData = state.costSummary.isPrecise
-                ? state.costSummary.thirtyDayByProvider
-                : state.costSummary.todayByProvider
+            let breakdownData = providerState.costSummary.isPrecise
+                ? providerState.costSummary.thirtyDayByProvider
+                : providerState.costSummary.todayByProvider
             if !breakdownData.isEmpty {
                 ForEach(Array(breakdownData.sorted(by: { $0.cost > $1.cost }).prefix(5)), id: \.provider) { item in
                     HStack {
@@ -262,7 +263,7 @@ struct OverviewTab: View {
                         Text(item.provider)
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
-                        if let sub = state.costSummary.subscriptionByProvider.first(where: { $0.provider == item.provider }) {
+                        if let sub = providerState.costSummary.subscriptionByProvider.first(where: { $0.provider == item.provider }) {
                             Text(sub.plan)
                                 .font(.system(size: 7, weight: .medium))
                                 .foregroundStyle(.orange)
@@ -280,7 +281,7 @@ struct OverviewTab: View {
             }
 
             // Subscriptions section
-            if !state.costSummary.subscriptionByProvider.isEmpty {
+            if !providerState.costSummary.subscriptionByProvider.isEmpty {
                 Divider().padding(.vertical, 2)
 
                 HStack {
@@ -291,12 +292,12 @@ struct OverviewTab: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(CostFormatter.format(state.costSummary.subscriptionTotal) + "/mo")
+                    Text(CostFormatter.format(providerState.costSummary.subscriptionTotal) + "/mo")
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundStyle(.orange)
                 }
 
-                ForEach(state.costSummary.subscriptionByProvider, id: \.provider) { item in
+                ForEach(providerState.costSummary.subscriptionByProvider, id: \.provider) { item in
                     HStack {
                         Text("\(item.provider) \(item.plan)")
                             .font(.system(size: 10))
@@ -309,7 +310,7 @@ struct OverviewTab: View {
                 }
 
                 // Subscription Utilization (API equivalent cost vs subscription price)
-                if !state.costSummary.utilization.isEmpty {
+                if !providerState.costSummary.utilization.isEmpty {
                     Divider().padding(.vertical, 2)
 
                     HStack {
@@ -322,7 +323,7 @@ struct OverviewTab: View {
                         Spacer()
                     }
 
-                    ForEach(state.costSummary.utilization, id: \.provider) { item in
+                    ForEach(providerState.costSummary.utilization, id: \.provider) { item in
                         VStack(alignment: .leading, spacing: 3) {
                             HStack {
                                 Text("\(item.provider) \(item.plan)")
@@ -367,16 +368,16 @@ struct OverviewTab: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text("~" + CostFormatter.format(state.costSummary.grandTotal))
+                    Text("~" + CostFormatter.format(providerState.costSummary.grandTotal))
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                         .foregroundStyle(.primary)
                 }
             }
 
             // Model-level cost breakdown with bar chart
-            if !state.costSummary.costByModel.isEmpty {
+            if !providerState.costSummary.costByModel.isEmpty {
                 DisclosureGroup("By Model") {
-                    let sorted = state.costSummary.costByModel.sorted { $0.cost > $1.cost }
+                    let sorted = providerState.costSummary.costByModel.sorted { $0.cost > $1.cost }
                     let maxCost = sorted.first?.cost ?? 1
                     ForEach(sorted.prefix(10)) { item in
                         VStack(spacing: 2) {
@@ -497,7 +498,7 @@ struct OverviewTab: View {
             SectionHeader(title: L10n.dashboard.providerUsage, icon: "cpu")
 
             let enabledProviders = dash.provider_breakdown.filter { p in
-                state.enabledProviderNames.contains(p.provider)
+                providerState.enabledProviderNames.contains(p.provider)
             }
 
             ForEach(enabledProviders) { provider in

@@ -7,6 +7,7 @@ import CLIPulseCore
 /// provider-config window.
 struct ProviderSettingsSection: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var providerState: ProviderState
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -17,7 +18,7 @@ struct ProviderSettingsSection: View {
                 .font(.system(size: 9))
                 .foregroundStyle(.tertiary)
 
-            ForEach(state.providerConfigs) { config in
+            ForEach(providerState.providerConfigs) { config in
                 providerRow(config: config)
             }
         }
@@ -55,7 +56,7 @@ struct ProviderSettingsSection: View {
             }
             Spacer()
             Button {
-                state.editingProviderKind = config.kind
+                providerState.editingProviderKind = config.kind
                 NSApp.activate(ignoringOtherApps: true)
                 openWindow(id: "provider-config")
             } label: {

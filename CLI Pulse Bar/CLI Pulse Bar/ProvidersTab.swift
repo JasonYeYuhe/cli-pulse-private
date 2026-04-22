@@ -3,10 +3,11 @@ import CLIPulseCore
 
 struct ProvidersTab: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var providerState: ProviderState
     @State private var showDisabled = false
 
     private var sortedDetails: [ProviderDetail] {
-        state.providerDetails.filter { showDisabled || $0.config.isEnabled }
+        providerState.providerDetails.filter { showDisabled || $0.config.isEnabled }
     }
 
     var body: some View {
@@ -25,7 +26,7 @@ struct ProvidersTab: View {
                             .foregroundStyle(PulseTheme.accent)
                     }
                     .buttonStyle(.plain)
-                    Text("\(state.providers.count) \(L10n.providers.tracked)")
+                    Text("\(providerState.providers.count) \(L10n.providers.tracked)")
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                 }
@@ -43,7 +44,7 @@ struct ProvidersTab: View {
                     costSummaryBar
                 }
 
-                if sortedDetails.isEmpty && state.providers.isEmpty {
+                if sortedDetails.isEmpty && providerState.providers.isEmpty {
                     EmptyStateView(
                         icon: "cpu",
                         title: L10n.providers.noProviders,
@@ -102,7 +103,7 @@ struct ProvidersTab: View {
                 Text(L10n.dashboard.today)
                     .font(.system(size: 8))
                     .foregroundStyle(.tertiary)
-                Text(CostFormatter.format(state.costSummary.todayTotal))
+                Text(CostFormatter.format(providerState.costSummary.todayTotal))
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(.green)
             }
@@ -111,7 +112,7 @@ struct ProvidersTab: View {
                 Text(L10n.dashboard.thirtyDayEst)
                     .font(.system(size: 8))
                     .foregroundStyle(.tertiary)
-                Text(CostFormatter.format(state.costSummary.thirtyDayTotal))
+                Text(CostFormatter.format(providerState.costSummary.thirtyDayTotal))
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(.green)
             }

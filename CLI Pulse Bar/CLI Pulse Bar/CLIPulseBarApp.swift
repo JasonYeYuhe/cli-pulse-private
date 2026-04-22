@@ -22,11 +22,13 @@ struct CLIPulseBarApp: App {
                 .environmentObject(appState.subscriptionManager)
                 .environmentObject(appState.authState)
                 .environmentObject(appState.alertState)
+                .environmentObject(appState.providerState)
         } label: {
             MenuBarLabel(
                 appState: appState,
                 authState: appState.authState,
-                alertState: appState.alertState
+                alertState: appState.alertState,
+                providerState: appState.providerState
             )
         }
         .menuBarExtraStyle(.window)
@@ -72,6 +74,7 @@ struct CLIPulseBarApp: App {
                 .environmentObject(appState.subscriptionManager)
                 .environmentObject(appState.authState)
                 .environmentObject(appState.alertState)
+                .environmentObject(appState.providerState)
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
@@ -80,17 +83,23 @@ struct CLIPulseBarApp: App {
 
 // MARK: - Menu Bar Label
 
-/// Observes `AppState`, `AuthState`, and `AlertState` so the MenuBarExtra
-/// label re-renders when any of the fields consumed by `menuBarIcon` /
-/// `menuBarLabel` change. Those computed properties read `isAuthenticated` /
-/// `isPaired` (now on AuthState) and `alerts.filter { !$0.is_resolved }.count`
-/// (now on AlertState) — their backing @Published lives on the child
-/// ObservableObjects, not AppState, so the label closure must observe all
-/// three publishers to pick up badge-count and auth-gate changes.
+/// Observes `AppState`, `AuthState`, `AlertState`, and `ProviderState` so the
+/// MenuBarExtra label re-renders when any field consumed by `menuBarIcon` /
+/// `menuBarLabel` changes. Those computed properties read:
+/// - `isAuthenticated` / `isPaired` — now on AuthState
+/// - `alerts.filter { !$0.is_resolved }.count` — now on AlertState
+/// - `mostUsedProvider` (reads `providers` + `enabledProviderNames` which
+///   reads `providerConfigs`) — now on ProviderState
+/// - `serverOnline` and `menuBarDisplayMode` — still on AppState
+///
+/// The backing `@Published` storage lives on the child ObservableObjects, not
+/// on AppState, so the label closure must observe all four publishers to
+/// pick up icon/badge/label changes.
 private struct MenuBarLabel: View {
     @ObservedObject var appState: AppState
     @ObservedObject var authState: AuthState
     @ObservedObject var alertState: AlertState
+    @ObservedObject var providerState: ProviderState
 
     var body: some View {
         HStack(spacing: 3) {
@@ -113,10 +122,11 @@ private struct MenuBarLabel: View {
 /// on every state change, destabilizing MenuBarExtra.
 private struct ProviderConfigWindowContent: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var providerState: ProviderState
 
     var body: some View {
         Group {
-            if let kind = state.editingProviderKind {
+            if let kind = providerState.editingProviderKind {
                 ProviderConfigEditor(kind: kind, state: state)
             } else {
                 Text("No provider selected")

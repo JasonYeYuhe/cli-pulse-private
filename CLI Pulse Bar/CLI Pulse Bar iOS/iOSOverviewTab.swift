@@ -3,6 +3,7 @@ import CLIPulseCore
 
 struct iOSOverviewTab: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var providerState: ProviderState
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private var isIPad: Bool { horizontalSizeClass == .regular }
@@ -69,14 +70,14 @@ struct iOSOverviewTab: View {
                 ToolbarItem(placement: .secondaryAction) {
                     Menu {
                         if let url = ExportService.exportCostReportCSV(
-                            dashboard: state.dashboard, providers: state.providers, sessions: state.sessions
+                            dashboard: state.dashboard, providers: providerState.providers, sessions: state.sessions
                         ) {
                             ShareLink(item: url) { Label("Export Cost Report", systemImage: "doc.text") }
                         }
                         if let url = ExportService.exportSessionsCSV(sessions: state.sessions) {
                             ShareLink(item: url) { Label("Export Sessions", systemImage: "list.bullet") }
                         }
-                        if let url = ExportService.exportProviderSummaryCSV(providers: state.providers) {
+                        if let url = ExportService.exportProviderSummaryCSV(providers: providerState.providers) {
                             ShareLink(item: url) { Label("Export Providers", systemImage: "chart.bar") }
                         }
                     } label: {
@@ -122,12 +123,12 @@ struct iOSOverviewTab: View {
                 Text(L10n.dashboard.costSummary)
                     .font(.subheadline.weight(.semibold))
                 Spacer()
-                Text(state.costSummary.isPrecise ? "Exact" : "Estimated")
+                Text(providerState.costSummary.isPrecise ? "Exact" : "Estimated")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(state.costSummary.isPrecise ? .green : .orange)
+                    .foregroundStyle(providerState.costSummary.isPrecise ? .green : .orange)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background((state.costSummary.isPrecise ? Color.green : Color.orange).opacity(0.15))
+                    .background((providerState.costSummary.isPrecise ? Color.green : Color.orange).opacity(0.15))
                     .clipShape(Capsule())
             }
 
@@ -137,26 +138,26 @@ struct iOSOverviewTab: View {
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                     HStack(alignment: .firstTextBaseline, spacing: 3) {
-                        Text(CostFormatter.format(state.costSummary.todayTotal))
+                        Text(CostFormatter.format(providerState.costSummary.todayTotal))
                             .font(.title3.weight(.bold).monospacedDigit())
                             .foregroundStyle(.green)
-                        if state.costSummary.todayTokens > 0 {
-                            Text("· \(TokenFormatter.format(state.costSummary.todayTokens))")
+                        if providerState.costSummary.todayTokens > 0 {
+                            Text("· \(TokenFormatter.format(providerState.costSummary.todayTokens))")
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
                         }
                     }
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(state.costSummary.isPrecise ? "30 Day" : L10n.dashboard.thirtyDayEst)
+                    Text(providerState.costSummary.isPrecise ? "30 Day" : L10n.dashboard.thirtyDayEst)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                     HStack(alignment: .firstTextBaseline, spacing: 3) {
-                        Text(CostFormatter.format(state.costSummary.thirtyDayTotal))
+                        Text(CostFormatter.format(providerState.costSummary.thirtyDayTotal))
                             .font(.title3.weight(.bold).monospacedDigit())
                             .foregroundStyle(.green)
-                        if state.costSummary.thirtyDayTokens > 0 {
-                            Text("· \(TokenFormatter.format(state.costSummary.thirtyDayTokens))")
+                        if providerState.costSummary.thirtyDayTokens > 0 {
+                            Text("· \(TokenFormatter.format(providerState.costSummary.thirtyDayTokens))")
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
                         }
@@ -166,9 +167,9 @@ struct iOSOverviewTab: View {
             }
 
             // Per-provider breakdown
-            let breakdownData = state.costSummary.isPrecise
-                ? state.costSummary.thirtyDayByProvider
-                : state.costSummary.todayByProvider
+            let breakdownData = providerState.costSummary.isPrecise
+                ? providerState.costSummary.thirtyDayByProvider
+                : providerState.costSummary.todayByProvider
             ForEach(Array(breakdownData.sorted(by: { $0.cost > $1.cost }).prefix(5)), id: \.provider) { item in
                 HStack {
                     Circle()
@@ -177,7 +178,7 @@ struct iOSOverviewTab: View {
                     Text(item.provider)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if let sub = state.costSummary.subscriptionByProvider.first(where: { $0.provider == item.provider }) {
+                    if let sub = providerState.costSummary.subscriptionByProvider.first(where: { $0.provider == item.provider }) {
                         Text(sub.plan)
                             .font(.system(size: 9, weight: .medium))
                             .foregroundStyle(.orange)
@@ -194,7 +195,7 @@ struct iOSOverviewTab: View {
             }
 
             // Subscriptions
-            if !state.costSummary.subscriptionByProvider.isEmpty {
+            if !providerState.costSummary.subscriptionByProvider.isEmpty {
                 Divider()
                 HStack {
                     Image(systemName: "creditcard")
@@ -204,12 +205,12 @@ struct iOSOverviewTab: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(CostFormatter.format(state.costSummary.subscriptionTotal) + "/mo")
+                    Text(CostFormatter.format(providerState.costSummary.subscriptionTotal) + "/mo")
                         .font(.subheadline.weight(.bold).monospacedDigit())
                         .foregroundStyle(.orange)
                 }
 
-                ForEach(state.costSummary.subscriptionByProvider, id: \.provider) { item in
+                ForEach(providerState.costSummary.subscriptionByProvider, id: \.provider) { item in
                     HStack {
                         Text("\(item.provider) \(item.plan)")
                             .font(.caption)
@@ -223,7 +224,7 @@ struct iOSOverviewTab: View {
             }
 
             // Subscription Utilization
-            if !state.costSummary.utilization.isEmpty {
+            if !providerState.costSummary.utilization.isEmpty {
                 Divider()
                 HStack {
                     Image(systemName: "chart.bar")
@@ -235,7 +236,7 @@ struct iOSOverviewTab: View {
                     Spacer()
                 }
 
-                ForEach(state.costSummary.utilization.prefix(2), id: \.provider) { item in
+                ForEach(providerState.costSummary.utilization.prefix(2), id: \.provider) { item in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text("\(item.provider) \(item.plan)")
@@ -274,14 +275,14 @@ struct iOSOverviewTab: View {
             }
 
             // Grand total
-            if !state.costSummary.subscriptionByProvider.isEmpty {
+            if !providerState.costSummary.subscriptionByProvider.isEmpty {
                 Divider()
                 HStack {
                     Text("Total Monthly")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text("~" + CostFormatter.format(state.costSummary.grandTotal))
+                    Text("~" + CostFormatter.format(providerState.costSummary.grandTotal))
                         .font(.subheadline.weight(.bold).monospacedDigit())
                         .foregroundStyle(.primary)
                 }
@@ -301,7 +302,7 @@ struct iOSOverviewTab: View {
 
     private func providerBreakdown(_ dash: DashboardSummary) -> some View {
         let enabledProviders = dash.provider_breakdown.filter { p in
-            state.enabledProviderNames.contains(p.provider)
+            providerState.enabledProviderNames.contains(p.provider)
         }
 
         return VStack(alignment: .leading, spacing: 10) {

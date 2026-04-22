@@ -11,6 +11,7 @@ import CLIPulseCore
 /// `HelperLogin.toggle()` services that also fire from PairingSection.
 struct AdvancedSection: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var providerState: ProviderState
     @Binding var launchAtLogin: Bool
     @Binding var helperEnabled: Bool
 
@@ -179,7 +180,7 @@ struct AdvancedSection: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("\(state.providers.count)")
+                Text("\(providerState.providers.count)")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.tertiary)
             }

@@ -5,6 +5,7 @@ struct MenuBarView: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var authState: AuthState
     @EnvironmentObject var alertState: AlertState
+    @EnvironmentObject var providerState: ProviderState
     @AppStorage("cli_pulse_menubar_height") private var storedHeight: Double = 580
 
     /// Adaptive max height: 85% of the screen where the status item lives, capped at 900pt.
@@ -251,11 +252,11 @@ struct MenuBarView: View {
     }
 
     private var providerSwitcher: some View {
-        let enabled = Array(state.providerConfigs.filter(\.isEnabled))
+        let enabled = Array(providerState.providerConfigs.filter(\.isEnabled))
         let visible = Array(enabled.prefix(5))
         return HStack(spacing: 2) {
             ForEach(visible) { config in
-                let hasData = state.providers.contains { $0.provider == config.kind.rawValue }
+                let hasData = providerState.providers.contains { $0.provider == config.kind.rawValue }
                 Image(systemName: config.kind.iconName)
                     .font(.system(size: 7))
                     .foregroundStyle(hasData ? PulseTheme.providerColor(config.kind.rawValue) : Color.gray.opacity(0.3))

@@ -5,6 +5,7 @@ struct iOSMainView: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var authState: AuthState
     @EnvironmentObject var alertState: AlertState
+    @EnvironmentObject var providerState: ProviderState
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
@@ -14,11 +15,13 @@ struct iOSMainView: View {
                     .environmentObject(state)
                     .environmentObject(authState)
                     .environmentObject(alertState)
+                    .environmentObject(providerState)
             } else if horizontalSizeClass == .regular {
                 iPadSplitView()
                     .environmentObject(state)
                     .environmentObject(authState)
                     .environmentObject(alertState)
+                    .environmentObject(providerState)
             } else {
                 iPhoneTabView
             }
@@ -35,6 +38,7 @@ struct iOSMainView: View {
                 .environmentObject(state)
                 .environmentObject(authState)
                 .environmentObject(alertState)
+                .environmentObject(providerState)
                 .tabItem {
                     Label(L10n.tab.overview, systemImage: "gauge.with.dots.needle.33percent")
                 }
@@ -44,6 +48,7 @@ struct iOSMainView: View {
                 .environmentObject(state)
                 .environmentObject(authState)
                 .environmentObject(alertState)
+                .environmentObject(providerState)
                 .tabItem {
                     Label(L10n.tab.providers, systemImage: "cpu")
                 }
@@ -53,6 +58,7 @@ struct iOSMainView: View {
                 .environmentObject(state)
                 .environmentObject(authState)
                 .environmentObject(alertState)
+                .environmentObject(providerState)
                 .tabItem {
                     Label(L10n.tab.sessions, systemImage: "terminal")
                 }
@@ -62,6 +68,7 @@ struct iOSMainView: View {
                 .environmentObject(state)
                 .environmentObject(authState)
                 .environmentObject(alertState)
+                .environmentObject(providerState)
                 .tabItem {
                     Label(L10n.tab.alerts, systemImage: "bell.badge")
                 }
@@ -72,6 +79,7 @@ struct iOSMainView: View {
                 .environmentObject(state)
                 .environmentObject(authState)
                 .environmentObject(alertState)
+                .environmentObject(providerState)
                 .tabItem {
                     Label(L10n.tab.settings, systemImage: "gear")
                 }
@@ -87,6 +95,7 @@ struct iPadSplitView: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var authState: AuthState
     @EnvironmentObject var alertState: AlertState
+    @EnvironmentObject var providerState: ProviderState
     @State private var selectedSection: AppState.Tab = .overview
 
     var body: some View {
@@ -98,6 +107,7 @@ struct iPadSplitView: View {
                 .environmentObject(state)
                 .environmentObject(authState)
                 .environmentObject(alertState)
+                .environmentObject(providerState)
         }
         .navigationSplitViewStyle(.balanced)
         .tint(PulseTheme.accent)

@@ -9,6 +9,8 @@ struct iOSSettingsTab: View {
     @EnvironmentObject var subscriptionManager: SubscriptionManager
     /// v1.10 P2-3 slice 3: observe AuthState directly.
     @EnvironmentObject var authState: AuthState
+    /// v1.10 P2-3 slice 5: observe ProviderState directly.
+    @EnvironmentObject var providerState: ProviderState
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showDeleteConfirmation = false
     @State private var alertThresholds: AlertThresholds = AlertThresholdsStore.load()
@@ -189,7 +191,7 @@ struct iOSSettingsTab: View {
                             : [GridItem(.flexible()), GridItem(.flexible())]
 
                         LazyVGrid(columns: columns, spacing: 10) {
-                            ForEach(state.providerConfigs) { config in
+                            ForEach(providerState.providerConfigs) { config in
                                 providerToggleCell(config)
                             }
                         }
@@ -198,12 +200,13 @@ struct iOSSettingsTab: View {
                         NavigationLink {
                             ProviderManagementView()
                                 .environmentObject(state)
+                                .environmentObject(providerState)
                         } label: {
                             HStack {
                                 Text(L10n.settings.reorderProviders)
                                 Spacer()
-                                let enabled = state.providerConfigs.filter(\.isEnabled).count
-                                Text("\(enabled)/\(state.providerConfigs.count)")
+                                let enabled = providerState.providerConfigs.filter(\.isEnabled).count
+                                Text("\(enabled)/\(providerState.providerConfigs.count)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -419,11 +422,12 @@ struct iOSSettingsTab: View {
 
 struct ProviderManagementView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var providerState: ProviderState
 
     var body: some View {
         List {
             Section {
-                ForEach(state.providerConfigs) { config in
+                ForEach(providerState.providerConfigs) { config in
                     HStack(spacing: 12) {
                         Image(systemName: config.kind.iconName)
                             .font(.body.weight(.semibold))
@@ -433,7 +437,7 @@ struct ProviderManagementView: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(config.kind.rawValue)
                                 .font(.body)
-                            if let usage = state.providers.first(where: { $0.provider == config.kind.rawValue }) {
+                            if let usage = providerState.providers.first(where: { $0.provider == config.kind.rawValue }) {
                                 Text(L10n.detail.usageToday(CostFormatter.formatUsage(usage.today_usage)))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
