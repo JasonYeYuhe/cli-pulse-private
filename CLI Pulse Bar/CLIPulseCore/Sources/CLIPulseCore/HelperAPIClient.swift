@@ -1,8 +1,9 @@
-#if os(macOS)
 import Foundation
 import os
 
 private let helperLogger = Logger(subsystem: "com.clipulse", category: "HelperAPI")
+
+#if os(macOS)
 
 /// Lightweight Supabase RPC client for the helper daemon.
 /// Uses the anon key (not user tokens) — helper authenticates via device secret.
@@ -140,6 +141,7 @@ public actor HelperAPIClient {
         return result
     }
 }
+#endif
 
 // MARK: - Supabase Constants (centralized)
 
@@ -159,6 +161,14 @@ public enum SupabaseConstants {
         return ""
         #endif
     }()
+
+    /// v1.10 P3-6 launch-time self-check: release builds silently fall through
+    /// to `anonKey = ""` when the key is missing (see above), which makes every
+    /// API call fail with `HelperAPIError.notConfigured` but leaves the user
+    /// staring at a blank, never-loading dashboard. Top-level views read this
+    /// flag and render a persistent "configuration error" banner so the
+    /// problem is at least visible.
+    public static var isConfigured: Bool { !anonKey.isEmpty }
 }
 
 // MARK: - Errors
@@ -180,4 +190,3 @@ public enum HelperAPIError: LocalizedError {
         }
     }
 }
-#endif

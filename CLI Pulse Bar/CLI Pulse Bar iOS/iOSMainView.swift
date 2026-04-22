@@ -9,27 +9,54 @@ struct iOSMainView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
-        Group {
-            if !authState.isAuthenticated {
-                iOSLoginView()
-                    .environmentObject(state)
-                    .environmentObject(authState)
-                    .environmentObject(alertState)
-                    .environmentObject(providerState)
-            } else if horizontalSizeClass == .regular {
-                iPadSplitView()
-                    .environmentObject(state)
-                    .environmentObject(authState)
-                    .environmentObject(alertState)
-                    .environmentObject(providerState)
-            } else {
-                iPhoneTabView
+        VStack(spacing: 0) {
+            if !SupabaseConstants.isConfigured {
+                configurationErrorBanner
+            }
+            Group {
+                if !authState.isAuthenticated {
+                    iOSLoginView()
+                        .environmentObject(state)
+                        .environmentObject(authState)
+                        .environmentObject(alertState)
+                        .environmentObject(providerState)
+                } else if horizontalSizeClass == .regular {
+                    iPadSplitView()
+                        .environmentObject(state)
+                        .environmentObject(authState)
+                        .environmentObject(alertState)
+                        .environmentObject(providerState)
+                } else {
+                    iPhoneTabView
+                }
             }
         }
         .preferredColorScheme(state.appearanceMode)
         .task {
             state.requestNotificationPermission()
         }
+    }
+
+    // v1.10 P3-6: persistent banner shown when `SUPABASE_ANON_KEY` is missing
+    // at launch. Release builds silently fell through to an empty key,
+    // leaving the user with a non-functional app and no hint why.
+    private var configurationErrorBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.octagon.fill")
+                .font(.system(size: 14))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Configuration error")
+                    .font(.footnote.weight(.semibold))
+                Text("SUPABASE_ANON_KEY missing — API calls will fail.")
+                    .font(.caption)
+                    .lineLimit(2)
+            }
+            Spacer()
+        }
+        .foregroundStyle(.red)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color.red.opacity(0.12))
     }
 
     private var iPhoneTabView: some View {

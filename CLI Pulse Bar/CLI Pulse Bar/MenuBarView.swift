@@ -24,6 +24,9 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if !SupabaseConstants.isConfigured {
+                configurationErrorBanner
+            }
             if !authState.isAuthenticated {
                 notConnectedView
             } else if authState.isPaired || state.isLocalMode {
@@ -33,6 +36,29 @@ struct MenuBarView: View {
             }
         }
         .frame(width: 380, height: effectiveHeight)
+    }
+
+    // v1.10 P3-6: persistent, non-dismissable banner shown at the top of the
+    // menu-bar popover when `SUPABASE_ANON_KEY` is missing from Info.plist +
+    // env at launch. Release builds previously silently fell through to an
+    // empty key, leaving the user with a blank dashboard and no hint why.
+    private var configurationErrorBanner: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "exclamationmark.octagon.fill")
+                .font(.system(size: 10))
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Configuration error")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("SUPABASE_ANON_KEY missing — API calls will fail.")
+                    .font(.system(size: 9))
+                    .lineLimit(2)
+            }
+            Spacer()
+        }
+        .foregroundStyle(.red)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.red.opacity(0.12))
     }
 
     // MARK: - Not Connected
