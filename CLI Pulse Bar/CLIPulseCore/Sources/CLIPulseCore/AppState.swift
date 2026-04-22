@@ -41,7 +41,18 @@ public final class AppState: ObservableObject {
     @Published public var providers: [ProviderUsage] = []
     @Published public var sessions: [SessionRecord] = []
     @Published public var devices: [DeviceRecord] = []
-    @Published public var alerts: [AlertRecord] = []
+
+    // v1.10 P2-3 slice 4: extracted into a child AlertState ObservableObject.
+    // `alerts` and `suppressedAlertIDs` now live on `alertState`; AppState
+    // exposes them as computed forwarders so existing mutators (AuthManager
+    // sign-out reset, DemoDataProvider, DataRefreshManager payload assign,
+    // suppression helpers) compile unchanged through implicit `self`.
+    public let alertState = AlertState()
+
+    public var alerts: [AlertRecord] {
+        get { alertState.alerts }
+        set { alertState.alerts = newValue }
+    }
 
     // MARK: - Subscription
     //
@@ -76,7 +87,14 @@ public final class AppState: ObservableObject {
     /// `AlertGenerator.evaluateQuotaAlerts` until the suppression expires.
     /// `Date.distantFuture` means "never reappear unless threshold ratchets up
     /// (which produces a new ID)". Persisted in UserDefaults.
-    @Published public internal(set) var suppressedAlertIDs: [String: SuppressionEntry] = [:]
+    ///
+    /// v1.10 P2-3 slice 4: forwarder to `alertState.suppressedAlertIDs`.
+    /// Preserves the original `public internal(set)` API contract — external
+    /// callers can read, only this module can mutate.
+    public internal(set) var suppressedAlertIDs: [String: SuppressionEntry] {
+        get { alertState.suppressedAlertIDs }
+        set { alertState.suppressedAlertIDs = newValue }
+    }
 
     // v1.10 P2-3 slice 1: the concrete types + pure logic moved to
     // AlertSuppression.swift. These type aliases + static passthroughs

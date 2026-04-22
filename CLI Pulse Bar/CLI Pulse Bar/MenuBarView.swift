@@ -4,6 +4,7 @@ import CLIPulseCore
 struct MenuBarView: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var authState: AuthState
+    @EnvironmentObject var alertState: AlertState
     @AppStorage("cli_pulse_menubar_height") private var storedHeight: Double = 580
 
     /// Adaptive max height: 85% of the screen where the status item lives, capped at 900pt.
@@ -152,7 +153,7 @@ struct MenuBarView: View {
 
                     // Alert badge
                     if tab == .alerts {
-                        let count = state.alerts.filter { !$0.is_resolved }.count
+                        let count = alertState.alerts.filter { !$0.is_resolved }.count
                         if count > 0 {
                             Text("\(min(count, 99))")
                                 .font(.system(size: 7, weight: .bold))

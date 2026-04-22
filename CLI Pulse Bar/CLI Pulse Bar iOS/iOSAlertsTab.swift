@@ -3,6 +3,7 @@ import CLIPulseCore
 
 struct iOSAlertsTab: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var alertState: AlertState
     @State private var filter: AlertFilter = .open
 
     enum AlertFilter: String, CaseIterable {
@@ -21,9 +22,9 @@ struct iOSAlertsTab: View {
 
     private var filteredAlerts: [AlertRecord] {
         switch filter {
-        case .open: return state.alerts.filter { !$0.is_resolved }
-        case .resolved: return state.alerts.filter { $0.is_resolved }
-        case .all: return state.alerts
+        case .open: return alertState.alerts.filter { !$0.is_resolved }
+        case .resolved: return alertState.alerts.filter { $0.is_resolved }
+        case .all: return alertState.alerts
         }
     }
 
@@ -81,7 +82,7 @@ struct iOSAlertsTab: View {
 
     @ViewBuilder
     private var alertSummary: some View {
-        let open = state.alerts.filter { !$0.is_resolved }
+        let open = alertState.alerts.filter { !$0.is_resolved }
         let critical = open.filter { $0.severity == "Critical" }.count
         let warning = open.filter { $0.severity == "Warning" }.count
 

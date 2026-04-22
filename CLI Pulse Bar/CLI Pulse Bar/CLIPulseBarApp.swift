@@ -21,8 +21,13 @@ struct CLIPulseBarApp: App {
                 .environmentObject(appState)
                 .environmentObject(appState.subscriptionManager)
                 .environmentObject(appState.authState)
+                .environmentObject(appState.alertState)
         } label: {
-            MenuBarLabel(appState: appState, authState: appState.authState)
+            MenuBarLabel(
+                appState: appState,
+                authState: appState.authState,
+                alertState: appState.alertState
+            )
         }
         .menuBarExtraStyle(.window)
         .commands {
@@ -66,6 +71,7 @@ struct CLIPulseBarApp: App {
                 .environmentObject(appState)
                 .environmentObject(appState.subscriptionManager)
                 .environmentObject(appState.authState)
+                .environmentObject(appState.alertState)
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
@@ -74,12 +80,17 @@ struct CLIPulseBarApp: App {
 
 // MARK: - Menu Bar Label
 
-/// Observes both `AppState` and `AuthState` so the MenuBarExtra label re-renders
-/// when auth fields (now hosted on AuthState) change — `menuBarIcon`/`menuBarLabel`
-/// read `isAuthenticated` and `isPaired`, which are computed forwarders to AuthState.
+/// Observes `AppState`, `AuthState`, and `AlertState` so the MenuBarExtra
+/// label re-renders when any of the fields consumed by `menuBarIcon` /
+/// `menuBarLabel` change. Those computed properties read `isAuthenticated` /
+/// `isPaired` (now on AuthState) and `alerts.filter { !$0.is_resolved }.count`
+/// (now on AlertState) — their backing @Published lives on the child
+/// ObservableObjects, not AppState, so the label closure must observe all
+/// three publishers to pick up badge-count and auth-gate changes.
 private struct MenuBarLabel: View {
     @ObservedObject var appState: AppState
     @ObservedObject var authState: AuthState
+    @ObservedObject var alertState: AlertState
 
     var body: some View {
         HStack(spacing: 3) {
