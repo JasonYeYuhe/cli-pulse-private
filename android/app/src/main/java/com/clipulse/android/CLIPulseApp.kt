@@ -3,6 +3,7 @@ package com.clipulse.android
 import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
+import com.clipulse.android.util.SentryInit
 import com.clipulse.android.worker.SyncWorker
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
@@ -20,6 +21,7 @@ class CLIPulseApp : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        SentryInit.install(this)
         // Start periodic background sync
         SyncWorker.enqueue(this)
     }

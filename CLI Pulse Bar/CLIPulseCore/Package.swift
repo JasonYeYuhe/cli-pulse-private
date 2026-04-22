@@ -16,9 +16,15 @@ let package = Package(
             targets: ["CLIPulseCore"]
         ),
     ],
+    dependencies: [
+        .package(url: "https://github.com/getsentry/sentry-cocoa", from: "9.10.0")
+    ],
     targets: [
         .target(
             name: "CLIPulseCore",
+            dependencies: [
+                .product(name: "Sentry", package: "sentry-cocoa")
+            ],
             resources: [
                 .process("Resources")
             ]

@@ -11,6 +11,7 @@ struct CLIPulseBarApp: App {
     @Environment(\.openWindow) private var openWindow
 
     init() {
+        SentryLogger.start(platform: .macOS)
         // Resolve stored security-scoped bookmarks on launch
         BookmarkManager.shared.resolveAllBookmarks()
     }

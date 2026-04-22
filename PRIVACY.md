@@ -31,6 +31,7 @@ file, **the file wins** — please open an issue.
 | **Git activity metadata** (commit hash, HMAC of project path, commit timestamp, merge flag) | Supabase — only when "Track git activity" toggle is ON | ✅ Yes (opt-in only) | Powers the Yield Score feature |
 | **Git commit messages, diffs, file paths, author identity** | — | ❌ Never | Explicitly excluded even when Yield Score is on |
 | **Alerts you resolve locally** (quota depletion alerts) | UserDefaults on this device | ❌ Never | Suppression list to prevent re-firing |
+| **Crash reports** (stack trace, app version, OS version, non-PII device model) | Sentry (sentry.io), scrubbed before leaving the device | ✅ Yes (when a crash/error happens) | So crashes are visible to us without waiting for an App Store review |
 
 **The key point:** the two categories of data you'd be most worried about —
 provider API keys and raw session-log contents — never touch our servers, full
@@ -85,8 +86,19 @@ servers — it goes directly from your Keychain to the provider.
   encryption — the metrics we store are aggregate numbers, not secrets. See
   "Roadmap" below.
 - **No third-party analytics SDKs.** We do not ship Google Analytics,
-  Firebase Analytics, Amplitude, Mixpanel, Sentry, Crashlytics, or any
-  similar tool. There is no fingerprinting and no ad network integration.
+  Firebase Analytics, Amplitude, Mixpanel, Crashlytics, or any similar
+  product-analytics tool. There is no fingerprinting and no ad network
+  integration.
+- **Sentry for crash reports only.** We ship the Sentry SDK in all four
+  clients (macOS, iOS, watchOS, Android) strictly for crash and error
+  reporting. PII is disabled (`sendDefaultPii = false`), IP addresses are
+  dropped at the Sentry ingest layer, and a local `beforeSend` hook scrubs
+  API keys, OAuth tokens, JWTs, Bearer headers, `/Users/<name>` paths, and
+  any field whose name contains common sensitive fragments (`token`,
+  `secret`, `password`, `api_key`, `supabase`, etc.) before the event
+  leaves your device. Performance tracing is disabled
+  (`tracesSampleRate = 0`); only crashes and explicit error reports are
+  sent.
 
 ---
 

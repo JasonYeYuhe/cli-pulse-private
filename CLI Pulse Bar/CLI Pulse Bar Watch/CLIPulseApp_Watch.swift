@@ -6,6 +6,10 @@ struct CLIPulseWatchApp: App {
     @StateObject private var appState = WatchAppState()
     @StateObject private var sessionManager = WatchSessionManager.shared
 
+    init() {
+        SentryLogger.start(platform: .watchOS)
+    }
+
     var body: some Scene {
         WindowGroup {
             WatchMainView()

@@ -40,6 +40,8 @@ android {
             "\"${localProps.getProperty("SUPABASE_ANON_KEY", System.getenv("SUPABASE_ANON_KEY") ?: "")}\"")
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID",
             "\"${localProps.getProperty("GOOGLE_WEB_CLIENT_ID", System.getenv("GOOGLE_WEB_CLIENT_ID") ?: "")}\"")
+        buildConfigField("String", "SENTRY_DSN",
+            "\"${localProps.getProperty("SENTRY_DSN", System.getenv("SENTRY_DSN") ?: "")}\"")
     }
 
     buildTypes {
@@ -146,6 +148,9 @@ dependencies {
 
     // Image loading
     implementation(libs.coil.compose)
+
+    // Crash reporting
+    implementation(libs.sentry.android.core)
 
     // Testing
     testImplementation("junit:junit:4.13.2")

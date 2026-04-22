@@ -9,6 +9,7 @@ struct CLIPulseApp: App {
     private let phoneSession = PhoneSessionManager.shared
 
     init() {
+        SentryLogger.start(platform: .iOS)
         let state = AppState()
         _appState = StateObject(wrappedValue: state)
         // Activate the WatchConnectivity bridge as early as possible. The

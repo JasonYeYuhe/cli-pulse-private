@@ -30,6 +30,8 @@
 	<string>yyh.CLI-Pulse</string>
 	<key>CFBundleIconName</key>
 	<string>AppIcon</string>
+	<key>SENTRY_DSN</key>
+	<string>https://a81bb1aa20c94da472e1a46ad2248a74@o4511263220891648.ingest.us.sentry.io/4511263241601024</string>
 	<key>SUPABASE_URL</key>
 	<string>https://gkjwsxotmwrgqsvfijzs.supabase.co</string>
 	<key>SUPABASE_ANON_KEY</key>
