@@ -1,7 +1,7 @@
 # Privacy Policy
 
 **CLI Pulse**
-**Last Updated: April 20, 2026**
+**Last Updated: April 22, 2026**
 
 CLI Pulse is a developer tool for monitoring usage, quotas, and cost across AI
 coding providers (Claude, Codex, Gemini, OpenRouter, and others). Our privacy
@@ -107,10 +107,20 @@ servers — it goes directly from your Keychain to the provider.
 
 ## Data retention
 
-- Local Keychain entries persist until you delete the provider or the app.
-- On Supabase, your usage metrics are retained while your account is active.
-  Account deletion removes them within 30 days (cascading deletes handled
-  at the database level).
+- **Local Keychain entries** persist until you delete the provider or the
+  app.
+- **Account-active metrics** on Supabase are retained for **up to 18
+  months** of rolling history. A nightly job prunes rows older than that
+  from the long-tail analytical tables (`commits`, `sessions`,
+  `session_commit_links`, `daily_usage_metrics`, `yield_score_daily`). 18
+  months is long enough to support year-over-year cost comparisons with
+  one month of buffer; beyond that the historical detail adds no product
+  value and we'd rather delete it.
+- **Per-user retention overrides:** if you set a shorter `data_retention`
+  in Settings → Privacy, that value applies to your sessions, alerts, and
+  device snapshots (it overrides the 18-month default for those tables).
+- **Account deletion** removes all associated rows within 30 days
+  (cascading deletes handled at the database level).
 
 ---
 
