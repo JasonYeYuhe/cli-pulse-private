@@ -14,6 +14,7 @@ public extension Notification.Name {
 }
 
 public struct AuthSessionState {
+    public let userId: String
     public let userName: String
     public let userEmail: String
     public let isPaired: Bool
@@ -128,6 +129,7 @@ public final class AuthManager {
 
     private func authSessionState(from response: AuthResponse) -> AuthSessionState {
         AuthSessionState(
+            userId: response.user.id,
             userName: response.user.name,
             userEmail: response.user.email,
             isPaired: response.paired
@@ -414,6 +416,7 @@ extension AppState {
     // ObservableObject). The LHS assignments below now route through
     // AppState's computed forwarders to the child.
     func applyAuthenticatedState(_ session: AuthSessionState) {
+        userId = session.userId
         userName = session.userName
         userEmail = session.userEmail
         isPaired = session.isPaired
@@ -439,6 +442,7 @@ extension AppState {
         isPaired = false
         isLocalMode = false
         serverOnline = false
+        userId = ""
         userName = ""
         userEmail = ""
         dashboard = nil

@@ -6,6 +6,10 @@ struct TeamView: View {
     @EnvironmentObject var appState: AppState
     /// v1.10 P2-3 slice 2: observe SubscriptionManager directly.
     @EnvironmentObject var subscriptionManager: SubscriptionManager
+    /// v1.10.1 P3a: observe AuthState so we can read userId synchronously
+    /// from a @MainActor view (was `appState.api.userId` which crosses
+    /// the APIClient actor boundary — Swift 6 violation).
+    @EnvironmentObject var authState: AuthState
 
     @State private var teams: [TeamDTO] = []
     @State private var selectedTeam: TeamDetailDTO?
@@ -62,7 +66,7 @@ struct TeamView: View {
 
             if let detail = selectedTeam {
                 Divider()
-                let currentUserId = appState.api.userId ?? ""
+                let currentUserId = authState.userId
                 let callerIsOwner = detail.team.owner_id == currentUserId
                 let callerIsAdmin = detail.members.first(where: { $0.user_id == currentUserId })?.role == "admin"
                 let canManage = callerIsOwner || callerIsAdmin

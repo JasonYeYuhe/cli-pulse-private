@@ -27,6 +27,10 @@ public final class AppState: ObservableObject {
         get { authState.isPaired }
         set { authState.isPaired = newValue }
     }
+    public var userId: String {
+        get { authState.userId }
+        set { authState.userId = newValue }
+    }
     public var userName: String {
         get { authState.userName }
         set { authState.userName = newValue }

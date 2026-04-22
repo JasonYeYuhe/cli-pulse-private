@@ -21,6 +21,7 @@ import Combine
 public final class AuthState: ObservableObject {
     @Published public var isAuthenticated = false
     @Published public var isPaired = false
+    @Published public var userId: String = ""
     @Published public var userName: String = ""
     @Published public var userEmail: String = ""
 

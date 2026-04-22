@@ -74,16 +74,21 @@ public final class WatchAppState: ObservableObject {
         // Re-apply cached fallback when the phone pushes fresh application context.
         // preferLive=false — the push is authoritative, so overwrite any stale
         // data the watch has from a prior refresh.
+        // v1.10.1 P3b: bind `self` in the outer closure before the Task hop.
+        // Swift 6 forbids referencing a captured `var` (weak self binding)
+        // from concurrently-executing code; bind-then-capture passes a
+        // plain `let` into the Task and silences the violation cleanly.
         NotificationCenter.default.addObserver(forName: .watchDidReceiveContext, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
             Task { @MainActor in
-                guard let self else { return }
                 self.applyFallbackData(from: WatchSessionManager.shared, preferLive: false)
             }
         }
 
         NotificationCenter.default.addObserver(forName: .watchDidReceiveLogout, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
             Task { @MainActor in
-                self?.signOut()
+                self.signOut()
             }
         }
     }
@@ -227,8 +232,9 @@ public final class WatchAppState: ObservableObject {
     func startRefreshLoop() {
         stopRefreshLoop()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
+            guard let self else { return }
             Task { @MainActor in
-                await self?.refreshAll()
+                await self.refreshAll()
             }
         }
     }

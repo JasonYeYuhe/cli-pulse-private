@@ -54,7 +54,26 @@ internal final class DataRefreshManager {
     private let api: APIClient
     private var refreshTimer: Timer?
     private var refreshTask: Task<Void, Never>?
-    private var previousAlertIDs: Set<String> = []
+
+    /// Alert IDs we've already seen on a previous refresh cycle. New IDs —
+    /// those NOT in this set — trigger a user notification at most once per
+    /// "first appearance". Must survive cold launch, or every unresolved
+    /// alert in the feed would re-fire every time the app is reopened
+    /// (Codex v1.10.1 P2 finding). Backed by UserDefaults; bounded because
+    /// the set is overwritten each cycle with only the IDs still in the
+    /// feed (resolved/aged-out alerts drop off naturally).
+    private static let previousAlertIDsKey = "cli_pulse_previous_alert_ids_v1"
+    private var previousAlertIDs: Set<String> = {
+        guard let arr = UserDefaults.standard.stringArray(forKey: DataRefreshManager.previousAlertIDsKey) else {
+            return []
+        }
+        return Set(arr)
+    }()
+
+    private func updatePreviousAlertIDs(_ ids: Set<String>) {
+        previousAlertIDs = ids
+        UserDefaults.standard.set(Array(ids), forKey: Self.previousAlertIDsKey)
+    }
 
     #if os(macOS)
     private var helperSyncObserver: NSObjectProtocol?
@@ -216,7 +235,7 @@ internal final class DataRefreshManager {
                     callbacks.sendNotification(alert)
                 }
             }
-            previousAlertIDs = Set(augmentedAlerts.map(\.id))
+            updatePreviousAlertIDs(Set(augmentedAlerts.map(\.id)))
 
             // Evaluate budget alerts server-side (non-blocking, best-effort)
             Task {
@@ -375,7 +394,12 @@ internal final class DataRefreshManager {
             alert_summary: AlertSummaryDTO(critical: 0, warning: 0, info: 0)
         )
 
-        previousAlertIDs = []
+        // v1.10.1 P2 fix (Gemini-caught): persist the IDs of alerts that are
+        // actually in this local-mode refresh, NOT an empty set. Previously
+        // this reset the dedupe cache, so a brief local-mode detour would
+        // wipe UserDefaults and make the NEXT cloud refresh re-fire every
+        // unresolved alert on cold launch or mode switch.
+        updatePreviousAlertIDs(Set(alerts.map(\.id)))
         callbacks.applyPayload(
             RefreshPayload(
                 dashboard: dashboard,
