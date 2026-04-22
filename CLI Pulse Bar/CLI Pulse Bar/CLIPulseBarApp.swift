@@ -111,6 +111,21 @@ private struct MenuBarLabel: View {
                     .font(.system(size: 11, weight: .medium, design: .rounded))
             }
         }
+        // v1.10 P3-3: VoiceOver reads the menu-bar widget as a single
+        // "CLI Pulse, {label}" element (e.g. "CLI Pulse, 3" when 3 alerts
+        // are unresolved) instead of announcing the raw SF Symbol name.
+        // Use `.ignore` + explicit label because we're entirely replacing
+        // the readout — `.combine` + label would make the combine redundant.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(menuBarAccessibilityLabel)
+    }
+
+    private var menuBarAccessibilityLabel: String {
+        let label = appState.menuBarLabel
+        if label.isEmpty {
+            return "CLI Pulse"
+        }
+        return "CLI Pulse, \(label)"
     }
 }
 

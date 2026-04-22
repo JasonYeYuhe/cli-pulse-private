@@ -112,6 +112,18 @@ public struct UsageBar: View {
             }
             .frame(height: 6)
         }
+        // v1.10 P3-3: entirely replace VoiceOver readout with label + detail
+        // rather than letting SwiftUI read the two overlay rectangles + two
+        // text runs separately. Use `.ignore` (not `.combine`) because we're
+        // fully specifying label and value — combining would be redundant.
+        // The numeric `value` parameter has inconsistent semantics across
+        // call sites (some pass "remaining" 0..1, others pass "used" 0..1),
+        // so we do NOT compute a percentage from it — `detail` already
+        // carries the caller-formatted summary (e.g. "15% left" or
+        // "17k remaining").
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(detail ?? "")
     }
 }
 

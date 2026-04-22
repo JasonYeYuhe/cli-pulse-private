@@ -59,6 +59,11 @@ struct MenuBarView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(Color.red.opacity(0.12))
+        // v1.10 P3-3: combine so VoiceOver reads the icon + heading + body
+        // as one element, but DON'T override with a hardcoded label —
+        // let the actual Text content drive the readout so any future
+        // localization/body changes propagate.
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Not Connected
@@ -98,6 +103,7 @@ struct MenuBarView: View {
                             .font(.system(size: 8))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss error")
                 }
                 .foregroundStyle(.orange)
                 .padding(.horizontal, 12)
@@ -121,6 +127,7 @@ struct MenuBarView: View {
                             .font(.system(size: 8))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss tier limit warning")
                 }
                 .foregroundStyle(.purple)
                 .padding(.horizontal, 12)
@@ -232,6 +239,7 @@ struct MenuBarView: View {
             }
             .buttonStyle(.plain)
             .disabled(state.isLoading)
+            .accessibilityLabel(L10n.common.refresh)
 
             Button {
                 NSApplication.shared.terminate(nil)

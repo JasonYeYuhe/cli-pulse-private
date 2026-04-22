@@ -375,6 +375,21 @@ struct EnhancedProviderCard: View {
                 .stroke(providerColor.opacity(config.isEnabled ? 0.2 : 0.05), lineWidth: 1)
         )
         .opacity(config.isEnabled ? 1.0 : 0.6)
+        // v1.10 P3-3: VoiceOver summary when the card is focused.
+        // `.contain` so nested UsageBars keep their own drill-in accessibility.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilitySummary)
+    }
+
+    private var accessibilitySummary: String {
+        var parts: [String] = [provider.provider]
+        parts.append(config.isEnabled ? "enabled" : "disabled")
+        parts.append(provider.status_text)
+        if let quota = provider.quota, quota > 0 {
+            let pct = Int(round(provider.usagePercent * 100))
+            parts.append("\(pct)% used")
+        }
+        return parts.joined(separator: ", ")
     }
 
     private var providerColor: Color {

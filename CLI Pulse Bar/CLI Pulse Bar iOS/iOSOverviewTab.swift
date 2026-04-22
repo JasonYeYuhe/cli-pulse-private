@@ -66,6 +66,7 @@ struct iOSOverviewTab: View {
                         Image(systemName: "arrow.clockwise")
                     }
                     .disabled(state.isLoading)
+                    .accessibilityLabel(L10n.common.refresh)
                 }
                 ToolbarItem(placement: .secondaryAction) {
                     Menu {
