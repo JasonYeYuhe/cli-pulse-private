@@ -165,8 +165,12 @@
 "subscription.popular" = "人気";
 "subscription.not_available" = "利用不可";
 "subscription.restore" = "購入を復元";
+"subscription.free" = "Free";
+"subscription.free_description" = "個人利用向けの基本モニタリング";
 "subscription.pro" = "Pro";
+"subscription.pro_description" = "拡張履歴付きの高度なモニタリング";
 "subscription.team" = "チーム";
+"subscription.team_description" = "チーム向けフル機能モニタリング";
 "subscription.everything_in_pro" = "Proのすべての機能を含む";
 "subscription.unlimited_devices" = "無制限のデバイス";
 "subscription.data_retention_365" = "365日間データ保持";
@@ -342,3 +346,10 @@
 "forecast.confidence" = "信頼区間";
 "forecast.estimate" = "予測";
 "forecast.insufficient_data" = "予測に十分なデータがありません";
+
+// v1.10 P3-2: accessibility labels
+"a11y.dismiss_error" = "エラーを閉じる";
+"a11y.dismiss_tier_warning" = "プラン制限の警告を閉じる";
+"a11y.configure_provider" = "%@を設定";
+"a11y.configuration_error_title" = "設定エラー";
+"a11y.configuration_error_body" = "SUPABASE_ANON_KEY が未設定です。API 呼び出しは失敗します。";

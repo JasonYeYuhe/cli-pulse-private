@@ -47,9 +47,9 @@ struct MenuBarView: View {
             Image(systemName: "exclamationmark.octagon.fill")
                 .font(.system(size: 10))
             VStack(alignment: .leading, spacing: 1) {
-                Text("Configuration error")
+                Text(L10n.a11y.configurationErrorTitle)
                     .font(.system(size: 10, weight: .semibold))
-                Text("SUPABASE_ANON_KEY missing — API calls will fail.")
+                Text(L10n.a11y.configurationErrorBody)
                     .font(.system(size: 9))
                     .lineLimit(2)
             }
@@ -103,7 +103,7 @@ struct MenuBarView: View {
                             .font(.system(size: 8))
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Dismiss error")
+                    .accessibilityLabel(L10n.a11y.dismissError)
                 }
                 .foregroundStyle(.orange)
                 .padding(.horizontal, 12)
@@ -127,7 +127,7 @@ struct MenuBarView: View {
                             .font(.system(size: 8))
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Dismiss tier limit warning")
+                    .accessibilityLabel(L10n.a11y.dismissTierWarning)
                 }
                 .foregroundStyle(.purple)
                 .padding(.horizontal, 12)

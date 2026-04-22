@@ -165,8 +165,12 @@
 "subscription.popular" = "POPULAR";
 "subscription.not_available" = "No disponible";
 "subscription.restore" = "Restaurar compras";
+"subscription.free" = "Gratis";
+"subscription.free_description" = "Monitoreo básico para uso personal";
 "subscription.pro" = "Pro";
+"subscription.pro_description" = "Monitoreo avanzado con historial extendido";
 "subscription.team" = "Equipo";
+"subscription.team_description" = "Monitoreo con todas las funciones para equipos";
 "subscription.everything_in_pro" = "Todo lo de Pro";
 "subscription.unlimited_devices" = "Dispositivos ilimitados";
 "subscription.data_retention_365" = "365 días de retención";
@@ -342,3 +346,10 @@
 "forecast.confidence" = "Rango de confianza";
 "forecast.estimate" = "Estimación";
 "forecast.insufficient_data" = "Se necesitan más datos para el pronóstico";
+
+// v1.10 P3-2: accessibility labels
+"a11y.dismiss_error" = "Descartar error";
+"a11y.dismiss_tier_warning" = "Descartar advertencia de límite de plan";
+"a11y.configure_provider" = "Configurar %@";
+"a11y.configuration_error_title" = "Error de configuración";
+"a11y.configuration_error_body" = "Falta SUPABASE_ANON_KEY — las llamadas a la API fallarán.";

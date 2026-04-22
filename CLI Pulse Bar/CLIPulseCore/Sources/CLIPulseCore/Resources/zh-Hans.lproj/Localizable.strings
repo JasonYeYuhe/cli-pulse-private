@@ -346,3 +346,10 @@
 "forecast.confidence" = "置信范围";
 "forecast.estimate" = "预估";
 "forecast.insufficient_data" = "数据不足，无法预测";
+
+// v1.10 P3-2: accessibility labels
+"a11y.dismiss_error" = "关闭错误";
+"a11y.dismiss_tier_warning" = "关闭套餐限制提醒";
+"a11y.configure_provider" = "配置 %@";
+"a11y.configuration_error_title" = "配置错误";
+"a11y.configuration_error_body" = "缺少 SUPABASE_ANON_KEY — API 调用将失败。";

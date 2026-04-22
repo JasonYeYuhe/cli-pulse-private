@@ -346,3 +346,10 @@
 "forecast.confidence" = "Confidence Range";
 "forecast.estimate" = "Estimate";
 "forecast.insufficient_data" = "Need more data for forecast";
+
+// v1.10 P3-2: accessibility labels (added alongside P3-3 a11y pass)
+"a11y.dismiss_error" = "Dismiss error";
+"a11y.dismiss_tier_warning" = "Dismiss tier limit warning";
+"a11y.configure_provider" = "Configure %@";
+"a11y.configuration_error_title" = "Configuration error";
+"a11y.configuration_error_body" = "SUPABASE_ANON_KEY missing — API calls will fail.";

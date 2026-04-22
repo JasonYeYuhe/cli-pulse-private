@@ -45,9 +45,9 @@ struct iOSMainView: View {
             Image(systemName: "exclamationmark.octagon.fill")
                 .font(.system(size: 14))
             VStack(alignment: .leading, spacing: 2) {
-                Text("Configuration error")
+                Text(L10n.a11y.configurationErrorTitle)
                     .font(.footnote.weight(.semibold))
-                Text("SUPABASE_ANON_KEY missing — API calls will fail.")
+                Text(L10n.a11y.configurationErrorBody)
                     .font(.caption)
                     .lineLimit(2)
             }

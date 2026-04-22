@@ -65,7 +65,7 @@ struct ProviderSettingsSection: View {
                     .foregroundStyle(PulseTheme.accent)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Configure \(config.kind.rawValue)")
+            .accessibilityLabel(L10n.a11y.configureProvider(config.kind.rawValue))
         }
         .padding(.vertical, 3)
         .padding(.horizontal, 6)

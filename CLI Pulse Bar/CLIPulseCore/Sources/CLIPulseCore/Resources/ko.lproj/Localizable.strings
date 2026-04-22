@@ -165,8 +165,12 @@
 "subscription.popular" = "인기";
 "subscription.not_available" = "이용 불가";
 "subscription.restore" = "구매 복원";
+"subscription.free" = "무료";
+"subscription.free_description" = "개인용 기본 모니터링";
 "subscription.pro" = "Pro";
+"subscription.pro_description" = "확장된 히스토리를 포함한 고급 모니터링";
 "subscription.team" = "팀";
+"subscription.team_description" = "팀을 위한 모든 기능의 모니터링";
 "subscription.everything_in_pro" = "Pro의 모든 기능 포함";
 "subscription.unlimited_devices" = "무제한 기기";
 "subscription.data_retention_365" = "365일 데이터 보존";
@@ -342,3 +346,10 @@
 "forecast.confidence" = "신뢰 범위";
 "forecast.estimate" = "예상";
 "forecast.insufficient_data" = "예측을 위한 데이터가 부족합니다";
+
+// v1.10 P3-2: accessibility labels
+"a11y.dismiss_error" = "오류 닫기";
+"a11y.dismiss_tier_warning" = "요금제 한도 경고 닫기";
+"a11y.configure_provider" = "%@ 구성";
+"a11y.configuration_error_title" = "구성 오류";
+"a11y.configuration_error_body" = "SUPABASE_ANON_KEY 누락 — API 호출이 실패합니다.";

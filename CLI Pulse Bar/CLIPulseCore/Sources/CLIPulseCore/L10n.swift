@@ -452,6 +452,20 @@ public enum L10n {
         public static var data: String { tr("common.data") }
         public static var refresh: String { tr("common.refresh") }
     }
+
+    /// v1.10 P3-2: accessibility labels for icon-only controls and
+    /// compound views. Kept in a dedicated namespace so the P3-3
+    /// accessibility pass has a single place to add VoiceOver strings
+    /// without polluting `common` or per-screen namespaces.
+    public enum a11y {
+        public static var dismissError: String { tr("a11y.dismiss_error") }
+        public static var dismissTierWarning: String { tr("a11y.dismiss_tier_warning") }
+        public static func configureProvider(_ name: String) -> String {
+            tr("a11y.configure_provider", name)
+        }
+        public static var configurationErrorTitle: String { tr("a11y.configuration_error_title") }
+        public static var configurationErrorBody: String { tr("a11y.configuration_error_body") }
+    }
 }
 
 #if !SWIFT_PACKAGE
