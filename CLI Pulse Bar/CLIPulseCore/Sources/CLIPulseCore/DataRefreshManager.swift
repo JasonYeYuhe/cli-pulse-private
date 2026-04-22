@@ -248,7 +248,7 @@ internal final class DataRefreshManager {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: effectiveInterval, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
-                self.scheduleRefresh(using: onRefreshRequested)
+                self.requestRefresh(using: onRefreshRequested)
             }
         }
 
@@ -750,24 +750,27 @@ internal final class DataRefreshManager {
         ) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
-                self.scheduleRefresh(using: onRefreshRequested)
+                self.requestRefresh(using: onRefreshRequested)
             }
         }
     }
     #endif
 
-    private func scheduleRefresh(using onRefreshRequested: @escaping @MainActor () async -> Void) {
-        // v1.10 P2-7: cancel any in-flight refresh stored in `refreshTask`
-        // before overwriting the handle — prevents a stacked queue when
-        // the scheduleRefresh timer fires during a long fetch.
-        //
-        // Caveat: cooperative cancellation only SIGNALS the previous task;
-        // `onRefreshRequested` checks `Task.isCancelled` once early
-        // (see AppState.refreshAll) but network calls already in flight
-        // complete on their own. Manual user-triggered refreshes from the
-        // menu bar / overview button bypass this path and run their own
-        // unmanaged `Task { await state.refreshAll() }`, so full overlap
-        // prevention requires a bigger audit (tracked separately).
+    /// v1.10 P2-7 (+ v1.10.1 overlap audit): cancel any in-flight refresh
+    /// stored in `refreshTask` before overwriting the handle — prevents a
+    /// stacked queue when the scheduled timer fires during a long fetch
+    /// or when a manual user-triggered refresh collides with either.
+    ///
+    /// Caveat: cooperative cancellation only SIGNALS the previous task;
+    /// `onRefreshRequested` checks `Task.isCancelled` once early
+    /// (see AppState.refreshAll) but network calls already in flight
+    /// complete on their own. That's acceptable — the second launch will
+    /// re-apply the payload, which is idempotent.
+    ///
+    /// Exposed as `internal` (not private) so AppState's public
+    /// `requestRefresh()` can route manual refreshes through this same
+    /// single-in-flight discipline.
+    func requestRefresh(using onRefreshRequested: @escaping @MainActor () async -> Void) {
         refreshTask?.cancel()
         refreshTask = Task { @MainActor in
             await onRefreshRequested()
@@ -800,6 +803,21 @@ extension AppState {
         // freshly-loaded snapshot to the Apple Watch via WCSession. No userInfo
         // — observers pull the current @Published values from AppState.
         NotificationCenter.default.post(name: .cliPulseDidRefresh, object: self)
+    }
+
+    /// v1.10.1 manual-refresh overlap fix: user-triggered refreshes (toolbar
+    /// buttons, menu command) should share the same single-in-flight
+    /// discipline as the timer-driven refreshRequest path. Routing through
+    /// `dataRefreshManager.requestRefresh` cancels any prior refreshTask
+    /// before launching the new one, preventing stacked overlapping fetches
+    /// when the user taps refresh while a timer-scheduled refresh is still
+    /// in flight (or vice versa).
+    ///
+    /// Fire-and-forget by design — the Task is owned by DataRefreshManager.
+    /// Do not `await` this; the Button is already disabled via `isLoading`.
+    @MainActor
+    public func requestRefresh() {
+        dataRefreshManager.requestRefresh(using: refreshRequest())
     }
 
     #if os(macOS)

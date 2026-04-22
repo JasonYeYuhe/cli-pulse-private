@@ -45,7 +45,7 @@ struct CLIPulseBarApp: App {
                     .keyboardShortcut("5", modifiers: .command)
                 Divider()
                 Button(L10n.common.refreshAll) {
-                    Task { await appState.refreshAll() }
+                    appState.requestRefresh()
                 }
                 .keyboardShortcut("r", modifiers: .command)
             }

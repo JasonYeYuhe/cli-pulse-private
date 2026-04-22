@@ -60,7 +60,7 @@ struct iOSOverviewTab: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        Task { await state.refreshAll() }
+                        state.requestRefresh()
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
@@ -441,7 +441,7 @@ struct iOSSyncOnboardingCard: View {
 
             // Refresh button
             Button {
-                Task { await state.refreshAll() }
+                state.requestRefresh()
             } label: {
                 HStack {
                     if state.isLoading {

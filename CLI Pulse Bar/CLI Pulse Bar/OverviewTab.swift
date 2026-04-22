@@ -141,7 +141,7 @@ struct OverviewTab: View {
 
     private var refreshButton: some View {
         Button {
-            Task { await state.refreshAll() }
+            state.requestRefresh()
         } label: {
             Image(systemName: "arrow.clockwise")
                 .font(.system(size: 10))

@@ -49,7 +49,7 @@ struct CLIPulseApp: App {
             }
             CommandMenu(L10n.common.data) {
                 Button(L10n.common.refresh) {
-                    Task { await appState.refreshAll() }
+                    appState.requestRefresh()
                 }
                 .keyboardShortcut("r", modifiers: .command)
             }
@@ -65,6 +65,6 @@ struct CLIPulseApp: App {
         guard let requestedAt = CLIPulseIntentCache.refreshRequestedAt() else { return }
         let lastRefresh = appState.lastRefresh ?? .distantPast
         guard requestedAt > lastRefresh else { return }
-        Task { await appState.refreshAll() }
+        appState.requestRefresh()
     }
 }

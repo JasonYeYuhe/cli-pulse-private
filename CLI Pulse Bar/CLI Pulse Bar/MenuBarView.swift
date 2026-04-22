@@ -195,7 +195,7 @@ struct MenuBarView: View {
             Spacer()
 
             Button {
-                Task { await state.refreshAll() }
+                state.requestRefresh()
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 9))

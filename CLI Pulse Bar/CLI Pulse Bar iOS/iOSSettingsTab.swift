@@ -282,7 +282,7 @@ struct iOSSettingsTab: View {
                         Toggle(L10n.settings.hidePersonalInfo, isOn: $state.hidePersonalInfo)
 
                         Button {
-                            Task { await state.refreshAll() }
+                            state.requestRefresh()
                         } label: {
                             HStack {
                                 Image(systemName: "arrow.clockwise")
