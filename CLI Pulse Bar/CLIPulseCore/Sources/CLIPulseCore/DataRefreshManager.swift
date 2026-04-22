@@ -183,7 +183,16 @@ internal final class DataRefreshManager {
             // (quota-<provider>-<tier>-<threshold>) prevent duplicates because
             // `previousAlertIDs` is updated every cycle below. Locally-resolved
             // or snoozed IDs are filtered via `activeSuppressedAlertIDs`.
-            #if os(macOS)
+            //
+            // v1.10 P3-4: previously guarded `#if os(macOS)` so iOS never
+            // surfaced locally-computed 80%/95% quota depletion alerts —
+            // users only saw cloud-supplied alerts, which don't include the
+            // threshold-crossing alerts that the client computes from the
+            // provider quota/remaining fields. iOS receives `providers`
+            // populated by the Supabase sync (same quota/remaining shape as
+            // macOS), so `evaluateQuotaAlerts` works identically. Removed
+            // the guard; `activeSuppressedAlertIDs` + `AlertThresholdsStore`
+            // are both already cross-platform.
             var augmentedAlerts = alertData
             let suppressedIDs = await callbacks.activeSuppressedAlertIDs()
             let quotaAlertDicts = AlertGenerator.evaluateQuotaAlerts(
@@ -198,9 +207,6 @@ internal final class DataRefreshManager {
                     augmentedAlerts.append(rec)
                 }
             }
-            #else
-            let augmentedAlerts = alertData
-            #endif
 
             let newAlerts = augmentedAlerts.filter { alert in
                 !alert.is_resolved && !previousAlertIDs.contains(alert.id)

@@ -1,10 +1,15 @@
-#if os(macOS)
 import Foundation
 
 /// Generates alerts from device metrics and session data.
 /// Ports the 3 alert rules from Python's `collect_alerts()`.
+///
+/// v1.10 P3-4: budget/quota evaluators + `makeAlertRecord` are cross-platform
+/// (operate on ProviderUsage, thresholds, dicts). The device-based `generate`
+/// method remains macOS-only because it depends on `DeviceMetrics.Snapshot`
+/// which is only produced by the macOS helper.
 public enum AlertGenerator {
 
+    #if os(macOS)
     /// Generate alerts based on device snapshot and active sessions.
     ///
     /// - `device`: device-level CPU/memory snapshot
@@ -77,6 +82,7 @@ public enum AlertGenerator {
 
         return Array(alerts.prefix(6))
     }
+    #endif
 
     /// Generate budget and cost spike alerts from provider usage data.
     /// Called during both cloud and local refresh cycles.
@@ -221,4 +227,3 @@ public enum AlertGenerator {
         )
     }
 }
-#endif
