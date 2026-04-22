@@ -27,6 +27,11 @@ jobs:
 
       - name: Swift test
         working-directory: CLI Pulse Bar/CLIPulseCore
+        env:
+          # DEBUG SupabaseConstants.anonKey lazy init triggers fatalError if
+          # missing (v1.10.6 P3-6 self-check path). Any non-empty stub is
+          # enough — the tests don't hit the network.
+          CLI_PULSE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY || 'ci-stub-anon-key' }}
         run: swift test --parallel
 
   build-apps:

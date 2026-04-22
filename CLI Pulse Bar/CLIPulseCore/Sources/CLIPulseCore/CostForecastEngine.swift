@@ -87,7 +87,7 @@ public enum CostForecastEngine {
         let residuals = dataPoints.map { point in
             point.y - (regression.slope * point.x + regression.intercept)
         }
-        let stdDev = standardDeviation(residuals.map(\.self))
+        let stdDev = standardDeviation(residuals)
         let marginOfError = stdDev * sqrt(Double(remainingDays)) * 1.0
 
         let lowerBound = max(blended - marginOfError, actualToDate)

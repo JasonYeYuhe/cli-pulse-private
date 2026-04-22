@@ -38,6 +38,20 @@ jobs:
           key: gradle-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties', 'android/**/libs.versions.toml') }}
           restore-keys: gradle-
 
+      # google-services.json is gitignored. Write it from a secret at CI time
+      # so the google-services Gradle plugin can run. If the secret is absent
+      # we fail loud — a stub won't satisfy the plugin's validation.
+      - name: Restore google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "::error::Secret GOOGLE_SERVICES_JSON is not set."
+            echo "::error::Set it with: gh secret set GOOGLE_SERVICES_JSON < android/app/google-services.json"
+            exit 1
+          fi
+          printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --no-daemon
 
