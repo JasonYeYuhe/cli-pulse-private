@@ -253,7 +253,7 @@ public enum ClaudeHelperContract {
         return sharedISO8601Formatter.string(from: parsed)
     }
 
-    static func canonicalWeeklyReset(after reference: Date, calendar: Calendar = .current) -> Date? {
+    static func canonicalWeeklyReset(after reference: Date, calendar: Calendar = claudeWeeklyResetCalendar) -> Date? {
         var components = DateComponents()
         components.weekday = 6 // Friday in Gregorian calendars where Sunday == 1
         components.hour = 23
@@ -267,6 +267,21 @@ public enum ClaudeHelperContract {
             direction: .forward
         )
     }
+
+    /// Claude's weekly reset is anchored to Friday 11 PM Asia/Tokyo (the
+    /// same absolute instant worldwide = 14:00 UTC, NOT per-user-local).
+    /// Default `.current` here caused the reset to compute in the runner's
+    /// local timezone — for US users this meant Fri 11 PM Eastern, which
+    /// is a different absolute instant from what Claude actually uses.
+    /// v1.10.2 fix: pin the default calendar to Asia/Tokyo so production
+    /// behavior no longer depends on the user's device timezone.
+    /// Caught when the CI (UTC) test started failing with 2026-04-03T23:00:00Z
+    /// instead of the Tokyo-anchored 2026-04-03T14:00:00Z.
+    static let claudeWeeklyResetCalendar: Calendar = {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        return cal
+    }()
 
     private static func parseISO8601(_ raw: String) -> Date? {
         // Try default format first via shared (immutable) formatter
