@@ -5,6 +5,8 @@ import CLIPulseCore
 
 struct iOSSettingsTab: View {
     @EnvironmentObject var state: AppState
+    /// v1.10 P2-3 slice 2: observe SubscriptionManager directly.
+    @EnvironmentObject var subscriptionManager: SubscriptionManager
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showDeleteConfirmation = false
     @State private var alertThresholds: AlertThresholds = AlertThresholdsStore.load()
@@ -83,35 +85,35 @@ struct iOSSettingsTab: View {
                         HStack {
                             Text(L10n.settings.currentPlan)
                             Spacer()
-                            SubscriptionBadge(tier: state.subscriptionManager.currentTier)
+                            SubscriptionBadge(tier: subscriptionManager.currentTier)
                         }
 
                         HStack {
                             Text(L10n.settings.providers)
                             Spacer()
-                            Text(state.subscriptionManager.maxProviders < 0 ? L10n.account.unlimited : "\(state.subscriptionManager.maxProviders)")
+                            Text(subscriptionManager.maxProviders < 0 ? L10n.account.unlimited : "\(subscriptionManager.maxProviders)")
                                 .foregroundStyle(.secondary)
                         }
 
                         HStack {
                             Text(L10n.settings.devices)
                             Spacer()
-                            Text(state.subscriptionManager.maxDevices < 0 ? L10n.account.unlimited : "\(state.subscriptionManager.maxDevices)")
+                            Text(subscriptionManager.maxDevices < 0 ? L10n.account.unlimited : "\(subscriptionManager.maxDevices)")
                                 .foregroundStyle(.secondary)
                         }
 
                         HStack {
                             Text(L10n.settings.dataRetention)
                             Spacer()
-                            Text("\(state.subscriptionManager.dataRetentionDays) \(L10n.settings.days)")
+                            Text("\(subscriptionManager.dataRetentionDays) \(L10n.settings.days)")
                                 .foregroundStyle(.secondary)
                         }
 
                         NavigationLink {
-                            SubscriptionView(manager: state.subscriptionManager)
+                            SubscriptionView(manager: subscriptionManager)
                         } label: {
                             HStack {
-                                if state.subscriptionManager.isProOrAbove {
+                                if subscriptionManager.isProOrAbove {
                                     Label(L10n.settings.manageSubscription, systemImage: "gear")
                                 } else {
                                     Label(L10n.settings.upgradePro, systemImage: "star.fill")

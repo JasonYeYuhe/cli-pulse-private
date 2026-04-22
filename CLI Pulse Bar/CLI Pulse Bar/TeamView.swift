@@ -4,6 +4,8 @@ import CLIPulseCore
 /// Team management view — create teams, manage members, view invites.
 struct TeamView: View {
     @EnvironmentObject var appState: AppState
+    /// v1.10 P2-3 slice 2: observe SubscriptionManager directly.
+    @EnvironmentObject var subscriptionManager: SubscriptionManager
 
     @State private var teams: [TeamDTO] = []
     @State private var selectedTeam: TeamDetailDTO?
@@ -25,10 +27,10 @@ struct TeamView: View {
                     Image(systemName: "plus.circle")
                 }
                 .accessibilityLabel(L10n.team.createTeam)
-                .disabled(!appState.subscriptionManager.isProOrAbove)
+                .disabled(!subscriptionManager.isProOrAbove)
             }
 
-            if !appState.subscriptionManager.isProOrAbove {
+            if !subscriptionManager.isProOrAbove {
                 HStack {
                     Image(systemName: "lock.fill")
                         .accessibilityHidden(true)
@@ -40,7 +42,7 @@ struct TeamView: View {
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
             }
 
-            if !appState.subscriptionManager.isProOrAbove {
+            if !subscriptionManager.isProOrAbove {
                 // Don't load teams for free-tier users
             } else if isLoading {
                 ProgressView()
@@ -87,7 +89,7 @@ struct TeamView: View {
             }
         }
         .task {
-            guard appState.subscriptionManager.isProOrAbove else { return }
+            guard subscriptionManager.isProOrAbove else { return }
             await loadTeams()
         }
         .sheet(isPresented: $showCreateSheet) {

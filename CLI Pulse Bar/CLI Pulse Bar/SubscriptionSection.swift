@@ -8,6 +8,9 @@ import CLIPulseCore
 /// IAP purchase cards for free-tier users.
 struct SubscriptionSection: View {
     @EnvironmentObject var state: AppState
+    /// v1.10 P2-3 slice 2: observe SubscriptionManager directly instead of
+    /// relying on AppState's old `subscriptionCancellable.sink` forwarder.
+    @EnvironmentObject var subscriptionManager: SubscriptionManager
     @Environment(\.openWindow) private var openWindow
     @State private var iapError: String?
 
@@ -20,7 +23,7 @@ struct SubscriptionSection: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 Spacer()
-                SubscriptionBadge(tier: state.subscriptionManager.currentTier)
+                SubscriptionBadge(tier: subscriptionManager.currentTier)
             }
 
             HStack {
@@ -28,7 +31,7 @@ struct SubscriptionSection: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(state.subscriptionManager.maxProviders < 0 ? "Unlimited" : "\(state.subscriptionManager.maxProviders)")
+                Text(subscriptionManager.maxProviders < 0 ? "Unlimited" : "\(subscriptionManager.maxProviders)")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }
@@ -38,7 +41,7 @@ struct SubscriptionSection: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(state.subscriptionManager.maxDevices < 0 ? "Unlimited" : "\(state.subscriptionManager.maxDevices)")
+                Text(subscriptionManager.maxDevices < 0 ? "Unlimited" : "\(subscriptionManager.maxDevices)")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }
@@ -48,12 +51,12 @@ struct SubscriptionSection: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("\(state.subscriptionManager.dataRetentionDays) \(L10n.settings.days)")
+                Text("\(subscriptionManager.dataRetentionDays) \(L10n.settings.days)")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }
 
-            if state.subscriptionManager.isProOrAbove {
+            if subscriptionManager.isProOrAbove {
                 Button {
                     openWindow(id: "subscription")
                 } label: {
@@ -63,8 +66,8 @@ struct SubscriptionSection: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(PulseTheme.accent)
             } else {
-                if state.subscriptionManager.products.isEmpty {
-                    if state.subscriptionManager.isLoading {
+                if subscriptionManager.products.isEmpty {
+                    if subscriptionManager.isLoading {
                         HStack {
                             ProgressView().controlSize(.small)
                             Text("Loading plans...")
@@ -76,7 +79,7 @@ struct SubscriptionSection: View {
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                         Button {
-                            Task { await state.subscriptionManager.loadProducts() }
+                            Task { await subscriptionManager.loadProducts() }
                         } label: {
                             Text("Retry")
                                 .font(.system(size: 10))
@@ -108,16 +111,16 @@ struct SubscriptionSection: View {
 
     private var inlineIAPCards: some View {
         VStack(spacing: 6) {
-            if let pro = state.subscriptionManager.proMonthly {
+            if let pro = subscriptionManager.proMonthly {
                 inlineProductRow(product: pro, label: "Pro Monthly", features: "Unlimited providers, 5 devices")
             }
-            if let proY = state.subscriptionManager.proYearly {
+            if let proY = subscriptionManager.proYearly {
                 inlineProductRow(product: proY, label: "Pro Yearly", features: "Save 17%")
             }
-            if let team = state.subscriptionManager.teamMonthly {
+            if let team = subscriptionManager.teamMonthly {
                 inlineProductRow(product: team, label: "Team Monthly", features: "Unlimited everything, team features")
             }
-            if let teamY = state.subscriptionManager.teamYearly {
+            if let teamY = subscriptionManager.teamYearly {
                 inlineProductRow(product: teamY, label: "Team Yearly", features: "Save 17%")
             }
         }
@@ -137,7 +140,7 @@ struct SubscriptionSection: View {
                 Task {
                     iapError = nil
                     do {
-                        _ = try await state.subscriptionManager.purchase(product)
+                        _ = try await subscriptionManager.purchase(product)
                     } catch {
                         iapError = error.localizedDescription
                     }

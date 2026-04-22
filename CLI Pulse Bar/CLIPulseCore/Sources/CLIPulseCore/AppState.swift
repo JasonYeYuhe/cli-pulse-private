@@ -22,8 +22,13 @@ public final class AppState: ObservableObject {
     @Published public var alerts: [AlertRecord] = []
 
     // MARK: - Subscription
-    @Published public var subscriptionManager = SubscriptionManager.shared
-    private var subscriptionCancellable: AnyCancellable?
+    //
+    // v1.10 P2-3 slice 2: exposed as `let`, not `@Published`. Views that read
+    // subscription state (SubscriptionSection, TeamView, iOSSettingsTab) now
+    // observe `SubscriptionManager` directly via `@ObservedObject`, so tier /
+    // product changes re-render only those views instead of invalidating the
+    // entire AppState tree via a blanket `objectWillChange.sink` forwarder.
+    public let subscriptionManager = SubscriptionManager.shared
 
     // MARK: - UI State
     @Published public var selectedTab: Tab = .overview
@@ -281,9 +286,10 @@ public final class AppState: ObservableObject {
         loadProviderConfigs()
         loadSuppressedAlertIDs()
 
-        subscriptionCancellable = subscriptionManager.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
+        // v1.10 P2-3 slice 2: the `subscriptionCancellable` forwarder that
+        // re-emitted the manager's objectWillChange into AppState's has been
+        // removed. Views now observe SubscriptionManager directly via
+        // @ObservedObject.
 
         if let legacyToken = UserDefaults.standard.string(forKey: "cli_pulse_token"), !legacyToken.isEmpty {
             Self.persistAuthTokens(access: legacyToken, refresh: KeychainHelper.load(key: AuthManager.refreshTokenKeychainKey))

@@ -19,6 +19,7 @@ struct CLIPulseBarApp: App {
         MenuBarExtra {
             MenuBarView()
                 .environmentObject(appState)
+                .environmentObject(appState.subscriptionManager)
         } label: {
             HStack(spacing: 3) {
                 Image(systemName: appState.menuBarIcon)
@@ -70,6 +71,7 @@ struct CLIPulseBarApp: App {
         Window("Provider Settings", id: "provider-config") {
             ProviderConfigWindowContent()
                 .environmentObject(appState)
+                .environmentObject(appState.subscriptionManager)
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
