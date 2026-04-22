@@ -3,6 +3,7 @@ import CLIPulseCore
 
 struct iOSProvidersTab: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var authState: AuthState
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showDisabled = false
 
@@ -23,7 +24,7 @@ struct iOSProvidersTab: View {
                     }
 
                     if visibleDetails.isEmpty && state.providers.isEmpty {
-                        if !state.isPaired {
+                        if !authState.isPaired {
                             iOSSyncOnboardingCard()
                                 .environmentObject(state)
                                 .padding(.horizontal)

@@ -9,10 +9,32 @@ import WidgetKit
 @MainActor
 public final class AppState: ObservableObject {
     // MARK: - Auth State
-    @Published public var isAuthenticated = false
-    @Published public var isPaired = false
-    @Published public var userName: String = ""
-    @Published public var userEmail: String = ""
+    //
+    // v1.10 P2-3 slice 3: extracted into a child `AuthState` ObservableObject.
+    // Views that only need auth/profile/pairing status observe `authState`
+    // directly via `@EnvironmentObject`, so login/profile/pairing updates
+    // don't invalidate the entire AppState-observing tree. The 4 computed
+    // properties below preserve AppState's public API so existing internal
+    // callers (AuthManager.applyAuthenticatedState, DemoDataProvider,
+    // DataRefreshManager contexts) keep working.
+    public let authState = AuthState()
+
+    public var isAuthenticated: Bool {
+        get { authState.isAuthenticated }
+        set { authState.isAuthenticated = newValue }
+    }
+    public var isPaired: Bool {
+        get { authState.isPaired }
+        set { authState.isPaired = newValue }
+    }
+    public var userName: String {
+        get { authState.userName }
+        set { authState.userName = newValue }
+    }
+    public var userEmail: String {
+        get { authState.userEmail }
+        set { authState.userEmail = newValue }
+    }
 
     // MARK: - Data
     @Published public var dashboard: DashboardSummary?

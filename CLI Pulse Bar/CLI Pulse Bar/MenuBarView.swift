@@ -3,6 +3,7 @@ import CLIPulseCore
 
 struct MenuBarView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var authState: AuthState
     @AppStorage("cli_pulse_menubar_height") private var storedHeight: Double = 580
 
     /// Adaptive max height: 85% of the screen where the status item lives, capped at 900pt.
@@ -21,9 +22,9 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if !state.isAuthenticated {
+            if !authState.isAuthenticated {
                 notConnectedView
-            } else if state.isPaired || state.isLocalMode {
+            } else if authState.isPaired || state.isLocalMode {
                 connectedView
             } else {
                 notConnectedView
@@ -38,7 +39,7 @@ struct MenuBarView: View {
 
     private var notConnectedView: some View {
         VStack(spacing: 0) {
-            if !state.isAuthenticated && !onboardingCompleted {
+            if !authState.isAuthenticated && !onboardingCompleted {
                 OnboardingWizardView()
                     .environmentObject(state)
             } else {

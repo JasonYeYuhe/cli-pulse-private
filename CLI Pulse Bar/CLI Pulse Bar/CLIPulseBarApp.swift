@@ -20,16 +20,9 @@ struct CLIPulseBarApp: App {
             MenuBarView()
                 .environmentObject(appState)
                 .environmentObject(appState.subscriptionManager)
+                .environmentObject(appState.authState)
         } label: {
-            HStack(spacing: 3) {
-                Image(systemName: appState.menuBarIcon)
-                    .symbolRenderingMode(.hierarchical)
-                let label = appState.menuBarLabel
-                if !label.isEmpty {
-                    Text(label)
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                }
-            }
+            MenuBarLabel(appState: appState, authState: appState.authState)
         }
         .menuBarExtraStyle(.window)
         .commands {
@@ -72,9 +65,32 @@ struct CLIPulseBarApp: App {
             ProviderConfigWindowContent()
                 .environmentObject(appState)
                 .environmentObject(appState.subscriptionManager)
+                .environmentObject(appState.authState)
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
+    }
+}
+
+// MARK: - Menu Bar Label
+
+/// Observes both `AppState` and `AuthState` so the MenuBarExtra label re-renders
+/// when auth fields (now hosted on AuthState) change — `menuBarIcon`/`menuBarLabel`
+/// read `isAuthenticated` and `isPaired`, which are computed forwarders to AuthState.
+private struct MenuBarLabel: View {
+    @ObservedObject var appState: AppState
+    @ObservedObject var authState: AuthState
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: appState.menuBarIcon)
+                .symbolRenderingMode(.hierarchical)
+            let label = appState.menuBarLabel
+            if !label.isEmpty {
+                Text(label)
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+            }
+        }
     }
 }
 

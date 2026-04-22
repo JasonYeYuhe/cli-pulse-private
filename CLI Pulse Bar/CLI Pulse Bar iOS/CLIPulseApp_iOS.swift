@@ -23,6 +23,7 @@ struct CLIPulseApp: App {
             iOSMainView()
                 .environmentObject(appState)
                 .environmentObject(appState.subscriptionManager)
+                .environmentObject(appState.authState)
                 .onAppear {
                     if #available(iOS 17.0, *) {
                         CLIPulseShortcuts.updateAppShortcutParameters()

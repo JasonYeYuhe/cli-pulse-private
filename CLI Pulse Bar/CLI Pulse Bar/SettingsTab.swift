@@ -5,6 +5,7 @@ import CLIPulseCore
 
 struct SettingsTab: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var authState: AuthState
     @State private var email = ""
     @State private var otpCode = ""
     @State private var password = ""
@@ -38,7 +39,7 @@ struct SettingsTab: View {
                 Text(L10n.settings.title)
                     .font(.system(size: 14, weight: .bold))
 
-                if state.isAuthenticated {
+                if authState.isAuthenticated {
                     authenticatedSection
                 } else {
                     loginSection
@@ -159,7 +160,7 @@ struct SettingsTab: View {
         VStack(alignment: .leading, spacing: 12) {
             AccountCardView()
 
-            if !state.isPaired {
+            if !authState.isPaired {
                 Divider()
                 PairingSection(helperEnabled: $helperEnabled)
             } else {

@@ -7,6 +7,8 @@ struct iOSSettingsTab: View {
     @EnvironmentObject var state: AppState
     /// v1.10 P2-3 slice 2: observe SubscriptionManager directly.
     @EnvironmentObject var subscriptionManager: SubscriptionManager
+    /// v1.10 P2-3 slice 3: observe AuthState directly.
+    @EnvironmentObject var authState: AuthState
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showDeleteConfirmation = false
     @State private var alertThresholds: AlertThresholds = AlertThresholdsStore.load()
@@ -16,7 +18,7 @@ struct iOSSettingsTab: View {
     var body: some View {
         NavigationStack {
             Form {
-                if state.isAuthenticated {
+                if authState.isAuthenticated {
                     // Account
                     Section(L10n.settings.account) {
                         HStack(spacing: 12) {
@@ -24,18 +26,18 @@ struct iOSSettingsTab: View {
                                 .font(.title)
                                 .foregroundStyle(PulseTheme.accent)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(state.userName)
+                                Text(authState.userName)
                                     .font(.headline)
                                 if !state.hidePersonalInfo {
-                                    Text(state.userEmail)
+                                    Text(authState.userEmail)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
                             }
                             Spacer()
                             StatusBadge(
-                                text: state.isPaired ? L10n.settings.paired : L10n.settings.notPaired,
-                                color: state.isPaired ? .green : .orange
+                                text: authState.isPaired ? L10n.settings.paired : L10n.settings.notPaired,
+                                color: authState.isPaired ? .green : .orange
                             )
                         }
                         .padding(.vertical, 4)
@@ -45,7 +47,7 @@ struct iOSSettingsTab: View {
                     LinkedAccountsSection()
 
                     // Sync Setup Guide (shown when not synced)
-                    if !state.isPaired {
+                    if !authState.isPaired {
                         Section {
                             VStack(alignment: .leading, spacing: 12) {
                                 HStack(spacing: 8) {

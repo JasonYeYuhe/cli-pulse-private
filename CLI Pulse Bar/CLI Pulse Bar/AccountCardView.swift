@@ -7,6 +7,7 @@ import CLIPulseCore
 /// `AppState`.
 struct AccountCardView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var authState: AuthState
 
     var body: some View {
         HStack(spacing: 10) {
@@ -15,10 +16,10 @@ struct AccountCardView: View {
                 .foregroundStyle(PulseTheme.accent)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(state.userName)
+                Text(authState.userName)
                     .font(.system(size: 12, weight: .semibold))
                 if !state.hidePersonalInfo {
-                    Text(state.userEmail)
+                    Text(authState.userEmail)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
@@ -28,8 +29,8 @@ struct AccountCardView: View {
 
             VStack(alignment: .trailing, spacing: 2) {
                 StatusBadge(
-                    text: state.isPaired ? L10n.settings.paired : L10n.settings.notPaired,
-                    color: state.isPaired ? .green : .orange
+                    text: authState.isPaired ? L10n.settings.paired : L10n.settings.notPaired,
+                    color: authState.isPaired ? .green : .orange
                 )
             }
         }

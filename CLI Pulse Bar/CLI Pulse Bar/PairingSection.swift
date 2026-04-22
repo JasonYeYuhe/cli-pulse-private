@@ -12,6 +12,7 @@ import CLIPulseCore
 /// propagates the login-item state upward.
 struct PairingSection: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var authState: AuthState
     @Binding var helperEnabled: Bool
 
     @State private var pairingInProgress = false
@@ -22,7 +23,7 @@ struct PairingSection: View {
             SectionHeader(title: L10n.settings.connection, icon: "link")
 
             // Current mode indicator
-            if state.isPaired {
+            if authState.isPaired {
                 modeIndicator(icon: "cloud.fill", text: L10n.onboarding.syncedMode, color: PulseTheme.accent)
             } else if state.isLocalMode {
                 modeIndicator(icon: "desktopcomputer", text: L10n.onboarding.localModeDesc, color: .green)
@@ -33,7 +34,7 @@ struct PairingSection: View {
                 modeIndicator(icon: "questionmark.circle", text: "Not Connected", color: .orange)
             }
 
-            if !state.isPaired {
+            if !authState.isPaired {
                 HowItWorksCard()
 
                 Divider()

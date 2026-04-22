@@ -5,6 +5,7 @@ import CLIPulseCore
 /// Steps: Welcome → Features → Privacy (v1.9.4) → Sign In → Pair Device (optional)
 struct OnboardingWizardView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var authState: AuthState
     @AppStorage("cli_pulse_onboarding_completed") private var onboardingCompleted = false
     @State private var step = 0
     @State private var email = ""
@@ -37,7 +38,7 @@ struct OnboardingWizardView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(.easeInOut(duration: 0.25), value: step)
         }
-        .onChange(of: state.isAuthenticated) { isAuth in
+        .onChange(of: authState.isAuthenticated) { isAuth in
             if isAuth && step == 3 {
                 step = 4
             }

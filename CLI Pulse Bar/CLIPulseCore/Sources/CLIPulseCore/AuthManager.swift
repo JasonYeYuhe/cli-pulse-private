@@ -152,8 +152,8 @@ extension AppState {
         isLoading = true
         lastError = nil
         do {
-            let authState = try await authManager.verifyOTP(email: otpEmail, code: code)
-            applyAuthenticatedState(authState)
+            let session = try await authManager.verifyOTP(email: otpEmail, code: code)
+            applyAuthenticatedState(session)
             otpSent = false
             otpEmail = ""
             startRefreshLoop()
@@ -168,8 +168,8 @@ extension AppState {
         isLoading = true
         lastError = nil
         do {
-            let authState = try await authManager.signInWithPassword(email: email, password: password)
-            applyAuthenticatedState(authState)
+            let session = try await authManager.signInWithPassword(email: email, password: password)
+            applyAuthenticatedState(session)
             startRefreshLoop()
             await refreshAll()
         } catch {
@@ -189,13 +189,13 @@ extension AppState {
         isLoading = true
         lastError = nil
         do {
-            let authState = try await authManager.signInWithApple(
+            let session = try await authManager.signInWithApple(
                 identityToken: identityToken,
                 nonce: nonce,
                 fullName: fullName,
                 email: email
             )
-            applyAuthenticatedState(authState)
+            applyAuthenticatedState(session)
             startRefreshLoop()
             await refreshAll()
         } catch {
@@ -209,8 +209,8 @@ extension AppState {
         isLoading = true
         lastError = nil
         do {
-            let authState = try await authManager.signInWithGoogle(idToken: idToken, name: name, email: email)
-            applyAuthenticatedState(authState)
+            let session = try await authManager.signInWithGoogle(idToken: idToken, name: name, email: email)
+            applyAuthenticatedState(session)
             startRefreshLoop()
             await refreshAll()
         } catch {
@@ -374,9 +374,9 @@ extension AppState {
         ) {
         case .demoMode:
             enterDemoMode()
-        case .restored(let authState):
+        case .restored(let session):
             isLoading = true
-            applyAuthenticatedState(authState)
+            applyAuthenticatedState(session)
             serverOnline = true
             isLoading = false
             await subscriptionManager.updateCurrentEntitlements()
@@ -409,10 +409,14 @@ extension AppState {
         UserDefaults.standard.removeObject(forKey: "cli_pulse_token")
     }
 
-    func applyAuthenticatedState(_ authState: AuthSessionState) {
-        userName = authState.userName
-        userEmail = authState.userEmail
-        isPaired = authState.isPaired
+    // v1.10 P2-3 slice 3: parameter renamed from `authState` to `session` to
+    // avoid shadowing `self.authState` (the newly-extracted AuthState child
+    // ObservableObject). The LHS assignments below now route through
+    // AppState's computed forwarders to the child.
+    func applyAuthenticatedState(_ session: AuthSessionState) {
+        userName = session.userName
+        userEmail = session.userEmail
+        isPaired = session.isPaired
         isAuthenticated = true
         serverOnline = true
 
@@ -423,8 +427,8 @@ extension AppState {
             userInfo: [
                 "access_token": storedToken,
                 "refresh_token": storedRefreshToken,
-                "email": authState.userEmail,
-                "name": authState.userName,
+                "email": session.userEmail,
+                "name": session.userName,
             ]
         )
     }

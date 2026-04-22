@@ -6,6 +6,7 @@ import os
 
 struct iOSLoginView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var authState: AuthState
     @State private var email = ""
     @State private var password = ""
     @State private var otpCode = ""
@@ -165,7 +166,7 @@ struct iOSLoginView: View {
                 otpCode = ""
                 state.lastError = nil
             }
-            .onChange(of: state.isAuthenticated) { _, isAuth in
+            .onChange(of: authState.isAuthenticated) { _, isAuth in
                 if !isAuth {
                     email = ""
                     password = ""
