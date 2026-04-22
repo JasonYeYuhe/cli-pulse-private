@@ -189,7 +189,7 @@ build_watchos() {
 <plist version="1.0">
 <dict>
     <key>method</key>
-    <string>app-store-connect</string>
+    <string>app-store</string>
     <key>teamID</key>
     <string>KHMK6Q3L3K</string>
     <key>destination</key>
