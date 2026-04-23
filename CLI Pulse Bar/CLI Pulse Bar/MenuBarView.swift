@@ -111,6 +111,41 @@ struct MenuBarView: View {
                 .background(Color.orange.opacity(0.08))
             }
 
+            // One-time migration banner: "We disabled N providers to fit your
+            // free plan." Shown after migrateProviderLimitsIfNeeded() ran on
+            // an over-limit free user. Different color (blue, informational)
+            // from the tier-limit warning (purple, over-limit) so users see
+            // an action, not a failure.
+            if state.providerLimitMigrationCount > 0 {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.shield")
+                        .font(.system(size: 9))
+                    Text("Kept your \(state.subscriptionManager.maxProviders) most-used providers to fit the free plan. Disabled \(state.providerLimitMigrationCount) — edit in Settings → Providers.")
+                        .font(.system(size: 9))
+                        .lineLimit(3)
+                    Spacer()
+                    Button {
+                        state.selectedTab = .settings
+                    } label: {
+                        Text("Edit")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    Button {
+                        state.dismissProviderLimitMigrationBanner()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(L10n.a11y.dismissTierWarning)
+                }
+                .foregroundStyle(.blue)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                .background(Color.blue.opacity(0.08))
+            }
+
             // Tier limit warning banner
             if let warning = state.tierLimitWarning {
                 HStack(spacing: 4) {

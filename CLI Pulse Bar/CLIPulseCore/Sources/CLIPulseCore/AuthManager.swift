@@ -382,6 +382,9 @@ extension AppState {
             serverOnline = true
             isLoading = false
             await subscriptionManager.updateCurrentEntitlements()
+            // Tier is now known — safe to run the one-shot free-tier provider
+            // migration. See `migrateProviderLimitsIfNeeded` for ranking logic.
+            migrateProviderLimitsIfNeeded()
             startRefreshLoop()
             await refreshAll()
         case .unavailable:
@@ -456,5 +459,11 @@ extension AppState {
         lastRefresh = nil
         locallySupplementedProviders = []
         selectedTab = .overview
+        // Clear tier-migration state so a different account signing in on
+        // the same device starts clean — otherwise they'd see the prior
+        // user's "Disabled N providers" banner and stale "Limited by free
+        // plan" lock badges (Gemini 3.1 Pro review 2026-04-23).
+        providerLimitMigrationCount = 0
+        UserDefaults.standard.removeObject(forKey: "cli_pulse_providers_disabled_by_tier")
     }
 }

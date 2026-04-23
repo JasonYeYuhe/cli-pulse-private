@@ -89,6 +89,25 @@ public enum ClaudeHelperContract {
         (helperDir as NSString).appendingPathComponent("claude_session.json")
     }
 
+    /// Path to the account-info file. Sibling to `snapshotPath` but
+    /// intentionally kept separate so metadata (email, tier, weekly reset)
+    /// can be cached even during quota-fetch failures without polluting
+    /// the strict "quota only if all 4 percents present" contract that
+    /// `snapshotPath` enforces downstream.
+    public static var accountInfoPath: String {
+        (helperDir as NSString).appendingPathComponent("claude_account.json")
+    }
+
+    /// Account-info file paths to probe in priority order.
+    public static var accountInfoCandidatePaths: [String] {
+        var paths: [String] = []
+        if let appGroupHelperDir {
+            paths.append((appGroupHelperDir as NSString).appendingPathComponent("claude_account.json"))
+        }
+        paths.append((legacyHelperDir as NSString).appendingPathComponent("claude_account.json"))
+        return Array(NSOrderedSet(array: paths)) as? [String] ?? paths
+    }
+
     /// Snapshot paths to probe in priority order.
     public static var snapshotCandidatePaths: [String] {
         var paths: [String] = []
@@ -148,6 +167,42 @@ public enum ClaudeHelperContract {
         }
         let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: URL(fileURLWithPath: snapshotPath), options: .atomic)
+    }
+
+    /// Write account-level metadata to its dedicated sibling file.
+    ///
+    /// Unlike `writeSnapshot` (which is strict about usage fields), this file
+    /// is written whenever *any* metadata is known — even during a quota fetch
+    /// failure — so we can still tell the user "Signed in as X" under the
+    /// diagnostic copy path while the quota endpoint drifts.
+    public static func writeAccountInfo(_ info: ClaudeAccountInfo) throws {
+        ensureHelperDir()
+        var dict: [String: Any] = [
+            "fetched_at": sharedISO8601Formatter.string(from: Date()),
+        ]
+        if let v = info.accountEmail { dict["account_email"] = v }
+        if let v = info.rateLimitTier { dict["rate_limit_tier"] = v }
+        if let v = info.weeklyReset { dict["weekly_reset"] = v }
+        let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: URL(fileURLWithPath: accountInfoPath), options: .atomic)
+    }
+
+    /// Read account-level metadata. Returns nil when the file is missing
+    /// or malformed. No TTL — account metadata is long-lived and even a
+    /// day-old email/tier is better than nothing for diagnostic copy.
+    public static func readAccountInfo() -> ClaudeAccountInfo? {
+        for path in accountInfoCandidatePaths {
+            guard let data = FileManager.default.contents(atPath: path),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                continue
+            }
+            return ClaudeAccountInfo(
+                accountEmail: json["account_email"] as? String,
+                rateLimitTier: json["rate_limit_tier"] as? String,
+                weeklyReset: json["weekly_reset"] as? String
+            )
+        }
+        return nil
     }
 
     /// Write a session key from the helper side.

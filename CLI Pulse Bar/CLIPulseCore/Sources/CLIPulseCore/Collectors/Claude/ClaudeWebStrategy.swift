@@ -53,6 +53,32 @@ public struct ClaudeWebStrategy: ClaudeSourceStrategy, Sendable {
         // Step 4: Get account info for email/plan hints (optional)
         let account = await fetchAccount(sessionKey: sessionKey)
 
+        // If the web endpoint returned JSON but none of the percent-key probes
+        // matched, fail fast so the resolver falls through to OAuth/cache instead
+        // of writing a snapshot with only metadata — that previously rendered as
+        // "Quota data unavailable" while masking real failures.
+        // Record the response's top-level keys (names only, no values) so we can
+        // detect schema drift from resolver logs without leaking tokens.
+        if usage.sessionPercent == nil && usage.weeklyPercent == nil &&
+           usage.opusPercent == nil {
+            // Persist any account metadata we DID manage to collect before
+            // throwing — the "Signed in as X" diagnostic copy in
+            // ClaudeResultBuilder relies on this file existing even when the
+            // quota fetch is broken (Gemini 3.1 Pro review 2026-04-23).
+            let recoveredAccount = ClaudeAccountInfo(
+                accountEmail: account?.email ?? org.email,
+                rateLimitTier: account?.rateLimitTier ?? usage.planType,
+                weeklyReset: usage.weeklyResetISO
+            )
+            if !recoveredAccount.isEmpty {
+                try? ClaudeHelperContract.writeAccountInfo(recoveredAccount)
+            }
+            let keysHint = usage.topLevelKeysForDiagnostics ?? "<unknown>"
+            throw ClaudeStrategyError.parseFailed(
+                "web /usage had no recognizable percent keys — top-level: \(keysHint)"
+            )
+        }
+
         return ClaudeSnapshot(
             sessionUsed: usage.sessionPercent,
             weeklyUsed: usage.weeklyPercent,
@@ -164,6 +190,10 @@ public struct ClaudeWebStrategy: ClaudeSourceStrategy, Sendable {
         let sessionResetISO: String?
         let weeklyResetISO: String?
         let planType: String?
+        /// Sorted, comma-separated list of top-level JSON keys from the response
+        /// used for schema-drift diagnostics only. Values are NEVER included to
+        /// avoid leaking tokens / PII.
+        let topLevelKeysForDiagnostics: String?
     }
 
     /// `GET /api/organizations/{orgId}/usage` — session/weekly/opus utilization.
@@ -203,9 +233,13 @@ public struct ClaudeWebStrategy: ClaudeSourceStrategy, Sendable {
         let weeklyReset = parseReset("weekly_resets_at") ?? parseReset("weeklyResetsAt")
         let plan = json["plan_type"] as? String ?? json["planType"] as? String
 
+        // Key names only (not values) for schema-drift diagnostics.
+        let keysHint = json.keys.sorted().joined(separator: ",")
+
         return UsageData(
             sessionPercent: sessionPct, weeklyPercent: weeklyPct, opusPercent: opusPct,
-            sessionResetISO: sessionReset, weeklyResetISO: weeklyReset, planType: plan
+            sessionResetISO: sessionReset, weeklyResetISO: weeklyReset, planType: plan,
+            topLevelKeysForDiagnostics: keysHint
         )
     }
 

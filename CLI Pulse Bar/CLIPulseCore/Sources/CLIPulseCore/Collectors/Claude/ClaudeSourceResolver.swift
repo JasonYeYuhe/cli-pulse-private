@@ -36,22 +36,48 @@ public struct ClaudeSourceResolver: Sendable {
     public func resolve(config: ProviderConfig) async throws -> CollectorResult {
         Self.log("resolve start, sourceMode=\(config.sourceMode), helper=\(ClaudeHelperContract.diagnosticSummary())")
 
-        let snapshot: ClaudeSnapshot
+        let rawSnapshot: ClaudeSnapshot
 
         switch config.sourceMode {
         case .oauth:
-            snapshot = try await runSingle(ClaudeOAuthStrategy(), config: config, label: "oauth-explicit")
+            rawSnapshot = try await runSingle(ClaudeOAuthStrategy(), config: config, label: "oauth-explicit")
         case .web:
-            snapshot = try await runSingle(ClaudeWebStrategy(), config: config, label: "web-explicit")
+            rawSnapshot = try await runSingle(ClaudeWebStrategy(), config: config, label: "web-explicit")
         case .cli:
-            snapshot = try await runSingle(ClaudeCLIPTYStrategy(), config: config, label: "cli-explicit")
+            rawSnapshot = try await runSingle(ClaudeCLIPTYStrategy(), config: config, label: "cli-explicit")
         default:
-            snapshot = try await runChain(config: config)
+            rawSnapshot = try await runChain(config: config)
         }
+
+        // Persist any account metadata we observed so a later quota-only
+        // failure can still surface "Signed in as X" under diagnostic copy.
+        Self.persistAccountInfoIfPresent(from: rawSnapshot)
+
+        // Merge the persisted account cache into the snapshot only when the
+        // snapshot itself lacks those metadata fields. Usage fields are not
+        // touched — pure metadata merge.
+        let snapshot = rawSnapshot.mergingAccountInfo(ClaudeHelperContract.readAccountInfo())
 
         let result = ClaudeResultBuilder.build(from: snapshot)
         Self.logResult(result, source: snapshot.sourceLabel)
         return result
+    }
+
+    /// Cache any account metadata present on the incoming snapshot to the
+    /// sibling `claude_account.json` file. No-op when all account fields are nil.
+    private static func persistAccountInfoIfPresent(from snapshot: ClaudeSnapshot) {
+        let info = ClaudeAccountInfo(
+            accountEmail: snapshot.accountEmail,
+            rateLimitTier: snapshot.rateLimitTier,
+            weeklyReset: snapshot.weeklyReset
+        )
+        guard !info.isEmpty else { return }
+        do {
+            try ClaudeHelperContract.writeAccountInfo(info)
+            log("[account-cache] wrote account info to \(ClaudeHelperContract.accountInfoPath)")
+        } catch {
+            log("[account-cache] write failed: \(error.localizedDescription)")
+        }
     }
 
     /// Whether any strategy is available for the given config.

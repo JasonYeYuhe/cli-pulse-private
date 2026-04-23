@@ -64,6 +64,46 @@ public struct ClaudeSnapshot: Sendable {
     public var hasAnyUsage: Bool {
         sessionUsed != nil || weeklyUsed != nil || sonnetUsed != nil || opusUsed != nil
     }
+
+    /// Return a copy with `accountEmail` / `rateLimitTier` / `weeklyReset`
+    /// filled in from `info` only when this snapshot's corresponding field is
+    /// nil. Usage fields are never touched — the account cache is metadata-only.
+    /// Called by `ClaudeSourceResolver` after the strategy chain returns so the
+    /// pure `ClaudeResultBuilder.build` transform stays untouched.
+    public func mergingAccountInfo(_ info: ClaudeAccountInfo?) -> ClaudeSnapshot {
+        guard let info else { return self }
+        return ClaudeSnapshot(
+            sessionUsed: sessionUsed,
+            weeklyUsed: weeklyUsed,
+            opusUsed: opusUsed,
+            sonnetUsed: sonnetUsed,
+            sessionReset: sessionReset,
+            weeklyReset: weeklyReset ?? info.weeklyReset,
+            extraUsage: extraUsage,
+            rateLimitTier: rateLimitTier ?? info.rateLimitTier,
+            accountEmail: accountEmail ?? info.accountEmail,
+            sourceLabel: sourceLabel
+        )
+    }
+}
+
+/// Account-level metadata Claude provides that can be cached independently
+/// of the strict quota snapshot. Written by any strategy that gets this data
+/// even when the quota fetch itself failed.
+public struct ClaudeAccountInfo: Sendable {
+    public let accountEmail: String?
+    public let rateLimitTier: String?
+    public let weeklyReset: String?
+
+    public init(accountEmail: String? = nil, rateLimitTier: String? = nil, weeklyReset: String? = nil) {
+        self.accountEmail = accountEmail
+        self.rateLimitTier = rateLimitTier
+        self.weeklyReset = weeklyReset
+    }
+
+    public var isEmpty: Bool {
+        accountEmail == nil && rateLimitTier == nil && weeklyReset == nil
+    }
 }
 
 /// Extra usage / credit info from Claude.
@@ -124,8 +164,16 @@ public enum ClaudeResultBuilder {
             statusText = "\(used)% used"
         } else if hasUsage {
             statusText = "Operational"
+        } else if let email = snapshot.accountEmail {
+            // Signed in but quota not reaching us (OAuth keychain not granted,
+            // or Cloudflare challenge / schema drift on the web endpoint).
+            // Point the user at the Connect action rather than the obsolete
+            // `/usage` CLI command — that command was removed in Claude v2.x.
+            statusText = "Signed in as \(email) — Connect Claude Code in Settings"
         } else {
-            statusText = "Quota data unavailable"
+            // No signal at all: no account email, no usage. Direct the user
+            // to Settings → Claude where the Connect button lives.
+            statusText = "Claude quota unavailable — Connect in Settings → Claude"
         }
 
         #if DEBUG
@@ -230,6 +278,16 @@ public enum ClaudeCredentials {
     /// from the real keychain.
     public static func clearCachedKeychainCredentials() {
         KeychainHelper.delete(key: keychainCacheKey)
+    }
+
+    /// Peek at the app's own keychain cache without ever triggering a
+    /// cross-app prompt. Used by UI to show "Connected" status without
+    /// side effects. Returns nil if no cached credentials exist.
+    public static func readCachedKeychainCredentials() -> Creds? {
+        guard let cached = KeychainHelper.load(key: keychainCacheKey),
+              let data = cached.data(using: .utf8),
+              let creds = parseCredentialsJSON(data) else { return nil }
+        return creds
     }
 
     private static let keychainCacheKey = "claude-code-creds-cache"

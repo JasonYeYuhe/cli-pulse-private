@@ -132,7 +132,26 @@ final class HelperDaemon {
         }
 
         // Step 5-6: Sync to Supabase
-        let sessionDicts = scanResult.sessions.map { sessionToDict($0) }
+        // Respect the user's enabled-set here too: sessions for providers the
+        // user (or the tier-migration) disabled are local observations only,
+        // not shipped to Supabase. When no config suite is readable (very
+        // first launch before main app has written), pass sessions through
+        // unfiltered rather than losing data silently.
+        let enabledProviderNames: Set<String>? = {
+            guard let defaults = UserDefaults(suiteName: HelperIPC.suiteName),
+                  let data = defaults.data(forKey: HelperIPC.providerConfigsKey),
+                  let saved = try? JSONDecoder().decode([ProviderConfig].self, from: data)
+            else { return nil }
+            return Set(saved.filter(\.isEnabled).map(\.kind.rawValue))
+        }()
+        let filteredSessions: [SessionRecord] = {
+            guard let enabled = enabledProviderNames else { return scanResult.sessions }
+            return scanResult.sessions.filter { enabled.contains($0.provider) }
+        }()
+        if filteredSessions.count != scanResult.sessions.count {
+            logger.info("Filtered \(scanResult.sessions.count - filteredSessions.count) sessions from disabled providers")
+        }
+        let sessionDicts = filteredSessions.map { sessionToDict($0) }
         let providerRemaining: [String: Int] = providerTiers.compactMapValues { dict in
             (dict as? [String: Any])?["remaining"] as? Int
         }
@@ -194,6 +213,16 @@ final class HelperDaemon {
             // so quota data is available even when no session is running.
 
             let config = configs.first(where: { $0.kind == collector.kind }) ?? ProviderConfig(kind: collector.kind)
+            // Respect the user's enabled-set. The tier-migration auto-disables
+            // extra providers for free users, and users can also disable
+            // providers manually. Before this filter, the helper would still
+            // collect quota for all 26 kinds and push them to Supabase, which
+            // defeats the migration's intent and wastes network + battery.
+            // (v1.10.4 free-tier fix, 2026-04-23.)
+            if !config.isEnabled {
+                logger.debug("Skipping \(providerName): disabled in user config")
+                continue
+            }
             let available = collector.isAvailable(config: config)
             if !available {
                 logger.debug("Skipping \(providerName): isAvailable=false")

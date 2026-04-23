@@ -25,6 +25,14 @@ public struct ClaudeOAuthStrategy: ClaudeSourceStrategy, Sendable {
         } catch ClaudeStrategyError.httpError(let status, _) where status == 401 || status == 403 {
             // Token may have rotated — clear the keychain cache so the next
             // attempt re-reads from Claude Code's real keychain item.
+            // Persist the tier we DID read from keychain before throwing so
+            // the account-info cache keeps feeding the diagnostic copy
+            // ("Signed in as X — Connect Claude Code"). Gemini 3.1 Pro review.
+            if let tier, !tier.isEmpty {
+                try? ClaudeHelperContract.writeAccountInfo(
+                    ClaudeAccountInfo(accountEmail: nil, rateLimitTier: tier, weeklyReset: nil)
+                )
+            }
             ClaudeCredentials.clearCachedKeychainCredentials()
             throw ClaudeStrategyError.httpError(status: status, provider: "Claude")
         }
@@ -98,13 +106,29 @@ public struct ClaudeOAuthStrategy: ClaudeSourceStrategy, Sendable {
         let extraUsage: ExtraUsage?
     }
 
+    /// Coerce a JSON value that may be `Int` or `Double` into `Int`.
+    ///
+    /// Anthropic's OAuth /usage API returns `utilization` as a JSON number that
+    /// Foundation decodes as `Double` (e.g. `9.0`). A bare `as? Int` cast on
+    /// `NSNumber(Double)` returns `nil`, which previously collapsed every
+    /// window's utilization to the `?? 0` fallback — the bug behind
+    /// "Quota data unavailable" on macOS. Coercing via `NSNumber` first,
+    /// then rounding, handles both `Int` and `Double` shapes.
+    static func intFromJSON(_ v: Any?) -> Int? {
+        if let n = v as? NSNumber { return Int(n.doubleValue.rounded()) }
+        return nil
+    }
+
     static func parseUsage(_ data: Data) throws -> OAuthUsageResponse {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ClaudeStrategyError.parseFailed("invalid JSON")
         }
         func parseWindow(_ key: String) -> UsageWindow? {
             guard let w = json[key] as? [String: Any] else { return nil }
-            return UsageWindow(utilization: w["utilization"] as? Int ?? 0, resetsAt: w["resets_at"] as? String)
+            return UsageWindow(
+                utilization: intFromJSON(w["utilization"]) ?? 0,
+                resetsAt: w["resets_at"] as? String
+            )
         }
         var extra: ExtraUsage? = nil
         if let e = json["extra_usage"] as? [String: Any] {
@@ -112,7 +136,7 @@ public struct ClaudeOAuthStrategy: ClaudeSourceStrategy, Sendable {
                 isEnabled: e["is_enabled"] as? Bool ?? false,
                 monthlyLimit: (e["monthly_limit"] as? NSNumber)?.doubleValue,
                 usedCredits: (e["used_credits"] as? NSNumber)?.doubleValue,
-                utilization: e["utilization"] as? Int,
+                utilization: intFromJSON(e["utilization"]),
                 currency: e["currency"] as? String
             )
         }

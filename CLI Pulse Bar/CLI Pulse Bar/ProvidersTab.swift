@@ -340,15 +340,31 @@ struct EnhancedProviderCard: View {
                     )
                 } else if provider.metadata?.supports_quota == true {
                     // Quota provider with no captured data — surface honestly
-                    // rather than rendering a misleading "100% left" bar.
+                    // rather than rendering a misleading "100% left" bar. Use
+                    // the collector-supplied `status_text` when it's more
+                    // specific than the generic fallback (Claude provides
+                    // "Signed in as X — Connect Claude Code in Settings" etc.,
+                    // which is more actionable than "/usage in the CLI").
+                    let detailText: String = {
+                        let s = provider.status_text ?? ""
+                        // Treat generic / stale placeholders as "no guidance";
+                        // fall back to a provider-agnostic line. Avoid the old
+                        // "/usage in the CLI" hint — that command was removed
+                        // in Claude CLI v2.x.
+                        if !s.isEmpty && s != "Operational" &&
+                           !s.lowercased().contains("try `/usage`") {
+                            return s
+                        }
+                        return "Quota data unavailable"
+                    }()
                     HStack(spacing: 6) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 9))
                             .foregroundStyle(.orange.opacity(0.7))
-                        Text("Quota data unavailable — try `/usage` in the CLI")
+                        Text(detailText)
                             .font(.system(size: 9))
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            .lineLimit(2)
                     }
                     .padding(.vertical, 2)
                 }

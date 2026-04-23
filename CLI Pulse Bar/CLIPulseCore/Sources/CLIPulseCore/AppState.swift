@@ -83,6 +83,10 @@ public final class AppState: ObservableObject {
     @Published public var isLoading = false
     @Published public var lastError: String?
     @Published public var tierLimitWarning: String?
+    /// Count of providers the tier-migration just auto-disabled.
+    /// When > 0, the Overview shows a dismissible one-time banner with an
+    /// "Edit in Settings" deep-link. Reset to 0 by dismissProviderLimitMigrationBanner().
+    @Published public var providerLimitMigrationCount: Int = 0
     @Published public var lastRefresh: Date?
     @Published public var serverOnline = false
     @Published public var isLocalMode = false
@@ -447,6 +451,113 @@ public final class AppState: ObservableObject {
         // Toggle bound to `detail.config.isEnabled` flips in the same frame
         // instead of waiting for the next data refresh cycle.
         buildProviderDetails()
+    }
+
+    /// Auto-disables extra providers when a free-tier user has more enabled
+    /// than their plan allows. Must be invoked AFTER
+    /// `subscriptionManager.updateCurrentEntitlements()` has resolved — tier
+    /// starts `.free` and updates asynchronously, so running in `init()`
+    /// would wrongly prune paid users on cold launch (Codex review 2026-04-23).
+    ///
+    /// Ranking (highest-priority first):
+    ///   1. Enabled configs with usage data today or this week.
+    ///   2. Enabled configs with credentials set (API key / cookie).
+    ///   3. First three by `ProviderKind.allCases` order (claude/codex/gemini).
+    ///
+    /// Idempotency: gated by `enabledCount > maxProviders`. No persisted
+    /// one-shot flag — this way the migration cleanly handles subscription
+    /// downgrades (Paid → Free) that push the user over limit again, and
+    /// upgrades (Free → Paid) clear the lock-state badges automatically
+    /// (Gemini 3.1 Pro review 2026-04-23).
+    public func migrateProviderLimitsIfNeeded() {
+        let disabledByTierKey = "cli_pulse_providers_disabled_by_tier"
+        let maxProviders = subscriptionManager.maxProviders
+        guard maxProviders >= 0 else {
+            // Paid / unlimited — clear any lingering "Limited by free plan"
+            // badges from a prior free-tier session so the UI reflects the
+            // upgrade immediately.
+            UserDefaults.standard.removeObject(forKey: disabledByTierKey)
+            providerLimitMigrationCount = 0
+            return
+        }
+
+        let enabledConfigs = providerConfigs.filter(\.isEnabled)
+        guard enabledConfigs.count > maxProviders else {
+            // Already at or under limit — nothing to migrate. Clear badges
+            // too, since the user may have manually re-curated.
+            UserDefaults.standard.removeObject(forKey: disabledByTierKey)
+            return
+        }
+
+        // Rank the enabled configs.
+        let usageByKind: [String: ProviderUsage] = Dictionary(
+            uniqueKeysWithValues: providers.map { ($0.provider, $0) }
+        )
+        let fallbackOrder: [ProviderKind] = Array(ProviderKind.allCases.prefix(maxProviders))
+
+        func rank(_ config: ProviderConfig) -> Int {
+            if let u = usageByKind[config.kind.rawValue],
+               u.today_usage > 0 || u.week_usage > 0 {
+                return 0  // tier 1 — recent usage
+            }
+            if config.hasCredentials {
+                return 1  // tier 2 — configured credentials
+            }
+            if fallbackOrder.contains(config.kind) {
+                return 2  // tier 3 — default-trio fallback
+            }
+            return 3  // no signal
+        }
+
+        // Sort enabled configs by rank asc, then by (within same rank) usage
+        // desc, then by `ProviderKind.allCases` index asc for a deterministic
+        // tiebreak.
+        let kindIndex: [ProviderKind: Int] = Dictionary(
+            uniqueKeysWithValues: ProviderKind.allCases.enumerated().map { ($0.element, $0.offset) }
+        )
+        let ranked = enabledConfigs.sorted { a, b in
+            let ra = rank(a); let rb = rank(b)
+            if ra != rb { return ra < rb }
+            let ua = usageByKind[a.kind.rawValue].map { $0.today_usage + $0.week_usage } ?? 0
+            let ub = usageByKind[b.kind.rawValue].map { $0.today_usage + $0.week_usage } ?? 0
+            if ua != ub { return ua > ub }
+            return (kindIndex[a.kind] ?? .max) < (kindIndex[b.kind] ?? .max)
+        }
+
+        let keptKinds = Set(ranked.prefix(maxProviders).map(\.kind))
+        var disabledByMigration: [ProviderKind] = []
+        for i in providerConfigs.indices where providerConfigs[i].isEnabled {
+            if !keptKinds.contains(providerConfigs[i].kind) {
+                providerConfigs[i].isEnabled = false
+                disabledByMigration.append(providerConfigs[i].kind)
+            }
+        }
+
+        // Record which kinds were disabled by migration (vs. user choice) so
+        // Settings can show a distinct "Limited by free plan" state later.
+        // Merge with any existing set so a second downgrade doesn't lose
+        // providers that were disabled by an earlier migration run.
+        let existingRaw = UserDefaults.standard.stringArray(forKey: disabledByTierKey) ?? []
+        let mergedRaw = Set(existingRaw).union(disabledByMigration.map(\.rawValue))
+        UserDefaults.standard.set(Array(mergedRaw), forKey: disabledByTierKey)
+
+        saveProviderConfigs()
+        buildProviderDetails()
+
+        providerLimitMigrationCount = disabledByMigration.count
+    }
+
+    /// Dismiss the one-time migration banner on Overview.
+    public func dismissProviderLimitMigrationBanner() {
+        providerLimitMigrationCount = 0
+    }
+
+    /// Returns the set of provider kinds that were auto-disabled by the tier
+    /// migration (not by user choice). Used by Settings → Providers to show
+    /// a "Limited by free plan — upgrade" badge instead of a plain-off switch.
+    public static func providersDisabledByTier() -> Set<ProviderKind> {
+        let raw = UserDefaults.standard.stringArray(forKey: "cli_pulse_providers_disabled_by_tier") ?? []
+        return Set(raw.compactMap(ProviderKind.init(rawValue:)))
     }
 
     public func moveProvider(from source: IndexSet, to destination: Int) {

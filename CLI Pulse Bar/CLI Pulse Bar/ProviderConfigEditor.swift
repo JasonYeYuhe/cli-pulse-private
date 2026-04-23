@@ -22,6 +22,13 @@ struct ProviderConfigEditor: View {
     @State private var geminiError: String?
     @State private var showAPIKey: Bool = false
     @State private var testState: TestConnectionState = .idle
+    // Claude Code keychain-connect state. Mirrors Gemini OAuth pattern but the
+    // "prompt" is really the macOS Security framework's cross-app keychain
+    // access dialog triggered by SecItemCopyMatching — we don't need any
+    // custom OAuth flow, just need the one-time Allow.
+    @State private var isClaudeConnected: Bool = false
+    @State private var claudeConnectError: String?
+    @State private var claudeConnectedEmail: String?
     #endif
 
     #if os(macOS)
@@ -187,6 +194,14 @@ struct ProviderConfigEditor: View {
             if kind == .gemini {
                 geminiOAuthSection
             }
+            // Claude Code keychain bootstrap (macOS only). The sandbox can't
+            // read Claude Code's keychain item on its own — it needs the user
+            // to click Allow on the system prompt. This button surfaces the
+            // prompt deliberately instead of hoping it fires during a silent
+            // OAuth-strategy attempt.
+            if kind == .claude {
+                claudeConnectSection
+            }
             testConnectionRow
             #endif
 
@@ -255,6 +270,9 @@ struct ProviderConfigEditor: View {
         #if os(macOS)
         if kind == .gemini {
             isGeminiConnected = GeminiOAuthManager.shared.isConnected
+        }
+        if kind == .claude {
+            loadClaudeConnectState()
         }
         #endif
     }
@@ -333,6 +351,110 @@ struct ProviderConfigEditor: View {
             }
         }
     }
+
+    #if os(macOS)
+    private var claudeConnectSection: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Claude Code")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            if isClaudeConnected {
+                HStack {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .font(.system(size: 12))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Connected")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.green)
+                        if let email = claudeConnectedEmail {
+                            Text(email)
+                                .font(.system(size: 9))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                    Button("Disconnect") {
+                        ClaudeCredentials.clearCachedKeychainCredentials()
+                        isClaudeConnected = false
+                        claudeConnectedEmail = nil
+                        claudeConnectError = nil
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.red)
+                    .font(.system(size: 10))
+                }
+            } else {
+                Button {
+                    isConnecting = true
+                    claudeConnectError = nil
+                    // `readKeychainCredentials` triggers the macOS system
+                    // prompt when the app hasn't yet been allowed to read
+                    // the cross-app keychain item. SecItemCopyMatching is
+                    // SYNCHRONOUSLY blocking while the user decides on the
+                    // dialog — must be off the main actor or the UI
+                    // beach-balls (Gemini 3.1 Pro review 2026-04-23).
+                    // Read the credentials on a detached task and hop back
+                    // to the main actor only for the @State mutations.
+                    Task.detached {
+                        let creds = ClaudeCredentials.readKeychainCredentials()
+                        await MainActor.run {
+                            isConnecting = false
+                            if let creds, !creds.accessToken.isEmpty {
+                                isClaudeConnected = true
+                                claudeConnectedEmail = nil  // email not in credentials; will populate on next fetch
+                                claudeConnectError = nil
+                            } else {
+                                claudeConnectError = "Couldn't read Claude Code credentials. If you denied the prompt, try again or install/open Claude Code first."
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        if isConnecting {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Image(systemName: "key.fill")
+                        }
+                        Text("Connect Claude Code")
+                    }
+                    .font(.system(size: 10, weight: .medium))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
+                .controlSize(.small)
+                .disabled(isConnecting)
+
+                if let err = claudeConnectError {
+                    Text(err)
+                        .font(.system(size: 8))
+                        .foregroundStyle(.red)
+                } else {
+                    Text("Reads your existing Claude Code login. macOS will ask once for permission — tap Always Allow.")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.quaternary)
+                }
+            }
+        }
+    }
+
+    /// Refresh the "connected" visual based on the app-keychain cache.
+    /// We only show "Connected" when the cache is populated — if the cache
+    /// is empty but the cross-app keychain would succeed on prompt, we still
+    /// show the Connect button so the user knows they need to click once.
+    /// Uses the cache-only peek so this never triggers a prompt.
+    private func loadClaudeConnectState() {
+        guard kind == .claude else { return }
+        if let creds = ClaudeCredentials.readCachedKeychainCredentials(),
+           !creds.accessToken.isEmpty {
+            isClaudeConnected = true
+        } else {
+            isClaudeConnected = false
+        }
+    }
+    #endif
 
     // MARK: - Test connection
 

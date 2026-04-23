@@ -192,6 +192,42 @@ final class ClaudeStrategyTests: XCTestCase {
         XCTAssertEqual(usage.extraUsage!.monthlyLimit!, 5000.0, accuracy: 0.01)
     }
 
+    /// Regression: Anthropic's /api/oauth/usage returns `utilization` as a
+    /// JSON number that Foundation decodes to `Double` (e.g. `9.0`).
+    /// A bare `as? Int` cast on `NSNumber(Double)` returns nil — which, prior
+    /// to the v1.10.4 fix, collapsed every window's utilization to the
+    /// `?? 0` fallback, producing the "Quota data unavailable" symptom on
+    /// macOS even though the endpoint was returning valid data.
+    /// This test fails if the Int-coercion regresses.
+    func testOAuthParseUsageDoubleUtilization() throws {
+        let json = """
+        {
+            "five_hour":        { "utilization": 9.0,  "resets_at": "2026-04-23T09:00:01Z" },
+            "seven_day":        { "utilization": 81.0, "resets_at": "2026-04-23T20:00:01Z" },
+            "seven_day_opus":   null,
+            "seven_day_sonnet": { "utilization": 66.0, "resets_at": "2026-04-23T20:00:01Z" },
+            "extra_usage":      { "is_enabled": false, "monthly_limit": null, "used_credits": null, "utilization": null, "currency": null }
+        }
+        """.data(using: .utf8)!
+        let usage = try ClaudeOAuthStrategy.parseUsage(json)
+        XCTAssertEqual(usage.fiveHour?.utilization, 9, "Double 9.0 must coerce to Int 9, not 0")
+        XCTAssertEqual(usage.sevenDay?.utilization, 81)
+        XCTAssertNil(usage.sevenDayOpus, "null should decode as nil window")
+        XCTAssertEqual(usage.sevenDaySonnet?.utilization, 66)
+    }
+
+    /// Edge cases for the `intFromJSON` helper: rounds halves, handles Int
+    /// literals unchanged, returns nil for non-numbers.
+    func testIntFromJSONHelper() {
+        XCTAssertEqual(ClaudeOAuthStrategy.intFromJSON(9.0), 9)
+        XCTAssertEqual(ClaudeOAuthStrategy.intFromJSON(9.4), 9)
+        XCTAssertEqual(ClaudeOAuthStrategy.intFromJSON(9.6), 10)
+        XCTAssertEqual(ClaudeOAuthStrategy.intFromJSON(9), 9)
+        XCTAssertEqual(ClaudeOAuthStrategy.intFromJSON(0), 0)
+        XCTAssertNil(ClaudeOAuthStrategy.intFromJSON(nil))
+        XCTAssertNil(ClaudeOAuthStrategy.intFromJSON("9"))
+    }
+
     // MARK: - ClaudeSourceResolver
 
     func testResolverDefaultOrder() {

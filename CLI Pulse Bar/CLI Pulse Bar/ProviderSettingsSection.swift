@@ -10,6 +10,11 @@ struct ProviderSettingsSection: View {
     @EnvironmentObject var providerState: ProviderState
     @Environment(\.openWindow) private var openWindow
 
+    /// Providers that the tier-migration auto-disabled. Read once per render
+    /// from UserDefaults so the lock badge stays in sync even when the UI
+    /// re-renders after the user re-enables via the gear → Save flow.
+    private var disabledByTier: Set<ProviderKind> { AppState.providersDisabledByTier() }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeader(title: "Provider Configuration", icon: "cpu")
@@ -25,7 +30,11 @@ struct ProviderSettingsSection: View {
     }
 
     private func providerRow(config: ProviderConfig) -> some View {
-        HStack(spacing: 6) {
+        // `isLockedByTier` == true when the migration turned this off AND the
+        // config is still disabled. Re-enabling (or upgrading to Pro) clears
+        // the badge organically because the OR gate evaluates false.
+        let isLockedByTier = !config.isEnabled && disabledByTier.contains(config.kind)
+        return HStack(spacing: 6) {
             Image(systemName: config.kind.iconName)
                 .font(.system(size: 10))
                 .foregroundStyle(PulseTheme.providerColor(config.kind.rawValue))
@@ -45,6 +54,15 @@ struct ProviderSettingsSection: View {
                             .padding(.horizontal, 3)
                             .padding(.vertical, 1)
                             .background(Color.green.opacity(0.1))
+                            .clipShape(Capsule())
+                    }
+                    if isLockedByTier {
+                        Text("Limited by free plan")
+                            .font(.system(size: 7, weight: .medium))
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.12))
                             .clipShape(Capsule())
                     }
                     if let label = config.accountLabel, !label.isEmpty {
