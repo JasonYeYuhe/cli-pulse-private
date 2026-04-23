@@ -10,6 +10,11 @@ struct OnboardingWizardView: View {
     @State private var step = 0
     @State private var email = ""
     @State private var otpCode = ""
+    // v1.10.3 rejection fix: add password sign-in to the onboarding wizard.
+    // macOS first-launch users are forced through this wizard (MenuBarView.swift:73),
+    // and the ASC demo mailbox cannot receive OTP (clipulse.app has no MX record),
+    // so OTP-only here was the actual blocker. Mirrors iOSLoginView.emailEntryView.
+    @State private var password = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,8 +44,18 @@ struct OnboardingWizardView: View {
             .animation(.easeInOut(duration: 0.25), value: step)
         }
         .onChange(of: authState.isAuthenticated) { isAuth in
-            if isAuth && step == 3 {
-                step = 4
+            if isAuth {
+                // Always clear credential buffers on successful auth, regardless
+                // of which step the user is currently viewing. Guards against
+                // the case where the user clicks "Back" while a sign-in request
+                // is still in flight — without the unconditional clear, those
+                // buffers would retain the plaintext password/OTP code across
+                // a later sign-out. (Gemini 3.1 Pro review 2026-04-23.)
+                password = ""
+                otpCode = ""
+                if step == 3 {
+                    step = 4
+                }
             }
         }
     }
@@ -236,6 +251,7 @@ struct OnboardingWizardView: View {
 
                 Button("Back to email") {
                     otpCode = ""
+                    password = ""
                     state.resetOTP()
                 }
                 .font(.caption)
@@ -243,16 +259,25 @@ struct OnboardingWizardView: View {
                 TextField("Email", text: $email)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 260)
+                    .onSubmit { submitSignIn() }
+
+                // v1.10.3 rejection fix: password field (optional). If filled,
+                // tap routes to signInWithPassword; if left empty, falls through
+                // to the existing OTP path. Matches iOSLoginView.emailEntryView.
+                SecureField(L10n.auth.passwordPlaceholder, text: $password)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 260)
+                    .onSubmit { submitSignIn() }
 
                 Button {
-                    Task { await state.sendOTP(email: email) }
+                    submitSignIn()
                 } label: {
-                    Text("Send Code")
+                    Text(password.isEmpty ? L10n.auth.sendCode : L10n.settings.signIn)
                         .frame(width: 200)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(PulseTheme.accent)
-                .disabled(email.isEmpty || !email.contains("@"))
+                .disabled(email.isEmpty || !email.contains("@") || state.isLoading)
             }
 
             if let error = state.lastError {
@@ -271,8 +296,23 @@ struct OnboardingWizardView: View {
             Button("Back") { step = 2 }
                 .buttonStyle(.bordered)
                 .padding(.bottom, 20)
+                .disabled(state.isLoading)
         }
         .padding(.horizontal, 20)
+    }
+
+    // Shared submit handler for the email/password form — invoked both by the
+    // primary button tap and by Return-key submission on either field.
+    // When password is empty, falls through to the existing OTP send.
+    private func submitSignIn() {
+        guard !email.isEmpty, email.contains("@"), !state.isLoading else { return }
+        Task {
+            if !password.isEmpty {
+                await state.signInWithPassword(email: email, password: password)
+            } else {
+                await state.sendOTP(email: email)
+            }
+        }
     }
 
     // MARK: - Step 4: Pair Device
