@@ -338,6 +338,7 @@
 /* ── Auth (OAuth) ── */
 "auth.sign_in_google" = "Googleでサインイン";
 "auth.sign_in_github" = "GitHubでサインイン";
+"auth.sign_in_cancelled" = "サインインをキャンセルしました";
 
 /* ── 予測 ── */
 "forecast.title" = "コスト予測";

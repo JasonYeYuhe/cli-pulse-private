@@ -203,6 +203,13 @@ public final class LocalScanner: @unchecked Sendable {
     /// main app's identical call worked. libproc avoids the subprocess hop
     /// entirely and is permitted in the default sandbox for user-owned
     /// processes.
+    ///
+    /// IMPORTANT: `proc_pidpath` only returns the executable path, not argv.
+    /// Many AI CLIs (Claude Code, Codex CLI, Gemini CLI, …) run as
+    /// `/usr/local/bin/node /path/to/tool.js` — the executable is `node`, so
+    /// pattern-matching on the path alone misses them. We additionally read
+    /// `KERN_PROCARGS2` via sysctl to get argv[0..n] and match on the full
+    /// command line, which is what the original `ps`-based scanner saw.
     private func listProcesses() -> [ProcessRow] {
         let nowEpoch = Int(Date().timeIntervalSince1970)
         var pidBuf = [pid_t](repeating: 0, count: 8192)
@@ -226,6 +233,20 @@ public final class LocalScanner: @unchecked Sendable {
             guard pathLen > 0 else { continue }
             let path = String(cString: pathBuf)
             guard !path.isEmpty else { continue }
+
+            // Append argv so interpreters like `node`/`python` still show
+            // the script name we need to pattern-match on. Silent on
+            // failure — we just fall back to the path alone.
+            let fullCommand: String = {
+                guard let args = Self.processArgs(pid: pid), !args.isEmpty else {
+                    return path
+                }
+                // `path` is the canonical executable; argv[0] is how the
+                // caller invoked it (often a wrapper/symlink name like
+                // `claude`). Keep both so either can match a pattern.
+                let argvStr = args.joined(separator: " ")
+                return "\(path) \(argvStr)"
+            }()
 
             var bsd = proc_bsdinfo()
             let bsdSize = Int32(MemoryLayout<proc_bsdinfo>.stride)
@@ -260,11 +281,91 @@ public final class LocalScanner: @unchecked Sendable {
                 pcpu: String(format: "%.1f", pcpu),
                 pmem: "0.0",
                 etime: Self.formatEtime(etime),
-                command: path
+                command: fullCommand
             ))
         }
         Self.scanLogger.info("libproc enumeration: \(count) pids, \(rows.count) rows")
         return rows
+    }
+
+    /// Read `argv` of a running process via sysctl(KERN_PROCARGS2).
+    ///
+    /// Layout of the returned buffer on Darwin (see `ps` source):
+    ///
+    ///   [ int32 argc ]
+    ///   [ exec_path \0 ]
+    ///   [ padding \0* aligned to next non-null byte ]
+    ///   [ argv[0] \0 ] [ argv[1] \0 ] ... [ argv[argc-1] \0 ]
+    ///   [ envp[0] \0 ] ...
+    ///
+    /// We return `argv[0..argc-1]`. Returns nil on sysctl failure (which
+    /// happens for processes owned by other users — expected in sandbox).
+    nonisolated static func processArgs(pid: pid_t) -> [String]? {
+        // Query the kernel's buffer size limit first.
+        var argMax: Int32 = 0
+        var argMaxSize = MemoryLayout<Int32>.size
+        var argMaxMib: [Int32] = [CTL_KERN, KERN_ARGMAX]
+        if sysctl(&argMaxMib, 2, &argMax, &argMaxSize, nil, 0) != 0 || argMax <= 0 {
+            return nil
+        }
+
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = Int(argMax)
+        var buffer = [CChar](repeating: 0, count: size)
+        let result = buffer.withUnsafeMutableBufferPointer { ptr -> Int32 in
+            guard let base = ptr.baseAddress else { return -1 }
+            return sysctl(&mib, 3, UnsafeMutableRawPointer(base), &size, nil, 0)
+        }
+        if result != 0 || size < MemoryLayout<Int32>.size {
+            return nil
+        }
+
+        // First 4 bytes are argc (little-endian on Darwin).
+        var argc: Int32 = 0
+        withUnsafeMutableBytes(of: &argc) { argcBytes in
+            buffer.withUnsafeBytes { bufBytes in
+                argcBytes.copyMemory(from: UnsafeRawBufferPointer(rebasing: bufBytes.prefix(4)))
+            }
+        }
+        guard argc > 0 else { return [] }
+
+        // Walk past exec_path + padding, then collect `argc` strings.
+        var cursor = MemoryLayout<Int32>.size
+
+        // Skip the exec_path C-string.
+        while cursor < size, buffer[cursor] != 0 {
+            cursor += 1
+        }
+        // Skip trailing NULs between exec_path and argv[0].
+        while cursor < size, buffer[cursor] == 0 {
+            cursor += 1
+        }
+
+        var args: [String] = []
+        args.reserveCapacity(Int(argc))
+        for _ in 0..<argc {
+            guard cursor < size else { break }
+            let start = cursor
+            while cursor < size, buffer[cursor] != 0 {
+                cursor += 1
+            }
+            let byteCount = cursor - start
+            if byteCount > 0 {
+                let bytes: [UInt8] = buffer[start..<cursor].map { UInt8(bitPattern: $0) }
+                if let str = String(bytes: bytes, encoding: .utf8) {
+                    args.append(str)
+                } else {
+                    args.append("")
+                }
+            } else {
+                args.append("")
+            }
+            // Skip the terminating NUL.
+            if cursor < size, buffer[cursor] == 0 {
+                cursor += 1
+            }
+        }
+        return args
     }
 
     private static func formatEtime(_ seconds: Int) -> String {

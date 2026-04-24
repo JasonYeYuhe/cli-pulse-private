@@ -338,6 +338,7 @@
 /* ── Auth (OAuth) ── */
 "auth.sign_in_google" = "Sign in with Google";
 "auth.sign_in_github" = "Sign in with GitHub";
+"auth.sign_in_cancelled" = "Sign-in cancelled";
 
 /* ── Forecast ── */
 "forecast.title" = "Cost Forecast";

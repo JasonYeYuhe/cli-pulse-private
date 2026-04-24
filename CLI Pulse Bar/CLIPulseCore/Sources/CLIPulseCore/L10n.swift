@@ -197,6 +197,7 @@ public enum L10n {
         public static var passwordPlaceholder: String { tr("auth.password_placeholder") }
         public static var signInGoogle: String { tr("auth.sign_in_google") }
         public static var signInGithub: String { tr("auth.sign_in_github") }
+        public static var signInCancelled: String { tr("auth.sign_in_cancelled") }
     }
 
     // MARK: - Subscription

@@ -338,6 +338,7 @@
 /* ── Auth (OAuth) ── */
 "auth.sign_in_google" = "Iniciar sesión con Google";
 "auth.sign_in_github" = "Iniciar sesión con GitHub";
+"auth.sign_in_cancelled" = "Inicio de sesión cancelado";
 
 /* ── Pronóstico ── */
 "forecast.title" = "Pronóstico de costos";
