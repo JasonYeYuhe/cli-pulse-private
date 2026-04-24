@@ -129,5 +129,5 @@ xcodebuild -scheme "CLI Pulse Bar" build  → BUILD SUCCEEDED
 
 ## 相关 commit
 
-- `TBD` (本次 commit hash 待填)
+- `a2c1bb4` v1.10.5 build 39: iPhone dashboard fix + adaptive CPU alerts
 - 基线: `9b004a8` chore: sync versions to v1.10.4
