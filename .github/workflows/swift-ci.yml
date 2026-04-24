@@ -17,7 +17,10 @@ concurrency:
 jobs:
   test-core:
     name: CLIPulseCore unit tests
-    runs-on: macos-14
+    # v1.10.6: bumped macos-14 → macos-15 for Xcode 16+ / Swift tools 6.0.
+    # Sentry-cocoa 9.10+ declares swift-tools-version: 6.0 in its Package.swift,
+    # which Xcode 15 (macos-14) can't parse → SPM resolve fails before compile.
+    runs-on: macos-15
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -36,7 +39,7 @@ jobs:
 
   build-apps:
     name: Build ${{ matrix.scheme }}
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
     strategy:
       fail-fast: false
