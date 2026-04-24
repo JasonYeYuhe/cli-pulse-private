@@ -210,7 +210,9 @@ public actor APIClient {
         let provider: String?
         let today_usage: Int?
         let total_usage: Int?
-        let estimated_cost: Double?
+        let estimated_cost: Double?         // 7-day cost (historical name kept for backward compat)
+        let estimated_cost_today: Double?   // v1.10.6+ today cost from daily_usage_metrics
+        let estimated_cost_30_day: Double?  // v1.10.6+ 30-day cost from daily_usage_metrics
         let quota: Int?
         let remaining: Int?
         let plan_type: String?
@@ -548,8 +550,9 @@ public actor APIClient {
                 provider: name,
                 today_usage: provider.today_usage ?? 0,
                 week_usage: provider.total_usage ?? 0,
-                estimated_cost_today: 0,
+                estimated_cost_today: provider.estimated_cost_today ?? 0,
                 estimated_cost_week: provider.estimated_cost ?? 0,
+                estimated_cost_30_day: provider.estimated_cost_30_day ?? 0,
                 cost_status_today: "Estimated",
                 cost_status_week: "Estimated",
                 quota: provider.quota,

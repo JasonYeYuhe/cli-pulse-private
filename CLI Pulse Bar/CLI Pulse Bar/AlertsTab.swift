@@ -51,10 +51,10 @@ struct AlertsTab: View {
 
                     if filter == .open && !filteredAlerts.isEmpty {
                         Button {
+                            let toResolve = filteredAlerts.filter { !$0.is_resolved }
                             Task {
-                                for alert in filteredAlerts where !alert.is_resolved {
-                                    await state.resolveAlert(alert)
-                                }
+                                // v1.10.6: batched resolve (single terminal refresh).
+                                await state.resolveAlerts(toResolve)
                             }
                         } label: {
                             Text("Resolve All")

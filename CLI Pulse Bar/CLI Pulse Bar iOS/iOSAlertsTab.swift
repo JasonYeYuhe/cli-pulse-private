@@ -36,13 +36,36 @@ struct iOSAlertsTab: View {
                     alertSummary
                         .padding(.horizontal)
 
-                    // Filter
-                    Picker(L10n.alerts.filter, selection: $filter) {
-                        ForEach(AlertFilter.allCases, id: \.self) { f in
-                            Text(f.label)
+                    // Filter + Resolve All (v1.10.6: parity with macOS)
+                    HStack(spacing: 8) {
+                        Picker(L10n.alerts.filter, selection: $filter) {
+                            ForEach(AlertFilter.allCases, id: \.self) { f in
+                                Text(f.label)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        if filter == .open && !filteredAlerts.isEmpty {
+                            Button {
+                                let toResolve = filteredAlerts.filter { !$0.is_resolved }
+                                Task {
+                                    // v1.10.6: batched resolve — parallel network
+                                    // calls + single UI refresh at the end,
+                                    // instead of N sequential refreshes.
+                                    await state.resolveAlerts(toResolve)
+                                }
+                            } label: {
+                                Text("Resolve All")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(Color.green.opacity(0.15))
+                                    .foregroundStyle(.green)
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
-                    .pickerStyle(.segmented)
                     .padding(.horizontal)
 
                     // Alert List

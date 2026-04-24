@@ -4,73 +4,115 @@
 -- All use security definer so they bypass RLS with internal auth.
 -- ============================================================
 
--- dashboard_summary: returns overview stats for the authenticated user
+-- dashboard_summary: returns overview stats for the authenticated user.
+-- v1.10.5+: sources today_usage/today_cost from daily_usage_metrics
+-- (populated by CostUsageScanner via JSONL bookmarks, unaffected by the
+-- MAS sandbox gap that made `sessions` unreliable).
 create or replace function public.dashboard_summary()
 returns jsonb as $$
 declare
   v_user_id uuid := auth.uid();
   v_today date := current_date;
+  v_today_usage bigint;
+  v_today_cost numeric;
+  v_today_rows integer;
   v_result jsonb;
 begin
   if v_user_id is null then
     raise exception 'Not authenticated';
   end if;
 
-  -- Use range scan (SARGable) instead of casting to date for index efficiency
+  select
+    coalesce(sum(coalesce(input_tokens,0) + coalesce(cached_tokens,0) + coalesce(output_tokens,0)), 0),
+    coalesce(sum(cost), 0),
+    count(*)
+  into v_today_usage, v_today_cost, v_today_rows
+  from public.daily_usage_metrics
+  where user_id = v_user_id
+    and metric_date = v_today;
+
   select jsonb_build_object(
-    'today_usage', coalesce((select sum(total_usage) from public.sessions where user_id = v_user_id and last_active_at >= v_today and last_active_at < v_today + interval '1 day'), 0),
-    'today_cost', coalesce((select sum(estimated_cost) from public.sessions where user_id = v_user_id and last_active_at >= v_today and last_active_at < v_today + interval '1 day'), 0),
-    'active_sessions', (select count(*) from public.sessions where user_id = v_user_id and status = 'Running'),
-    'online_devices', (select count(*) from public.devices where user_id = v_user_id and status = 'Online'),
-    'unresolved_alerts', (select count(*) from public.alerts where user_id = v_user_id and is_resolved = false),
-    'today_sessions', coalesce((select sum(requests) from public.sessions where user_id = v_user_id and last_active_at >= v_today and last_active_at < v_today + interval '1 day'), 0)
+    'today_usage', v_today_usage,
+    'today_cost', v_today_cost,
+    'active_sessions', (
+      select count(*) from public.sessions
+      where user_id = v_user_id and status = 'Running'
+    ),
+    'online_devices', (
+      select count(*) from public.devices
+      where user_id = v_user_id and status = 'Online'
+    ),
+    'unresolved_alerts', (
+      select count(*) from public.alerts
+      where user_id = v_user_id and is_resolved = false
+    ),
+    'today_sessions', v_today_rows
   ) into v_result;
 
   return v_result;
 end;
 $$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
--- provider_summary: returns per-provider usage (week-scoped) for the authenticated user
+-- provider_summary: per-provider usage (today / 7-day / 30-day) for the
+-- authenticated user.
+-- v1.10.6: emits `estimated_cost_today`, `estimated_cost` (= week_cost)
+-- AND `estimated_cost_30_day` so iOS/Watch/Android can show actual 30-day
+-- cost without extrapolating from 7 days. Sources all windows from
+-- `daily_usage_metrics`.
 create or replace function public.provider_summary()
 returns jsonb as $$
 declare
   v_user_id uuid := auth.uid();
   v_today date := current_date;
   v_week_start date := current_date - interval '7 days';
+  v_month_start date := current_date - interval '30 days';
 begin
   if v_user_id is null then
     raise exception 'Not authenticated';
   end if;
 
-  -- Single-pass: CTE aggregates sessions, then FULL OUTER JOIN with quotas
   return (
-    with session_agg as (
+    with usage_agg as (
       select
-        s.provider,
-        coalesce(sum(case when s.last_active_at >= v_today and s.last_active_at < v_today + interval '1 day' then s.total_usage else 0 end), 0) as today_usage,
-        coalesce(sum(s.total_usage), 0) as total_usage,
-        coalesce(sum(s.estimated_cost), 0) as estimated_cost
-      from public.sessions s
-      where s.user_id = v_user_id and s.last_active_at >= v_week_start
-      group by s.provider
+        provider,
+        sum(case when metric_date = v_today
+              then coalesce(input_tokens,0) + coalesce(cached_tokens,0) + coalesce(output_tokens,0)
+              else 0 end) as today_usage,
+        sum(case when metric_date >= v_week_start
+              then coalesce(input_tokens,0) + coalesce(cached_tokens,0) + coalesce(output_tokens,0)
+              else 0 end) as total_usage,
+        sum(case when metric_date = v_today then cost else 0 end) as today_cost,
+        sum(case when metric_date >= v_week_start then cost else 0 end) as week_cost,
+        sum(cost) as month_cost
+      from public.daily_usage_metrics
+      where user_id = v_user_id
+        and metric_date >= v_month_start
+      group by provider
+    ),
+    quota_agg as (
+      select provider, remaining, quota, plan_type, reset_time, tiers
+      from public.provider_quotas
+      where user_id = v_user_id
     )
-    select coalesce(jsonb_agg(
-      jsonb_build_object(
-        'provider', coalesce(sa.provider, pq.provider),
-        'today_usage', coalesce(sa.today_usage, 0),
-        'total_usage', coalesce(sa.total_usage, 0),
-        'estimated_cost', coalesce(sa.estimated_cost, 0),
-        'remaining', pq.remaining,
-        'quota', pq.quota,
-        'plan_type', pq.plan_type,
-        'reset_time', pq.reset_time,
-        'tiers', coalesce(pq.tiers, '[]'::jsonb)
-      ) order by coalesce(sa.total_usage, 0) desc
-    ), '[]'::jsonb)
-    from session_agg sa
-    full outer join public.provider_quotas pq
-      on pq.user_id = v_user_id and pq.provider = sa.provider
-    where sa.provider is not null or pq.user_id = v_user_id
+    select coalesce(jsonb_agg(row_data order by sort_key desc), '[]'::jsonb)
+    from (
+      select jsonb_build_object(
+        'provider', coalesce(u.provider, q.provider),
+        'today_usage', coalesce(u.today_usage, 0),
+        'total_usage', coalesce(u.total_usage, 0),
+        'estimated_cost', coalesce(u.week_cost, 0),
+        'estimated_cost_today', coalesce(u.today_cost, 0),
+        'estimated_cost_30_day', coalesce(u.month_cost, 0),
+        'remaining', q.remaining,
+        'quota', q.quota,
+        'plan_type', q.plan_type,
+        'reset_time', q.reset_time,
+        'tiers', coalesce(q.tiers, '[]'::jsonb)
+      ) as row_data,
+      coalesce(u.total_usage, 0) as sort_key
+      from usage_agg u
+      full outer join quota_agg q on q.provider = u.provider
+    ) sub
   );
 end;
 $$ language plpgsql security definer set search_path = pg_catalog, public, extensions;

@@ -26,9 +26,12 @@ public enum AlertGenerator {
         let now = sharedISO8601Formatter.string(from: Date())
 
         // Rule 1: Device CPU >= 85%
+        // v1.10.6: use a stable id so repeated high-CPU samples upsert the
+        // same row instead of spawning a new alert (and new notification)
+        // every refresh cycle. Callers dedup notifications by alert id.
         if device.cpuUsage >= 85 {
             alerts.append([
-                "id": "cpu-spike-\(Int(Date().timeIntervalSince1970))",
+                "id": "cpu-spike-global",
                 "type": "Usage Spike",
                 "severity": "Warning",
                 "title": "Device CPU usage is elevated",

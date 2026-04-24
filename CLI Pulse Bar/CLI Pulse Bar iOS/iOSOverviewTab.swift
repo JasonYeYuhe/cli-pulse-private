@@ -167,10 +167,13 @@ struct iOSOverviewTab: View {
                 Spacer()
             }
 
-            // Per-provider breakdown
-            let breakdownData = providerState.costSummary.isPrecise
-                ? providerState.costSummary.thirtyDayByProvider
-                : providerState.costSummary.todayByProvider
+            // Per-provider breakdown — always use 30-day to match the header.
+            // v1.10.6: prior code fell back to `todayByProvider` when not precise,
+            // which rendered all-zero rows under the "30 Day Est." label because
+            // the server didn't emit per-provider today cost. The new
+            // `provider_summary` RPC returns a real 30-day sum, so clients
+            // without a local scan can show consistent numbers here.
+            let breakdownData = providerState.costSummary.thirtyDayByProvider
             ForEach(Array(breakdownData.sorted(by: { $0.cost > $1.cost }).prefix(5)), id: \.provider) { item in
                 HStack {
                     Circle()

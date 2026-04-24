@@ -63,8 +63,19 @@ internal final class DataRefreshManager {
     /// the set is overwritten each cycle with only the IDs still in the
     /// feed (resolved/aged-out alerts drop off naturally).
     private static let previousAlertIDsKey = "cli_pulse_previous_alert_ids_v1"
+    private static let previousSuppressionKeysKey = "cli_pulse_previous_alert_suppression_keys_v1"
     private var previousAlertIDs: Set<String> = {
         guard let arr = UserDefaults.standard.stringArray(forKey: DataRefreshManager.previousAlertIDsKey) else {
+            return []
+        }
+        return Set(arr)
+    }()
+    /// v1.10.6: track suppression_key across cycles so a group of related
+    /// alerts (e.g. repeated budget hits on one project, repeated CPU spikes)
+    /// only fires a local notification the FIRST time it lands. Resets when
+    /// the group stops appearing for a full refresh.
+    private var previousSuppressionKeys: Set<String> = {
+        guard let arr = UserDefaults.standard.stringArray(forKey: DataRefreshManager.previousSuppressionKeysKey) else {
             return []
         }
         return Set(arr)
@@ -73,6 +84,11 @@ internal final class DataRefreshManager {
     private func updatePreviousAlertIDs(_ ids: Set<String>) {
         previousAlertIDs = ids
         UserDefaults.standard.set(Array(ids), forKey: Self.previousAlertIDsKey)
+    }
+
+    private func updatePreviousSuppressionKeys(_ keys: Set<String>) {
+        previousSuppressionKeys = keys
+        UserDefaults.standard.set(Array(keys), forKey: Self.previousSuppressionKeysKey)
     }
 
     #if os(macOS)
@@ -227,8 +243,19 @@ internal final class DataRefreshManager {
                 }
             }
 
+            // v1.10.6: dedupe by BOTH alert.id AND suppression_key. Groups
+            // of related alerts sharing a suppression_key (same project,
+            // same quota window, repeated CPU spikes) notify only once per
+            // group until the group ages out of the feed. This prevents
+            // "I know I'm working on this project, stop telling me" spam.
+            var seenSuppressionThisCycle: Set<String> = previousSuppressionKeys
             let newAlerts = augmentedAlerts.filter { alert in
-                !alert.is_resolved && !previousAlertIDs.contains(alert.id)
+                guard !alert.is_resolved, !previousAlertIDs.contains(alert.id) else { return false }
+                if let sk = alert.suppression_key, !sk.isEmpty {
+                    if seenSuppressionThisCycle.contains(sk) { return false }
+                    seenSuppressionThisCycle.insert(sk)
+                }
+                return true
             }
             if context.notificationsEnabled {
                 for alert in newAlerts {
@@ -236,6 +263,19 @@ internal final class DataRefreshManager {
                 }
             }
             updatePreviousAlertIDs(Set(augmentedAlerts.map(\.id)))
+            // Persist the suppression keys that are still ACTIVE in this cycle's
+            // feed. Intentionally exclude resolved alerts — a resolved row can
+            // linger in the feed for weeks (see `alerts` retention), and if we
+            // kept its key we'd suppress a fresh alert that happens to share the
+            // same suppression_key (e.g. same project re-exceeding budget). Keys
+            // drop from the set when a group stops appearing OR all its alerts
+            // get resolved, so a legit re-occurrence fires a notification again.
+            updatePreviousSuppressionKeys(
+                Set(augmentedAlerts
+                    .filter { !$0.is_resolved }
+                    .compactMap { $0.suppression_key }
+                    .filter { !$0.isEmpty })
+            )
 
             // Evaluate budget alerts server-side (non-blocking, best-effort)
             Task {
@@ -597,6 +637,7 @@ internal final class DataRefreshManager {
                     week_usage: mergedWeekUsage,
                     estimated_cost_today: existing.estimated_cost_today,
                     estimated_cost_week: existing.estimated_cost_week,
+                    estimated_cost_30_day: existing.estimated_cost_30_day,
                     cost_status_today: existing.cost_status_today,
                     cost_status_week: existing.cost_status_week,
                     quota: mergedQuota,
@@ -700,6 +741,7 @@ internal final class DataRefreshManager {
                 week_usage: mergedWeekUsage,
                 estimated_cost_today: mergedCostToday,
                 estimated_cost_week: mergedCostWeek,
+                estimated_cost_30_day: provider.estimated_cost_30_day,
                 cost_status_today: statusToday,
                 cost_status_week: statusWeek,
                 quota: provider.quota,
@@ -883,10 +925,16 @@ extension AppState {
     }
 
     public func resolveAlert(_ alert: AlertRecord) async {
-        // v1.9.3: locally-generated alerts (id prefix `quota-`) don't exist
-        // server-side, so `api.resolveAlert` would no-op and the alert would
-        // re-fire on the next quota evaluation. Persist a permanent local
-        // suppression instead.
+        await resolveAlert(alert, skipRefresh: false)
+    }
+
+    /// v1.10.6: internal variant that skips the full `refreshAll()` at the end.
+    /// Used by `resolveAlerts(_:)` to batch N resolves into a single refresh —
+    /// otherwise "Resolve All" would issue N back-to-back network fetches.
+    private func resolveAlert(_ alert: AlertRecord, skipRefresh: Bool) async {
+        // Locally-generated alerts (id prefix `quota-`) don't exist server-side,
+        // so `api.resolveAlert` would no-op and the alert would re-fire on the
+        // next quota evaluation. Persist a permanent local suppression instead.
         if alert.id.hasPrefix("quota-") {
             suppressAlert(id: alert.id, until: .distantFuture)
             if let idx = alerts.firstIndex(where: { $0.id == alert.id }) {
@@ -902,9 +950,31 @@ extension AppState {
         }
         do {
             _ = try await api.resolveAlert(id: alert.id)
-            await refreshAll()
+            if !skipRefresh {
+                await refreshAll()
+            }
         } catch {
             lastError = error.localizedDescription
+        }
+    }
+
+    /// v1.10.6: resolve a batch of alerts with a single terminal refresh.
+    /// "Resolve All" on both macOS and iOS calls this. The per-alert network
+    /// writes run concurrently; the UI refreshes exactly once at the end.
+    public func resolveAlerts(_ alertsToResolve: [AlertRecord]) async {
+        guard !alertsToResolve.isEmpty else { return }
+        await withTaskGroup(of: Void.self) { group in
+            for alert in alertsToResolve {
+                group.addTask { [weak self] in
+                    await self?.resolveAlert(alert, skipRefresh: true)
+                }
+            }
+        }
+        // Skip the final refresh for demo mode (no network) and when the batch
+        // was entirely local `quota-*` suppressions (handled in-memory above).
+        let needsRefresh = !isDemoMode && alertsToResolve.contains { !$0.id.hasPrefix("quota-") }
+        if needsRefresh {
+            await refreshAll()
         }
     }
 
@@ -1042,8 +1112,16 @@ extension AppState {
             for entry in scan.entries {
                 thirtyDayByProv[entry.provider, default: 0] += entry.costUSD ?? 0
             }
-            for provider in providers where thirtyDayByProv[provider.provider] == nil && provider.estimated_cost_week > 0 {
-                thirtyDayByProv[provider.provider] = provider.estimated_cost_week * 4.3
+            // v1.10.6: prefer the real 30-day cost from the server (sourced
+            // from `daily_usage_metrics`) over the old week*4.3 extrapolation.
+            // Fall back to week*4.3 only for older clients / providers whose
+            // server-side 30-day sum is missing.
+            for provider in providers where thirtyDayByProv[provider.provider] == nil {
+                if provider.estimated_cost_30_day > 0 {
+                    thirtyDayByProv[provider.provider] = provider.estimated_cost_30_day
+                } else if provider.estimated_cost_week > 0 {
+                    thirtyDayByProv[provider.provider] = provider.estimated_cost_week * 4.3
+                }
             }
             let thirtyDayByProvider = thirtyDayByProv.map { ($0.key, $0.value) }
             let thirtyDayTotal = thirtyDayByProv.values.reduce(0, +)
@@ -1102,10 +1180,17 @@ extension AppState {
             return
         }
 
-        // Fallback: use API-provided estimates
+        // Fallback: use API-provided estimates.
+        // v1.10.6: use the server's real 30-day cost from daily_usage_metrics
+        // when available; fall back to `week * 4.3` for older servers.
         let todayByProvider = providers.map { ($0.provider, $0.estimated_cost_today) }
         let todayTotal = todayByProvider.reduce(0) { $0 + $1.1 }
-        let thirtyDayByProvider = providers.map { ($0.provider, $0.estimated_cost_week * 4.3) }
+        let thirtyDayByProvider = providers.map { provider -> (String, Double) in
+            if provider.estimated_cost_30_day > 0 {
+                return (provider.provider, provider.estimated_cost_30_day)
+            }
+            return (provider.provider, provider.estimated_cost_week * 4.3)
+        }
         let thirtyDayTotal = thirtyDayByProvider.reduce(0) { $0 + $1.1 }
         costSummary = CostSummary(
             todayTotal: todayTotal,

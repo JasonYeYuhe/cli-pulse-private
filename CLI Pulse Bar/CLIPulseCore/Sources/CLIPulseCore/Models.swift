@@ -363,6 +363,7 @@ public struct ProviderUsage: Codable, Identifiable, Sendable {
     public let week_usage: Int
     public let estimated_cost_today: Double
     public let estimated_cost_week: Double
+    public let estimated_cost_30_day: Double
     public let cost_status_today: String
     public let cost_status_week: String
     public let quota: Int?
@@ -391,6 +392,7 @@ public struct ProviderUsage: Codable, Identifiable, Sendable {
     public init(
         provider: String, today_usage: Int, week_usage: Int,
         estimated_cost_today: Double, estimated_cost_week: Double,
+        estimated_cost_30_day: Double = 0,
         cost_status_today: String, cost_status_week: String,
         quota: Int?, remaining: Int?,
         plan_type: String? = nil, reset_time: String? = nil,
@@ -404,6 +406,7 @@ public struct ProviderUsage: Codable, Identifiable, Sendable {
         self.week_usage = week_usage
         self.estimated_cost_today = estimated_cost_today
         self.estimated_cost_week = estimated_cost_week
+        self.estimated_cost_30_day = estimated_cost_30_day
         self.cost_status_today = cost_status_today
         self.cost_status_week = cost_status_week
         self.quota = quota
