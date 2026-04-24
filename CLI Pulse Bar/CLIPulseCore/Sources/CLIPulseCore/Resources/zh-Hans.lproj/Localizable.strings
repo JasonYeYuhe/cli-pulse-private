@@ -338,6 +338,7 @@
 /* ── Auth (OAuth) ── */
 "auth.sign_in_google" = "使用 Google 登录";
 "auth.sign_in_github" = "使用 GitHub 登录";
+"auth.sign_in_cancelled" = "已取消登录";
 
 /* ── 预测 ── */
 "forecast.title" = "费用预测";

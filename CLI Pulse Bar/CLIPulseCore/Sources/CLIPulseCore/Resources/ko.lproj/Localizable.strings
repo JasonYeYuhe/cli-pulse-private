@@ -338,6 +338,7 @@
 /* ── Auth (OAuth) ── */
 "auth.sign_in_google" = "Google로 로그인";
 "auth.sign_in_github" = "GitHub로 로그인";
+"auth.sign_in_cancelled" = "로그인이 취소되었습니다";
 
 /* ── 예측 ── */
 "forecast.title" = "비용 예측";

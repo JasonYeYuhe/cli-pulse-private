@@ -147,6 +147,40 @@ final class LocalScannerTests: XCTestCase {
         XCTAssertEqual(result?.0, "Warp")
         XCTAssertEqual(result?.1, "medium")
     }
+
+    // MARK: - Node-launched CLIs (regression for sessions data staleness)
+
+    /// Claude Code / Codex CLI / Gemini CLI etc. often run as
+    /// `/usr/local/bin/node /path/to/tool.js …`. Historical `proc_pidpath`
+    /// returned only `/usr/local/bin/node`, which matched nothing and left
+    /// `public.sessions` empty on Supabase. With the argv-concatenated
+    /// command string, the `\bclaude\b` / `\bcodex\b` patterns inside the
+    /// script path must now match.
+    func testNodeLaunchedCodexMatches() {
+        let cmd = "/usr/local/bin/node /Users/jason/.claude/plugins/cache/openai-codex/codex/1.0.1/scripts/app-server-broker.mjs serve"
+        let result = scanner.detectProvider(cmd)
+        XCTAssertEqual(result?.0, "Codex")
+        XCTAssertEqual(result?.1, "high")
+    }
+
+    func testNodeLaunchedClaudeCodeMatches() {
+        let cmd = "/opt/homebrew/bin/node /Users/jason/.claude/local/node_modules/@anthropic-ai/claude-code/cli.js --print"
+        let result = scanner.detectProvider(cmd)
+        XCTAssertEqual(result?.0, "Claude")
+        XCTAssertEqual(result?.1, "high")
+    }
+
+    // MARK: - processArgs(pid:)
+
+    /// Run against the test process itself — every process has argv, so
+    /// argv[0] must be non-empty. Verifies the sysctl(KERN_PROCARGS2) walk
+    /// produces something we can decode back into UTF-8.
+    func testProcessArgsForSelf() {
+        let args = LocalScanner.processArgs(pid: getpid())
+        XCTAssertNotNil(args, "KERN_PROCARGS2 should succeed for own pid")
+        XCTAssertFalse(args?.isEmpty ?? true, "self argv must contain at least argv[0]")
+        XCTAssertFalse(args?.first?.isEmpty ?? true, "argv[0] must be non-empty")
+    }
 }
 
 #endif

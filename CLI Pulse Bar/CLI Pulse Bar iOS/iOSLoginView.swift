@@ -206,35 +206,17 @@ struct iOSLoginView: View {
                 #if DEBUG
                 print("[OAuth] callback URL: \(callbackURL.absoluteString)")
                 #endif
-                // Supabase may return the auth code either as a query parameter (?code=...)
-                // or as a URL fragment (#code=...). Try both.
-                let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)
-                func readItem(_ name: String) -> String? {
-                    if let v = components?.queryItems?.first(where: { $0.name == name })?.value { return v }
-                    if let fragment = components?.fragment {
-                        var fragComponents = URLComponents()
-                        fragComponents.query = fragment
-                        return fragComponents.queryItems?.first(where: { $0.name == name })?.value
+                switch OAuthCallbackParser.parse(url: callbackURL) {
+                case .cancelled:
+                    Task { @MainActor in state?.lastError = L10n.auth.signInCancelled }
+                case .failed(let description):
+                    Task { @MainActor in state?.lastError = "OAuth sign-in failed: \(description)" }
+                case .success(let code, let returnedState):
+                    guard returnedState == expectedState else {
+                        Task { @MainActor in state?.lastError = "OAuth sign-in failed: state mismatch" }
+                        return
                     }
-                    return nil
-                }
-                let code = readItem("code")
-                let returnedState = readItem("state")
-                // Surface any error returned by Supabase/Google for easier debugging.
-                let errorDesc = components?.queryItems?.first(where: { $0.name == "error_description" })?.value
-                    ?? components?.queryItems?.first(where: { $0.name == "error" })?.value
-                guard let code else {
-                    let detail = errorDesc ?? callbackURL.absoluteString
-                    Task { @MainActor in state?.lastError = "OAuth sign-in failed: \(detail)" }
-                    return
-                }
-                // CSRF: verify the state Supabase echoed back matches what we sent.
-                guard let returnedState, returnedState == expectedState else {
-                    Task { @MainActor in state?.lastError = "OAuth sign-in failed: state mismatch" }
-                    return
-                }
-                Task {
-                    await state?.exchangeOAuthCode(code: code, codeVerifier: codeVerifier)
+                    Task { await state?.exchangeOAuthCode(code: code, codeVerifier: codeVerifier) }
                 }
             }
             session.presentationContextProvider = Self.webAuthContextProvider
