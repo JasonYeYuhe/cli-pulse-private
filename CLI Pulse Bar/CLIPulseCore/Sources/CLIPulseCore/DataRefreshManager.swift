@@ -1192,14 +1192,36 @@ extension AppState {
             return (provider.provider, provider.estimated_cost_week * 4.3)
         }
         let thirtyDayTotal = thirtyDayByProvider.reduce(0) { $0 + $1.1 }
+
+        // v1.10.7: derive Subscription Utilization from the 30-day fallback
+        // totals so iPhone (cloud-only) and any other client without a local
+        // JSONL scan can still render the Utilization section of the Cost
+        // Summary card. The local-scan branch above already populates this
+        // precisely; this is the estimate path.
+        let thirtyDayLookup = thirtyDayByProvider.reduce(into: [String: Double]()) {
+            $0[$1.0, default: 0] += $1.1
+        }
+        let utilization: [SubscriptionUtilization] = subscriptions.compactMap { sub in
+            guard sub.monthlyCost > 0 else { return nil }
+            let apiCost = thirtyDayLookup[sub.provider] ?? 0
+            return SubscriptionUtilization(
+                provider: sub.provider,
+                plan: sub.plan,
+                apiEquivCost: apiCost,
+                subscriptionCost: sub.monthlyCost
+            )
+        }.sorted { $0.utilizationPercent > $1.utilizationPercent }
+
         costSummary = CostSummary(
             todayTotal: todayTotal,
             todayByProvider: todayByProvider,
             thirtyDayTotal: thirtyDayTotal,
             thirtyDayByProvider: thirtyDayByProvider,
+            isPrecise: false,
             subscriptionTotal: subTotal,
             subscriptionByProvider: subscriptions,
-            grandTotal: subTotal + thirtyDayTotal
+            grandTotal: subTotal + thirtyDayTotal,
+            utilization: utilization
         )
     }
 
@@ -1342,7 +1364,27 @@ extension AppState {
         if let dash = dashboard {
             let localTodayCost = costSummary.todayTotal
             let localTodayTokens = costSummary.todayTokens
-            if localTodayCost > 0 || localTodayTokens > 0 {
+            // v1.10.7: when the cloud dashboard ships an empty
+            // `provider_breakdown` (today's Supabase `dashboard_summary` RPC
+            // does not populate it), synthesise it from the per-provider
+            // `providers` array so iOS/cloud-only clients can render the
+            // Overview "Provider Usage" card. Runs independently of the
+            // local-today rebuild below; both paths share `rebuiltBreakdown`.
+            let rebuiltBreakdown: [ProviderBreakdown] = {
+                if !dash.provider_breakdown.isEmpty { return dash.provider_breakdown }
+                if providers.isEmpty { return dash.provider_breakdown }
+                return providers.map {
+                    ProviderBreakdown(
+                        provider: $0.provider,
+                        usage: $0.today_usage,
+                        estimated_cost: $0.estimated_cost_today,
+                        cost_status: $0.cost_status_today,
+                        remaining: $0.remaining
+                    )
+                }
+            }()
+            let breakdownChanged = rebuiltBreakdown.count != dash.provider_breakdown.count
+            if localTodayCost > 0 || localTodayTokens > 0 || breakdownChanged {
                 dashboard = DashboardSummary(
                     total_usage_today: localTodayTokens > 0 ? localTodayTokens : dash.total_usage_today,
                     total_estimated_cost_today: localTodayCost > 0 ? localTodayCost : dash.total_estimated_cost_today,
@@ -1351,7 +1393,7 @@ extension AppState {
                     active_sessions: dash.active_sessions,
                     online_devices: dash.online_devices,
                     unresolved_alerts: dash.unresolved_alerts,
-                    provider_breakdown: dash.provider_breakdown,
+                    provider_breakdown: rebuiltBreakdown,
                     top_projects: dash.top_projects,
                     trend: dash.trend,
                     recent_activity: dash.recent_activity,

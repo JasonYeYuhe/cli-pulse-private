@@ -7,11 +7,29 @@ struct iOSProvidersTab: View {
     @EnvironmentObject var providerState: ProviderState
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showDisabled = false
+    /// v1.10.7: kinds the user just toggled OFF in this view's lifetime.
+    /// Without this, the filter below drops the card the moment the toggle
+    /// flips, so the user can't tap it back on — they thought the control
+    /// was broken. Sticky-visible until the user leaves the tab and returns.
+    @State private var recentlyToggledOff: Set<ProviderKind> = []
 
     private var isIPad: Bool { horizontalSizeClass == .regular }
 
     private var visibleDetails: [ProviderDetail] {
-        providerState.providerDetails.filter { showDisabled || $0.config.isEnabled }
+        providerState.providerDetails.filter {
+            showDisabled
+                || $0.config.isEnabled
+                || recentlyToggledOff.contains($0.config.kind)
+        }
+    }
+
+    private func handleToggle(_ kind: ProviderKind, newValue: Bool) {
+        if !newValue {
+            recentlyToggledOff.insert(kind)
+        } else {
+            recentlyToggledOff.remove(kind)
+        }
+        state.setProviderEnabled(kind, isEnabled: newValue)
     }
 
     var body: some View {
@@ -38,6 +56,21 @@ struct iOSProvidersTab: View {
                             }
                             .padding(.vertical, 40)
                         }
+                    } else if visibleDetails.isEmpty {
+                        // v1.10.7: parity with macOS — when every provider is
+                        // toggled off and the user hasn't hit "Show All", give
+                        // them a clear path back instead of a blank screen.
+                        ContentUnavailableView {
+                            Label(L10n.providers.allHidden, systemImage: "eye.slash")
+                        } description: {
+                            Text(L10n.providers.showAllHint)
+                        } actions: {
+                            Button(L10n.providers.showAll) {
+                                showDisabled = true
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                        .padding(.vertical, 40)
                     } else if isIPad {
                         // iPad: two-column grid
                         LazyVGrid(columns: [
@@ -45,8 +78,8 @@ struct iOSProvidersTab: View {
                             GridItem(.flexible(), spacing: 12),
                         ], spacing: 12) {
                             ForEach(visibleDetails) { detail in
-                                iOSEnhancedProviderCard(detail: detail, showCost: state.showCost) {
-                                    state.toggleProvider(detail.config.kind)
+                                iOSEnhancedProviderCard(detail: detail, showCost: state.showCost) { newValue in
+                                    handleToggle(detail.config.kind, newValue: newValue)
                                 }
                             }
                         }
@@ -54,8 +87,8 @@ struct iOSProvidersTab: View {
                     } else {
                         // iPhone: single column
                         ForEach(visibleDetails) { detail in
-                            iOSEnhancedProviderCard(detail: detail, showCost: state.showCost) {
-                                state.toggleProvider(detail.config.kind)
+                            iOSEnhancedProviderCard(detail: detail, showCost: state.showCost) { newValue in
+                                handleToggle(detail.config.kind, newValue: newValue)
                             }
                         }
                         .padding(.horizontal)
@@ -119,7 +152,10 @@ struct iOSProvidersTab: View {
 struct iOSEnhancedProviderCard: View {
     let detail: ProviderDetail
     let showCost: Bool
-    let onToggle: () -> Void
+    /// v1.10.7: receives the exact new toggle value instead of an implicit flip.
+    /// Mirrors the macOS card contract and removes the last-write-wins race
+    /// that made rapid double-taps appear to not re-enable a provider.
+    let onToggle: (Bool) -> Void
 
     private var provider: ProviderUsage { detail.provider }
     private var config: ProviderConfig { detail.config }
@@ -168,7 +204,7 @@ struct iOSEnhancedProviderCard: View {
 
                 Toggle("", isOn: Binding(
                     get: { config.isEnabled },
-                    set: { _ in onToggle() }
+                    set: { newValue in onToggle(newValue) }
                 ))
                 .labelsHidden()
             }

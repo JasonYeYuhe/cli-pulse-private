@@ -305,9 +305,33 @@ struct iOSOverviewTab: View {
     // MARK: - Provider Breakdown
 
     private func providerBreakdown(_ dash: DashboardSummary) -> some View {
-        let enabledProviders = dash.provider_breakdown.filter { p in
-            providerState.enabledProviderNames.contains(p.provider)
-        }
+        // v1.10.7: the server's `dashboard_summary` RPC returns
+        // `provider_breakdown: []` for cloud-only clients, so fall back to
+        // the fully-populated `providerState.providers` list (the same data
+        // that drives the Providers tab) when the dashboard has nothing.
+        // DataRefreshManager.completeRefresh() also synthesises this into
+        // `dashboard.provider_breakdown`; this UI-level fallback is a belt-
+        // and-braces guard in case the dashboard is read before the refresh
+        // completes.
+        let source: [ProviderBreakdown] = {
+            if !dash.provider_breakdown.isEmpty { return dash.provider_breakdown }
+            return providerState.providers.map {
+                ProviderBreakdown(
+                    provider: $0.provider,
+                    usage: $0.today_usage,
+                    estimated_cost: $0.estimated_cost_today,
+                    cost_status: $0.cost_status_today,
+                    remaining: $0.remaining
+                )
+            }
+        }()
+        // v1.10.7: rank by cost desc + drop 0-activity rows + scale bars by
+        // cost. See `OverviewFormatters.rankedProviderBreakdown` for why —
+        // `usage` semantics vary by provider (quota %, billable tokens,
+        // cache-read counts) so bars scaled by usage gave Claude a full bar
+        // and crushed Codex to a sliver.
+        let enabledProviders = OverviewFormatters.rankedProviderBreakdown(
+            source, enabledNames: providerState.enabledProviderNames)
 
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 5) {
@@ -319,8 +343,8 @@ struct iOSOverviewTab: View {
             }
 
             ForEach(enabledProviders) { provider in
-                let maxUsage = enabledProviders.map(\.usage).max() ?? 1
-                let fraction = maxUsage > 0 ? Double(provider.usage) / Double(maxUsage) : 0
+                let fraction = OverviewFormatters.providerUsageBarFraction(
+                    provider, in: enabledProviders)
 
                 UsageBar(
                     label: provider.provider,
@@ -329,7 +353,14 @@ struct iOSOverviewTab: View {
                     detail: "\(CostFormatter.formatUsage(provider.usage)) \u{00B7} \(CostFormatter.format(provider.estimated_cost))"
                 )
             }
+
+            if enabledProviders.isEmpty {
+                Text("No enabled providers with data")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(PulseTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -353,6 +384,7 @@ struct iOSOverviewTab: View {
                 style: .iOS
             )
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(PulseTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -394,6 +426,7 @@ struct iOSOverviewTab: View {
             }
             ActivityTimelineChart(trend: trend, style: .iOS)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(PulseTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))

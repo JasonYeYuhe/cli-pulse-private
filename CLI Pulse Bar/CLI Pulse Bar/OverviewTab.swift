@@ -497,13 +497,14 @@ struct OverviewTab: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: L10n.dashboard.providerUsage, icon: "cpu")
 
-            let enabledProviders = dash.provider_breakdown.filter { p in
-                providerState.enabledProviderNames.contains(p.provider)
-            }
+            // v1.10.7: shared ranking + cost-scaled bars (see iOS counterpart).
+            let enabledProviders = OverviewFormatters.rankedProviderBreakdown(
+                dash.provider_breakdown,
+                enabledNames: providerState.enabledProviderNames)
 
             ForEach(enabledProviders) { provider in
-                let maxUsage = enabledProviders.map(\.usage).max() ?? 1
-                let fraction = maxUsage > 0 ? Double(provider.usage) / Double(maxUsage) : 0
+                let fraction = OverviewFormatters.providerUsageBarFraction(
+                    provider, in: enabledProviders)
 
                 UsageBar(
                     label: provider.provider,
