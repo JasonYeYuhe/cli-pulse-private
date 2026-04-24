@@ -114,7 +114,14 @@ public enum ExportService {
     }
 
     private static func writeTemp(_ content: String, name: String) -> URL? {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+        // v1.10.6: prefix with a UUID so parallel callers (especially
+        // `swift test --parallel`) don't clobber each other's output when
+        // two tests both hit e.g. exportProviderSummaryCSV — race between
+        // atomic writes silently produced stale reads and crashed consumers
+        // that assumed their own data was on disk.
+        let unique = UUID().uuidString
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(unique)-\(name)")
         do {
             try content.write(to: url, atomically: true, encoding: .utf8)
             return url

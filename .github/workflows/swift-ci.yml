@@ -35,7 +35,13 @@ jobs:
           # missing (v1.10.6 P3-6 self-check path). Any non-empty stub is
           # enough — the tests don't hit the network.
           CLI_PULSE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY || 'ci-stub-anon-key' }}
-        run: swift test --parallel
+        # v1.10.6: dropped --parallel. Under macos-15 / Xcode 16 / Swift 6
+        # tooling, parallel test execution exposes pre-existing shared-state
+        # races in ProviderLimitMigrationTests (UserDefaults) and similar
+        # tests that touch global singletons. Serial is ~50% slower but
+        # deterministic, and the suite is small enough (~220 tests) that
+        # the total wall time is still under 2 min.
+        run: swift test
 
   build-apps:
     name: Build ${{ matrix.scheme }}
