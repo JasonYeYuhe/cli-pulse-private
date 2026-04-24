@@ -8,6 +8,8 @@
 	<string>CLI Pulse</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -19,7 +21,18 @@
 	<key>CFBundleShortVersionString</key>
 	<string>1.10.5</string>
 	<key>CFBundleVersion</key>
-	<string>38</string>
+	<string>39</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>SENTRY_DSN</key>
+	<string>https://a81bb1aa20c94da472e1a46ad2248a74@o4511263220891648.ingest.us.sentry.io/4511263241601024</string>
+	<key>SUPABASE_ANON_KEY</key>
+	<string>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdrandzeG90bXdyZ3FzdmZpanpzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2OTAzNzAsImV4cCI6MjA5MDI2NjM3MH0.uPHYnh0psr2-KQynBw2NiQZOhz5eZiEaWpfCwdXrNQM</string>
+	<key>SUPABASE_URL</key>
+	<string>https://gkjwsxotmwrgqsvfijzs.supabase.co</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
@@ -28,18 +41,5 @@
 	<true/>
 	<key>WKCompanionAppBundleIdentifier</key>
 	<string>yyh.CLI-Pulse</string>
-	<key>CFBundleIconName</key>
-	<string>AppIcon</string>
-	<key>SENTRY_DSN</key>
-	<string>https://a81bb1aa20c94da472e1a46ad2248a74@o4511263220891648.ingest.us.sentry.io/4511263241601024</string>
-	<key>SUPABASE_URL</key>
-	<string>https://gkjwsxotmwrgqsvfijzs.supabase.co</string>
-	<key>SUPABASE_ANON_KEY</key>
-	<string>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdrandzeG90bXdyZ3FzdmZpanpzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2OTAzNzAsImV4cCI6MjA5MDI2NjM3MH0.uPHYnh0psr2-KQynBw2NiQZOhz5eZiEaWpfCwdXrNQM</string>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
 </dict>
 </plist>
