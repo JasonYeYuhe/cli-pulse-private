@@ -17,7 +17,7 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.10.4</string>
+	<string>1.10.5</string>
 	<key>CFBundleVersion</key>
 	<string>38</string>
 	<key>SUPABASE_URL</key>

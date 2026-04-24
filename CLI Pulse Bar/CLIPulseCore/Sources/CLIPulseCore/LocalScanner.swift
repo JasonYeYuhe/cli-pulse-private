@@ -1,5 +1,7 @@
 #if os(macOS)
 import Foundation
+import Darwin
+import os
 
 /// Scans local processes to detect running AI coding tools.
 ///
@@ -12,6 +14,8 @@ import Foundation
 /// (`APIClient.providers()` → `provider_summary` RPC).
 public final class LocalScanner: @unchecked Sendable {
     public static let shared = LocalScanner()
+
+    private static let scanLogger = Logger(subsystem: "com.clipulse", category: "LocalScanner")
 
     // Patterns for process-based detection of running AI coding tools.
     // NOTE: This is process scanning only — it detects running processes, not
@@ -82,6 +86,7 @@ public final class LocalScanner: @unchecked Sendable {
     public func scan(costRateLookup: ((String) -> Double?)? = nil) -> LocalScanResult {
         let rows = listProcesses()
         var sessions: [SessionRecord] = []
+        var sessionCPU: [String: Double] = [:]
         var providerUsage: [String: (usage: Int, sessions: Int, cost: Double)] = [:]
         let now = sharedISO8601Formatter.string(from: Date())
         let hostName = ProcessInfo.processInfo.hostName
@@ -138,6 +143,7 @@ public final class LocalScanner: @unchecked Sendable {
                 project_hash: projectHash
             )
             sessions.append(session)
+            sessionCPU[session.id] = cpu
 
             var entry = providerUsage[match.provider] ?? (usage: 0, sessions: 0, cost: 0)
             entry.usage += usage
@@ -168,12 +174,15 @@ public final class LocalScanner: @unchecked Sendable {
         let totalUsage = sessions.reduce(0) { $0 + $1.total_usage }
         let totalCost = sessions.reduce(0) { $0 + $1.estimated_cost }
 
+        Self.scanLogger.info("scan produced \(sessions.count) sessions across \(providerUsage.count) providers")
+
         return LocalScanResult(
             sessions: sessions,
             providers: providers,
             totalUsage: totalUsage,
             totalCost: totalCost,
-            activeSessionCount: sessions.count
+            activeSessionCount: sessions.count,
+            sessionCPU: sessionCPU
         )
     }
 
@@ -187,43 +196,89 @@ public final class LocalScanner: @unchecked Sendable {
         let command: String
     }
 
-    /// Lists running processes via `ps`. Synchronous — completes in <1s.
+    /// Lists running processes via libproc (in-process, no subprocess fork).
+    ///
+    /// Previous implementation forked /bin/ps, which returned zero rows when
+    /// called from the MAS-sandboxed CLIPulseHelper LoginItem even though the
+    /// main app's identical call worked. libproc avoids the subprocess hop
+    /// entirely and is permitted in the default sandbox for user-owned
+    /// processes.
     private func listProcesses() -> [ProcessRow] {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/ps")
-        task.arguments = ["-axo", "pid=,pcpu=,pmem=,etime=,command="]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = Pipe()
-
-        do {
-            try task.run()
-            task.waitUntilExit()
-        } catch {
+        let nowEpoch = Int(Date().timeIntervalSince1970)
+        var pidBuf = [pid_t](repeating: 0, count: 8192)
+        let bufSize = Int32(pidBuf.count * MemoryLayout<pid_t>.size)
+        let bytesWritten = proc_listallpids(&pidBuf, bufSize)
+        if bytesWritten <= 0 {
+            Self.scanLogger.error("proc_listallpids failed errno=\(errno)")
             return []
         }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let output = String(data: data, encoding: .utf8) else { return [] }
-
+        let count = Int(bytesWritten) / MemoryLayout<pid_t>.size
         var rows: [ProcessRow] = []
-        for line in output.components(separatedBy: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { continue }
+        rows.reserveCapacity(count)
 
-            // Parse: PID  CPU  MEM  ETIME  COMMAND...
-            let parts = trimmed.split(separator: " ", maxSplits: 4, omittingEmptySubsequences: true).map(String.init)
-            guard parts.count >= 5 else { continue }
+        var pathBuf = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        for i in 0..<count {
+            let pid = pidBuf[i]
+            guard pid > 0 else { continue }
+
+            pathBuf.withUnsafeMutableBufferPointer { _ = memset($0.baseAddress, 0, Int(MAXPATHLEN)) }
+            let pathLen = proc_pidpath(pid, &pathBuf, UInt32(MAXPATHLEN))
+            guard pathLen > 0 else { continue }
+            let path = String(cString: pathBuf)
+            guard !path.isEmpty else { continue }
+
+            var bsd = proc_bsdinfo()
+            let bsdSize = Int32(MemoryLayout<proc_bsdinfo>.stride)
+            let bsdRead = withUnsafeMutablePointer(to: &bsd) { ptr -> Int32 in
+                proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, ptr, bsdSize)
+            }
+            let etime: Int
+            if bsdRead == bsdSize {
+                etime = max(0, nowEpoch - Int(bsd.pbi_start_tvsec))
+            } else {
+                etime = 60
+            }
+
+            // Average CPU% over process lifetime, matching ps's pcpu semantics
+            // (100% = one full core). Computed as (user+system cpu time) /
+            // wall elapsed. Per-core units; AlertGenerator normalizes by core
+            // count before threshold comparison.
+            var taskInfo = proc_taskinfo()
+            let taskSize = Int32(MemoryLayout<proc_taskinfo>.stride)
+            let taskRead = withUnsafeMutablePointer(to: &taskInfo) { ptr -> Int32 in
+                proc_pidinfo(pid, PROC_PIDTASKINFO, 0, ptr, taskSize)
+            }
+            var pcpu = 1.0
+            if taskRead == taskSize, etime > 0 {
+                let cpuNanos = Double(taskInfo.pti_total_user) + Double(taskInfo.pti_total_system)
+                let elapsedNanos = Double(etime) * 1_000_000_000
+                pcpu = min(max(cpuNanos / elapsedNanos * 100.0, 0), 10_000)
+            }
 
             rows.append(ProcessRow(
-                pid: parts[0],
-                pcpu: parts[1],
-                pmem: parts[2],
-                etime: parts[3],
-                command: parts[4]
+                pid: "\(pid)",
+                pcpu: String(format: "%.1f", pcpu),
+                pmem: "0.0",
+                etime: Self.formatEtime(etime),
+                command: path
             ))
         }
+        Self.scanLogger.info("libproc enumeration: \(count) pids, \(rows.count) rows")
         return rows
+    }
+
+    private static func formatEtime(_ seconds: Int) -> String {
+        let days = seconds / 86400
+        let hours = (seconds % 86400) / 3600
+        let minutes = (seconds % 3600) / 60
+        let secs = seconds % 60
+        if days > 0 {
+            return String(format: "%d-%02d:%02d:%02d", days, hours, minutes, secs)
+        }
+        if hours > 0 {
+            return String(format: "%02d:%02d:%02d", hours, minutes, secs)
+        }
+        return String(format: "%02d:%02d", minutes, secs)
     }
 
     // MARK: - Detection
@@ -342,6 +397,26 @@ public struct LocalScanResult: Sendable {
     public let totalUsage: Int
     public let totalCost: Double
     public let activeSessionCount: Int
+    /// Per-session average CPU% over the process's lifetime (per-core units,
+    /// 100% = one full core). Keyed by `SessionRecord.id`. Consumed by
+    /// `AlertGenerator.generate` where it is normalized against core count.
+    public let sessionCPU: [String: Double]
+
+    public init(
+        sessions: [SessionRecord],
+        providers: [ProviderUsage],
+        totalUsage: Int,
+        totalCost: Double,
+        activeSessionCount: Int,
+        sessionCPU: [String: Double] = [:]
+    ) {
+        self.sessions = sessions
+        self.providers = providers
+        self.totalUsage = totalUsage
+        self.totalCost = totalCost
+        self.activeSessionCount = activeSessionCount
+        self.sessionCPU = sessionCPU
+    }
 
     public var isEmpty: Bool { sessions.isEmpty }
 }

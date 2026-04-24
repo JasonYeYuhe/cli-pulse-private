@@ -63,19 +63,30 @@ final class AlertGeneratorTests: XCTestCase {
 
     // MARK: - generate(): session CPU rule
 
+    // v1.10.5: Rule 2 is now "session using ≥40% of total system CPU capacity"
+    // (capacity = cores * 100). A raw per-process pcpu of 80 means 80% of one
+    // core, which on a 14-core Mac is only 5.7% of system — harmless. Tests
+    // scale inputs by processorCount so they pass regardless of hardware.
+
     func testSessionCpuAlertFires() {
+        let cores = ProcessInfo.processInfo.processorCount
         let snap = DeviceMetrics.Snapshot(cpuUsage: 10, memoryUsage: 40)
         let session = makeSession(id: "s1")
-        let alerts = AlertGenerator.generate(device: snap, sessions: [session], sessionCPU: ["s1": 80.0])
+        // 60% of total capacity clearly crosses the 40% threshold.
+        let pcpu = Double(cores) * 100.0 * 0.6
+        let alerts = AlertGenerator.generate(device: snap, sessions: [session], sessionCPU: ["s1": pcpu])
         XCTAssertEqual(alerts.count, 1)
         XCTAssertEqual(alerts[0]["type"] as? String, "Usage Spike")
         XCTAssertEqual(alerts[0]["source_kind"] as? String, "session")
     }
 
-    func testSessionCpuAlertNotFiredBelow80() {
+    func testSessionCpuAlertNotFiredBelowThreshold() {
+        let cores = ProcessInfo.processInfo.processorCount
         let snap = DeviceMetrics.Snapshot(cpuUsage: 10, memoryUsage: 40)
         let session = makeSession(id: "s1")
-        let alerts = AlertGenerator.generate(device: snap, sessions: [session], sessionCPU: ["s1": 79.9])
+        // 30% of total capacity — below the 40% fire threshold.
+        let pcpu = Double(cores) * 100.0 * 0.3
+        let alerts = AlertGenerator.generate(device: snap, sessions: [session], sessionCPU: ["s1": pcpu])
         XCTAssertTrue(alerts.isEmpty)
     }
 
@@ -98,10 +109,13 @@ final class AlertGeneratorTests: XCTestCase {
     }
 
     func testResultsCappedAtSix() {
+        let cores = ProcessInfo.processInfo.processorCount
         let snap = DeviceMetrics.Snapshot(cpuUsage: 10, memoryUsage: 40)
         // 4 sessions each triggering both CPU + long-run = 8 alerts, but capped at 6
         let sessions = (1...4).map { makeSession(id: "s\($0)", requests: 400) }
-        let cpu = Dictionary(uniqueKeysWithValues: (1...4).map { ("s\($0)", 85.0) })
+        // Push each session above the 40%-of-system threshold so the CPU rule fires.
+        let pcpu = Double(cores) * 100.0 * 0.6
+        let cpu = Dictionary(uniqueKeysWithValues: (1...4).map { ("s\($0)", pcpu) })
         let alerts = AlertGenerator.generate(device: snap, sessions: sessions, sessionCPU: cpu)
         XCTAssertEqual(alerts.count, 6)
     }

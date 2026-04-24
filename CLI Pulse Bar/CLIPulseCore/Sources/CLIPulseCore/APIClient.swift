@@ -1307,21 +1307,23 @@ public actor APIClient {
     // MARK: - Daily Usage Sync
 
     /// Push precise daily usage data from CostUsageScanner to Supabase.
-    /// Only syncs completed days (T-1 and earlier) to avoid incomplete data.
+    ///
+    /// v1.10.5: previously excluded today's date to avoid "incomplete" data,
+    /// but after the Mac App Store sandbox broke `LocalScanner` process
+    /// enumeration, `sessions` became empty — and the iPhone/Watch/Android
+    /// dashboards were sourcing "Usage Today" from sessions. Including today
+    /// in the upsert (keyed on user_id + metric_date + provider + model) lets
+    /// the server-side dashboard_summary read today's real cost from this
+    /// table instead. Every refresh overwrites the row with the latest scan,
+    /// so partial-day values auto-correct as the day progresses.
     public func syncDailyUsage(_ scanResult: CostUsageScanResult) async {
         guard let userId else { return }
         guard !scanResult.entries.isEmpty else { return }
 
-        // Only sync completed days (exclude today).
-        // v1.9.4: also skip the synthetic `__claude_msg__` model bucket — it
-        // carries raw message-event counts, not real model usage, and would
-        // pollute the server-side per-model analytics with a fake model row.
-        let cal = Calendar.current
-        let todayComps = cal.dateComponents([.year, .month, .day], from: Date())
-        let todayKey = String(format: "%04d-%02d-%02d", todayComps.year ?? 1970, todayComps.month ?? 1, todayComps.day ?? 1)
-        let completedEntries = scanResult.entries.filter {
-            $0.date < todayKey && $0.model != "__claude_msg__"
-        }
+        // Skip the synthetic `__claude_msg__` model bucket — it carries raw
+        // message-event counts, not real model usage, and would pollute the
+        // server-side per-model analytics with a fake model row.
+        let completedEntries = scanResult.entries.filter { $0.model != "__claude_msg__" }
         guard !completedEntries.isEmpty else { return }
 
         let metrics: [[String: Any]] = completedEntries.map { entry in

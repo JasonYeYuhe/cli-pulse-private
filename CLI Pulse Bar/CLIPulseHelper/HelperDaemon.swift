@@ -113,7 +113,8 @@ final class HelperDaemon {
         // Step 3: Alerts
         let alerts = AlertGenerator.generate(
             device: device,
-            sessions: scanResult.sessions
+            sessions: scanResult.sessions,
+            sessionCPU: scanResult.sessionCPU
         )
 
         // Step 4: Provider quotas via collectors

@@ -40,15 +40,25 @@ public enum AlertGenerator {
             ])
         }
 
+        let cpuCount = max(ProcessInfo.processInfo.processorCount, 1)
+        let systemCapacity = Double(cpuCount * 100)
+        let systemFractionThreshold = 0.4
+
         for session in sessions {
-            // Rule 2: Session CPU >= 80%
-            if let cpu = sessionCPU[session.id], cpu >= 80 {
+            // Rule 2: Session using ≥40% of total system CPU.
+            // Prior versions compared raw per-process %CPU (where 100% = 1 core)
+            // against a hardcoded 80, which fired on trivial workloads on
+            // high-core-count Macs (80% of 1 core = 5.7% of a 14-core system).
+            // Normalize by core count so the threshold represents a meaningful
+            // share of total capacity regardless of machine.
+            if let cpu = sessionCPU[session.id], cpu / systemCapacity >= systemFractionThreshold {
+                let systemPct = Int(round(cpu / systemCapacity * 100))
                 alerts.append([
                     "id": "session-spike-\(session.id)",
                     "type": "Usage Spike",
                     "severity": "Warning",
                     "title": "\(session.name) is consuming high CPU",
-                    "message": "Process CPU is \(String(format: "%.1f", cpu))% for \(session.provider).",
+                    "message": "Using ~\(systemPct)% of total system CPU (\(cpuCount) cores) for \(session.provider).",
                     "created_at": now,
                     "related_session_id": session.id,
                     "related_session_name": session.name,
