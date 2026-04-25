@@ -21,12 +21,16 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.clipulse.android.MainActivity
 import com.clipulse.android.R
 import com.clipulse.android.data.model.UserIdentity
+import com.clipulse.android.data.remote.OAuthDeepLinkCallback
+import com.clipulse.android.data.remote.OAuthDeepLinkNotice
+import com.clipulse.android.data.remote.OAuthDeepLinkNoticeReason
 import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
-    linkCallback: MainActivity.OAuthCallback? = null,
+    linkCallback: OAuthDeepLinkCallback? = null,
+    linkNotice: OAuthDeepLinkNotice? = null,
     onSignOut: () -> Unit,
     onManageSubscription: () -> Unit = {},
     onViewDevices: () -> Unit = {},
@@ -37,6 +41,7 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
 
     var pendingIdentityToUnlink by remember { mutableStateOf<UserIdentity?>(null) }
+    var oauthLinkNoticeMessage by remember { mutableStateOf<String?>(null) }
 
     // Handle deep-link callback from identity-linking OAuth flow.
     // The verifier + state have already been validated by MainActivity against the durable
@@ -45,6 +50,20 @@ fun SettingsScreen(
         val cb = linkCallback ?: return@LaunchedEffect
         viewModel.completeLinkIdentity(cb.code, cb.codeVerifier)
         (context as? MainActivity)?.consumePendingCallback()
+    }
+
+    // Surface non-success link-flow deep-link outcomes inline. The pending-flow
+    // record is already cleared by MainActivity by the time we see a notice.
+    LaunchedEffect(linkNotice) {
+        val notice = linkNotice ?: return@LaunchedEffect
+        val resId = when (notice.reason) {
+            OAuthDeepLinkNoticeReason.CANCELLED -> R.string.oauth_link_cancelled
+            OAuthDeepLinkNoticeReason.FAILED -> R.string.oauth_link_failed
+            OAuthDeepLinkNoticeReason.STATE_MISMATCH -> R.string.oauth_link_state_mismatch
+            OAuthDeepLinkNoticeReason.MALFORMED -> R.string.oauth_link_malformed
+        }
+        oauthLinkNoticeMessage = context.getString(resId)
+        (context as? MainActivity)?.consumePendingNotice()
     }
 
     Column(
@@ -120,6 +139,14 @@ fun SettingsScreen(
                             onUnlinkRequest = { pendingIdentityToUnlink = linked },
                         )
                         Spacer(Modifier.height(8.dp))
+                    }
+
+                    oauthLinkNoticeMessage?.let { msg ->
+                        Text(
+                            msg,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
                     }
 
                     state.linkIdentityError?.let { err ->

@@ -62,6 +62,14 @@ public final class LocalScanner: @unchecked Sendable {
         #"\.vscode-server"#,
         #"--ms-enable-electron"#,
         #"node_modules/\.bin"#,
+        // The Claude desktop app installs a Chrome native-messaging host bridge
+        // whose argv contains the literal "Claude" plus the Chrome extension id.
+        // Our `\bclaude\b` provider regex would otherwise create a zombie
+        // "Claude" session for the bridge — it's not a coding CLI.
+        #"chrome-native-host"#,
+        #"fcoeoabgfenejglbffodgkkbkcdhcgfn"#,
+        #"com\.anthropic\.claude\.nativehost"#,
+        #"Claude\.app/Contents/.*/nativehost"#,
     ]
 
     private static let confidenceRank: [String: Int] = ["high": 3, "medium": 2, "low": 1]
@@ -119,9 +127,19 @@ public final class LocalScanner: @unchecked Sendable {
             let cpu = Double(row.pcpu) ?? 0
             let usage = max(500, Int(Double(elapsed) * max(1.5, cpu + 1.0)))
             let cost = estimateCost(provider: match.provider, usage: usage, rateLookup: costRateLookup)
-            let project = guessProject(row.command)
+            // Prefer the basename of the discovered project root when a repo
+            // marker (.git/package.json/...) was found nearby — that's strictly
+            // a better label than what `guessProject` can derive from argv
+            // alone, especially for node-launched CLIs whose argv is full of
+            // version dirs and runtime sidecars. Fall back to argv-based
+            // inference when no marker is present.
+            let projectRoot: String? = guessProjectRoot(row.command)
+            let project: String = projectRoot
+                .map { ($0 as NSString).lastPathComponent }
+                .flatMap { $0.isEmpty ? nil : $0 }
+                ?? guessProject(row.command)
             let projectHash: String? = {
-                guard let secret, let root = guessProjectRoot(row.command) else { return nil }
+                guard let secret, let root = projectRoot else { return nil }
                 return UserSecret.projectHash(secret: secret, absolutePath: root)
             }()
 
@@ -403,7 +421,9 @@ public final class LocalScanner: @unchecked Sendable {
         return best
     }
 
-    private func shouldIgnore(_ command: String) -> Bool {
+    /// Exposed at `internal` so `@testable` can exercise the ignore list
+    /// without spinning a real process scan. Not part of the public API.
+    func shouldIgnore(_ command: String) -> Bool {
         let lower = command.lowercased()
         let range = NSRange(lower.startIndex..., in: lower)
         for regex in Self.compiledIgnorePatterns {
@@ -436,31 +456,109 @@ public final class LocalScanner: @unchecked Sendable {
         return Double(usage) / 1000.0 * rate
     }
 
-    private func guessProject(_ command: String) -> String {
-        // Extract only the leaf directory name — never transmit full paths
+    /// Pure version strings like `1.0.1`, `v2.3.4-beta` — never useful as a
+    /// project label. Caches the regex object across scans.
+    private static let versionDirRegex = try? NSRegularExpression(
+        pattern: #"^v?\d+(\.\d+)+[a-z0-9\-]*$"#,
+        options: .caseInsensitive
+    )
+
+    /// Sidecar/runtime files we never want as a project label.
+    private static let sidecarSuffixes: [String] = [
+        ".pid", ".sock", ".lock", ".log", ".tmp", ".cache", ".db", ".sqlite",
+        ".json", ".yaml", ".yml", ".toml", ".plist",
+        ".mjs", ".cjs", ".js", ".ts", ".py", ".rb", ".go", ".rs", ".sh",
+        ".env", ".pem", ".key", ".crt", ".p12", ".keychain",
+    ]
+
+    /// Reserved infrastructure / build / framework directory names. A user repo
+    /// is unlikely to be one of these, so they make a poor project label.
+    private static let reservedNames: Set<String> = [
+        "bin", "sbin", "lib", "libexec", "share", "etc", "var", "tmp",
+        "Contents", "Resources", "MacOS", "Frameworks", "PlugIns", "Helpers",
+        "node_modules", "dist", "build", "out", "target",
+        ".git", ".claude", ".codex", ".cache", ".config", ".local", ".npm",
+        "scripts",
+    ]
+
+    /// Walk argv right-to-left and return the first basename that survives a
+    /// strict allow rule. Walks up the path components inside each argv token
+    /// until the user-root anchor (`/Users` / `/home`) is reached, then moves
+    /// to the next argv token. Used only as a fallback when `guessProjectRoot`
+    /// did not find a repo marker — a marker-derived basename always wins.
+    /// `internal` so unit tests can drive it directly.
+    func guessProject(_ command: String) -> String {
         let parts = command.split(separator: " ").map(String.init)
+
         for part in parts.reversed() {
-            if part.contains("/") && !part.hasPrefix("-") && !part.hasPrefix("/usr") && !part.hasPrefix("/bin") && !part.hasPrefix("/opt") {
-                let components = part.split(separator: "/")
-                if let last = components.last, !last.isEmpty {
-                    // Only return the basename, never the full path
-                    let name = String(last)
-                    // Skip names that look like secrets, tokens, or config files
-                    if name.contains("token") || name.contains("secret") || name.contains("key") || name.hasPrefix(".") {
-                        continue
-                    }
-                    return name
+            guard part.contains("/"),
+                  !part.hasPrefix("-"),
+                  !part.hasPrefix("/usr"),
+                  !part.hasPrefix("/bin"),
+                  !part.hasPrefix("/opt") else { continue }
+
+            // Path entirely inside an .app bundle is a dead end — system or
+            // third-party app internals are never a useful project label.
+            // Skip the whole argv token and try the next one.
+            if part.range(of: #"\.app(/|$)"#, options: .regularExpression) != nil { continue }
+
+            let pathComponents = part.split(separator: "/").map(String.init)
+            // Walk leaf → root, stopping at the user-root anchors so we don't
+            // ever emit `/Users` or `/home` as a label. Returns the first
+            // segment that satisfies `isAcceptableProjectName`.
+            for component in pathComponents.reversed() {
+                if component.isEmpty { continue }
+                if component == "Users" || component == "home" { break }
+                if isAcceptableProjectName(component) {
+                    return component
                 }
             }
         }
         return "unknown"
     }
 
+    /// Allow rule for a project label. Returns true only when the name is
+    /// plausibly a human-chosen project directory.
+    private func isAcceptableProjectName(_ name: String) -> Bool {
+        guard !name.isEmpty else { return false }
+
+        // Hidden dotfiles / dot-dirs that aren't repo names.
+        if name.hasPrefix(".") { return false }
+
+        // Existing secret/token/key filter — keep it.
+        let lower = name.lowercased()
+        if lower.contains("token") || lower.contains("secret") || lower.contains("key") {
+            return false
+        }
+
+        // Pure version strings.
+        if let regex = Self.versionDirRegex {
+            let range = NSRange(name.startIndex..<name.endIndex, in: name)
+            if regex.firstMatch(in: name, options: [], range: range) != nil {
+                return false
+            }
+        }
+
+        // Sidecar / runtime / source-file extensions.
+        for suffix in Self.sidecarSuffixes where lower.hasSuffix(suffix) {
+            return false
+        }
+
+        // Reserved infrastructure / build / framework names. The reservedNames
+        // set is small; the cost of an isolated false-negative for a user repo
+        // literally called e.g. "scripts" is mitigated by `guessProjectRoot`
+        // taking precedence whenever a `.git` marker is present nearby.
+        if Self.reservedNames.contains(name) { return false }
+
+        return true
+    }
+
     /// Best-effort absolute project root path inferred from command's path arguments.
     /// Used only to compute project_hash (HMAC) before discarding — never transmitted.
     /// Walks up looking for a marker file; returns nil if no project structure is found.
     private static let projectMarkers = [".git", "package.json", "Cargo.toml", "pyproject.toml", "go.mod", "pom.xml", "Gemfile"]
-    private func guessProjectRoot(_ command: String) -> String? {
+    /// `internal` so the repo-marker test can assert the basename it returns.
+    func guessProjectRoot(_ command: String) -> String? {
         let parts = command.split(separator: " ").map(String.init)
         let fm = FileManager.default
         for part in parts {

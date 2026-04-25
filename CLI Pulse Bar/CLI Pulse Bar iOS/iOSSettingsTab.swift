@@ -667,7 +667,7 @@ struct LinkedAccountsSection: View {
         localError = nil
         Task {
             guard let (authURL, codeVerifier, expectedState) = await state.linkIdentityURL(provider: provider) else {
-                localError = state.linkIdentityError ?? "Failed to build \(provider) link URL"
+                localError = state.linkIdentityError ?? L10n.auth.linkFailedGeneric
                 return
             }
             let session = ASWebAuthenticationSession(
@@ -679,39 +679,29 @@ struct LinkedAccountsSection: View {
                     if (error as NSError).code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
                         return
                     }
+                    // Surface the system error description (already user-facing, no callback URL).
                     Task { @MainActor in self.localError = error.localizedDescription }
                     return
                 }
                 guard let callbackURL else {
-                    Task { @MainActor in self.localError = "Link failed: no callback URL" }
+                    Task { @MainActor in self.localError = L10n.auth.linkFailedGeneric }
                     return
                 }
-                let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)
-                func readItem(_ name: String) -> String? {
-                    if let v = components?.queryItems?.first(where: { $0.name == name })?.value { return v }
-                    if let fragment = components?.fragment {
-                        var fragComponents = URLComponents()
-                        fragComponents.query = fragment
-                        return fragComponents.queryItems?.first(where: { $0.name == name })?.value
+                switch OAuthCallbackParser.parse(url: callbackURL) {
+                case .cancelled:
+                    Task { @MainActor in self.localError = L10n.auth.linkCancelled }
+                case .failed:
+                    // The parser has already stripped raw URL/code/state from the description,
+                    // but for link-flow we still keep messaging generic — mirroring sign-in.
+                    Task { @MainActor in self.localError = L10n.auth.linkFailedGeneric }
+                case .success(let code, let returnedState):
+                    guard returnedState == expectedState else {
+                        Task { @MainActor in self.localError = L10n.auth.linkFailedStateMismatch }
+                        return
                     }
-                    return nil
-                }
-                let code = readItem("code")
-                let returnedState = readItem("state")
-                let errorDesc = components?.queryItems?.first(where: { $0.name == "error_description" })?.value
-                    ?? components?.queryItems?.first(where: { $0.name == "error" })?.value
-                guard let code else {
-                    let detail = errorDesc ?? callbackURL.absoluteString
-                    Task { @MainActor in self.localError = "Link failed: \(detail)" }
-                    return
-                }
-                // CSRF: verify the state Supabase echoed back matches what we sent.
-                guard let returnedState, returnedState == expectedState else {
-                    Task { @MainActor in self.localError = "Link failed: state mismatch" }
-                    return
-                }
-                Task {
-                    await state.completeLinkIdentity(code: code, codeVerifier: codeVerifier)
+                    Task {
+                        await state.completeLinkIdentity(code: code, codeVerifier: codeVerifier)
+                    }
                 }
             }
             session.presentationContextProvider = Self.webAuthContextProvider

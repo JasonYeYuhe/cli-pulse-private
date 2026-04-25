@@ -17,6 +17,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.clipulse.android.MainActivity
+import com.clipulse.android.data.remote.OAuthDeepLinkCallback
+import com.clipulse.android.data.remote.OAuthDeepLinkNotice
 import com.clipulse.android.ui.alerts.AlertsScreen
 import com.clipulse.android.ui.login.LoginScreen
 import com.clipulse.android.ui.overview.OverviewScreen
@@ -42,7 +44,10 @@ enum class Screen(val route: String, val label: String, val icon: ImageVector) {
 }
 
 @Composable
-fun AppNavigation(pendingCallback: MainActivity.OAuthCallback? = null) {
+fun AppNavigation(
+    pendingCallback: OAuthDeepLinkCallback? = null,
+    pendingNotice: OAuthDeepLinkNotice? = null,
+) {
     val navController = rememberNavController()
     var isLoggedIn by remember { mutableStateOf(false) }
 
@@ -51,9 +56,15 @@ fun AppNavigation(pendingCallback: MainActivity.OAuthCallback? = null) {
     // MainActivity has already cleared the pending-flow record.
     val loginCallback = pendingCallback?.takeIf { it.kind == "login" }
     val linkCallback = pendingCallback?.takeIf { it.kind == "link" }
+    val loginNotice = pendingNotice?.takeIf { it.kind == "login" }
+    val linkNotice = pendingNotice?.takeIf { it.kind == "link" }
 
     if (!isLoggedIn) {
-        LoginScreen(loginCallback = loginCallback, onLoggedIn = { isLoggedIn = true })
+        LoginScreen(
+            loginCallback = loginCallback,
+            loginNotice = loginNotice,
+            onLoggedIn = { isLoggedIn = true },
+        )
         return
     }
 
@@ -122,6 +133,7 @@ fun AppNavigation(pendingCallback: MainActivity.OAuthCallback? = null) {
             composable(Screen.Settings.route) {
                 SettingsScreen(
                     linkCallback = linkCallback,
+                    linkNotice = linkNotice,
                     onSignOut = { isLoggedIn = false },
                     onManageSubscription = { navController.navigate("subscription") },
                     onViewDevices = { navController.navigate("devices") },

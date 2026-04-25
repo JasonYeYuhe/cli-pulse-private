@@ -123,4 +123,18 @@
     <string name="back">Atrás</string>
     <string name="save">Guardar</string>
     <string name="delete">Eliminar</string>
+
+    <!-- Diagnóstico de configuración (compilación de lanzamiento sin Supabase) -->
+    <string name="config_error_title">Error de configuración</string>
+    <string name="config_error_body">CLI Pulse no puede iniciarse porque falta la siguiente configuración de compilación: %1$s. Vuelve a instalar una versión compilada correctamente.</string>
+
+    <!-- Comentarios sobre el deep link de OAuth -->
+    <string name="oauth_sign_in_cancelled">Inicio de sesión cancelado</string>
+    <string name="oauth_sign_in_failed">Error al iniciar sesión. Inténtalo de nuevo.</string>
+    <string name="oauth_sign_in_state_mismatch">Error al iniciar sesión: la verificación de seguridad no coincidió. Inténtalo de nuevo.</string>
+    <string name="oauth_sign_in_malformed">Error al iniciar sesión: respuesta con formato incorrecto. Inténtalo de nuevo.</string>
+    <string name="oauth_link_cancelled">Vinculación cancelada</string>
+    <string name="oauth_link_failed">Error al vincular. Inténtalo de nuevo.</string>
+    <string name="oauth_link_state_mismatch">Error al vincular: la verificación de seguridad no coincidió. Inténtalo de nuevo.</string>
+    <string name="oauth_link_malformed">Error al vincular: respuesta con formato incorrecto. Inténtalo de nuevo.</string>
 </resources>

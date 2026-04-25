@@ -123,4 +123,18 @@
     <string name="back">返回</string>
     <string name="save">儲存</string>
     <string name="delete">刪除</string>
+
+    <!-- 配置診斷（缺少 Supabase 設定的發行版本） -->
+    <string name="config_error_title">設定錯誤</string>
+    <string name="config_error_body">由於以下建置設定缺失，CLI Pulse 無法啟動：%1$s。請重新安裝正確建置的版本。</string>
+
+    <!-- OAuth 深層連結回饋 -->
+    <string name="oauth_sign_in_cancelled">已取消登入</string>
+    <string name="oauth_sign_in_failed">登入失敗，請重試。</string>
+    <string name="oauth_sign_in_state_mismatch">登入失敗：安全驗證不相符，請重試。</string>
+    <string name="oauth_sign_in_malformed">登入失敗：回應格式錯誤，請重試。</string>
+    <string name="oauth_link_cancelled">已取消連結</string>
+    <string name="oauth_link_failed">連結失敗，請重試。</string>
+    <string name="oauth_link_state_mismatch">連結失敗：安全驗證不相符，請重試。</string>
+    <string name="oauth_link_malformed">連結失敗：回應格式錯誤，請重試。</string>
 </resources>

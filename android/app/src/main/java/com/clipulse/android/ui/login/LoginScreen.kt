@@ -21,17 +21,24 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.clipulse.android.MainActivity
+import com.clipulse.android.R
+import com.clipulse.android.data.remote.OAuthDeepLinkCallback
+import com.clipulse.android.data.remote.OAuthDeepLinkNotice
+import com.clipulse.android.data.remote.OAuthDeepLinkNoticeReason
 import kotlinx.coroutines.launch
 
 @Composable
 fun LoginScreen(
     viewModel: LoginViewModel = hiltViewModel(),
-    loginCallback: MainActivity.OAuthCallback? = null,
+    loginCallback: OAuthDeepLinkCallback? = null,
+    loginNotice: OAuthDeepLinkNotice? = null,
     onLoggedIn: () -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    var oauthNoticeMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) { viewModel.tryRestoreSession() }
     LaunchedEffect(state.isLoggedIn) {
@@ -43,6 +50,20 @@ fun LoginScreen(
         val cb = loginCallback ?: return@LaunchedEffect
         viewModel.exchangeOAuthCode(cb.code, cb.codeVerifier)
         (context as? MainActivity)?.consumePendingCallback()
+    }
+
+    // Surface a non-success deep-link outcome (cancel / error / state mismatch / malformed)
+    // as an inline error. Pending-flow record was already cleared by MainActivity.
+    LaunchedEffect(loginNotice) {
+        val notice = loginNotice ?: return@LaunchedEffect
+        val resId = when (notice.reason) {
+            OAuthDeepLinkNoticeReason.CANCELLED -> R.string.oauth_sign_in_cancelled
+            OAuthDeepLinkNoticeReason.FAILED -> R.string.oauth_sign_in_failed
+            OAuthDeepLinkNoticeReason.STATE_MISMATCH -> R.string.oauth_sign_in_state_mismatch
+            OAuthDeepLinkNoticeReason.MALFORMED -> R.string.oauth_sign_in_malformed
+        }
+        oauthNoticeMessage = context.getString(resId)
+        (context as? MainActivity)?.consumePendingNotice()
     }
 
     var email by remember { mutableStateOf("") }
@@ -77,6 +98,16 @@ fun LoginScreen(
             if (state.isLoading) {
                 CircularProgressIndicator()
                 return@Column
+            }
+
+            oauthNoticeMessage?.let { message ->
+                Text(
+                    message,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(bottom = 16.dp),
+                )
             }
 
             state.error?.let { error ->

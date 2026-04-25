@@ -123,4 +123,18 @@
     <string name="back">Back</string>
     <string name="save">Save</string>
     <string name="delete">Delete</string>
+
+    <!-- Configuration diagnostics (release build with missing Supabase keys) -->
+    <string name="config_error_title">Configuration error</string>
+    <string name="config_error_body">CLI Pulse cannot start because the following build configuration is missing: %1$s. Please reinstall a properly built version.</string>
+
+    <!-- OAuth deep-link feedback -->
+    <string name="oauth_sign_in_cancelled">Sign-in cancelled</string>
+    <string name="oauth_sign_in_failed">Sign-in failed. Please try again.</string>
+    <string name="oauth_sign_in_state_mismatch">Sign-in failed: security check did not match. Please try again.</string>
+    <string name="oauth_sign_in_malformed">Sign-in failed: malformed response. Please try again.</string>
+    <string name="oauth_link_cancelled">Linking cancelled</string>
+    <string name="oauth_link_failed">Linking failed. Please try again.</string>
+    <string name="oauth_link_state_mismatch">Linking failed: security check did not match. Please try again.</string>
+    <string name="oauth_link_malformed">Linking failed: malformed response. Please try again.</string>
 </resources>

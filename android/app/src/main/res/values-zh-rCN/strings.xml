@@ -123,4 +123,18 @@
     <string name="back">返回</string>
     <string name="save">保存</string>
     <string name="delete">删除</string>
+
+    <!-- 配置诊断（缺少 Supabase 配置的发布版本） -->
+    <string name="config_error_title">配置错误</string>
+    <string name="config_error_body">由于以下构建配置缺失，CLI Pulse 无法启动：%1$s。请重新安装正确构建的版本。</string>
+
+    <!-- OAuth 深链反馈 -->
+    <string name="oauth_sign_in_cancelled">已取消登录</string>
+    <string name="oauth_sign_in_failed">登录失败，请重试。</string>
+    <string name="oauth_sign_in_state_mismatch">登录失败：安全校验不匹配，请重试。</string>
+    <string name="oauth_sign_in_malformed">登录失败：返回数据格式错误，请重试。</string>
+    <string name="oauth_link_cancelled">已取消关联</string>
+    <string name="oauth_link_failed">关联失败，请重试。</string>
+    <string name="oauth_link_state_mismatch">关联失败：安全校验不匹配，请重试。</string>
+    <string name="oauth_link_malformed">关联失败：返回数据格式错误，请重试。</string>
 </resources>

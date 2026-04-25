@@ -123,4 +123,18 @@
     <string name="back">戻る</string>
     <string name="save">保存</string>
     <string name="delete">削除</string>
+
+    <!-- 構成エラー診断（Supabase 設定が欠けたリリースビルド） -->
+    <string name="config_error_title">構成エラー</string>
+    <string name="config_error_body">次のビルド構成が欠けているため、CLI Pulse を起動できません：%1$s。正しくビルドされたバージョンを再インストールしてください。</string>
+
+    <!-- OAuth ディープリンクのフィードバック -->
+    <string name="oauth_sign_in_cancelled">サインインをキャンセルしました</string>
+    <string name="oauth_sign_in_failed">サインインに失敗しました。もう一度お試しください。</string>
+    <string name="oauth_sign_in_state_mismatch">サインインに失敗しました：セキュリティ確認が一致しません。もう一度お試しください。</string>
+    <string name="oauth_sign_in_malformed">サインインに失敗しました：応答が不正です。もう一度お試しください。</string>
+    <string name="oauth_link_cancelled">連携をキャンセルしました</string>
+    <string name="oauth_link_failed">連携に失敗しました。もう一度お試しください。</string>
+    <string name="oauth_link_state_mismatch">連携に失敗しました：セキュリティ確認が一致しません。もう一度お試しください。</string>
+    <string name="oauth_link_malformed">連携に失敗しました：応答が不正です。もう一度お試しください。</string>
 </resources>

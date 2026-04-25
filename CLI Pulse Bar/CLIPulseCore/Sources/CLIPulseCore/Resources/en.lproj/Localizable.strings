@@ -339,6 +339,10 @@
 "auth.sign_in_google" = "Sign in with Google";
 "auth.sign_in_github" = "Sign in with GitHub";
 "auth.sign_in_cancelled" = "Sign-in cancelled";
+"auth.sign_in_failed_generic" = "Sign-in failed. Please try again.";
+"auth.link_cancelled" = "Linking cancelled";
+"auth.link_failed_generic" = "Linking failed. Please try again.";
+"auth.link_failed_state_mismatch" = "Linking failed: security check did not match. Please try again.";
 
 /* ── Forecast ── */
 "forecast.title" = "Cost Forecast";

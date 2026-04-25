@@ -203,9 +203,6 @@ struct iOSLoginView: View {
                     Task { @MainActor in state?.lastError = "OAuth sign-in failed: no callback URL" }
                     return
                 }
-                #if DEBUG
-                print("[OAuth] callback URL: \(callbackURL.absoluteString)")
-                #endif
                 switch OAuthCallbackParser.parse(url: callbackURL) {
                 case .cancelled:
                     Task { @MainActor in state?.lastError = L10n.auth.signInCancelled }

@@ -123,4 +123,18 @@
     <string name="back">뒤로</string>
     <string name="save">저장</string>
     <string name="delete">삭제</string>
+
+    <!-- 구성 오류 진단 (Supabase 설정이 누락된 릴리스 빌드) -->
+    <string name="config_error_title">구성 오류</string>
+    <string name="config_error_body">다음 빌드 구성이 누락되어 CLI Pulse를 시작할 수 없습니다: %1$s. 올바르게 빌드된 버전을 다시 설치해 주세요.</string>
+
+    <!-- OAuth 딥링크 피드백 -->
+    <string name="oauth_sign_in_cancelled">로그인이 취소되었습니다</string>
+    <string name="oauth_sign_in_failed">로그인에 실패했습니다. 다시 시도해 주세요.</string>
+    <string name="oauth_sign_in_state_mismatch">로그인에 실패했습니다: 보안 확인이 일치하지 않습니다. 다시 시도해 주세요.</string>
+    <string name="oauth_sign_in_malformed">로그인에 실패했습니다: 응답이 잘못되었습니다. 다시 시도해 주세요.</string>
+    <string name="oauth_link_cancelled">연결이 취소되었습니다</string>
+    <string name="oauth_link_failed">연결에 실패했습니다. 다시 시도해 주세요.</string>
+    <string name="oauth_link_state_mismatch">연결에 실패했습니다: 보안 확인이 일치하지 않습니다. 다시 시도해 주세요.</string>
+    <string name="oauth_link_malformed">연결에 실패했습니다: 응답이 잘못되었습니다. 다시 시도해 주세요.</string>
 </resources>
