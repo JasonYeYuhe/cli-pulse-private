@@ -340,6 +340,7 @@
 "auth.sign_in_github" = "使用 GitHub 登录";
 "auth.sign_in_cancelled" = "已取消登录";
 "auth.sign_in_failed_generic" = "登录失败，请重试。";
+"auth.sign_in_failed_state_mismatch" = "登录失败：安全校验不匹配，请重试。";
 "auth.link_cancelled" = "已取消关联";
 "auth.link_failed_generic" = "关联失败，请重试。";
 "auth.link_failed_state_mismatch" = "关联失败：安全校验不匹配，请重试。";

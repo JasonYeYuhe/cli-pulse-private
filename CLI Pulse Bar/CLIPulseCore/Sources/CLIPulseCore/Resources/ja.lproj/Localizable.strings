@@ -340,6 +340,7 @@
 "auth.sign_in_github" = "GitHubでサインイン";
 "auth.sign_in_cancelled" = "サインインをキャンセルしました";
 "auth.sign_in_failed_generic" = "サインインに失敗しました。もう一度お試しください。";
+"auth.sign_in_failed_state_mismatch" = "サインインに失敗しました：セキュリティ確認が一致しません。もう一度お試しください。";
 "auth.link_cancelled" = "連携をキャンセルしました";
 "auth.link_failed_generic" = "連携に失敗しました。もう一度お試しください。";
 "auth.link_failed_state_mismatch" = "連携に失敗しました：セキュリティ確認が一致しません。もう一度お試しください。";

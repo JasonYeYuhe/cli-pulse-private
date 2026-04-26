@@ -340,6 +340,7 @@
 "auth.sign_in_github" = "Iniciar sesión con GitHub";
 "auth.sign_in_cancelled" = "Inicio de sesión cancelado";
 "auth.sign_in_failed_generic" = "Error al iniciar sesión. Inténtalo de nuevo.";
+"auth.sign_in_failed_state_mismatch" = "Error al iniciar sesión: la verificación de seguridad no coincidió. Inténtalo de nuevo.";
 "auth.link_cancelled" = "Vinculación cancelada";
 "auth.link_failed_generic" = "Error al vincular. Inténtalo de nuevo.";
 "auth.link_failed_state_mismatch" = "Error al vincular: la verificación de seguridad no coincidió. Inténtalo de nuevo.";

@@ -195,7 +195,7 @@ struct iOSLoginView: View {
     private func signInWithProvider(_ provider: String) {
         Task {
             guard let (authURL, codeVerifier, expectedState) = await state.oauthURL(provider: provider) else {
-                state.lastError = "Failed to build \(provider) authorization URL"
+                state.lastError = L10n.auth.signInFailedGeneric
                 return
             }
             let session = ASWebAuthenticationSession(
@@ -213,17 +213,20 @@ struct iOSLoginView: View {
                     return
                 }
                 guard let callbackURL else {
-                    Task { @MainActor in state?.lastError = "OAuth sign-in failed: no callback URL" }
+                    Task { @MainActor in state?.lastError = L10n.auth.signInFailedGeneric }
                     return
                 }
                 switch OAuthCallbackParser.parse(url: callbackURL) {
                 case .cancelled:
                     Task { @MainActor in state?.lastError = L10n.auth.signInCancelled }
-                case .failed(let description):
-                    Task { @MainActor in state?.lastError = "OAuth sign-in failed: \(description)" }
+                case .failed:
+                    // OAuthCallbackParser already strips raw URL/code/state from
+                    // the description, but keep messaging generic here for parity
+                    // with the link-flow in iOSSettingsTab.
+                    Task { @MainActor in state?.lastError = L10n.auth.signInFailedGeneric }
                 case .success(let code, let returnedState):
                     guard returnedState == expectedState else {
-                        Task { @MainActor in state?.lastError = "OAuth sign-in failed: state mismatch" }
+                        Task { @MainActor in state?.lastError = L10n.auth.signInFailedStateMismatch }
                         return
                     }
                     Task { await state?.exchangeOAuthCode(code: code, codeVerifier: codeVerifier) }

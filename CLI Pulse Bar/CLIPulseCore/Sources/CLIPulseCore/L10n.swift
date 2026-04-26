@@ -199,6 +199,7 @@ public enum L10n {
         public static var signInGithub: String { tr("auth.sign_in_github") }
         public static var signInCancelled: String { tr("auth.sign_in_cancelled") }
         public static var signInFailedGeneric: String { tr("auth.sign_in_failed_generic") }
+        public static var signInFailedStateMismatch: String { tr("auth.sign_in_failed_state_mismatch") }
         public static var linkCancelled: String { tr("auth.link_cancelled") }
         public static var linkFailedGeneric: String { tr("auth.link_failed_generic") }
         public static var linkFailedStateMismatch: String { tr("auth.link_failed_state_mismatch") }
