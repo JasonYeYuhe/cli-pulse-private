@@ -918,9 +918,10 @@ public actor APIClient {
     /// Supabase echoes back in the redirect; callers must verify it matches before exchanging.
     public func oauthAuthorizeURL(provider: String, redirectTo: String) -> (URL, String, String)? {
         // Generate PKCE code verifier + challenge
-        let verifier = generateCodeVerifier()
-        guard let challenge = sha256Base64URL(verifier) else { return nil }
-        let state = String(generateCodeVerifier().prefix(32))
+        guard let verifier = generateCodeVerifier(),
+              let stateSource = generateCodeVerifier(),
+              let challenge = sha256Base64URL(verifier) else { return nil }
+        let state = String(stateSource.prefix(32))
 
         var components = URLComponents(string: "\(supabaseURL)/auth/v1/authorize")
         components?.queryItems = [
@@ -1073,9 +1074,12 @@ public actor APIClient {
     /// The `state` is a CSRF token that Supabase propagates through the OAuth roundtrip and
     /// echoes back in the redirect — callers must verify it matches before exchanging.
     public func linkIdentityAuthorizeURL(provider: String, redirectTo: String) async throws -> (URL, String, String) {
-        let verifier = generateCodeVerifier()
-        guard let challenge = sha256Base64URL(verifier) else { throw APIError.invalidResponse }
-        let state = String(generateCodeVerifier().prefix(32))
+        guard let verifier = generateCodeVerifier(),
+              let stateSource = generateCodeVerifier(),
+              let challenge = sha256Base64URL(verifier) else {
+            throw APIError.invalidResponse
+        }
+        let state = String(stateSource.prefix(32))
         var components = URLComponents(string: "\(supabaseURL)/auth/v1/user/identities/authorize")
         components?.queryItems = [
             URLQueryItem(name: "provider", value: provider),
@@ -1185,9 +1189,13 @@ public actor APIClient {
     }
 
     // PKCE helpers
-    private func generateCodeVerifier() -> String {
+    /// Returns nil if `SecRandomCopyBytes` fails — callers must treat that as a
+    /// hard failure rather than fall back to the all-zero buffer, which would
+    /// produce a deterministic, attacker-known verifier/state.
+    private func generateCodeVerifier() -> String? {
         var buffer = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, buffer.count, &buffer)
+        let status = SecRandomCopyBytes(kSecRandomDefault, buffer.count, &buffer)
+        guard status == errSecSuccess else { return nil }
         return Data(buffer).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
