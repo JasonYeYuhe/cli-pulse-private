@@ -303,6 +303,7 @@
 "onboarding.set_up_sync" = "클라우드 동기화 설정";
 "onboarding.synced_mode" = "클라우드 동기화 — 기기 간 데이터 동기화 중";
 "onboarding.not_synced_hint" = "Mac에서 도우미를 설정하여 다중 기기 동기화, 기록 및 iPhone 접근을 활성화하세요.";
+"onboarding.helper_not_connected_yet" = "도우미가 아직 연결되지 않았습니다. 위의 명령을 실행한 후 다시 시도해 주세요.";
 
 /* ── 팀 ── */
 "team.title" = "팀";

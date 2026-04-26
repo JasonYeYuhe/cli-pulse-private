@@ -303,6 +303,7 @@
 "onboarding.set_up_sync" = "クラウド同期をセットアップ";
 "onboarding.synced_mode" = "クラウド同期 — デバイス間でデータ同期中";
 "onboarding.not_synced_hint" = "Macでヘルパーをセットアップして、マルチデバイス同期、履歴、iPhoneアクセスを有効にしましょう。";
+"onboarding.helper_not_connected_yet" = "ヘルパーがまだ接続されていません。上記のコマンドを実行してから、もう一度お試しください。";
 
 /* ── チーム ── */
 "team.title" = "チーム";

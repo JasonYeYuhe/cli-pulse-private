@@ -303,6 +303,7 @@
 "onboarding.set_up_sync" = "设置云同步";
 "onboarding.synced_mode" = "云同步 — 数据在设备间同步";
 "onboarding.not_synced_hint" = "在 Mac 上设置助手以启用多设备同步、历史记录和 iPhone 访问。";
+"onboarding.helper_not_connected_yet" = "助手尚未连接。请运行上方命令后重试。";
 
 /* ── 团队 ── */
 "team.title" = "团队";

@@ -303,6 +303,7 @@
 "onboarding.set_up_sync" = "Configurar sincronización en la nube";
 "onboarding.synced_mode" = "Sincronización en la nube — datos sincronizando entre dispositivos";
 "onboarding.not_synced_hint" = "Configure el auxiliar en su Mac para sincronización multidispositivo, historial y acceso desde iPhone.";
+"onboarding.helper_not_connected_yet" = "El auxiliar aún no se ha conectado. Ejecute el comando anterior y vuelva a intentarlo.";
 
 /* ── Equipo ── */
 "team.title" = "Equipos";

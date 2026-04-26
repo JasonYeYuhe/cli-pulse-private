@@ -303,6 +303,7 @@
 "onboarding.set_up_sync" = "Set Up Cloud Sync";
 "onboarding.synced_mode" = "Cloud Sync — data syncing across devices";
 "onboarding.not_synced_hint" = "Set up the helper on your Mac for multi-device sync, history, and iPhone access.";
+"onboarding.helper_not_connected_yet" = "Helper hasn't connected yet. Run the command above, then try again.";
 
 /* ── Team ── */
 "team.title" = "Teams";

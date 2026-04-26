@@ -334,7 +334,7 @@ extension AppState {
                 startRefreshLoop()
                 await refreshAll()
             } else {
-                pairingError = "Helper hasn't connected yet. Run the command above, then try again."
+                pairingError = L10n.onboarding.helperNotConnectedYet
             }
         } catch {
             pairingError = error.localizedDescription

@@ -414,6 +414,7 @@ public enum L10n {
         public static var setUpSync: String { tr("onboarding.set_up_sync") }
         public static var syncedMode: String { tr("onboarding.synced_mode") }
         public static var notSyncedHint: String { tr("onboarding.not_synced_hint") }
+        public static var helperNotConnectedYet: String { tr("onboarding.helper_not_connected_yet") }
     }
 
     // MARK: - Common
