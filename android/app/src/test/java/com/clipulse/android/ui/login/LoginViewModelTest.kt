@@ -50,6 +50,34 @@ class LoginViewModelTest {
     }
 
     @Test
+    fun `initial state with cached non-demo session is loading not logged in`() = runTest {
+        // Regression: ensure cached tokens don't pre-flip isLoggedIn=true at
+        // construction. LoginScreen would otherwise call onLoggedIn() before
+        // tryRestoreSession validates the token, stranding the user in the
+        // authenticated stack if me() later returns 401 / TokenExpired.
+        every { tokenStore.isLoggedIn } returns true
+        every { tokenStore.isDemoMode } returns false
+
+        val vm = LoginViewModel(supabase, tokenStore)
+
+        assertFalse(vm.state.value.isLoggedIn)
+        assertTrue(vm.state.value.isLoading)
+        vm.viewModelScope.cancel()
+    }
+
+    @Test
+    fun `initial state with demo mode is logged in not loading`() = runTest {
+        // Demo mode bypasses session restore — no me() call, log in immediately.
+        every { tokenStore.isDemoMode } returns true
+
+        val vm = LoginViewModel(supabase, tokenStore)
+
+        assertTrue(vm.state.value.isLoggedIn)
+        assertFalse(vm.state.value.isLoading)
+        vm.viewModelScope.cancel()
+    }
+
+    @Test
     fun `signInWithGoogle success sets logged in`() = runTest {
         coEvery { supabase.signInWithGoogle("id-token", "Jason", "j@t.com") } returns testAuth
         val vm = LoginViewModel(supabase, tokenStore)
