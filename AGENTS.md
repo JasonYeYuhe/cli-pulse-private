@@ -137,6 +137,14 @@ python3 -m pytest -q helper/test_system_collector.py
 swift test --package-path "CLI Pulse Bar/CLIPulseCore"
 ```
 
+When touching `backend/supabase/` SQL, app/helper/Android RPC call sites,
+or edge functions, also run the static contract smoke (no network, no
+credentials):
+
+```bash
+python3 backend/supabase/ci_check_rpc_contract.py
+```
+
 ### Android validation (requires Java runtime)
 
 ```bash
