@@ -369,6 +369,7 @@
 "auth.watch_complete_sign_in" = "Complete Sign In";
 "auth.watch_email_fallback" = "Sign in with email instead";
 "auth.apple_no_token" = "Apple authorization returned no identity token";
+"auth.apple_nonce_failed" = "Couldn't prepare a secure sign-in nonce. Please try again.";
 "account.linked_accounts" = "Linked Accounts";
 "account.linked_accounts_footer" = "Link Apple, Google, or GitHub to sign in with any of them — they all resolve to the same CLI Pulse account.";
 "account.unlink_confirm_title" = "Unlink this account?";

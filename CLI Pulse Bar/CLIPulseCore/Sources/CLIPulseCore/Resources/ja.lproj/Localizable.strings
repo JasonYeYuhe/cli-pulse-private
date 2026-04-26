@@ -369,6 +369,7 @@
 "auth.watch_complete_sign_in" = "サインインを完了";
 "auth.watch_email_fallback" = "代わりにメールでサインイン";
 "auth.apple_no_token" = "Apple 認証で ID トークンが返されませんでした";
+"auth.apple_nonce_failed" = "安全なサインイン用ノンスを生成できませんでした。もう一度お試しください。";
 "account.linked_accounts" = "連携済みアカウント";
 "account.linked_accounts_footer" = "Apple、Google、または GitHub を連携すると、どれでも同じ CLI Pulse アカウントにサインインできます。";
 "account.unlink_confirm_title" = "このアカウントの連携を解除しますか？";

@@ -369,6 +369,7 @@
 "auth.watch_complete_sign_in" = "Completar inicio de sesión";
 "auth.watch_email_fallback" = "Iniciar sesión con correo";
 "auth.apple_no_token" = "La autorización de Apple no devolvió un token de identidad";
+"auth.apple_nonce_failed" = "No se pudo preparar un nonce seguro para iniciar sesión. Inténtalo de nuevo.";
 "account.linked_accounts" = "Cuentas vinculadas";
 "account.linked_accounts_footer" = "Vincula Apple, Google o GitHub para iniciar sesión con cualquiera de ellos — todos resuelven en la misma cuenta de CLI Pulse.";
 "account.unlink_confirm_title" = "¿Desvincular esta cuenta?";

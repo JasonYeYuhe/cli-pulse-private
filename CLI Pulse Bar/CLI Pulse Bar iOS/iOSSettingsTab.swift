@@ -630,13 +630,22 @@ struct LinkedAccountsSection: View {
 
     @ViewBuilder
     private func appleLinkButton() -> some View {
+        // Nonce is prepared in `.onAppear` and rotated after each completion;
+        // the button is disabled while `currentAppleNonce` is nil so Apple auth
+        // never starts without one.
         SignInWithAppleButton(.continue) { request in
+            guard let nonce = currentAppleNonce else { return }
             localError = nil
-            let nonce = randomNonceString()
-            currentAppleNonce = nonce
             request.requestedScopes = [.email]
             request.nonce = sha256(nonce)
         } onCompletion: { result in
+            // Snapshot the nonce before `defer` rotates it — the async Task below
+            // would otherwise send the rotated value to Supabase.
+            guard let nonce = currentAppleNonce else {
+                localError = L10n.auth.appleNonceFailed
+                return
+            }
+            defer { prepareAppleNonce() }
             switch result {
             case .success(let authorization):
                 guard
@@ -648,7 +657,7 @@ struct LinkedAccountsSection: View {
                     return
                 }
                 Task {
-                    await state.linkAppleIdentity(identityToken: token, nonce: currentAppleNonce)
+                    await state.linkAppleIdentity(identityToken: token, nonce: nonce)
                 }
             case .failure(let error):
                 let ns = error as NSError
@@ -658,7 +667,22 @@ struct LinkedAccountsSection: View {
         }
         .signInWithAppleButtonStyle(.whiteOutline)
         .frame(width: 110, height: 30)
-        .disabled(state.isLinkingIdentity)
+        .disabled(state.isLinkingIdentity || currentAppleNonce == nil)
+        .onAppear {
+            if currentAppleNonce == nil { prepareAppleNonce() }
+        }
+    }
+
+    /// Preflight: prepare a fresh nonce so the link-Apple button can be
+    /// enabled. If preparation fails the button stays disabled — Apple auth
+    /// never starts without a valid nonce.
+    private func prepareAppleNonce() {
+        do {
+            currentAppleNonce = try AuthNonce.random()
+        } catch {
+            currentAppleNonce = nil
+            localError = L10n.auth.appleNonceFailed
+        }
     }
 
     // MARK: Google / GitHub link
@@ -736,15 +760,6 @@ struct LinkedAccountsSection: View {
         case "email": return "Email"
         default: return provider.capitalized
         }
-    }
-
-    private func randomNonceString(length: Int = 32) -> String {
-        precondition(length > 0)
-        var randomBytes = [UInt8](repeating: 0, count: length)
-        let err = SecRandomCopyBytes(kSecRandomDefault, randomBytes.count, &randomBytes)
-        if err != errSecSuccess { fatalError("Unable to generate nonce.") }
-        let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
-        return String(randomBytes.map { charset[Int($0) % charset.count] })
     }
 
     private func sha256(_ input: String) -> String {

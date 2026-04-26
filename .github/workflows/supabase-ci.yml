@@ -4,10 +4,18 @@ on:
   push:
     paths:
       - 'backend/supabase/**'
+      - 'CLI Pulse Bar/CLIPulseCore/Sources/CLIPulseCore/APIClient.swift'
+      - 'CLI Pulse Bar/CLIPulseCore/Sources/CLIPulseCore/HelperAPIClient.swift'
+      - 'helper/**'
+      - 'android/app/src/main/java/com/clipulse/android/data/remote/**'
       - '.github/workflows/supabase-ci.yml'
   pull_request:
     paths:
       - 'backend/supabase/**'
+      - 'CLI Pulse Bar/CLIPulseCore/Sources/CLIPulseCore/APIClient.swift'
+      - 'CLI Pulse Bar/CLIPulseCore/Sources/CLIPulseCore/HelperAPIClient.swift'
+      - 'helper/**'
+      - 'android/app/src/main/java/com/clipulse/android/data/remote/**'
       - '.github/workflows/supabase-ci.yml'
 
 concurrency:
@@ -29,3 +37,18 @@ jobs:
 
       - name: Check every public SECURITY DEFINER function pins search_path
         run: python3 backend/supabase/ci_check_search_path.py
+
+  rpc-contract:
+    name: RPC contract drift guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Static RPC contract check
+        run: python3 backend/supabase/ci_check_rpc_contract.py

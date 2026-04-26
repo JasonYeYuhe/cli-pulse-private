@@ -211,6 +211,7 @@ public enum L10n {
         public static var watchCompleteSignIn: String { tr("auth.watch_complete_sign_in") }
         public static var watchEmailFallback: String { tr("auth.watch_email_fallback") }
         public static var appleNoToken: String { tr("auth.apple_no_token") }
+        public static var appleNonceFailed: String { tr("auth.apple_nonce_failed") }
     }
 
     // MARK: - Subscription

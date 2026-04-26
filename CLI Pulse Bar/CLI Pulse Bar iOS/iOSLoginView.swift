@@ -16,19 +16,22 @@ struct iOSLoginView: View {
 
     private static let webAuthContextProvider = WebAuthContextProvider()
 
-    private func randomNonceString(length: Int = 32) -> String {
-        precondition(length > 0)
-        var randomBytes = [UInt8](repeating: 0, count: length)
-        let errorCode = SecRandomCopyBytes(kSecRandomDefault, randomBytes.count, &randomBytes)
-        if errorCode != errSecSuccess { fatalError("Unable to generate nonce.") }
-        let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
-        return String(randomBytes.map { charset[Int($0) % charset.count] })
-    }
-
     private func sha256(_ input: String) -> String {
         let inputData = Data(input.utf8)
         let hashed = SHA256.hash(data: inputData)
         return hashed.compactMap { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Preflight: prepare a fresh nonce so the SignInWithAppleButton can be
+    /// enabled. If preparation fails we leave `currentNonce` nil, which keeps
+    /// the button disabled — Apple auth never starts without a valid nonce.
+    private func prepareNonce() {
+        do {
+            currentNonce = try AuthNonce.random()
+        } catch {
+            currentNonce = nil
+            state.lastError = L10n.auth.appleNonceFailed
+        }
     }
 
     var body: some View {
@@ -50,13 +53,21 @@ struct iOSLoginView: View {
                     }
                     .padding(.top, 40)
 
-                    // Sign in with Apple
+                    // Sign in with Apple. Nonce is prepared in `.onAppear` and
+                    // rotated after each completion; the button is disabled while
+                    // `currentNonce` is nil so Apple auth never starts without one.
                     SignInWithAppleButton(.signIn) { request in
-                        let nonce = randomNonceString()
-                        currentNonce = nonce
+                        guard let nonce = currentNonce else { return }
                         request.requestedScopes = [.fullName, .email]
                         request.nonce = sha256(nonce)
                     } onCompletion: { result in
+                        // Snapshot the nonce before `defer` rotates it — the async Task
+                        // below would otherwise send the rotated value to Supabase.
+                        guard let nonce = currentNonce else {
+                            state.lastError = L10n.auth.appleNonceFailed
+                            return
+                        }
+                        defer { prepareNonce() }
                         switch result {
                         case .success(let authorization):
                             if let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential,
@@ -68,7 +79,7 @@ struct iOSLoginView: View {
                                 Task {
                                     await state.signInWithApple(
                                         identityToken: identityToken,
-                                        nonce: currentNonce,
+                                        nonce: nonce,
                                         fullName: fullName.isEmpty ? nil : fullName,
                                         email: appleIDCredential.email
                                     )
@@ -80,6 +91,7 @@ struct iOSLoginView: View {
                     }
                     .signInWithAppleButtonStyle(.black)
                     .frame(height: 50)
+                    .disabled(currentNonce == nil)
                     .padding(.horizontal)
 
                     // Sign in with Google (via Supabase OAuth)
@@ -165,6 +177,7 @@ struct iOSLoginView: View {
                 password = ""
                 otpCode = ""
                 state.lastError = nil
+                if currentNonce == nil { prepareNonce() }
             }
             .onChange(of: authState.isAuthenticated) { _, isAuth in
                 if !isAuth {

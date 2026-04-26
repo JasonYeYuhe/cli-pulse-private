@@ -369,6 +369,7 @@
 "auth.watch_complete_sign_in" = "完成登录";
 "auth.watch_email_fallback" = "改用邮箱登录";
 "auth.apple_no_token" = "Apple 授权未返回身份令牌";
+"auth.apple_nonce_failed" = "无法生成安全的登录随机数，请重试。";
 "account.linked_accounts" = "已关联账户";
 "account.linked_accounts_footer" = "关联 Apple、Google 或 GitHub 后均可登录同一 CLI Pulse 账户。";
 "account.unlink_confirm_title" = "取消关联此账户？";

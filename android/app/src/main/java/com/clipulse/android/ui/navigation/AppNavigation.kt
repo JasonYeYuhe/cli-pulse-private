@@ -73,6 +73,20 @@ fun AppNavigation(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
 
+    // If a link-flow OAuth deep link arrived while the user wasn't on the Settings
+    // tab, auto-navigate there so SettingsScreen's LaunchedEffects can consume the
+    // callback / surface the notice. Login callbacks are intentionally not routed
+    // here — pre-auth there's only one screen and LoginScreen already consumes them.
+    LaunchedEffect(linkCallback, linkNotice) {
+        if (linkCallback == null && linkNotice == null) return@LaunchedEffect
+        if (currentDestination?.route == Screen.Settings.route) return@LaunchedEffect
+        navController.navigate(Screen.Settings.route) {
+            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
