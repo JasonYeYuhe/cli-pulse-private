@@ -358,3 +358,29 @@
 "a11y.configure_provider" = "Configurar %@";
 "a11y.configuration_error_title" = "Error de configuración";
 "a11y.configuration_error_body" = "Falta SUPABASE_ANON_KEY — las llamadas a la API fallarán.";
+
+/* ── Auth / Cuenta ── */
+"auth.password_sign_in" = "Iniciar sesión";
+"auth.use_email_code" = "Usar código por correo en su lugar";
+"auth.use_password" = "Iniciar sesión con contraseña";
+"auth.password_label" = "Contraseña";
+"auth.watch_phone_prompt" = "Abre CLI Pulse en tu iPhone para iniciar sesión";
+"auth.watch_phone_unreachable" = "iPhone no disponible. Asegúrate de que CLI Pulse esté abierto en tu iPhone, o inicia sesión manualmente abajo.";
+"auth.watch_complete_sign_in" = "Completar inicio de sesión";
+"auth.watch_email_fallback" = "Iniciar sesión con correo";
+"auth.apple_no_token" = "La autorización de Apple no devolvió un token de identidad";
+"account.linked_accounts" = "Cuentas vinculadas";
+"account.linked_accounts_footer" = "Vincula Apple, Google o GitHub para iniciar sesión con cualquiera de ellos — todos resuelven en la misma cuenta de CLI Pulse.";
+"account.unlink_confirm_title" = "¿Desvincular esta cuenta?";
+"account.unlink_with_provider" = "Desvincular %@";
+"account.unlink_message" = "Ya no podrás iniciar sesión con %@. Puedes volver a vincular más tarde.";
+"account.linked_status" = "Vinculada";
+"account.not_linked_status" = "No vinculada";
+"account.unlink" = "Desvincular";
+"account.link" = "Vincular";
+"account.delete_long_message" = "Esto eliminará permanentemente tu cuenta y todos los datos asociados, incluidas sesiones, dispositivos, alertas y membresías de equipo. Esta acción no se puede deshacer.";
+"account.delete_continue" = "Continuar";
+"account.delete_confirm_step_title" = "Confirmar eliminación";
+"account.delete_confirm_placeholder" = "Escribe DELETE para confirmar";
+"account.delete_confirm_button" = "Eliminar mi cuenta";
+"account.delete_confirm_step_message" = "Escribe DELETE para confirmar la eliminación permanente de la cuenta.";

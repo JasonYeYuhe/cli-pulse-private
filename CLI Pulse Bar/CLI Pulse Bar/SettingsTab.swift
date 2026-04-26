@@ -63,7 +63,7 @@ struct SettingsTab: View {
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 11))
 
-                SecureField("Password", text: $password)
+                SecureField(L10n.auth.passwordLabel, text: $password)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 11))
 
@@ -72,7 +72,7 @@ struct SettingsTab: View {
                 } label: {
                     HStack {
                         if state.isLoading { ProgressView().controlSize(.small) }
-                        Text("Sign In")
+                        Text(L10n.auth.passwordSignIn)
                             .font(.system(size: 11, weight: .semibold))
                     }
                     .frame(maxWidth: .infinity)
@@ -87,7 +87,7 @@ struct SettingsTab: View {
                     password = ""
                     state.lastError = nil
                 } label: {
-                    Text("Use email code instead")
+                    Text(L10n.auth.useEmailCode)
                         .font(.system(size: 10))
                 }
             } else if state.otpSent {
@@ -141,7 +141,7 @@ struct SettingsTab: View {
                     usePasswordLogin = true
                     state.lastError = nil
                 } label: {
-                    Text("Sign in with password")
+                    Text(L10n.auth.usePassword)
                         .font(.system(size: 10))
                 }
             }

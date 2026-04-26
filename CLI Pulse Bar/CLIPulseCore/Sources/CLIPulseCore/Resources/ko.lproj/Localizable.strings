@@ -358,3 +358,29 @@
 "a11y.configure_provider" = "%@ 구성";
 "a11y.configuration_error_title" = "구성 오류";
 "a11y.configuration_error_body" = "SUPABASE_ANON_KEY 누락 — API 호출이 실패합니다.";
+
+/* ── 인증 / 계정 ── */
+"auth.password_sign_in" = "로그인";
+"auth.use_email_code" = "이메일 인증 코드 사용";
+"auth.use_password" = "비밀번호로 로그인";
+"auth.password_label" = "비밀번호";
+"auth.watch_phone_prompt" = "iPhone에서 CLI Pulse를 열어 로그인하세요";
+"auth.watch_phone_unreachable" = "iPhone에 연결할 수 없습니다. iPhone에서 CLI Pulse가 열려 있는지 확인하거나 아래에서 수동으로 로그인하세요.";
+"auth.watch_complete_sign_in" = "로그인 완료";
+"auth.watch_email_fallback" = "이메일로 로그인";
+"auth.apple_no_token" = "Apple 인증에서 ID 토큰을 반환하지 않았습니다";
+"account.linked_accounts" = "연결된 계정";
+"account.linked_accounts_footer" = "Apple, Google 또는 GitHub를 연결하면 어느 것으로든 동일한 CLI Pulse 계정에 로그인할 수 있습니다.";
+"account.unlink_confirm_title" = "이 계정 연결을 해제하시겠습니까?";
+"account.unlink_with_provider" = "%@ 연결 해제";
+"account.unlink_message" = "더 이상 %@(으)로 로그인할 수 없습니다. 나중에 다시 연결할 수 있습니다.";
+"account.linked_status" = "연결됨";
+"account.not_linked_status" = "연결되지 않음";
+"account.unlink" = "연결 해제";
+"account.link" = "연결";
+"account.delete_long_message" = "세션, 기기, 알림, 팀 멤버십을 포함한 계정과 모든 관련 데이터가 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.";
+"account.delete_continue" = "계속";
+"account.delete_confirm_step_title" = "삭제 확인";
+"account.delete_confirm_placeholder" = "DELETE를 입력하여 확인";
+"account.delete_confirm_button" = "내 계정 삭제";
+"account.delete_confirm_step_message" = "계정을 영구적으로 삭제하려면 DELETE를 입력하세요.";

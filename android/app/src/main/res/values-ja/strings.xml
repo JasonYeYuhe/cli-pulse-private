@@ -137,4 +137,25 @@
     <string name="oauth_link_failed">連携に失敗しました。もう一度お試しください。</string>
     <string name="oauth_link_state_mismatch">連携に失敗しました：セキュリティ確認が一致しません。もう一度お試しください。</string>
     <string name="oauth_link_malformed">連携に失敗しました：応答が不正です。もう一度お試しください。</string>
+
+    <!-- 認証（拡張） -->
+    <string name="auth_tagline">AI API の使用状況を監視</string>
+    <string name="auth_otp_sent_to">認証コードを %1$s に送信しました</string>
+    <string name="auth_otp_code_label">認証コード</string>
+    <string name="auth_email_label">メール</string>
+    <string name="auth_password_label">パスワード</string>
+    <string name="auth_back_to_email">メールサインインに戻る</string>
+    <string name="sign_in_button">サインイン</string>
+    <string name="sign_in_github">GitHubでサインイン</string>
+    <string name="send_verification_code">認証コードを送信</string>
+
+    <!-- アカウント（連携） -->
+    <string name="account_linked_accounts">連携済みアカウント</string>
+    <string name="account_linked_accounts_footer">Google または GitHub を連携すると、どちらでも同じ CLI Pulse アカウントにサインインできます。</string>
+    <string name="account_unlink_confirm_title">%1$s の連携を解除しますか？</string>
+    <string name="account_unlink_message">%1$s でサインインできなくなります。後で再連携できます。</string>
+    <string name="account_unlink">連携解除</string>
+    <string name="account_link">連携</string>
+    <string name="account_linked_status">連携済み</string>
+    <string name="account_not_linked_status">未連携</string>
 </resources>

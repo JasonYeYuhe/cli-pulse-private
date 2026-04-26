@@ -110,10 +110,10 @@ fun SettingsScreen(
         if (!state.isDemoMode) {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Linked Accounts", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.account_linked_accounts), style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Link Google or GitHub to sign in with either — they'll resolve to the same CLI Pulse account.",
+                        stringResource(R.string.account_linked_accounts_footer),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -166,18 +166,18 @@ fun SettingsScreen(
         pendingIdentityToUnlink?.let { identity ->
             AlertDialog(
                 onDismissRequest = { pendingIdentityToUnlink = null },
-                title = { Text("Unlink ${providerDisplayName(identity.provider)}?") },
-                text = { Text("You won't be able to sign in with ${providerDisplayName(identity.provider)} anymore. You can relink later.") },
+                title = { Text(stringResource(R.string.account_unlink_confirm_title, providerDisplayName(identity.provider))) },
+                text = { Text(stringResource(R.string.account_unlink_message, providerDisplayName(identity.provider))) },
                 confirmButton = {
                     TextButton(onClick = {
                         viewModel.unlinkIdentity(identity)
                         pendingIdentityToUnlink = null
                     }) {
-                        Text("Unlink", color = MaterialTheme.colorScheme.error)
+                        Text(stringResource(R.string.account_unlink), color = MaterialTheme.colorScheme.error)
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { pendingIdentityToUnlink = null }) { Text("Cancel") }
+                    TextButton(onClick = { pendingIdentityToUnlink = null }) { Text(stringResource(R.string.cancel)) }
                 },
             )
         }
@@ -479,13 +479,13 @@ private fun LinkedAccountRow(
             Text(providerLabel, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
             if (linkedIdentity != null) {
                 Text(
-                    linkedIdentity.email ?: "Linked",
+                    linkedIdentity.email ?: stringResource(R.string.account_linked_status),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
                 Text(
-                    "Not linked",
+                    stringResource(R.string.account_not_linked_status),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -497,14 +497,14 @@ private fun LinkedAccountRow(
                 enabled = canUnlink && !isBusy,
                 colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
             ) {
-                Text("Unlink")
+                Text(stringResource(R.string.account_unlink))
             }
         } else {
             OutlinedButton(
                 onClick = onLink,
                 enabled = !isBusy,
             ) {
-                Text("Link")
+                Text(stringResource(R.string.account_link))
             }
         }
     }

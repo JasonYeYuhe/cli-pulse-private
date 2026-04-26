@@ -202,6 +202,15 @@ public enum L10n {
         public static var linkCancelled: String { tr("auth.link_cancelled") }
         public static var linkFailedGeneric: String { tr("auth.link_failed_generic") }
         public static var linkFailedStateMismatch: String { tr("auth.link_failed_state_mismatch") }
+        public static var passwordSignIn: String { tr("auth.password_sign_in") }
+        public static var useEmailCode: String { tr("auth.use_email_code") }
+        public static var usePassword: String { tr("auth.use_password") }
+        public static var passwordLabel: String { tr("auth.password_label") }
+        public static var watchPhonePrompt: String { tr("auth.watch_phone_prompt") }
+        public static var watchPhoneUnreachable: String { tr("auth.watch_phone_unreachable") }
+        public static var watchCompleteSignIn: String { tr("auth.watch_complete_sign_in") }
+        public static var watchEmailFallback: String { tr("auth.watch_email_fallback") }
+        public static var appleNoToken: String { tr("auth.apple_no_token") }
     }
 
     // MARK: - Subscription
@@ -275,6 +284,21 @@ public enum L10n {
         public static var deleteConfirmTitle: String { tr("account.delete_confirm_title") }
         public static var deleteConfirmMessage: String { tr("account.delete_confirm_message") }
         public static var unlimited: String { tr("account.unlimited") }
+        public static var linkedAccounts: String { tr("account.linked_accounts") }
+        public static var linkedAccountsFooter: String { tr("account.linked_accounts_footer") }
+        public static var unlinkConfirmTitle: String { tr("account.unlink_confirm_title") }
+        public static func unlinkWithProvider(_ provider: String) -> String { tr("account.unlink_with_provider", provider) }
+        public static func unlinkMessage(_ provider: String) -> String { tr("account.unlink_message", provider) }
+        public static var linkedStatus: String { tr("account.linked_status") }
+        public static var notLinkedStatus: String { tr("account.not_linked_status") }
+        public static var unlink: String { tr("account.unlink") }
+        public static var link: String { tr("account.link") }
+        public static var deleteLongMessage: String { tr("account.delete_long_message") }
+        public static var deleteContinue: String { tr("account.delete_continue") }
+        public static var deleteConfirmStepTitle: String { tr("account.delete_confirm_step_title") }
+        public static var deleteConfirmPlaceholder: String { tr("account.delete_confirm_placeholder") }
+        public static var deleteConfirmButton: String { tr("account.delete_confirm_button") }
+        public static var deleteConfirmStepMessage: String { tr("account.delete_confirm_step_message") }
     }
 
     // MARK: - Session Details

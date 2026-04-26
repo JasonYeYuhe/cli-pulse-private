@@ -137,4 +137,25 @@
     <string name="oauth_link_failed">Error al vincular. Inténtalo de nuevo.</string>
     <string name="oauth_link_state_mismatch">Error al vincular: la verificación de seguridad no coincidió. Inténtalo de nuevo.</string>
     <string name="oauth_link_malformed">Error al vincular: respuesta con formato incorrecto. Inténtalo de nuevo.</string>
+
+    <!-- Auth (extendido) -->
+    <string name="auth_tagline">Monitorea el uso de tu API de IA</string>
+    <string name="auth_otp_sent_to">Código enviado a %1$s</string>
+    <string name="auth_otp_code_label">Código de verificación</string>
+    <string name="auth_email_label">Email</string>
+    <string name="auth_password_label">Contraseña</string>
+    <string name="auth_back_to_email">Volver a inicio con email</string>
+    <string name="sign_in_button">Iniciar sesión</string>
+    <string name="sign_in_github">Iniciar sesión con GitHub</string>
+    <string name="send_verification_code">Enviar código de verificación</string>
+
+    <!-- Cuenta (vinculadas) -->
+    <string name="account_linked_accounts">Cuentas vinculadas</string>
+    <string name="account_linked_accounts_footer">Vincula Google o GitHub para iniciar sesión con cualquiera de ellos — todos resuelven en la misma cuenta de CLI Pulse.</string>
+    <string name="account_unlink_confirm_title">¿Desvincular %1$s?</string>
+    <string name="account_unlink_message">Ya no podrás iniciar sesión con %1$s. Puedes volver a vincular más tarde.</string>
+    <string name="account_unlink">Desvincular</string>
+    <string name="account_link">Vincular</string>
+    <string name="account_linked_status">Vinculada</string>
+    <string name="account_not_linked_status">No vinculada</string>
 </resources>

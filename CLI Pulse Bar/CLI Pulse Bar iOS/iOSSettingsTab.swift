@@ -536,13 +536,13 @@ struct LinkedAccountsSection: View {
                     .foregroundStyle(.red)
             }
         } header: {
-            Text("Linked Accounts")
+            Text(L10n.account.linkedAccounts)
         } footer: {
-            Text("Link Apple, Google, or GitHub to sign in with any of them — they all resolve to the same CLI Pulse account.")
+            Text(L10n.account.linkedAccountsFooter)
         }
         .task { await state.refreshLinkedIdentities() }
         .confirmationDialog(
-            "Unlink this account?",
+            L10n.account.unlinkConfirmTitle,
             isPresented: Binding(
                 get: { pendingUnlink != nil },
                 set: { if !$0 { pendingUnlink = nil } }
@@ -550,16 +550,16 @@ struct LinkedAccountsSection: View {
             titleVisibility: .visible,
             presenting: pendingUnlink
         ) { identity in
-            Button("Unlink \(providerLabel(identity.provider))", role: .destructive) {
+            Button(L10n.account.unlinkWithProvider(providerLabel(identity.provider)), role: .destructive) {
                 Task {
                     localError = nil
                     await state.unlinkIdentity(identity)
                     pendingUnlink = nil
                 }
             }
-            Button("Cancel", role: .cancel) { pendingUnlink = nil }
+            Button(L10n.common.cancel, role: .cancel) { pendingUnlink = nil }
         } message: { identity in
-            Text("You won't be able to sign in with \(providerLabel(identity.provider)) anymore. You can relink later.")
+            Text(L10n.account.unlinkMessage(providerLabel(identity.provider)))
         }
     }
 
@@ -583,11 +583,11 @@ struct LinkedAccountsSection: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 } else if linked != nil {
-                    Text("Linked")
+                    Text(L10n.account.linkedStatus)
                         .font(.caption)
                         .foregroundStyle(.green)
                 } else {
-                    Text("Not linked")
+                    Text(L10n.account.notLinkedStatus)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -605,7 +605,7 @@ struct LinkedAccountsSection: View {
                 localError = nil
                 pendingUnlink = linked
             } label: {
-                Text("Unlink").font(.caption.weight(.semibold))
+                Text(L10n.account.unlink).font(.caption.weight(.semibold))
             }
             .buttonStyle(.bordered)
             .tint(.red)
@@ -617,7 +617,7 @@ struct LinkedAccountsSection: View {
                 Button {
                     linkOAuthProvider(provider.id)
                 } label: {
-                    Text("Link").font(.caption.weight(.semibold))
+                    Text(L10n.account.link).font(.caption.weight(.semibold))
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(provider.tint)
@@ -644,7 +644,7 @@ struct LinkedAccountsSection: View {
                     let tokenData = credential.identityToken,
                     let token = String(data: tokenData, encoding: .utf8)
                 else {
-                    localError = "Apple authorization returned no identity token"
+                    localError = L10n.auth.appleNoToken
                     return
                 }
                 Task {

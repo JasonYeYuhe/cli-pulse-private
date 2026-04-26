@@ -52,27 +52,27 @@ struct DangerZoneSection: View {
             } label: {
                 HStack {
                     if isDeletingAccount { ProgressView().controlSize(.small) }
-                    Label("Delete Account", systemImage: "trash")
+                    Label(L10n.account.deleteAccount, systemImage: "trash")
                         .font(.system(size: 11))
                 }
             }
             .buttonStyle(.plain)
             .foregroundStyle(.red)
             .disabled(isDeletingAccount)
-            .alert("Delete Account", isPresented: $showDeleteAccountAlert) {
-                Button("Cancel", role: .cancel) { }
-                Button("Continue", role: .destructive) {
+            .alert(L10n.account.deleteConfirmTitle, isPresented: $showDeleteAccountAlert) {
+                Button(L10n.common.cancel, role: .cancel) { }
+                Button(L10n.account.deleteContinue, role: .destructive) {
                     showDeleteAccountConfirm = true
                 }
             } message: {
-                Text("This will permanently delete your account and all associated data including sessions, devices, alerts, and team memberships. This action cannot be undone.")
+                Text(L10n.account.deleteLongMessage)
             }
-            .alert("Confirm Deletion", isPresented: $showDeleteAccountConfirm) {
-                TextField("Type DELETE to confirm", text: $deleteConfirmText)
-                Button("Cancel", role: .cancel) {
+            .alert(L10n.account.deleteConfirmStepTitle, isPresented: $showDeleteAccountConfirm) {
+                TextField(L10n.account.deleteConfirmPlaceholder, text: $deleteConfirmText)
+                Button(L10n.common.cancel, role: .cancel) {
                     deleteConfirmText = ""
                 }
-                Button("Delete My Account", role: .destructive) {
+                Button(L10n.account.deleteConfirmButton, role: .destructive) {
                     guard deleteConfirmText == "DELETE" else {
                         deleteConfirmText = ""
                         return
@@ -82,7 +82,7 @@ struct DangerZoneSection: View {
                 }
                 .disabled(deleteConfirmText != "DELETE")
             } message: {
-                Text("Type DELETE to confirm permanent account deletion.")
+                Text(L10n.account.deleteConfirmStepMessage)
             }
 
             Button {

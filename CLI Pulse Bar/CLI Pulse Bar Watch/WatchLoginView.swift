@@ -25,7 +25,7 @@ struct WatchLoginView: View {
                             Image(systemName: "iphone.badge.checkmark")
                                 .font(.title3)
                                 .foregroundStyle(.green)
-                            Text("Open CLI Pulse on your iPhone to sign in")
+                            Text(L10n.auth.watchPhonePrompt)
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
@@ -33,7 +33,7 @@ struct WatchLoginView: View {
                             Image(systemName: "iphone.slash")
                                 .font(.title3)
                                 .foregroundStyle(.secondary)
-                            Text("iPhone not reachable. Make sure CLI Pulse is open on your iPhone, or sign in manually below.")
+                            Text(L10n.auth.watchPhoneUnreachable)
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
@@ -53,7 +53,7 @@ struct WatchLoginView: View {
                                     )
                                 }
                             } label: {
-                                Text("Complete Sign In")
+                                Text(L10n.auth.watchCompleteSignIn)
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.borderedProminent)
@@ -63,7 +63,7 @@ struct WatchLoginView: View {
                         Button {
                             showManualLogin = true
                         } label: {
-                            Text("Sign in with email instead")
+                            Text(L10n.auth.watchEmailFallback)
                                 .font(.caption2)
                         }
                     }

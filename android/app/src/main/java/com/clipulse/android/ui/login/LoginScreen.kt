@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -83,13 +84,13 @@ fun LoginScreen(
             verticalArrangement = Arrangement.Center,
         ) {
             Text(
-                "CLI Pulse",
+                stringResource(R.string.app_name),
                 style = MaterialTheme.typography.headlineLarge,
                 color = MaterialTheme.colorScheme.primary,
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "Monitor your AI API usage",
+                stringResource(R.string.auth_tagline),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -122,12 +123,15 @@ fun LoginScreen(
 
             if (state.showOtpInput) {
                 // OTP verification
-                Text("Code sent to ${state.otpEmail}", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    stringResource(R.string.auth_otp_sent_to, state.otpEmail),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
                     value = otpCode,
                     onValueChange = { otpCode = it },
-                    label = { Text("Verification Code") },
+                    label = { Text(stringResource(R.string.auth_otp_code_label)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -138,14 +142,14 @@ fun LoginScreen(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = otpCode.isNotBlank(),
                 ) {
-                    Text("Verify")
+                    Text(stringResource(R.string.verify))
                 }
             } else if (showPasswordLogin) {
                 // Password login
                 OutlinedTextField(
                     value = email,
                     onValueChange = { email = it },
-                    label = { Text("Email") },
+                    label = { Text(stringResource(R.string.auth_email_label)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -154,7 +158,7 @@ fun LoginScreen(
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
-                    label = { Text("Password") },
+                    label = { Text(stringResource(R.string.auth_password_label)) },
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -165,18 +169,18 @@ fun LoginScreen(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = email.isNotBlank() && password.isNotBlank(),
                 ) {
-                    Text("Sign In")
+                    Text(stringResource(R.string.sign_in_button))
                 }
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = { showPasswordLogin = false }) {
-                    Text("Back to email sign-in")
+                    Text(stringResource(R.string.auth_back_to_email))
                 }
             } else {
                 // Email OTP flow (primary)
                 OutlinedTextField(
                     value = email,
                     onValueChange = { email = it },
-                    label = { Text("Email") },
+                    label = { Text(stringResource(R.string.auth_email_label)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -187,7 +191,7 @@ fun LoginScreen(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = email.contains("@"),
                 ) {
-                    Text("Send Verification Code")
+                    Text(stringResource(R.string.send_verification_code))
                 }
                 Spacer(Modifier.height(24.dp))
                 HorizontalDivider()
@@ -223,7 +227,7 @@ fun LoginScreen(
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Sign in with Google")
+                    Text(stringResource(R.string.sign_in_google))
                 }
                 Spacer(Modifier.height(12.dp))
 
@@ -235,17 +239,17 @@ fun LoginScreen(
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Sign in with GitHub")
+                    Text(stringResource(R.string.sign_in_github))
                 }
                 Spacer(Modifier.height(12.dp))
                 TextButton(onClick = { showPasswordLogin = true }) {
-                    Text("Sign in with password")
+                    Text(stringResource(R.string.sign_in_password))
                 }
                 Spacer(Modifier.height(24.dp))
                 TextButton(onClick = {
                     viewModel.enterDemoMode()
                 }) {
-                    Text("Try Demo", color = MaterialTheme.colorScheme.tertiary)
+                    Text(stringResource(R.string.try_demo), color = MaterialTheme.colorScheme.tertiary)
                 }
             }
         }

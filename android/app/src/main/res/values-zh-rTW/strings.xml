@@ -137,4 +137,25 @@
     <string name="oauth_link_failed">連結失敗，請重試。</string>
     <string name="oauth_link_state_mismatch">連結失敗：安全驗證不相符，請重試。</string>
     <string name="oauth_link_malformed">連結失敗：回應格式錯誤，請重試。</string>
+
+    <!-- 認證（擴充） -->
+    <string name="auth_tagline">監控你的 AI API 使用情況</string>
+    <string name="auth_otp_sent_to">驗證碼已傳送至 %1$s</string>
+    <string name="auth_otp_code_label">驗證碼</string>
+    <string name="auth_email_label">電子郵件</string>
+    <string name="auth_password_label">密碼</string>
+    <string name="auth_back_to_email">返回電子郵件登入</string>
+    <string name="sign_in_button">登入</string>
+    <string name="sign_in_github">使用 GitHub 登入</string>
+    <string name="send_verification_code">傳送驗證碼</string>
+
+    <!-- 帳號（已連結） -->
+    <string name="account_linked_accounts">已連結帳號</string>
+    <string name="account_linked_accounts_footer">連結 Google 或 GitHub 後皆可登入同一 CLI Pulse 帳號。</string>
+    <string name="account_unlink_confirm_title">解除連結 %1$s？</string>
+    <string name="account_unlink_message">您將無法再使用 %1$s 登入。可以稍後重新連結。</string>
+    <string name="account_unlink">解除連結</string>
+    <string name="account_link">連結</string>
+    <string name="account_linked_status">已連結</string>
+    <string name="account_not_linked_status">未連結</string>
 </resources>

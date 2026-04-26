@@ -358,3 +358,29 @@
 "a11y.configure_provider" = "Configure %@";
 "a11y.configuration_error_title" = "Configuration error";
 "a11y.configuration_error_body" = "SUPABASE_ANON_KEY missing — API calls will fail.";
+
+/* ── Auth / Account (P2 localization slice — auth/account surfaces) ── */
+"auth.password_sign_in" = "Sign In";
+"auth.use_email_code" = "Use email code instead";
+"auth.use_password" = "Sign in with password";
+"auth.password_label" = "Password";
+"auth.watch_phone_prompt" = "Open CLI Pulse on your iPhone to sign in";
+"auth.watch_phone_unreachable" = "iPhone not reachable. Make sure CLI Pulse is open on your iPhone, or sign in manually below.";
+"auth.watch_complete_sign_in" = "Complete Sign In";
+"auth.watch_email_fallback" = "Sign in with email instead";
+"auth.apple_no_token" = "Apple authorization returned no identity token";
+"account.linked_accounts" = "Linked Accounts";
+"account.linked_accounts_footer" = "Link Apple, Google, or GitHub to sign in with any of them — they all resolve to the same CLI Pulse account.";
+"account.unlink_confirm_title" = "Unlink this account?";
+"account.unlink_with_provider" = "Unlink %@";
+"account.unlink_message" = "You won't be able to sign in with %@ anymore. You can relink later.";
+"account.linked_status" = "Linked";
+"account.not_linked_status" = "Not linked";
+"account.unlink" = "Unlink";
+"account.link" = "Link";
+"account.delete_long_message" = "This will permanently delete your account and all associated data including sessions, devices, alerts, and team memberships. This action cannot be undone.";
+"account.delete_continue" = "Continue";
+"account.delete_confirm_step_title" = "Confirm Deletion";
+"account.delete_confirm_placeholder" = "Type DELETE to confirm";
+"account.delete_confirm_button" = "Delete My Account";
+"account.delete_confirm_step_message" = "Type DELETE to confirm permanent account deletion.";

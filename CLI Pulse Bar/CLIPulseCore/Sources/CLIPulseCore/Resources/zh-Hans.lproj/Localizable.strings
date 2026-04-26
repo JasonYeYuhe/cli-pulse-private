@@ -358,3 +358,29 @@
 "a11y.configure_provider" = "配置 %@";
 "a11y.configuration_error_title" = "配置错误";
 "a11y.configuration_error_body" = "缺少 SUPABASE_ANON_KEY — API 调用将失败。";
+
+/* ── 认证 / 账户 ── */
+"auth.password_sign_in" = "登录";
+"auth.use_email_code" = "改用邮箱验证码";
+"auth.use_password" = "使用密码登录";
+"auth.password_label" = "密码";
+"auth.watch_phone_prompt" = "在 iPhone 上打开 CLI Pulse 以登录";
+"auth.watch_phone_unreachable" = "无法连接到 iPhone。请确保 CLI Pulse 已在 iPhone 上打开，或在下方手动登录。";
+"auth.watch_complete_sign_in" = "完成登录";
+"auth.watch_email_fallback" = "改用邮箱登录";
+"auth.apple_no_token" = "Apple 授权未返回身份令牌";
+"account.linked_accounts" = "已关联账户";
+"account.linked_accounts_footer" = "关联 Apple、Google 或 GitHub 后均可登录同一 CLI Pulse 账户。";
+"account.unlink_confirm_title" = "取消关联此账户？";
+"account.unlink_with_provider" = "取消关联 %@";
+"account.unlink_message" = "您将无法再使用 %@ 登录。可以稍后重新关联。";
+"account.linked_status" = "已关联";
+"account.not_linked_status" = "未关联";
+"account.unlink" = "取消关联";
+"account.link" = "关联";
+"account.delete_long_message" = "这将永久删除您的账户和所有相关数据，包括会话、设备、提醒和团队成员资格。此操作无法撤销。";
+"account.delete_continue" = "继续";
+"account.delete_confirm_step_title" = "确认删除";
+"account.delete_confirm_placeholder" = "输入 DELETE 以确认";
+"account.delete_confirm_button" = "删除我的账户";
+"account.delete_confirm_step_message" = "输入 DELETE 以确认永久删除账户。";

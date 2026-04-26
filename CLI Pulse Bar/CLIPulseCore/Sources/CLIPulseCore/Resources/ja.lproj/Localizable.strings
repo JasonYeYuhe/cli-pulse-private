@@ -358,3 +358,29 @@
 "a11y.configure_provider" = "%@を設定";
 "a11y.configuration_error_title" = "設定エラー";
 "a11y.configuration_error_body" = "SUPABASE_ANON_KEY が未設定です。API 呼び出しは失敗します。";
+
+/* ── 認証 / アカウント ── */
+"auth.password_sign_in" = "サインイン";
+"auth.use_email_code" = "代わりにメール認証コードを使用";
+"auth.use_password" = "パスワードでサインイン";
+"auth.password_label" = "パスワード";
+"auth.watch_phone_prompt" = "iPhone で CLI Pulse を開いてサインイン";
+"auth.watch_phone_unreachable" = "iPhone に接続できません。iPhone で CLI Pulse を開いているか確認するか、下から手動でサインインしてください。";
+"auth.watch_complete_sign_in" = "サインインを完了";
+"auth.watch_email_fallback" = "代わりにメールでサインイン";
+"auth.apple_no_token" = "Apple 認証で ID トークンが返されませんでした";
+"account.linked_accounts" = "連携済みアカウント";
+"account.linked_accounts_footer" = "Apple、Google、または GitHub を連携すると、どれでも同じ CLI Pulse アカウントにサインインできます。";
+"account.unlink_confirm_title" = "このアカウントの連携を解除しますか？";
+"account.unlink_with_provider" = "%@ の連携を解除";
+"account.unlink_message" = "%@ でサインインできなくなります。後で再連携できます。";
+"account.linked_status" = "連携済み";
+"account.not_linked_status" = "未連携";
+"account.unlink" = "連携解除";
+"account.link" = "連携";
+"account.delete_long_message" = "アカウントとすべての関連データ（セッション、デバイス、アラート、チームメンバーシップを含む）が完全に削除されます。この操作は元に戻せません。";
+"account.delete_continue" = "続行";
+"account.delete_confirm_step_title" = "削除を確認";
+"account.delete_confirm_placeholder" = "DELETE と入力して確認";
+"account.delete_confirm_button" = "アカウントを削除";
+"account.delete_confirm_step_message" = "アカウントを完全に削除するには DELETE と入力してください。";

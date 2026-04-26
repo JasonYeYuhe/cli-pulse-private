@@ -137,4 +137,25 @@
     <string name="oauth_link_failed">연결에 실패했습니다. 다시 시도해 주세요.</string>
     <string name="oauth_link_state_mismatch">연결에 실패했습니다: 보안 확인이 일치하지 않습니다. 다시 시도해 주세요.</string>
     <string name="oauth_link_malformed">연결에 실패했습니다: 응답이 잘못되었습니다. 다시 시도해 주세요.</string>
+
+    <!-- 인증 (확장) -->
+    <string name="auth_tagline">AI API 사용량 모니터링</string>
+    <string name="auth_otp_sent_to">%1$s(으)로 코드를 전송했습니다</string>
+    <string name="auth_otp_code_label">인증 코드</string>
+    <string name="auth_email_label">이메일</string>
+    <string name="auth_password_label">비밀번호</string>
+    <string name="auth_back_to_email">이메일 로그인으로 돌아가기</string>
+    <string name="sign_in_button">로그인</string>
+    <string name="sign_in_github">GitHub로 로그인</string>
+    <string name="send_verification_code">인증 코드 전송</string>
+
+    <!-- 계정 (연결됨) -->
+    <string name="account_linked_accounts">연결된 계정</string>
+    <string name="account_linked_accounts_footer">Google 또는 GitHub를 연결하면 어느 것으로든 동일한 CLI Pulse 계정에 로그인할 수 있습니다.</string>
+    <string name="account_unlink_confirm_title">%1$s 연결을 해제하시겠습니까?</string>
+    <string name="account_unlink_message">더 이상 %1$s(으)로 로그인할 수 없습니다. 나중에 다시 연결할 수 있습니다.</string>
+    <string name="account_unlink">연결 해제</string>
+    <string name="account_link">연결</string>
+    <string name="account_linked_status">연결됨</string>
+    <string name="account_not_linked_status">연결되지 않음</string>
 </resources>

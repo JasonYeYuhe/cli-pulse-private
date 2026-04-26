@@ -137,4 +137,25 @@
     <string name="oauth_link_failed">Linking failed. Please try again.</string>
     <string name="oauth_link_state_mismatch">Linking failed: security check did not match. Please try again.</string>
     <string name="oauth_link_malformed">Linking failed: malformed response. Please try again.</string>
+
+    <!-- Auth (extended) — P2 localization slice -->
+    <string name="auth_tagline">Monitor your AI API usage</string>
+    <string name="auth_otp_sent_to">Code sent to %1$s</string>
+    <string name="auth_otp_code_label">Verification Code</string>
+    <string name="auth_email_label">Email</string>
+    <string name="auth_password_label">Password</string>
+    <string name="auth_back_to_email">Back to email sign-in</string>
+    <string name="sign_in_button">Sign In</string>
+    <string name="sign_in_github">Sign in with GitHub</string>
+    <string name="send_verification_code">Send Verification Code</string>
+
+    <!-- Account (linked providers) -->
+    <string name="account_linked_accounts">Linked Accounts</string>
+    <string name="account_linked_accounts_footer">Link Google or GitHub to sign in with either — they\'ll resolve to the same CLI Pulse account.</string>
+    <string name="account_unlink_confirm_title">Unlink %1$s?</string>
+    <string name="account_unlink_message">You won\'t be able to sign in with %1$s anymore. You can relink later.</string>
+    <string name="account_unlink">Unlink</string>
+    <string name="account_link">Link</string>
+    <string name="account_linked_status">Linked</string>
+    <string name="account_not_linked_status">Not linked</string>
 </resources>
