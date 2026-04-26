@@ -230,17 +230,19 @@ def collect_sql_definitions() -> dict[str, SqlFunction]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-# Apple Swift: `rpc("name", params: Params(p_x: ..., p_y: ...))` or just
-# `rpc("name")`. Also: `URL... /rest/v1/rpc/<name>` for the two non-helper
-# direct-URL paths (`upsert_daily_usage`, `get_daily_usage`).
-APPLE_RPC_HELPER_RE = re.compile(
-    r'\brpc\(\s*"([a-z_][a-z0-9_]*)"\s*(?:,\s*params:\s*Params\(([^)]*)\))?',
-)
-APPLE_RPC_URL_RE = re.compile(
-    r'/rest/v1/rpc/([a-z_][a-z0-9_]*)',
-)
-# Apple direct-URL bodies use `["key": ...]` literals near the URL line.
-APPLE_BODY_KEY_RE = re.compile(r'"([a-z_][a-z0-9_]*)"\s*:')
+# Apple Swift rpc helper: `rpc("name")` or `rpc("name", params: <expr>)`.
+# The 2nd argument is extracted via balanced-paren scan because it can be:
+#   - `Params(p_x: ..., p_y: ...)`  ← struct init with argument labels
+#   - `["p_x": ..., "p_y": ...]`    ← dictionary literal with quoted keys
+#   - `EmptyBody()`                  ← no params
+APPLE_RPC_HEAD_RE = re.compile(r'\brpc\(\s*"([a-z_][a-z0-9_]*)"')
+APPLE_RPC_URL_RE = re.compile(r'/rest/v1/rpc/([a-z_][a-z0-9_]*)')
+# Quoted-string dict keys: `"<lower_snake>":`. Real Swift header strings like
+# "Content-Type" / "Authorization" contain a hyphen and won't match. Method
+# strings ("POST", "GET") are not followed by a colon.
+APPLE_DICT_KEY_RE = re.compile(r'"([a-z_][a-z0-9_]*)"\s*:')
+# Swift Params struct argument labels: `Params(p_x: foo, p_y: bar)`.
+APPLE_STRUCT_LABEL_RE = re.compile(r'([a-z_][a-z0-9_]*)\s*:', re.IGNORECASE)
 
 # Helper Python: supabase_rpc("name", { "p_x": ..., "p_y": ... })
 PY_RPC_RE = re.compile(r'supabase_rpc\(\s*"([a-z_][a-z0-9_]*)"\s*,\s*\{([^}]*)\}', re.DOTALL)
@@ -283,7 +285,25 @@ def _surrounding_lines(text: str, offset: int, window: int) -> str:
 def collect_apple_call_sites() -> list[CallSite]:
     """APIClient.swift + HelperAPIClient.swift cover every Apple RPC reference
     today (verified by inspection during planning). If a future call site
-    moves elsewhere, broaden the glob."""
+    moves elsewhere, broaden the glob.
+
+    Two call patterns are handled:
+
+    (1) Helper form — `rpc("name", params: <expr>)`:
+        - `Params(p_x: foo, p_y: bar)`  → argument labels become param names
+        - `["p_x": foo, "p_y": bar]`    → dictionary literal keys become names
+        - `EmptyBody()` / no 2nd arg     → no params
+        2nd-arg expression is extracted with balanced-paren so neighbouring
+        code never bleeds in.
+
+    (2) Direct-URL form — `URL("…/rest/v1/rpc/<name>")` followed by a
+        `URLRequest` body. Bodies appear as either an inline
+        `withJSONObject: ["key": …]` or a separate `let body = ["key": …]`
+        used a few lines later. Both forms have *quoted* string keys; type
+        annotations like `[String: Any]` and HTTP header strings like
+        "Content-Type" / "Authorization" don't match the lower-snake-with-
+        colon shape so they're naturally excluded.
+    """
     sites: list[CallSite] = []
     apple_dir = REPO / "CLI Pulse Bar" / "CLIPulseCore" / "Sources" / "CLIPulseCore"
     targets = [apple_dir / "APIClient.swift", apple_dir / "HelperAPIClient.swift"]
@@ -293,37 +313,47 @@ def collect_apple_call_sites() -> list[CallSite]:
         text = path.read_text(encoding="utf-8")
         rel = str(path.relative_to(REPO))
 
-        # rpc("name", params: Params(...)) and rpc("name") forms.
-        for match in APPLE_RPC_HELPER_RE.finditer(text):
-            name = match.group(1).lower()
-            params_str = match.group(2) or ""
+        # ─── Pattern 1: rpc("name", ...) ────────────────────────────────────
+        for head in APPLE_RPC_HEAD_RE.finditer(text):
+            name = head.group(1).lower()
+            paren_pos = text.find("(", head.start(), head.end())
+            if paren_pos == -1:
+                continue
+            balanced = _balanced_extract(text, paren_pos)
+            args = _split_top_level_comma(balanced)
             sent: set[str] = set()
-            # Params(p_x: foo, p_y: bar) → grab argument labels.
-            for label_match in re.finditer(r"([a-z_][a-z0-9_]*)\s*:", params_str, re.IGNORECASE):
-                sent.add(label_match.group(1).lower())
+            if len(args) >= 2:
+                arg2 = args[1].strip()
+                # `params: <expr>` — strip the label.
+                if arg2.startswith("params:"):
+                    arg2 = arg2[len("params:"):].strip()
+                if arg2.startswith("["):
+                    # Dictionary literal: ["p_x": foo, "p_y": bar]
+                    for m in APPLE_DICT_KEY_RE.finditer(arg2):
+                        sent.add(m.group(1).lower())
+                elif arg2.startswith("Params(") or "Params(" in arg2[:10]:
+                    # Struct init: Params(p_x: foo, p_y: bar) — labels only.
+                    inner_open = arg2.find("(")
+                    inner = _balanced_extract(arg2, inner_open) if inner_open != -1 else ""
+                    for m in APPLE_STRUCT_LABEL_RE.finditer(inner):
+                        sent.add(m.group(1).lower())
+                # EmptyBody() and other expressions → no params.
             sites.append(CallSite(
                 rpc_name=name,
                 sent_params=sent,
                 file=rel,
-                line=_line_no_of(text, match.start()),
+                line=_line_no_of(text, head.start()),
             ))
 
-        # Direct-URL POSTs: /rest/v1/rpc/<name>. Walk forward up to SCAN_WINDOW
-        # lines to find the request body dict literal and pull its keys.
+        # ─── Pattern 2: direct-URL /rest/v1/rpc/<name> ─────────────────────
         for match in APPLE_RPC_URL_RE.finditer(text):
             name = match.group(1).lower()
             window = _surrounding_lines(text, match.start(), SCAN_WINDOW)
-            # Only count keys from a `httpBody = … withJSONObject: [...:...]`
-            # or `body: [String: Any] = [...:...]` line within the window.
-            sent: set[str] = set()
-            body_re = re.search(
-                r'(?:httpBody|body)\s*[:=].*?\[([^\]]*)\]',
-                window,
-                re.DOTALL,
-            )
-            if body_re:
-                for key_match in APPLE_BODY_KEY_RE.finditer(body_re.group(1)):
-                    sent.add(key_match.group(1).lower())
+            # Scan the full forward window for quoted snake-case keys. Real
+            # body dict keys (`"days":`, `"metrics":`) match; HTTP header
+            # strings ("Content-Type", "Authorization") and type annotations
+            # (`[String: Any]`) don't.
+            sent = {m.group(1).lower() for m in APPLE_DICT_KEY_RE.finditer(window)}
             sites.append(CallSite(
                 rpc_name=name,
                 sent_params=sent,
