@@ -459,6 +459,17 @@ extension AppState {
         lastRefresh = nil
         locallySupplementedProviders = []
         selectedTab = .overview
+        // Clear account-scoped auth/account UI state so a different account
+        // signing in on the same device doesn't briefly inherit the previous
+        // user's linked identities, pairing artifacts, or stale errors.
+        linkedIdentities = []
+        isLinkingIdentity = false
+        linkIdentityError = nil
+        otpSent = false
+        otpEmail = ""
+        pairingInfo = nil
+        pairingError = nil
+        lastError = nil
         // Clear tier-migration state so a different account signing in on
         // the same device starts clean — otherwise they'd see the prior
         // user's "Disabled N providers" banner and stale "Limited by free
