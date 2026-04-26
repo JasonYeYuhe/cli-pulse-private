@@ -71,6 +71,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // Persist the deep-link intent so a configuration change after onNewIntent
+        // recreates with getIntent() == deep link and onCreate can replay it.
+        // Replay is idempotent: a successful exchange already cleared the pending
+        // flow record, so the router returns Drop on the second pass.
+        setIntent(intent)
         // Don't process deep links when config is missing — there's no client to
         // exchange against and the diagnostics screen is the only thing rendered.
         if (!SupabaseConfig.isConfigured) return
