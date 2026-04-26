@@ -25,7 +25,18 @@ class LoginViewModel @Inject constructor(
     private val tokenStore: TokenStore,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(LoginUiState(isLoggedIn = tokenStore.isLoggedIn))
+    // Gate cached non-demo sessions behind tryRestoreSession: start in isLoading
+    // until me() either confirms the token (→ isLoggedIn=true) or rejects it
+    // (401/TokenExpired → tokens cleared, isLoggedIn stays false). Flipping
+    // isLoggedIn=true at construction would let LoginScreen call onLoggedIn()
+    // before validation, leaving the user in the authed stack with stale tokens
+    // when the eventual 401 arrives. Demo mode bypasses validation as before.
+    private val _state = MutableStateFlow(
+        LoginUiState(
+            isLoggedIn = tokenStore.isDemoMode,
+            isLoading = !tokenStore.isDemoMode && tokenStore.isLoggedIn,
+        )
+    )
     val state: StateFlow<LoginUiState> = _state
 
     fun signInWithGoogle(idToken: String, name: String?, email: String?) {
