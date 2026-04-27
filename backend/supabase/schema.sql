@@ -451,7 +451,10 @@ create or replace function public.get_daily_usage(days int default 30)
 returns jsonb as $$
 declare
   v_user_id uuid := auth.uid();
-  v_since date := current_date - days;
+  -- Inclusive N-day window: today + previous (N-1) calendar days = N rows max.
+  -- Clamp days to >= 1 so a caller passing 0 / negative still yields today only.
+  v_days int := greatest(coalesce(days, 30), 1);
+  v_since date := current_date - (v_days - 1);
 begin
   if v_user_id is null then
     raise exception 'Not authenticated';

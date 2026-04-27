@@ -16,8 +16,11 @@ returns jsonb as $$
 declare
   v_user_id uuid := auth.uid();
   v_today date := current_date;
-  v_week_start date := current_date - interval '7 days';
-  v_month_start date := current_date - interval '30 days';
+  -- Rolling-7-day window = today + previous 6 days inclusive (= 7 calendar days).
+  -- Matches Swift `DateRange.rollingWeekStart` convention.
+  v_week_start date := current_date - interval '6 days';
+  -- Rolling-30-day window = today + previous 29 days inclusive.
+  v_month_start date := current_date - interval '29 days';
 begin
   if v_user_id is null then
     raise exception 'Not authenticated';

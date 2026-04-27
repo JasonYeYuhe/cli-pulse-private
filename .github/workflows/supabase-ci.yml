@@ -52,3 +52,18 @@ jobs:
 
       - name: Static RPC contract check
         run: python3 backend/supabase/ci_check_rpc_contract.py
+
+  date-windows:
+    name: Rolling-window off-by-one guard (P0-2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Static rolling-window inclusive-N check
+        run: python3 backend/supabase/ci_check_date_windows.py
