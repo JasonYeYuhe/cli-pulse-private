@@ -7,8 +7,10 @@ import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.clipulse.android.R
 import com.clipulse.android.data.model.SessionRecord
 import com.clipulse.android.data.model.SessionStatus
 import com.clipulse.android.ui.components.StatusBadge
@@ -64,7 +66,7 @@ fun SessionsScreen(
             if (state.sessions.isEmpty() && !state.isLoading && state.error == null) {
                 item {
                     Text(
-                        "No sessions yet.",
+                        stringResource(R.string.sessions_empty),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(32.dp),

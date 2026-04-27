@@ -149,6 +149,19 @@
     <string name="sign_in_github">Sign in with GitHub</string>
     <string name="send_verification_code">Send Verification Code</string>
 
+    <!-- Empty states -->
+    <string name="providers_empty">No provider data yet.</string>
+    <string name="sessions_empty">No sessions yet.</string>
+    <string name="alerts_empty">No alerts. All clear!</string>
+    <string name="devices_empty_title">No devices registered</string>
+    <string name="devices_empty_body">Pair a device from Settings on macOS to start syncing data.</string>
+
+    <!-- Alert actions -->
+    <string name="alert_action_ack">Ack</string>
+    <string name="alert_action_resolve">Resolve</string>
+    <string name="alert_action_snooze">Snooze</string>
+    <string name="alert_action_snooze_duration_1h">1h</string>
+
     <!-- Account (linked providers) -->
     <string name="account_linked_accounts">Linked Accounts</string>
     <string name="account_linked_accounts_footer">Link Google or GitHub to sign in with either — they\'ll resolve to the same CLI Pulse account.</string>
