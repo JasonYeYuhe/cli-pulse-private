@@ -117,7 +117,7 @@ final class HelperDaemon {
         // resolve and collided across multi-device users). Falls back to the
         // host name when the helper is not yet paired (matches previous
         // behavior on the unpaired path).
-        let alertDeviceID = HelperConfig.load()?.deviceId.uuidString
+        let alertDeviceID = HelperConfig.load()?.deviceId
             ?? ProcessInfo.processInfo.hostName
         let alerts = AlertGenerator.generate(
             device: device,

@@ -405,7 +405,7 @@ Caller in `HelperDaemon.collectAndSync()` passes the helper's actual `device_id`
 ```swift
 let alerts = AlertGenerator.generate(
     device: device, sessions: scanResult.sessions, sessionCPU: scanResult.sessionCPU,
-    deviceID: HelperConfig.load()?.deviceId.uuidString ?? ProcessInfo.processInfo.hostName
+    deviceID: HelperConfig.load()?.deviceId ?? ProcessInfo.processInfo.hostName
 )
 ```
 
