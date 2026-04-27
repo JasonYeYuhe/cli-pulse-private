@@ -1295,8 +1295,13 @@ extension AppState {
         let request = UNNotificationRequest(identifier: alert.id, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
 
-        // Trigger webhook if enabled
-        if webhookEnabled, !webhookURL.isEmpty {
+        // Iter2: webhook fan-out moved server-side (alerts INSERT trigger →
+        // webhook_jobs → cron → edge). Inline call here is retained behind
+        // a kill-switch only so we can disable the trigger and re-enable
+        // client delivery without a rebuild. Default `true` means: trust
+        // the server. Migration v0.25 needs to be live before flipping
+        // this to false for any user.
+        if !serverSideWebhookEnabled, webhookEnabled, !webhookURL.isEmpty {
             Task {
                 try? await api.sendWebhook(alert: alert)
             }

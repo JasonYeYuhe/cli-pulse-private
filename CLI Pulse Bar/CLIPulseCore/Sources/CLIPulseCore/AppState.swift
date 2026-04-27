@@ -274,6 +274,15 @@ public final class AppState: ObservableObject {
     @AppStorage("cli_pulse_webhook_enabled") public var webhookEnabled = false
     @AppStorage("cli_pulse_webhook_url") public var webhookURL = ""
     @Published public var webhookEventFilter: WebhookEventFilter = WebhookEventFilter()
+    /// Iter2: kill-switch for the inline `api.sendWebhook` path. Defaults
+    /// to `true` so fresh installs use the server-side `webhook_jobs`
+    /// fan-out (Postgres trigger → cron → edge), which works for closed
+    /// clients, Android, watchOS, and cron-generated alerts. The flag
+    /// exists so we can revert the migration without leaving users with
+    /// no webhook delivery at all. Once the migration has soaked for one
+    /// release cycle, `sendWebhook` can be deleted entirely and this
+    /// flag retired.
+    @AppStorage("cli_pulse_server_side_webhook_enabled") public var serverSideWebhookEnabled: Bool = true
 
     // MARK: - Settings - General
     nonisolated static let tokenKeychainKey = "cli_pulse_token"

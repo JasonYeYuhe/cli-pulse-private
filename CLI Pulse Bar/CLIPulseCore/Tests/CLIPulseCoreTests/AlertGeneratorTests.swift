@@ -55,6 +55,38 @@ final class AlertGeneratorTests: XCTestCase {
         XCTAssertEqual(alerts[0]["source_kind"] as? String, "device")
     }
 
+    // Iter2 — cpu-spike id must rotate hourly (so a re-spike after the user
+    // resolved an old one creates a new row instead of upserting into the
+    // resolved one) and stay scoped to a device (so a multi-device user
+    // doesn't have one mac silence the other's alerts).
+    func testCpuSpikeIdRotatesByHour() {
+        let snap = DeviceMetrics.Snapshot(cpuUsage: 90, memoryUsage: 40)
+        // Pin two timestamps exactly one hour apart, same device id.
+        let t1 = Date(timeIntervalSince1970: 1_770_000_000)              // hour bucket N
+        let t2 = Date(timeIntervalSince1970: 1_770_000_000 + 3600)       // hour bucket N+1
+        let alertsT1 = AlertGenerator.generate(device: snap, sessions: [], deviceID: "dev-A", now: t1)
+        let alertsT2 = AlertGenerator.generate(device: snap, sessions: [], deviceID: "dev-A", now: t2)
+        XCTAssertEqual(alertsT1.count, 1)
+        XCTAssertEqual(alertsT2.count, 1)
+        let id1 = alertsT1[0]["id"] as? String
+        let id2 = alertsT2[0]["id"] as? String
+        XCTAssertNotEqual(id1, id2,
+                          "cpu-spike id must rotate across the hour boundary so a re-spike fires fresh")
+        XCTAssertEqual(id1, "cpu-spike-dev-A-\(Int(t1.timeIntervalSince1970 / 3600))")
+        XCTAssertEqual(id2, "cpu-spike-dev-A-\(Int(t2.timeIntervalSince1970 / 3600))")
+    }
+
+    func testCpuSpikeIdScopedByDevice() {
+        let snap = DeviceMetrics.Snapshot(cpuUsage: 90, memoryUsage: 40)
+        let t = Date(timeIntervalSince1970: 1_770_000_000)
+        let alertsA = AlertGenerator.generate(device: snap, sessions: [], deviceID: "dev-A", now: t)
+        let alertsB = AlertGenerator.generate(device: snap, sessions: [], deviceID: "dev-B", now: t)
+        XCTAssertNotEqual(alertsA[0]["id"] as? String, alertsB[0]["id"] as? String,
+                          "two devices must produce independent cpu-spike ids in the same hour")
+        XCTAssertEqual(alertsA[0]["suppression_key"] as? String, alertsA[0]["id"] as? String)
+        XCTAssertEqual(alertsB[0]["grouping_key"] as? String, "Usage Spike:device:dev-B")
+    }
+
     func testCpuAlertNotFiredBelow85() {
         let snap = DeviceMetrics.Snapshot(cpuUsage: 84, memoryUsage: 40)
         let alerts = AlertGenerator.generate(device: snap, sessions: [])

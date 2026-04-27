@@ -15,31 +15,49 @@ public enum AlertGenerator {
     /// - `device`: device-level CPU/memory snapshot
     /// - `sessions`: active sessions from LocalScanner
     /// - `sessionCPU`: optional per-session CPU usage (session.id → cpu%), from raw ps output
+    /// - `deviceID`: stable device identifier (helper config UUID, falling
+    ///    back to host name). Used to scope the device-CPU alert id so
+    ///    multi-device users don't collide on a shared `cpu-spike-global` row.
+    /// - `now`: clock injection point for tests.
     ///
     /// Returns at most 6 alerts per cycle (matching Python behavior).
     public static func generate(
         device: DeviceMetrics.Snapshot,
         sessions: [SessionRecord],
-        sessionCPU: [String: Double] = [:]
+        sessionCPU: [String: Double] = [:],
+        deviceID: String = ProcessInfo.processInfo.hostName,
+        now: Date = Date()
     ) -> [[String: Any]] {
         var alerts: [[String: Any]] = []
-        let now = sharedISO8601Formatter.string(from: Date())
+        let nowStr = sharedISO8601Formatter.string(from: now)
 
         // Rule 1: Device CPU >= 85%
-        // v1.10.6: use a stable id so repeated high-CPU samples upsert the
-        // same row instead of spawning a new alert (and new notification)
-        // every refresh cycle. Callers dedup notifications by alert id.
+        //
+        // Iter2 fix: id was `cpu-spike-global` (or `Usage Spike:global` on the
+        // suppression side). Two latent bugs:
+        //   1. helper_sync ON CONFLICT preserves `is_resolved`, so once the
+        //      user resolved the row the device never alerted again on that
+        //      id — same row gets re-upserted forever with is_resolved=true.
+        //   2. `global` had no device qualifier, so a user with two macs
+        //      would have one device's high-CPU silence the other's.
+        //
+        // Bucketing by hour rotates the id (so re-spike after the hour
+        // boundary creates a new row), and prefixing with deviceID keeps
+        // multi-device alerts independent. previousSuppressionKeys still
+        // dedups within a single refresh cycle.
+        let hourBucket = Int(now.timeIntervalSince1970 / 3600)
         if device.cpuUsage >= 85 {
+            let stableID = "cpu-spike-\(deviceID)-\(hourBucket)"
             alerts.append([
-                "id": "cpu-spike-global",
+                "id": stableID,
                 "type": "Usage Spike",
                 "severity": "Warning",
                 "title": "Device CPU usage is elevated",
                 "message": "helper sampled CPU usage at \(device.cpuUsage)%.",
-                "created_at": now,
+                "created_at": nowStr,
                 "source_kind": "device",
-                "grouping_key": "Usage Spike:system",
-                "suppression_key": "Usage Spike:global",
+                "grouping_key": "Usage Spike:device:\(deviceID)",
+                "suppression_key": stableID,
             ])
         }
 
@@ -62,7 +80,7 @@ public enum AlertGenerator {
                     "severity": "Warning",
                     "title": "\(session.name) is consuming high CPU",
                     "message": "Using ~\(systemPct)% of total system CPU (\(cpuCount) cores) for \(session.provider).",
-                    "created_at": now,
+                    "created_at": nowStr,
                     "related_session_id": session.id,
                     "related_session_name": session.name,
                     "related_provider": session.provider,
@@ -81,7 +99,7 @@ public enum AlertGenerator {
                     "severity": "Info",
                     "title": "\(session.name) has been running for a long time",
                     "message": "Long-running local agent session detected by helper.",
-                    "created_at": now,
+                    "created_at": nowStr,
                     "related_session_id": session.id,
                     "related_session_name": session.name,
                     "related_provider": session.provider,
