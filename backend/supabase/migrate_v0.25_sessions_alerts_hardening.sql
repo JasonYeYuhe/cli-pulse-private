@@ -448,7 +448,12 @@ begin
     limit 100
   loop
     begin
-      v_request_id := extensions.http_post(
+      -- iter2 follow-up (Codex bot review on PR #6): pg_net exposes
+      -- its request API as `net.http_post`, not `extensions.http_post`.
+      -- Calling the wrong schema raises `function does not exist`, which
+      -- the EXCEPTION block then silently swallowed — no requests ever
+      -- got dispatched. `net` is already in this function's search_path.
+      v_request_id := net.http_post(
         url := v_url || '/functions/v1/send-webhook',
         headers := jsonb_build_object(
           'Content-Type', 'application/json',
