@@ -18,6 +18,20 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+
+/**
+ * OAuth redirect URI handed to Supabase via `redirect_to`. We use the custom
+ * scheme until `clipulse.app` DNS + `/.well-known/assetlinks.json` are deployed,
+ * because an HTTPS App Link that does not autoVerify falls through to a browser
+ * disambiguator and breaks the round-trip. The HTTPS intent-filter in
+ * AndroidManifest is intentionally kept so that flipping back to the App Link
+ * after the domain is live is a one-line change here.
+ *
+ * iOS already passes this same value, so the Supabase project's Auth ->
+ * Redirect URLs allow-list does not need a new entry for Android.
+ */
+internal const val OAUTH_REDIRECT_TO: String = "clipulse://auth/callback"
+
 class SupabaseClient(
     private val tokenStore: TokenStore,
 ) {
@@ -538,7 +552,11 @@ class SupabaseClient(
         val verifier = generateCodeVerifier()
         val challenge = sha256Base64Url(verifier)
         val state = generateCodeVerifier().take(32) // random state for CSRF protection
-        val redirectTo = URLEncoder.encode("https://clipulse.app/auth/callback", "UTF-8")
+        // Custom scheme until clipulse.app DNS / assetlinks.json is restored. The
+        // HTTPS App Link intent-filter in AndroidManifest stays in place so we can
+        // flip back to `https://clipulse.app/auth/callback` once the domain is live
+        // -- no Supabase allow-list change needed (iOS already uses this scheme).
+        val redirectTo = URLEncoder.encode(OAUTH_REDIRECT_TO, "UTF-8")
         val url = "$supabaseUrl/auth/v1/authorize" +
             "?provider=$provider" +
             "&redirect_to=$redirectTo" +
@@ -608,7 +626,8 @@ class SupabaseClient(
             val verifier = generateCodeVerifier()
             val challenge = sha256Base64Url(verifier)
             val state = generateCodeVerifier().take(32)
-            val redirectTo = URLEncoder.encode("https://clipulse.app/auth/callback", "UTF-8")
+            // See `OAUTH_REDIRECT_TO` -- same custom-scheme rationale as login.
+            val redirectTo = URLEncoder.encode(OAUTH_REDIRECT_TO, "UTF-8")
             val url = "$supabaseUrl/auth/v1/user/identities/authorize" +
                 "?provider=$provider" +
                 "&redirect_to=$redirectTo" +
