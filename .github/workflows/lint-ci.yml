@@ -68,6 +68,23 @@ jobs:
           key: gradle-lint-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties', 'android/**/libs.versions.toml') }}
           restore-keys: gradle-lint-
 
+      # Mirror android-ci.yml: the google-services Gradle plugin runs even on
+      # `lintDebug` and aborts the configuration phase without
+      # google-services.json. The file is gitignored, so write it from the
+      # GOOGLE_SERVICES_JSON secret. Fail loud if the secret is missing — a
+      # stub does not satisfy the plugin's validation.
+      - name: Restore google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "::error::Secret GOOGLE_SERVICES_JSON is not set."
+            echo "::error::Set it with: gh secret set GOOGLE_SERVICES_JSON < android/app/google-services.json"
+            exit 1
+          fi
+          mkdir -p app
+          echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
+
       - name: Android lint (debug)
         run: ./gradlew lintDebug --no-daemon --continue
 

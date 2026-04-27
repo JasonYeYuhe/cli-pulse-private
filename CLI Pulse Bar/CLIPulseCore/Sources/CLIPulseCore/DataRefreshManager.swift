@@ -251,9 +251,9 @@ internal final class DataRefreshManager {
             var seenSuppressionThisCycle: Set<String> = previousSuppressionKeys
             let newAlerts = augmentedAlerts.filter { alert in
                 guard !alert.is_resolved, !previousAlertIDs.contains(alert.id) else { return false }
-                if let sk = alert.suppression_key, !sk.isEmpty {
-                    if seenSuppressionThisCycle.contains(sk) { return false }
-                    seenSuppressionThisCycle.insert(sk)
+                if let suppKey = alert.suppression_key, !suppKey.isEmpty {
+                    if seenSuppressionThisCycle.contains(suppKey) { return false }
+                    seenSuppressionThisCycle.insert(suppKey)
                 }
                 return true
             }
