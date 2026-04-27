@@ -158,4 +158,17 @@
     <string name="account_link">关联</string>
     <string name="account_linked_status">已关联</string>
     <string name="account_not_linked_status">未关联</string>
+
+    <!-- 空状态 -->
+    <string name="providers_empty">暂无提供商数据。</string>
+    <string name="sessions_empty">暂无会话。</string>
+    <string name="alerts_empty">暂无告警，一切正常！</string>
+    <string name="devices_empty_title">尚未注册设备</string>
+    <string name="devices_empty_body">在 macOS 的设置中关联设备即可开始同步数据。</string>
+
+    <!-- 告警操作 -->
+    <string name="alert_action_ack">确认</string>
+    <string name="alert_action_resolve">已解决</string>
+    <string name="alert_action_snooze">稍后提醒</string>
+    <string name="alert_action_snooze_duration_1h">1 小时</string>
 </resources>
