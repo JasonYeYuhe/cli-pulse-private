@@ -25,6 +25,10 @@ class SessionsViewModel @Inject constructor(
     private val _state = MutableStateFlow(SessionsUiState())
     val state: StateFlow<SessionsUiState> = _state
 
+    // Iter2 (Change 9): lifecycle-aware polling. Composable host toggles
+    // setPolling on ON_START / ON_STOP so backgrounded app doesn't poll.
+    private val _isPolling = MutableStateFlow(true)
+
     init {
         refresh()
         startAutoRefresh()
@@ -34,6 +38,7 @@ class SessionsViewModel @Inject constructor(
         viewModelScope.launch {
             while (true) {
                 delay(30_000)
+                if (!_isPolling.value) continue
                 try {
                     val sessions = supabase.sessions()
                     _state.value = _state.value.copy(sessions = sessions, error = null)
@@ -41,6 +46,8 @@ class SessionsViewModel @Inject constructor(
             }
         }
     }
+
+    fun setPolling(active: Boolean) { _isPolling.value = active }
 
     fun refresh() {
         viewModelScope.launch {

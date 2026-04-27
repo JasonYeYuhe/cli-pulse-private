@@ -3,6 +3,7 @@ package com.clipulse.android.ui.alerts
 import com.clipulse.android.MainDispatcherRule
 import com.clipulse.android.data.model.AlertRecord
 import com.clipulse.android.data.remote.SupabaseClient
+import com.clipulse.android.data.repository.DashboardRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -21,6 +22,7 @@ class AlertsViewModelTest {
     val mainDispatcherRule = MainDispatcherRule()
 
     private val supabase = mockk<SupabaseClient>(relaxed = true)
+    private val repository = mockk<DashboardRepository>(relaxed = true)
 
     private val testAlerts = listOf(
         AlertRecord(
@@ -38,7 +40,7 @@ class AlertsViewModelTest {
     @Test
     fun `initial state is loading`() = runTest {
         coEvery { supabase.alerts() } returns testAlerts
-        val vm = AlertsViewModel(supabase)
+        val vm = AlertsViewModel(supabase, repository)
         assertTrue(vm.state.value.isLoading)
         vm.viewModelScope.cancel()
     }
@@ -46,7 +48,7 @@ class AlertsViewModelTest {
     @Test
     fun `refresh success populates alerts`() = runTest {
         coEvery { supabase.alerts() } returns testAlerts
-        val vm = AlertsViewModel(supabase)
+        val vm = AlertsViewModel(supabase, repository)
         
 
         val state = vm.state.value
@@ -61,7 +63,7 @@ class AlertsViewModelTest {
     @Test
     fun `refresh failure sets error`() = runTest {
         coEvery { supabase.alerts() } throws RuntimeException("server error")
-        val vm = AlertsViewModel(supabase)
+        val vm = AlertsViewModel(supabase, repository)
         
 
         assertEquals("server error", vm.state.value.error)
@@ -71,7 +73,7 @@ class AlertsViewModelTest {
     @Test
     fun `acknowledge calls supabase and refreshes`() = runTest {
         coEvery { supabase.alerts() } returns testAlerts
-        val vm = AlertsViewModel(supabase)
+        val vm = AlertsViewModel(supabase, repository)
         
 
         vm.acknowledge("a1")
@@ -86,7 +88,7 @@ class AlertsViewModelTest {
     fun `acknowledge failure sets mutation error`() = runTest {
         coEvery { supabase.alerts() } returns testAlerts
         coEvery { supabase.acknowledgeAlert("a1") } throws RuntimeException("forbidden")
-        val vm = AlertsViewModel(supabase)
+        val vm = AlertsViewModel(supabase, repository)
         
 
         vm.acknowledge("a1")
@@ -99,7 +101,7 @@ class AlertsViewModelTest {
     @Test
     fun `resolve calls supabase and refreshes`() = runTest {
         coEvery { supabase.alerts() } returns testAlerts
-        val vm = AlertsViewModel(supabase)
+        val vm = AlertsViewModel(supabase, repository)
         
 
         vm.resolve("a2")
@@ -112,7 +114,7 @@ class AlertsViewModelTest {
     @Test
     fun `snooze calls supabase with minutes`() = runTest {
         coEvery { supabase.alerts() } returns testAlerts
-        val vm = AlertsViewModel(supabase)
+        val vm = AlertsViewModel(supabase, repository)
         
 
         vm.snooze("a1", 120)
@@ -125,7 +127,7 @@ class AlertsViewModelTest {
     @Test
     fun `snooze default is 60 minutes`() = runTest {
         coEvery { supabase.alerts() } returns testAlerts
-        val vm = AlertsViewModel(supabase)
+        val vm = AlertsViewModel(supabase, repository)
         
 
         vm.snooze("a1")
@@ -139,7 +141,7 @@ class AlertsViewModelTest {
     fun `clearMutationError resets mutation error`() = runTest {
         coEvery { supabase.alerts() } returns testAlerts
         coEvery { supabase.acknowledgeAlert("a1") } throws RuntimeException("fail")
-        val vm = AlertsViewModel(supabase)
+        val vm = AlertsViewModel(supabase, repository)
         
 
         vm.acknowledge("a1")
@@ -154,7 +156,7 @@ class AlertsViewModelTest {
     @Test
     fun `empty alerts list is valid`() = runTest {
         coEvery { supabase.alerts() } returns emptyList()
-        val vm = AlertsViewModel(supabase)
+        val vm = AlertsViewModel(supabase, repository)
         
 
         assertTrue(vm.state.value.alerts.isEmpty())

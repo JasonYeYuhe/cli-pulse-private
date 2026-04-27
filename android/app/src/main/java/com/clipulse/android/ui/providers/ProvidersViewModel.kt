@@ -25,10 +25,15 @@ class ProvidersViewModel @Inject constructor(
     private val _state = MutableStateFlow(ProvidersUiState())
     val state: StateFlow<ProvidersUiState> = _state
 
+    // Iter2 (Change 9): lifecycle-aware polling — Composable toggles via setPolling.
+    private val _isPolling = MutableStateFlow(true)
+
     init {
         refresh()
         startAutoRefresh()
     }
+
+    fun setPolling(active: Boolean) { _isPolling.value = active }
 
     fun refresh() {
         viewModelScope.launch {
@@ -46,6 +51,7 @@ class ProvidersViewModel @Inject constructor(
         viewModelScope.launch {
             while (true) {
                 delay(30_000) // 30 seconds
+                if (!_isPolling.value) continue
                 try {
                     val providers = supabase.providers()
                     _state.value = _state.value.copy(providers = providers, error = null)

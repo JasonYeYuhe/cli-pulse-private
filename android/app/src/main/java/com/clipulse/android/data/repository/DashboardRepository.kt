@@ -36,6 +36,29 @@ class DashboardRepository(
     private val _dailyUsage = MutableStateFlow<List<DailyUsage>>(emptyList())
     val dailyUsage: StateFlow<List<DailyUsage>> = _dailyUsage
 
+    /**
+     * Iter2 follow-up (Gemini caught): the budget-RPC throttle was originally
+     * placed on `AlertsViewModel`, but ViewModels are scoped to NavBackStackEntry
+     * and get destroyed on tab navigation, dropping the throttle. Repository
+     * is `@Singleton` (see AppModule.provideDashboardRepository), so this
+     * lastBudgetEvalAtMs survives across all tabs and the entire app session.
+     */
+    @Volatile
+    private var lastBudgetEvalAtMs: Long = 0L
+    private val budgetEvalCooldownMs = 5 * 60 * 1000L
+
+    /**
+     * Best-effort. Trigger `evaluate_budget_alerts` server-side at most once
+     * per 5 minutes. Failures are swallowed because alert delivery is not on
+     * the critical path of the alerts list rendering.
+     */
+    suspend fun maybeEvaluateBudgetAlerts() {
+        val now = System.currentTimeMillis()
+        if (now - lastBudgetEvalAtMs < budgetEvalCooldownMs) return
+        lastBudgetEvalAtMs = now
+        runCatching { supabase.evaluateBudgetAlerts() }
+    }
+
     /** Load cached data into StateFlows (call on startup). */
     suspend fun loadFromCache() {
         cache.getDashboard()?.let { cached ->

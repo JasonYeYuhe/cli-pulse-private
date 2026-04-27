@@ -371,6 +371,22 @@ class SupabaseClient(
         restPatch("/rest/v1/user_settings?user_id=eq.$userId", patch)
     }
 
+    /**
+     * Iter2 fix: Swift clients trigger this RPC every refresh cycle so cron-
+     * generated alerts (cost spike etc.) land in the user's feed; Android
+     * never did, so Android-only users got no budget/spike alerts at all.
+     * Best-effort + caller-throttled (see DashboardRepository) so we don't
+     * hammer the DB on every 30s polling cycle.
+     */
+    suspend fun evaluateBudgetAlerts(): Int = withContext(Dispatchers.IO) {
+        try {
+            val json = rpc("evaluate_budget_alerts")
+            json.optInt("alerts_created", 0)
+        } catch (_: Exception) {
+            0
+        }
+    }
+
     suspend fun testWebhook(): Unit = withContext(Dispatchers.IO) {
         val userId = tokenStore.userId ?: return@withContext
         val body = JSONObject().apply {

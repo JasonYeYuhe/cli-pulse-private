@@ -14,6 +14,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.clipulse.android.R
+import com.clipulse.android.ui.components.LifecyclePollingEffect
 import com.clipulse.android.ui.navigation.LocalSnackbarHostState
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -21,6 +22,7 @@ import com.clipulse.android.ui.navigation.LocalSnackbarHostState
 fun DevicesScreen(
     viewModel: DevicesViewModel = hiltViewModel(),
 ) {
+    LifecyclePollingEffect(viewModel::setPolling)
     val state by viewModel.state.collectAsState()
     val snackbar = LocalSnackbarHostState.current
     LaunchedEffect(state.error) {

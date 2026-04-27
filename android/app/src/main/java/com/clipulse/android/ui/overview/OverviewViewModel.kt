@@ -27,10 +27,15 @@ class OverviewViewModel @Inject constructor(
     private val _state = MutableStateFlow(OverviewUiState())
     val state: StateFlow<OverviewUiState> = _state
 
+    // Iter2 (Change 9): lifecycle-aware polling — Composable toggles via setPolling.
+    private val _isPolling = MutableStateFlow(true)
+
     init {
         refresh()
         startAutoRefresh()
     }
+
+    fun setPolling(active: Boolean) { _isPolling.value = active }
 
     fun refresh() {
         viewModelScope.launch {
@@ -59,6 +64,7 @@ class OverviewViewModel @Inject constructor(
         viewModelScope.launch {
             while (true) {
                 delay(60_000) // Match iOS 60s minimum
+                if (!_isPolling.value) continue
                 try {
                     repository.refreshDashboard()
                     _state.value = _state.value.copy(dashboard = repository.dashboard.value, error = null)
