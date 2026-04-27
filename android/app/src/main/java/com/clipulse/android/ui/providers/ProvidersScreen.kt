@@ -9,8 +9,10 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.clipulse.android.R
 import com.clipulse.android.data.model.ProviderKind
 import com.clipulse.android.data.model.ProviderUsage
 import com.clipulse.android.data.model.TierDTO
@@ -64,7 +66,7 @@ fun ProvidersScreen(
             if (state.providers.isEmpty() && !state.isLoading) {
                 item {
                     Text(
-                        "No provider data yet.",
+                        stringResource(R.string.providers_empty),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(32.dp),

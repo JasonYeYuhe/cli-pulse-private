@@ -10,8 +10,10 @@ import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.clipulse.android.R
 import com.clipulse.android.data.model.AlertRecord
 import com.clipulse.android.data.model.AlertSeverity
 import com.clipulse.android.ui.components.StatusBadge
@@ -57,7 +59,7 @@ fun AlertsScreen(
             if (state.alerts.isEmpty() && !state.isLoading) {
                 item {
                     Text(
-                        "No alerts. All clear!",
+                        stringResource(R.string.alerts_empty),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(32.dp),
@@ -103,18 +105,18 @@ fun AlertCard(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!alert.isRead) {
                         FilledTonalButton(onClick = onAcknowledge, contentPadding = PaddingValues(horizontal = 12.dp)) {
-                            Text("Ack", style = MaterialTheme.typography.labelSmall)
+                            Text(stringResource(R.string.alert_action_ack), style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     FilledTonalButton(onClick = onResolve, contentPadding = PaddingValues(horizontal = 12.dp)) {
-                        Icon(Icons.Default.Check, contentDescription = "Resolve", modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Check, contentDescription = stringResource(R.string.alert_action_resolve), modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Resolve", style = MaterialTheme.typography.labelSmall)
+                        Text(stringResource(R.string.alert_action_resolve), style = MaterialTheme.typography.labelSmall)
                     }
                     FilledTonalButton(onClick = onSnooze, contentPadding = PaddingValues(horizontal = 12.dp)) {
-                        Icon(Icons.Default.Snooze, contentDescription = "Snooze", modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Snooze, contentDescription = stringResource(R.string.alert_action_snooze), modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("1h", style = MaterialTheme.typography.labelSmall)
+                        Text(stringResource(R.string.alert_action_snooze_duration_1h), style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
