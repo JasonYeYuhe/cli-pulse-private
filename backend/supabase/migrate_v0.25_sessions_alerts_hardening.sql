@@ -365,9 +365,15 @@ create trigger alerts_webhook_enqueue
 -- completes. Jobs older than 5 minutes with no response are
 -- considered timed out and retried.
 --
--- Note: app.supabase_url and app.service_role_key are GUCs configured
--- via `alter database <db> set ...` at deploy time. When unset, the
--- worker logs a notice and returns — useful for branch DBs and tests.
+-- Iter2 follow-up (deploy-time): Supabase managed Postgres doesn't allow
+-- non-superuser ALTER DATABASE for `app.*` GUCs, so the original plan to
+-- store secrets via `current_setting` failed at deploy. Switched to the
+-- supabase_vault path, which is the recommended secret store for pg_cron
+-- workers per Supabase docs. Operators must populate two named secrets
+-- before this function works (otherwise it logs a notice and returns):
+--
+--   select vault.create_secret('https://<ref>.supabase.co', 'app_supabase_url', 'desc');
+--   select vault.create_secret('<service_role_jwt>',         'app_service_role_key', 'desc');
 create or replace function public.process_webhook_jobs()
 returns void as $$
 declare
@@ -376,10 +382,15 @@ declare
   v_key text;
   v_request_id bigint;
 begin
-  v_url := current_setting('app.supabase_url', true);
-  v_key := current_setting('app.service_role_key', true);
+  -- Read URL + service-role key from supabase_vault. `decrypted_secret` is
+  -- only readable by service_role / postgres; the cron worker runs as the
+  -- function owner (postgres) so this resolves at runtime.
+  select decrypted_secret into v_url
+  from vault.decrypted_secrets where name = 'app_supabase_url';
+  select decrypted_secret into v_key
+  from vault.decrypted_secrets where name = 'app_service_role_key';
   if v_url is null or v_key is null or v_url = '' or v_key = '' then
-    raise notice 'process_webhook_jobs: app.supabase_url / app.service_role_key not set; skipping';
+    raise notice 'process_webhook_jobs: vault secrets app_supabase_url / app_service_role_key not set; skipping';
     return;
   end if;
 
