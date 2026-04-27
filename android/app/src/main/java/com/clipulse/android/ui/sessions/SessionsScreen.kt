@@ -13,6 +13,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.clipulse.android.R
 import com.clipulse.android.data.model.SessionRecord
 import com.clipulse.android.data.model.SessionStatus
+import com.clipulse.android.ui.components.LifecyclePollingEffect
 import com.clipulse.android.ui.components.StatusBadge
 import com.clipulse.android.ui.components.formatCost
 import com.clipulse.android.ui.components.formatUsage
@@ -27,6 +28,7 @@ import com.clipulse.android.ui.theme.providerColor
 fun SessionsScreen(
     viewModel: SessionsViewModel = hiltViewModel(),
 ) {
+    LifecyclePollingEffect(viewModel::setPolling)
     val state by viewModel.state.collectAsState()
     val snackbar = LocalSnackbarHostState.current
     LaunchedEffect(state.error) {

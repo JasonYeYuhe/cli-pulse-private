@@ -110,11 +110,20 @@ final class HelperDaemon {
         let scanResult = LocalScanner.shared.scan()
         logger.debug("Scanned \(scanResult.sessions.count) sessions")
 
-        // Step 3: Alerts
+        // Step 3: Alerts.
+        // Iter2 fix: pass the helper's stable device_id so the device-CPU
+        // alert id is `cpu-spike-<deviceID>-<hour>` instead of the global
+        // `cpu-spike-global` static id (which never re-fired after first
+        // resolve and collided across multi-device users). Falls back to the
+        // host name when the helper is not yet paired (matches previous
+        // behavior on the unpaired path).
+        let alertDeviceID = HelperConfig.load()?.deviceId
+            ?? ProcessInfo.processInfo.hostName
         let alerts = AlertGenerator.generate(
             device: device,
             sessions: scanResult.sessions,
-            sessionCPU: scanResult.sessionCPU
+            sessionCPU: scanResult.sessionCPU,
+            deviceID: alertDeviceID
         )
 
         // Step 4: Provider quotas via collectors

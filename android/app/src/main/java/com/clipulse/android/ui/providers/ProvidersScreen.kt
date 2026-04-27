@@ -27,6 +27,7 @@ fun ProvidersScreen(
     viewModel: ProvidersViewModel = hiltViewModel(),
     onProviderClick: (String) -> Unit = {},
 ) {
+    LifecyclePollingEffect(viewModel::setPolling)
     val state by viewModel.state.collectAsState()
     val snackbar = LocalSnackbarHostState.current
     LaunchedEffect(state.error) {

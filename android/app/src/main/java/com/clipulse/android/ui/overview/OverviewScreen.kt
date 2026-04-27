@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.clipulse.android.R
 import com.clipulse.android.data.model.CostForecast
+import com.clipulse.android.ui.components.LifecyclePollingEffect
 import com.clipulse.android.ui.components.MetricCard
 import com.clipulse.android.ui.components.formatCost
 import com.clipulse.android.ui.components.formatUsage
@@ -33,6 +34,7 @@ fun OverviewScreen(
     viewModel: OverviewViewModel = hiltViewModel(),
     onCostAnalysis: () -> Unit = {},
 ) {
+    LifecyclePollingEffect(viewModel::setPolling)
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     val snackbar = LocalSnackbarHostState.current

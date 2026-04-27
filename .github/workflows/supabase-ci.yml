@@ -6,6 +6,9 @@ on:
       - 'backend/supabase/**'
       - 'CLI Pulse Bar/CLIPulseCore/Sources/CLIPulseCore/APIClient.swift'
       - 'CLI Pulse Bar/CLIPulseCore/Sources/CLIPulseCore/HelperAPIClient.swift'
+      - 'CLI Pulse Bar/CLIPulseCore/Sources/CLIPulseCore/AlertGenerator.swift'
+      - 'CLI Pulse Bar/CLIPulseCore/Sources/CLIPulseCore/Models.swift'
+      - 'CLI Pulse Bar/CLIPulseCore/Sources/CLIPulseCore/DemoDataProvider.swift'
       - 'helper/**'
       - 'android/app/src/main/java/com/clipulse/android/data/remote/**'
       - '.github/workflows/supabase-ci.yml'
@@ -14,6 +17,9 @@ on:
       - 'backend/supabase/**'
       - 'CLI Pulse Bar/CLIPulseCore/Sources/CLIPulseCore/APIClient.swift'
       - 'CLI Pulse Bar/CLIPulseCore/Sources/CLIPulseCore/HelperAPIClient.swift'
+      - 'CLI Pulse Bar/CLIPulseCore/Sources/CLIPulseCore/AlertGenerator.swift'
+      - 'CLI Pulse Bar/CLIPulseCore/Sources/CLIPulseCore/Models.swift'
+      - 'CLI Pulse Bar/CLIPulseCore/Sources/CLIPulseCore/DemoDataProvider.swift'
       - 'helper/**'
       - 'android/app/src/main/java/com/clipulse/android/data/remote/**'
       - '.github/workflows/supabase-ci.yml'
@@ -67,3 +73,33 @@ jobs:
 
       - name: Static rolling-window inclusive-N check
         run: python3 backend/supabase/ci_check_date_windows.py
+
+  alert-types:
+    name: Webhook TYPE_ALIASES drift guard (iter2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Static alert-type coverage check
+        run: python3 backend/supabase/ci_check_alert_types.py
+
+  user-id-cascade:
+    name: GDPR right-to-erasure cascade guard (iter2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Every public table with user_id cascades to auth.users
+        run: python3 backend/supabase/ci_check_user_id_cascade.py
