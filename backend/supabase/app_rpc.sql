@@ -64,8 +64,11 @@ returns jsonb as $$
 declare
   v_user_id uuid := auth.uid();
   v_today date := current_date;
-  v_week_start date := current_date - interval '7 days';
-  v_month_start date := current_date - interval '30 days';
+  -- Rolling-7-day window = today + previous 6 days inclusive (= 7 calendar days).
+  -- Same convention as Swift `DateRange.rollingWeekStart`.
+  v_week_start date := current_date - interval '6 days';
+  -- Rolling-30-day window = today + previous 29 days inclusive.
+  v_month_start date := current_date - interval '29 days';
 begin
   if v_user_id is null then
     raise exception 'Not authenticated';
@@ -268,7 +271,8 @@ declare
   v_user_id uuid := auth.uid();
   v_threshold numeric;
   v_cooldown integer;
-  v_week_start date := current_date - interval '7 days';
+  -- Rolling-7-day window = today + previous 6 days inclusive.
+  v_week_start date := current_date - interval '6 days';
   v_project record;
   v_alert_count integer := 0;
   v_suppression_key text;
@@ -573,7 +577,8 @@ create or replace function public.team_usage_summary(p_team_id uuid)
 returns jsonb as $$
 declare
   v_user_id uuid := auth.uid();
-  v_week_start date := current_date - interval '7 days';
+  -- Rolling-7-day window = today + previous 6 days inclusive.
+  v_week_start date := current_date - interval '6 days';
 begin
   if v_user_id is null then raise exception 'Not authenticated'; end if;
 
