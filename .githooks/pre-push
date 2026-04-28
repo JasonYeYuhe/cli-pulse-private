@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+#
+# .githooks/pre-push
+#
+# Refuses any push to the public CLI Pulse distribution repo
+# (JasonYeYuhe/cli-pulse) if the pushed commit/tag tree contains forbidden
+# private paths. Pushes to private remotes (origin / cli-pulse-private) are
+# never blocked.
+#
+# Enable in this clone with:
+#   git config core.hooksPath .githooks
+#
+# Standard git pre-push args:
+#   $1  remote name (e.g. "public", "origin")
+#   $2  remote URL  (e.g. "https://github.com/JasonYeYuhe/cli-pulse.git")
+#
+# Standard git pre-push stdin (one line per pushed ref):
+#   <local-ref> <local-sha> <remote-ref> <remote-sha>
+#
+# A local-sha of all zeros means a delete (e.g. removing a tag); we allow it
+# with a printed warning so a future intentional cleanup of stray refs is
+# not blocked.
+#
+# This hook does no network I/O. It only inspects already-fetched git
+# objects.
+
+set -u
+
+remote_name="${1:-}"
+remote_url="${2:-}"
+
+# Identify the public repo. Match by name OR by URL substring.
+is_public_remote() {
+    case "$remote_name" in
+        public) return 0 ;;
+    esac
+    case "$remote_url" in
+        *JasonYeYuhe/cli-pulse.git*)        return 0 ;;
+        *github.com/JasonYeYuhe/cli-pulse*) return 0 ;;
+        *github.com:JasonYeYuhe/cli-pulse*) return 0 ;;
+    esac
+    return 1
+}
+
+if ! is_public_remote; then
+    # Private push (origin / cli-pulse-private / anything else): no
+    # gating. Pre-push hooks for private remotes are out of scope here.
+    exit 0
+fi
+
+ZERO_SHA="0000000000000000000000000000000000000000"
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -z "$repo_root" ]; then
+    echo "pre-push: not in a git repository, aborting" >&2
+    exit 1
+fi
+verifier="$repo_root/scripts/verify_public_distribution_tree.sh"
+if [ ! -x "$verifier" ]; then
+    echo "pre-push: verifier not found or not executable: $verifier" >&2
+    echo "         Run: chmod +x scripts/verify_public_distribution_tree.sh" >&2
+    exit 1
+fi
+
+echo "pre-push: target is the PUBLIC distribution repo ($remote_url)"
+echo "pre-push: verifying every pushed commit/tag is distribution-clean..."
+
+failed=0
+saw_any=0
+
+while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
+    [ -z "${local_ref:-}" ] && continue
+    saw_any=1
+
+    if [ "$local_sha" = "$ZERO_SHA" ]; then
+        echo "  WARN: $local_ref is being DELETED on the public remote ($remote_ref). Allowed, but verify this is intentional." >&2
+        continue
+    fi
+
+    # Verify the tree at the pushed SHA. Tags are dereferenced
+    # automatically by git ls-tree.
+    echo "  -> checking $local_ref ($local_sha) -> $remote_ref"
+    if ! "$verifier" "$local_sha" >/dev/null; then
+        echo "" >&2
+        echo "BLOCKED: $local_ref ($local_sha) is not distribution-clean." >&2
+        echo "         Re-run for details:" >&2
+        echo "             $verifier $local_sha" >&2
+        echo "" >&2
+        failed=1
+    fi
+done
+
+if [ "$saw_any" = "0" ]; then
+    # No refs on stdin (e.g. `git push public` with everything up-to-date).
+    # Nothing to verify; allow.
+    exit 0
+fi
+
+if [ "$failed" = "1" ]; then
+    echo "" >&2
+    echo "Refusing push to public. CLI Pulse product source / helper / backend /" >&2
+    echo "internal docs / test fixtures must never reach JasonYeYuhe/cli-pulse." >&2
+    echo "" >&2
+    echo "If you really meant to push to the private repo, push to 'origin' instead:" >&2
+    echo "    git push origin <branch>" >&2
+    echo "" >&2
+    echo "If you intend a public distribution release, do it from a separate" >&2
+    echo "distribution-only working tree (see RELEASE_WORKFLOW.md)." >&2
+    exit 1
+fi
+
+echo "pre-push: all pushed refs are distribution-clean. Proceeding."
+exit 0
