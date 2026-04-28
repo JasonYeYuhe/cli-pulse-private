@@ -199,13 +199,22 @@ class ClaudeAdapter(ProviderAdapter):
                 "message": decision.reason or "Denied remotely via CLI Pulse",
             }
         else:
-            # fallback / unknown → deny with an explanation pointing the user
-            # at the local prompt. PermissionRequest has no "ask" value.
+            # fallback / unknown → deny with an explanation. PermissionRequest
+            # has no "ask" value, and there is no documented "delegate to local"
+            # shape. The honest path:
+            #   * tell the user we couldn't reach the remote channel
+            #   * tell them what to do — turn Remote Control off if it's
+            #     persistently broken, otherwise re-run the command
+            # Phrasing avoids implying that a single retry will magically make
+            # the local prompt appear (it won't if Remote Control is still on
+            # and the helper is still unreachable).
             decision_obj = {
                 "behavior": "deny",
                 "message": decision.reason or (
-                    "Remote approval unavailable. Please retry; CLI Pulse will "
-                    "let the local Claude permission prompt run."
+                    "Remote approval unavailable. If this keeps happening, "
+                    "open CLI Pulse → Settings → Privacy and turn off "
+                    "Remote Control; the local Claude permission prompt "
+                    "will then run on your next attempt."
                 ),
             }
 

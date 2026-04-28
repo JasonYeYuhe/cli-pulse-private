@@ -87,8 +87,10 @@ def _emit(output: dict[str, Any]) -> None:
 _RAW_DENY_FALLBACK = (
     '{"hookSpecificOutput":{"hookEventName":"PermissionRequest",'
     '"decision":{"behavior":"deny",'
-    '"message":"CLI Pulse remote-approval-hook crashed; please retry to '
-    'invoke the local Claude permission prompt."}}}\n'
+    '"message":"CLI Pulse remote-approval-hook crashed. '
+    'If this persists, open CLI Pulse \\u2192 Settings \\u2192 Privacy '
+    'and turn off Remote Control so the local Claude permission prompt '
+    'runs on your next attempt."}}}\n'
 )
 
 
