@@ -85,19 +85,31 @@ The targeted scan was run against the worst-case contaminated commit
   (iOS+Watch shared DSN, separate macOS DSN). Android DSN stayed in
   `local.properties` — verified gitignored, never committed.
 - Action items:
-  - [ ] Rotate both exposed DSNs from the Sentry org admin panel
-        (`jason-yeyuhe.sentry.io`) — DSN replacement is cheap. Update
-        the relevant `Info.plist` for the next release; a coordinated
-        client rollout is not strictly required because old DSNs
-        continue to work; rotation just narrows abuse surface.
-        **Blocked on:** access to Sentry web admin (no headless API
-        path available from this workspace).
-  - [ ] After rotation, confirm `beforeSend` scrubber is unchanged and
-        `tracesSampleRate = 0` is preserved (no PII / no perf traces).
+  - [x] **New DSNs generated 2026-04-28** via Sentry web admin
+        (`jason-yeyuhe.sentry.io`). Two new client keys created:
+        - `apple-ios` project — auto-named "COOL SLUG"
+          (covers iOS app + watchOS app)
+        - `apple-macos` project — auto-named "CAUSAL LADYBIRD"
+        Old "DEFAULT" keys remain ENABLED so currently-shipped client
+        versions keep reporting crashes. New DSN values are saved at
+        `~/Library/Application Support/CLI-Pulse-Secrets/sentry-rotation-2026-04-28.txt`
+        (mode 600, outside any git repo). Do not paste DSN values
+        into any committed file other than the four `Info.plist`
+        files at the next release.
+  - [ ] **Next release:** swap the new DSN values into the four
+        `Info.plist` files (iOS, Watch, macOS, Helper if applicable),
+        bump version, build, sign, notarize, ship. Confirm the
+        `beforeSend` scrubber is unchanged and
+        `tracesSampleRate = 0` is preserved.
+  - [ ] **2-3 weeks after the new release ships:** when crash-event
+        traffic to the OLD `DEFAULT` keys drops to negligible (check
+        the per-key event volume in Sentry), click `Disable` on the
+        old `DEFAULT` keys in both projects to fully close the
+        rotation. Update this checklist when done.
   - [x] Confirm Android Sentry DSN was never committed. Verified
         2026-04-28 — `git ls-files | grep local.properties` returns
         nothing; `android/.gitignore` lists `local.properties` and
-        `/local.properties`.
+        `/local.properties`. No rotation needed.
 
 ### App Store Connect API key
 

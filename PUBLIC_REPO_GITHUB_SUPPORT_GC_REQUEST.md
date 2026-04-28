@@ -1,12 +1,15 @@
 # GitHub Support — GC request for `JasonYeYuhe/cli-pulse`
 
-**Status:** draft, not yet sent.
+**Status:** **submitted 2026-04-28 as ticket #4333827** (open).
 **Drafted:** 2026-04-28
-**To send via:** <https://support.github.com/contact> (signed in as
-`JasonYeYuhe`), or `gh api` if a private support endpoint is preferred.
+**Submitted via:** <https://support.github.com/contact> (logged in as
+`JasonYeYuhe`). Category routed to: Repositories → Repository features
+→ Releases. Ticket portal: <https://support.github.com/tickets/personal/0>.
 
-The body below is intended to go in the support request as-is. It contains
-no secret values. Copy the block between the markers verbatim.
+The body below is the message that was actually submitted (line wraps were
+collapsed when pasted into the form's "Please describe your repository
+issue" field). Kept here for the audit trail and to amend if support
+asks follow-up questions.
 
 ---
 
@@ -91,9 +94,11 @@ Thanks very much.
 
 ## After sending
 
-- Save the support ticket ID here for future reference.
-- Re-run `gh api repos/JasonYeYuhe/cli-pulse/pages` and the source-archive
-  smoke test (`unzip -l` of the v1.10.7 zipball) once GitHub confirms GC
-  has run, to verify no stale objects are still being served.
+- ✅ **Ticket #4333827 — open as of 2026-04-28**, awaiting GitHub
+  Support response.
+- Once GitHub confirms GC has run, re-run
+  `gh api repos/JasonYeYuhe/cli-pulse/pages` and the source-archive
+  smoke test (`unzip -l` of the v1.10.7 zipball) to verify no stale
+  objects are still being served.
 - Update `PUBLIC_EXPOSURE_ROTATION_CHECKLIST.md` with the resulting
   posture (e.g. mark "GH GC complete" when done).
