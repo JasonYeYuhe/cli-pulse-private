@@ -29,11 +29,17 @@ struct iOSOverviewTab: View {
                     }
                     .padding(.horizontal)
 
-                    // v0.26 Phase 1: pending Remote Approvals banner. Only
-                    // visible when the user has opted into Remote Control AND
-                    // there is at least one pending request, so the banner
-                    // doesn't clutter the Overview for everyone else.
-                    if state.remoteControlEnabled && !state.remotePendingApprovals.isEmpty {
+                    // Pending Remote Approvals banner. Banner visibility uses
+                    // the shared RemoteApprovalsEntryState helper (tested in
+                    // CLIPulseCore) — pending-only by design. The Settings
+                    // tab has the always-visible NavigationLink for the
+                    // pending=0 case so users can still open the screen and
+                    // start active polling.
+                    let bannerState = RemoteApprovalsEntryState.banner(
+                        remoteControlEnabled: state.remoteControlEnabled,
+                        pendingCount: state.remotePendingApprovals.count
+                    )
+                    if let bannerCount = bannerState.badgeCount {
                         NavigationLink {
                             iOSRemoteApprovalsView()
                                 .environmentObject(state)
@@ -45,7 +51,7 @@ struct iOSOverviewTab: View {
                                     .padding(8)
                                     .background(Circle().fill(PulseTheme.accent))
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("\(state.remotePendingApprovals.count) pending approval\(state.remotePendingApprovals.count == 1 ? "" : "s")")
+                                    Text("\(bannerCount) pending approval\(bannerCount == 1 ? "" : "s")")
                                         .font(.subheadline.weight(.semibold))
                                         .foregroundStyle(.primary)
                                     Text("Tap to review Claude tool calls running on your Mac")

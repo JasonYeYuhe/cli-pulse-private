@@ -429,9 +429,20 @@ def diagnose(home: Path | None = None, cwd: Path | None = None) -> DiagnoseRepor
 
 
 def render_text_report(report: DiagnoseReport) -> str:
-    """Pretty-print the diagnose report for `helper print` consumption."""
+    """Pretty-print the diagnose report for `helper print` consumption.
+
+    The output contains local filesystem paths and verbatim entries from
+    `permissions.allow` / `ask` / `deny` (which can themselves include
+    paths and shell command fragments). The header below warns the user
+    not to paste it publicly without redaction. The diagnose flow itself
+    is local-only and never uploads anywhere.
+    """
     lines: list[str] = []
     lines.append("CLI Pulse — Claude Code permission diagnosis")
+    lines.append("  Output may contain local paths and command patterns from")
+    lines.append("  your Always-Allow history. Read-only — nothing is uploaded.")
+    lines.append("  Redact before pasting in a public bug report or chat.")
+    lines.append("")
     lines.append(f"  cwd:  {report.cwd}")
     lines.append(f"  home: {report.home}")
     lines.append("")

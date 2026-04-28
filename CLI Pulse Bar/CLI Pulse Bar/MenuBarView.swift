@@ -266,27 +266,44 @@ struct MenuBarView: View {
 
             Spacer()
 
-            // v0.26 Phase 1: pending-approvals pill. Only visible when the
-            // user has opted into Remote Control AND there is at least one
-            // pending request, so the footer stays uncluttered for everyone
-            // else. Tapping opens RemoteApprovalsSheet.
-            if state.remoteControlEnabled && !state.remotePendingApprovals.isEmpty {
+            // Remote Approvals entry. Visibility logic lives in
+            // CLIPulseCore.RemoteApprovalsEntryState so it can be unit-
+            // tested in isolation (see RemoteApprovalsEntryStateTests).
+            // Always-on entry when Remote Control is enabled — see
+            // RemoteApprovalsEntryState.footer doc comment for the
+            // dead-loop bug it exists to prevent.
+            let approvalsEntry = RemoteApprovalsEntryState.footer(
+                remoteControlEnabled: state.remoteControlEnabled,
+                pendingCount: state.remotePendingApprovals.count
+            )
+            if approvalsEntry.isVisible {
                 Button {
                     showRemoteApprovals = true
                 } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "checkmark.shield.fill")
                             .font(.system(size: 9))
-                        Text("\(state.remotePendingApprovals.count)")
-                            .font(.system(size: 9, weight: .semibold))
+                        if let count = approvalsEntry.badgeCount {
+                            Text("\(count)")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
                     }
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 1)
-                    .background(Capsule().fill(PulseTheme.accent))
+                    .background(Capsule().fill(
+                        approvalsEntry.badgeCount == nil
+                            ? PulseTheme.accent.opacity(0.55)
+                            : PulseTheme.accent
+                    ))
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Open Remote Approvals")
+                .accessibilityLabel(approvalsEntry.badgeCount == nil
+                    ? "Open Remote Approvals (none pending)"
+                    : "Open Remote Approvals (\(approvalsEntry.badgeCount!) pending)")
+                .help(approvalsEntry.badgeCount == nil
+                    ? "Open Remote Approvals — currently no pending requests"
+                    : "\(approvalsEntry.badgeCount!) pending Remote Approval\(approvalsEntry.badgeCount! == 1 ? "" : "s")")
             }
 
             Button {

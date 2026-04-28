@@ -478,32 +478,43 @@ def main() -> None:
 
     # Diagnostic / setup helpers for the Remote Approvals feature.
     # All three are READ-ONLY — they never mutate ~/.claude/settings.json
-    # or any other user file. Designed to surface "why does Always-Allow
-    # keep re-prompting" without us silently rewriting the user's config.
-    remote_status_parser = subparsers.add_parser(
-        "remote-approvals-status",
-        help="print whether remote-approvals is wired up on this Mac",
+    # or any other user file. Hierarchical:
+    #   remote-approvals status
+    #   remote-approvals print-claude-hook-config
+    #   remote-approvals diagnose-claude-permissions [--json]
+    remote_parser = subparsers.add_parser(
+        "remote-approvals",
+        help="Remote Approvals diagnostics + setup helpers (read-only)",
     )
-    remote_status_parser.set_defaults(func=_remote_approvals_status_cmd)
+    remote_subparsers = remote_parser.add_subparsers(
+        dest="remote_subcmd", required=True,
+        title="remote-approvals subcommands",
+    )
 
-    remote_print_parser = subparsers.add_parser(
-        "remote-approvals-print-claude-hook-config",
+    ra_status_parser = remote_subparsers.add_parser(
+        "status",
+        help="print whether Remote Approvals is wired up on this Mac",
+    )
+    ra_status_parser.set_defaults(func=_remote_approvals_status_cmd)
+
+    ra_print_parser = remote_subparsers.add_parser(
+        "print-claude-hook-config",
         help="print the JSON snippet to paste into ~/.claude/settings.json",
     )
-    remote_print_parser.add_argument(
+    ra_print_parser.add_argument(
         "--python", default=None,
         help="python3 interpreter to embed in the hook command (defaults to 'python3')",
     )
-    remote_print_parser.set_defaults(func=_remote_approvals_print_hook_cmd)
+    ra_print_parser.set_defaults(func=_remote_approvals_print_hook_cmd)
 
-    remote_diagnose_parser = subparsers.add_parser(
-        "remote-approvals-diagnose-claude-permissions",
+    ra_diagnose_parser = remote_subparsers.add_parser(
+        "diagnose-claude-permissions",
         help="diagnose Claude Code permission rules + hook wiring (read-only)",
     )
-    remote_diagnose_parser.add_argument(
+    ra_diagnose_parser.add_argument(
         "--json", action="store_true", help="emit a JSON report instead of human text",
     )
-    remote_diagnose_parser.set_defaults(func=_remote_approvals_diagnose_cmd)
+    ra_diagnose_parser.set_defaults(func=_remote_approvals_diagnose_cmd)
 
     args = parser.parse_args()
     args.func(args)

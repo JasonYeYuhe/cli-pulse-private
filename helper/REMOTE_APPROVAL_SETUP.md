@@ -28,8 +28,19 @@ another Mac via CLI Pulse.
 
 ## Wire the hook into Claude Code
 
-Open `~/.claude/settings.json` (create if missing) and add a
-`PermissionRequest` hook entry that pipes stdin into the helper:
+The helper can print a copy-pasteable JSON snippet tailored to this
+machine's absolute path (no manual editing needed):
+
+```bash
+python3 helper/cli_pulse_helper.py remote-approvals print-claude-hook-config
+```
+
+The command does **not** write anywhere — it just prints. Copy the
+`hooks` block into `~/.claude/settings.json` (create the file if it
+doesn't exist). If the file already has a `hooks` section, MERGE
+rather than replace.
+
+A typical snippet looks like:
 
 ```json
 {
@@ -94,6 +105,36 @@ Never uploaded:
 | Remote Control ON, helper paired, network up                | Pending request appears on iPhone / Mac sheet within seconds. Approve → `behavior: allow`. Deny → `behavior: deny` + message. |
 | High-risk shell command (`rm -rf`, `sudo`, …)               | Hook short-circuits to local prompt without ever uploading. (Set `--allow-high-risk` to override; not recommended.) |
 | Helper crash / network blip / poll timeout                  | Hardcoded fallback `behavior: deny` with explainer message. User reruns. |
+
+## Diagnose "Always Allow keeps re-prompting"
+
+Three read-only subcommands surface common Claude Code permission
+gotchas without rewriting any of your settings files:
+
+```bash
+# At-a-glance state of helper pairing + Claude hook + Remote Control flag
+python3 helper/cli_pulse_helper.py remote-approvals status
+
+# Print the JSON snippet for ~/.claude/settings.json (does NOT write)
+python3 helper/cli_pulse_helper.py remote-approvals print-claude-hook-config
+
+# Walk all 4 settings scopes (managed/local/project/user), merge rules,
+# and report findings: parse errors, deny-overrides-allow, ask-overrides-
+# allow, narrow Bash patterns, allow-only-in-local-scope, missing hook.
+python3 helper/cli_pulse_helper.py remote-approvals diagnose-claude-permissions
+
+# Same diagnosis as JSON for tooling.
+python3 helper/cli_pulse_helper.py remote-approvals diagnose-claude-permissions --json
+```
+
+**Privacy note on `diagnose` output.** It prints local file paths
+(e.g. `~/.claude/settings.json`, project cwd) and the raw text of
+your `permissions.allow` / `ask` / `deny` rules (which can include
+file paths and command patterns from your Always-Allow history).
+**Do not paste the diagnose output into a public bug report or chat
+verbatim** — redact paths and rules first if you need to share it.
+The diagnose itself is read-only and never uploads anything to
+Supabase, our backend, or any third party.
 
 ## Verifying the loop end-to-end
 
