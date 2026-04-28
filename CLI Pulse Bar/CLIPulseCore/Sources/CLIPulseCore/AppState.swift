@@ -251,6 +251,31 @@ public final class AppState: ObservableObject {
     /// `user_settings.track_git_activity`. Mirrored locally for UI toggle binding.
     @Published public var gitTrackingEnabled: Bool = false
 
+    /// Server-persisted opt-in for Remote Agent Sessions / Remote Approvals.
+    /// Source of truth is `user_settings.remote_control_enabled`. Default OFF —
+    /// the same flag is enforced server-side on every helper RPC, so toggling
+    /// it off here actually severs the helper end of the channel, not just
+    /// the UI affordance.
+    @Published public var remoteControlEnabled: Bool = false
+
+    /// True while a `setRemoteControlEnabled` PATCH is in flight. UI binds
+    /// `disabled(state.remoteControlSaving)` on the Toggle so the user can't
+    /// fire a second toggle on top of the first; periodic settings refreshes
+    /// also skip overwriting `remoteControlEnabled` while this is true so a
+    /// stale server response can't undo the user's latest intent (Codex
+    /// review iter5 P1: latest-intent-wins).
+    @Published public var remoteControlSaving: Bool = false
+
+    // MARK: - Remote Approvals (v0.26 — Phase 1 MVP)
+    /// Pending remote permission requests pulled from
+    /// `remote_app_list_pending_approvals`. Refreshed lazily — only when the
+    /// approvals sheet is open or the menu-bar popover is visible AND
+    /// `remoteControlEnabled` is true. We do NOT poll while the feature is
+    /// disabled; that's both wasted bandwidth and an inadvertent leak signal.
+    @Published public var remotePendingApprovals: [RemotePermissionRequest] = []
+    @Published public var remoteApprovalsLastRefresh: Date?
+    @Published public var remoteApprovalsError: String?
+
     /// Aggregated per-provider summaries over the currently-selected range.
     /// Re-derived on every access; cheap because rows is small (≤ providers × days).
     public var yieldScoreSummaries: [YieldScoreSummary] {

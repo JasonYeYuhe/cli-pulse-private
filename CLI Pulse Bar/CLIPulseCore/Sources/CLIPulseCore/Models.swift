@@ -656,6 +656,7 @@ public struct SettingsSnapshot: Codable, Sendable {
     public let alert_cooldown_minutes: Int
     public let data_retention_days: Int
     public let track_git_activity: Bool
+    public let remote_control_enabled: Bool
 
     public init(
         notifications_enabled: Bool, push_policy: String,
@@ -664,7 +665,8 @@ public struct SettingsSnapshot: Codable, Sendable {
         session_too_long_threshold_minutes: Int, offline_grace_period_minutes: Int,
         repeated_failure_threshold: Int, alert_cooldown_minutes: Int,
         data_retention_days: Int,
-        track_git_activity: Bool = false
+        track_git_activity: Bool = false,
+        remote_control_enabled: Bool = false
     ) {
         self.notifications_enabled = notifications_enabled
         self.push_policy = push_policy
@@ -678,6 +680,7 @@ public struct SettingsSnapshot: Codable, Sendable {
         self.alert_cooldown_minutes = alert_cooldown_minutes
         self.data_retention_days = data_retention_days
         self.track_git_activity = track_git_activity
+        self.remote_control_enabled = remote_control_enabled
     }
 }
 
@@ -762,4 +765,123 @@ public struct TeamUsageSummaryDTO: Codable, Sendable {
     public let total_cost: Double
     public let member_count: Int
     public let provider_breakdown: [ProviderBreakdown]?
+}
+
+// MARK: - Remote Agent Sessions (v0.26)
+
+/// Provider for a remote agent session. Mirrors the SQL CHECK constraint.
+public enum RemoteSessionProvider: String, Codable, Sendable, CaseIterable {
+    case claude
+    case codex
+    case shell
+}
+
+/// Lifecycle state of a remote session as the helper sees it.
+public enum RemoteSessionStatus: String, Codable, Sendable {
+    case pending
+    case running
+    case stopped
+    case errored
+}
+
+/// Risk classification attached to a remote permission request. UI uses this
+/// to decide whether to show a stronger confirm flow before approving.
+public enum RemotePermissionRisk: String, Codable, Sendable, CaseIterable {
+    case low
+    case medium
+    case high
+}
+
+/// Decision scope for a permission request. `alwaysSession` is only honoured
+/// for Claude in Phase 1; Codex requests are silently downgraded to `once`
+/// server-side because Codex updatedPermissions is not exposed yet.
+public enum RemotePermissionScope: String, Codable, Sendable {
+    case once
+    case alwaysSession
+}
+
+/// Kind of decision passed to `remote_app_decide_permission`.
+public enum RemotePermissionDecisionAction: String, Codable, Sendable {
+    case approve
+    case deny
+}
+
+/// Kind of command queued via `remote_app_send_command`.
+public enum RemoteCommandKind: String, Codable, Sendable {
+    case prompt
+    case stop
+    case interrupt
+}
+
+/// One Claude / Codex / shell session running under the helper.
+/// Snake-case to match the SQL → JSONB → REST shape. No transcript / API
+/// keys / cookies are ever included.
+public struct RemoteSession: Codable, Sendable, Identifiable {
+    public let id: String
+    public let device_id: String
+    public let provider: String
+    public let cwd_basename: String
+    public let cwd_hmac: String?
+    public let status: String
+    public let client_label: String?
+    public let created_at: String
+    public let last_event_at: String?
+
+    public init(
+        id: String, device_id: String, provider: String, cwd_basename: String,
+        cwd_hmac: String? = nil, status: String, client_label: String? = nil,
+        created_at: String, last_event_at: String? = nil
+    ) {
+        self.id = id; self.device_id = device_id; self.provider = provider
+        self.cwd_basename = cwd_basename; self.cwd_hmac = cwd_hmac
+        self.status = status; self.client_label = client_label
+        self.created_at = created_at; self.last_event_at = last_event_at
+    }
+}
+
+/// Append-only terminal-output / status row. Capped to 4 KB server-side.
+public struct RemoteSessionEvent: Codable, Sendable, Identifiable {
+    public let id: Int
+    public let session_id: String
+    public let seq: Int
+    public let kind: String
+    public let payload: String
+    public let created_at: String
+}
+
+/// App→helper command queued via `remote_app_send_command`.
+public struct RemoteSessionCommand: Codable, Sendable, Identifiable {
+    public let id: String
+    public let session_id: String?
+    public let kind: String
+    public let payload: String
+    public let status: String
+    public let created_at: String
+    public let picked_up_at: String?
+    public let completed_at: String?
+}
+
+/// One pending or decided remote permission request.
+public struct RemotePermissionRequest: Codable, Sendable, Identifiable {
+    public let id: String
+    public let session_id: String?
+    public let device_id: String
+    public let provider: String
+    public let tool_name: String
+    public let summary: String
+    public let risk: String
+    public let status: String
+    public let created_at: String
+    public let expires_at: String
+
+    public init(
+        id: String, session_id: String?, device_id: String, provider: String,
+        tool_name: String, summary: String, risk: String, status: String,
+        created_at: String, expires_at: String
+    ) {
+        self.id = id; self.session_id = session_id; self.device_id = device_id
+        self.provider = provider; self.tool_name = tool_name; self.summary = summary
+        self.risk = risk; self.status = status
+        self.created_at = created_at; self.expires_at = expires_at
+    }
 }

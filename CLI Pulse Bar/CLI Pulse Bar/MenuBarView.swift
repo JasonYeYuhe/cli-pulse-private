@@ -7,6 +7,7 @@ struct MenuBarView: View {
     @EnvironmentObject var alertState: AlertState
     @EnvironmentObject var providerState: ProviderState
     @AppStorage("cli_pulse_menubar_height") private var storedHeight: Double = 580
+    @State private var showRemoteApprovals = false
 
     /// Adaptive max height: 85% of the screen where the status item lives, capped at 900pt.
     private static var maxMenuBarHeight: CGFloat {
@@ -265,6 +266,29 @@ struct MenuBarView: View {
 
             Spacer()
 
+            // v0.26 Phase 1: pending-approvals pill. Only visible when the
+            // user has opted into Remote Control AND there is at least one
+            // pending request, so the footer stays uncluttered for everyone
+            // else. Tapping opens RemoteApprovalsSheet.
+            if state.remoteControlEnabled && !state.remotePendingApprovals.isEmpty {
+                Button {
+                    showRemoteApprovals = true
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "checkmark.shield.fill")
+                            .font(.system(size: 9))
+                        Text("\(state.remotePendingApprovals.count)")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(PulseTheme.accent))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open Remote Approvals")
+            }
+
             Button {
                 state.requestRefresh()
             } label: {
@@ -288,6 +312,10 @@ struct MenuBarView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
         .background(Color(nsColor: .separatorColor).opacity(0.1))
+        .sheet(isPresented: $showRemoteApprovals) {
+            RemoteApprovalsSheet()
+                .environmentObject(state)
+        }
     }
 
     // MARK: - Resize Handle

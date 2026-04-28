@@ -463,8 +463,33 @@ def main() -> None:
     inspect_parser = subparsers.add_parser("inspect", help="print the locally collected snapshot")
     inspect_parser.set_defaults(func=inspect)
 
+    remote_hook_parser = subparsers.add_parser(
+        "remote-approval-hook",
+        help="provider PermissionRequest hook — bridge to remote app approval (Phase 1: Claude only)",
+    )
+    remote_hook_parser.add_argument("--provider", required=True, choices=("claude", "codex", "shell"))
+    remote_hook_parser.add_argument("--timeout", type=float, default=10.0,
+                                    help="max seconds to wait for a remote decision (default 10)")
+    remote_hook_parser.add_argument("--poll-interval", type=float, default=1.0,
+                                    help="seconds between poll attempts (default 1)")
+    remote_hook_parser.add_argument("--allow-high-risk", action="store_true",
+                                    help="allow high-risk requests to round-trip (default: fail closed)")
+    remote_hook_parser.set_defaults(func=_remote_approval_hook_cmd)
+
     args = parser.parse_args()
     args.func(args)
+
+
+def _remote_approval_hook_cmd(args: argparse.Namespace) -> None:
+    """Adapter from argparse → remote_hook.run_hook."""
+    from remote_hook import HookConfig, run_hook
+    config = HookConfig(
+        poll_interval_s=args.poll_interval,
+        timeout_s=args.timeout,
+        ttl_seconds=max(int(args.timeout) + 30, 60),
+        fail_closed_on_high_risk=not args.allow_high_risk,
+    )
+    run_hook(args.provider, config)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ struct iOSSettingsTab: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showDeleteConfirmation = false
     @State private var alertThresholds: AlertThresholds = AlertThresholdsStore.load()
+    @State private var showRemoteControlConsent = false
 
     private var isIPad: Bool { horizontalSizeClass == .regular }
 
@@ -282,6 +283,88 @@ struct iOSSettingsTab: View {
                             }
                             .disabled(state.webhookURL.isEmpty)
                         }
+                    }
+
+                    // Remote Control (v0.26 Phase 1) — privacy-first opt-in.
+                    // Server-side gate on every helper RPC, so toggling off
+                    // here actually severs the helper end of the channel.
+                    Section {
+                        // iter4: every flip goes through
+                        // `setRemoteControlEnabled(_:)` so a failed PATCH
+                        // reverts the UI rather than desyncing from the
+                        // server-side gate.
+                        Toggle(isOn: Binding(
+                            get: { state.remoteControlEnabled },
+                            set: { newValue in
+                                if newValue && !state.remoteControlEnabled {
+                                    // Going ON — wait for consent.
+                                    showRemoteControlConsent = true
+                                } else {
+                                    state.setRemoteControlEnabled(newValue)
+                                }
+                            }
+                        )) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text("Remote Control")
+                                    if state.remoteControlSaving {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                    }
+                                }
+                                Text("Approve Claude tool calls from this iPhone")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        // iter5 P1: lock the toggle while a PATCH is in
+                        // flight so re-entrant taps can't race the request.
+                        .disabled(state.remoteControlSaving)
+
+                        if state.remoteControlEnabled {
+                            NavigationLink {
+                                iOSRemoteApprovalsView()
+                                    .environmentObject(state)
+                            } label: {
+                                HStack {
+                                    Image(systemName: "checkmark.shield")
+                                    Text("Pending Approvals")
+                                    Spacer()
+                                    if !state.remotePendingApprovals.isEmpty {
+                                        Text("\(state.remotePendingApprovals.count)")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.white)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 2)
+                                            .background(Capsule().fill(PulseTheme.accent))
+                                    }
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("Privacy")
+                    } footer: {
+                        Text("CLI Pulse uploads only a redacted summary of each request — never API keys, cookies, or full transcripts.")
+                            .font(.caption)
+                    }
+                    .alert("Enable Remote Control?", isPresented: $showRemoteControlConsent) {
+                        Button(L10n.common.cancel, role: .cancel) {}
+                        Button("Enable") {
+                            // Atomic entry point — see DataRefreshManager.
+                            state.setRemoteControlEnabled(true)
+                        }
+                    } message: {
+                        Text(
+                            "When Remote Control is on, CLI Pulse can:\n" +
+                            "• upload a redacted summary of each Claude permission request (tool name, short summary, risk badge)\n" +
+                            "• upload a short tail of terminal output and the session status\n" +
+                            "• accept your remote Approve / Deny back into the local hook on your Mac\n\n" +
+                            "What never leaves the Mac:\n" +
+                            "• provider API keys, cookies, OAuth tokens\n" +
+                            "• full transcripts or session log files\n" +
+                            "• full project paths (only basename + HMAC)\n\n" +
+                            "Approving a request executes the tool call on your Mac. Only approve requests you understand."
+                        )
                     }
 
                     // Advanced

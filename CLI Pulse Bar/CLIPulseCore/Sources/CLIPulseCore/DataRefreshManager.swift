@@ -1410,6 +1410,11 @@ extension AppState {
         publishWidgetData()
         Task { await refreshCostForecast() }
         Task { await refreshYieldScore() }
+        // v0.26 Phase 1: only fetch pending approvals when the feature is on.
+        // refreshYieldScore() above re-syncs `remoteControlEnabled` from
+        // user_settings on every cycle, so a remote toggle eventually reaches
+        // the UI within one refresh interval (~120s).
+        Task { await refreshRemoteApprovals() }
     }
 
     private func refreshCostForecast() async {
@@ -1426,6 +1431,16 @@ extension AppState {
         yieldScoreDailyRows = rows
         if let snapshot = try? await api.settings() {
             gitTrackingEnabled = snapshot.track_git_activity
+            // Skip overwriting remoteControlEnabled while a toggle PATCH is
+            // mid-flight — the snapshot may have been read before the user's
+            // latest intent reached the server, and writing it back here
+            // would silently undo the toggle (Codex review iter5 P1
+            // latest-intent-wins). Once setRemoteControlEnabled clears
+            // `remoteControlSaving`, the next refresh cycle will pick up the
+            // canonical server value.
+            if !remoteControlSaving {
+                remoteControlEnabled = snapshot.remote_control_enabled
+            }
         }
     }
 
@@ -1440,6 +1455,166 @@ extension AppState {
             } catch {
                 lastError = "Failed to save git tracking setting: \(error.localizedDescription)"
             }
+        }
+    }
+
+    /// Atomic entry point for flipping Remote Control on or off.
+    ///
+    /// Single source of truth: every Mac/iOS surface that toggles the flag
+    /// MUST go through this method (Codex review iter4 P1). The previous
+    /// pattern — direct mutation of `remoteControlEnabled` followed by a
+    /// separate push call — could leave the UI desynced from the server
+    /// when the PATCH failed (e.g. the user thinks they turned Remote
+    /// Control off but the helper-side gate is still open).
+    ///
+    /// **iter5 P1 hardening — latest-intent-wins under overlapping requests:**
+    /// the synchronous prologue (`saving` flag + early-return guards) runs
+    /// BEFORE the Task launches so there is no window in which a second
+    /// caller could race past a still-fire-and-forget first call. UI also
+    /// binds `.disabled(state.remoteControlSaving)` on the Toggle so a
+    /// double-tap can't even reach this method while a PATCH is in flight,
+    /// and `refreshYieldScore` skips overwriting `remoteControlEnabled`
+    /// while saving is true so a stale `settings()` response can't undo
+    /// the user's latest intent.
+    ///
+    /// Behaviour:
+    ///   1. Synchronous guards: drop if already saving, drop if equal.
+    ///   2. Synchronous flip: set `saving=true`, snapshot previous value,
+    ///      optimistically set new value. (Visible to UI immediately.)
+    ///   3. Async: PATCH `user_settings` with `remote_control_enabled`.
+    ///   4. On success: if disabling, clear cached pending approvals so the
+    ///      UI doesn't briefly show stale rows after the gate trips.
+    ///   5. On failure: revert to `previousValue`, leave pending approvals
+    ///      untouched, and surface a `lastError` so the user is aware.
+    ///   6. Always (success or failure): clear `saving=false`.
+    public func setRemoteControlEnabled(_ desired: Bool) {
+        // ── Synchronous prologue. Runs on the caller's thread (UI), before
+        //    the Task is enqueued, so a re-entrant call cannot slip past
+        //    these guards.
+        if remoteControlSaving {
+            // A previous PATCH is still in flight. The UI Toggle is bound to
+            // `.disabled(remoteControlSaving)` so this branch should be
+            // unreachable in practice; defending anyway in case a non-UI
+            // caller (programmatic test, future code path) sneaks past.
+            return
+        }
+        if remoteControlEnabled == desired {
+            // No-op set (e.g. repeated identical toggle, or refresh that
+            // already wrote the same value). Avoid the round-trip.
+            return
+        }
+        // Mark saving first so a refreshYieldScore that runs concurrently
+        // sees `saving=true` and skips its overwrite branch.
+        remoteControlSaving = true
+        let previousValue = remoteControlEnabled
+        remoteControlEnabled = desired
+
+        // ── Async epilogue. The PATCH and any follow-on state changes are
+        //    fine to perform from a Task; the synchronous prologue above has
+        //    already published the user's intent to SwiftUI.
+        Task {
+            do {
+                try await api.updateSettings(APIClient.SettingsPatch(
+                    remote_control_enabled: desired
+                ))
+                if !desired {
+                    // Successful toggle off — clear cached pending requests
+                    // so the UI doesn't briefly show stale rows after the
+                    // gate trips. Only on confirmed success; revert-after-
+                    // failure must not destroy that state.
+                    remotePendingApprovals = []
+                    remoteApprovalsLastRefresh = nil
+                }
+            } catch {
+                // PATCH failed — revert to keep the UI honest about server
+                // state. Do NOT touch remotePendingApprovals; if the user
+                // was disabling and the disable failed, the existing pending
+                // list is still the truth from the server's perspective.
+                remoteControlEnabled = previousValue
+                let action = desired ? "enable" : "disable"
+                lastError = "Couldn't \(action) Remote Control: \(error.localizedDescription)"
+                remoteApprovalsError = lastError
+            }
+            // Always clear saving so a follow-up toggle (or a deferred
+            // settings refresh) can proceed.
+            remoteControlSaving = false
+        }
+    }
+
+    // `pushRemoteControlSettingToServer` was the v0.27 helper. It was dropped
+    // in iter4: combining `state.remoteControlEnabled = newValue` followed by
+    // a separate push call meant a failed PATCH left the UI showing the new
+    // value while the server-side gate still reflected the old one. Use
+    // `setRemoteControlEnabled(_:)` instead, which snapshots, optimistically
+    // sets, PATCHes, and reverts on failure as a single transaction.
+
+    /// Refresh the pending-approvals list. No-op (and clears the local cache)
+    /// when Remote Control is disabled, so the UI stops looking like the
+    /// feature is live after the user has opted out.
+    public func refreshRemoteApprovals() async {
+        guard remoteControlEnabled else {
+            remotePendingApprovals = []
+            remoteApprovalsLastRefresh = Date()
+            return
+        }
+        do {
+            let pending = try await api.remoteListPendingApprovals()
+            // Re-check the gate AFTER the await: if the user toggled Remote
+            // Control off while the network call was in flight, the response
+            // would otherwise repopulate the UI with rows the user just
+            // disabled (Gemini review P2 #8). v0.29 also gates the server
+            // RPC, but the client check is the immediate fix and works
+            // against older server versions during rollout.
+            guard remoteControlEnabled else {
+                remotePendingApprovals = []
+                remoteApprovalsLastRefresh = Date()
+                return
+            }
+            remotePendingApprovals = pending
+            remoteApprovalsLastRefresh = Date()
+            remoteApprovalsError = nil
+        } catch {
+            // If the user toggled Remote Control off while the network call
+            // was in flight, swallow the error — the failed list call is
+            // irrelevant once the feature is disabled, and surfacing a stale
+            // error banner would just confuse them (Codex review iter4 P2).
+            guard remoteControlEnabled else {
+                return
+            }
+            remoteApprovalsError = error.localizedDescription
+        }
+    }
+
+    /// Approve or deny a pending request. Optimistically removes the row
+    /// locally so the UI feels snappy; refreshes from the server on completion
+    /// to stay consistent with any server-side state changes.
+    public func decideRemoteApproval(
+        requestId: String,
+        decision: RemotePermissionDecisionAction
+    ) async {
+        guard remoteControlEnabled else { return }
+        // Snapshot the failed row only — NOT the whole list. Restoring the
+        // entire list on failure would silently wipe new pending requests
+        // that arrived during the in-flight decide call (Gemini review P1 #3).
+        let originalRow = remotePendingApprovals.first(where: { $0.id == requestId })
+        remotePendingApprovals.removeAll { $0.id == requestId }
+        do {
+            try await api.remoteDecidePermission(
+                requestId: requestId,
+                decision: decision,
+                scope: .once
+            )
+            await refreshRemoteApprovals()
+        } catch {
+            // Re-insert only the failed row, preserving any new rows that
+            // arrived during the await. Sort by created_at desc to match the
+            // server-side `order by created_at desc` in list_pending_approvals.
+            if let row = originalRow,
+               !remotePendingApprovals.contains(where: { $0.id == row.id }) {
+                remotePendingApprovals.append(row)
+                remotePendingApprovals.sort { $0.created_at > $1.created_at }
+            }
+            remoteApprovalsError = "Decision failed: \(error.localizedDescription)"
         }
     }
 

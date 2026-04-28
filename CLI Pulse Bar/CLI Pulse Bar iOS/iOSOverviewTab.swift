@@ -29,6 +29,44 @@ struct iOSOverviewTab: View {
                     }
                     .padding(.horizontal)
 
+                    // v0.26 Phase 1: pending Remote Approvals banner. Only
+                    // visible when the user has opted into Remote Control AND
+                    // there is at least one pending request, so the banner
+                    // doesn't clutter the Overview for everyone else.
+                    if state.remoteControlEnabled && !state.remotePendingApprovals.isEmpty {
+                        NavigationLink {
+                            iOSRemoteApprovalsView()
+                                .environmentObject(state)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "checkmark.shield.fill")
+                                    .font(.body)
+                                    .foregroundStyle(.white)
+                                    .padding(8)
+                                    .background(Circle().fill(PulseTheme.accent))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("\(state.remotePendingApprovals.count) pending approval\(state.remotePendingApprovals.count == 1 ? "" : "s")")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                    Text("Tap to review Claude tool calls running on your Mac")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(PulseTheme.accent.opacity(0.08))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal)
+                    }
+
                     if let dash = state.dashboard {
                         metricsGrid(dash)
 

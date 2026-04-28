@@ -16,6 +16,7 @@ struct AdvancedSection: View {
     @Binding var helperEnabled: Bool
 
     @State private var showGitTrackingConsent = false
+    @State private var showRemoteControlConsent = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -159,6 +160,70 @@ struct AdvancedSection: View {
                 }
             } message: {
                 Text("CLI Pulse will scan git logs in projects where AI sessions are active. Only the commit hash, an HMAC of the project path, the commit timestamp, and a merge-commit flag leave your device. Commit messages, diffs, file paths, and author identity are never uploaded.")
+            }
+
+            // v0.27 Remote Control opt-in. Default OFF. Server-side gate is
+            // enforced on every remote_helper_* RPC, so toggling off here
+            // actually severs the helper end of the channel.
+            //
+            // iter4: route every flip through `setRemoteControlEnabled(_:)`
+            // so a failed PATCH cleanly reverts the UI instead of leaving it
+            // out of sync with the server-side gate.
+            Toggle(isOn: Binding(
+                get: { state.remoteControlEnabled },
+                set: { newValue in
+                    if newValue && !state.remoteControlEnabled {
+                        // Going ON requires consent — let the alert handle
+                        // the actual flip. Don't touch state here, otherwise
+                        // the toggle visually flips before consent is given.
+                        showRemoteControlConsent = true
+                    } else {
+                        // Going OFF (or repeated set to current value, which
+                        // the entry point no-ops) — flip atomically.
+                        state.setRemoteControlEnabled(newValue)
+                    }
+                }
+            )) {
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 4) {
+                        Text("Remote Control (Phase 1: Claude approvals)")
+                            .font(.system(size: 11))
+                        if state.remoteControlSaving {
+                            ProgressView()
+                                .controlSize(.mini)
+                        }
+                    }
+                    Text("Approve Claude tool calls from your iPhone or Mac · default off")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            // iter5 P1: while a PATCH is in flight, lock the toggle so a
+            // double-tap (or any other re-entrant call) can't race a stale
+            // request past the latest intent.
+            .disabled(state.remoteControlSaving)
+            .alert("Enable Remote Control?", isPresented: $showRemoteControlConsent) {
+                Button("Cancel", role: .cancel) {}
+                Button("Enable") {
+                    // Single atomic entry point — handles optimistic set,
+                    // PATCH, and revert-on-failure. UI never desyncs from
+                    // the server-side gate.
+                    state.setRemoteControlEnabled(true)
+                }
+            } message: {
+                Text(
+                    "When Remote Control is on, CLI Pulse can:\n" +
+                    "• upload a redacted summary of each Claude permission request (tool name, short summary, risk badge)\n" +
+                    "• upload a short tail of terminal output and the session status\n" +
+                    "• accept your remote Approve / Deny back into the local hook\n\n" +
+                    "What never leaves this Mac:\n" +
+                    "• provider API keys, cookies, OAuth tokens\n" +
+                    "• full transcripts or session log files\n" +
+                    "• full project paths (only basename + HMAC)\n\n" +
+                    "Approving a request executes the tool call on this Mac. Only approve requests you understand."
+                )
             }
 
             Divider()

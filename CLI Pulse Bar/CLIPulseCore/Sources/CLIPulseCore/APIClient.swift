@@ -288,6 +288,7 @@ public actor APIClient {
         let alert_cooldown_minutes: Int?
         let data_retention_days: Int?
         let track_git_activity: Bool?
+        let remote_control_enabled: Bool?
     }
 
     private struct UserTierPayload: Decodable {
@@ -710,7 +711,8 @@ public actor APIClient {
             repeated_failure_threshold: settings?.repeated_failure_threshold ?? 3,
             alert_cooldown_minutes: settings?.alert_cooldown_minutes ?? 30,
             data_retention_days: settings?.data_retention_days ?? 7,
-            track_git_activity: settings?.track_git_activity ?? false
+            track_git_activity: settings?.track_git_activity ?? false,
+            remote_control_enabled: settings?.remote_control_enabled ?? false
         )
     }
 
@@ -734,6 +736,7 @@ public actor APIClient {
         public var webhook_enabled: Bool?
         public var webhook_event_filter: WebhookEventFilter?
         public var track_git_activity: Bool?
+        public var remote_control_enabled: Bool?
 
         public init(
             notifications_enabled: Bool? = nil,
@@ -746,7 +749,8 @@ public actor APIClient {
             webhook_url: String? = nil,
             webhook_enabled: Bool? = nil,
             webhook_event_filter: WebhookEventFilter? = nil,
-            track_git_activity: Bool? = nil
+            track_git_activity: Bool? = nil,
+            remote_control_enabled: Bool? = nil
         ) {
             self.notifications_enabled = notifications_enabled
             self.push_policy = push_policy
@@ -759,6 +763,7 @@ public actor APIClient {
             self.webhook_enabled = webhook_enabled
             self.webhook_event_filter = webhook_event_filter
             self.track_git_activity = track_git_activity
+            self.remote_control_enabled = remote_control_enabled
         }
     }
 
@@ -909,6 +914,60 @@ public actor APIClient {
     public func teamUsageSummary(teamId: String) async throws -> TeamUsageSummaryDTO {
         struct Params: Encodable { let p_team_id: String }
         return try await rpc("team_usage_summary", params: Params(p_team_id: teamId))
+    }
+
+    // MARK: - Remote Agent Sessions / Approvals (v0.26)
+
+    /// Fetch every still-pending remote permission request across the user's devices.
+    /// Returns an empty array when none are pending.
+    public func remoteListPendingApprovals() async throws -> [RemotePermissionRequest] {
+        let result: [RemotePermissionRequest] = try await rpc("remote_app_list_pending_approvals")
+        return result
+    }
+
+    /// Approve or deny a remote permission request. `scope` is silently
+    /// downgraded to `.once` server-side for Codex (Phase 1 limitation).
+    public func remoteDecidePermission(
+        requestId: String,
+        decision: RemotePermissionDecisionAction,
+        scope: RemotePermissionScope = .once,
+        decidedByDeviceId: String? = nil
+    ) async throws {
+        struct Params: Encodable {
+            let p_request_id: String
+            let p_decision: String
+            let p_scope: String
+            let p_decided_by_device_id: String?
+        }
+        let _: [String: String] = try await rpc(
+            "remote_app_decide_permission",
+            params: Params(
+                p_request_id: requestId,
+                p_decision: decision.rawValue,
+                p_scope: scope.rawValue,
+                p_decided_by_device_id: decidedByDeviceId
+            )
+        )
+    }
+
+    /// Send a control command (prompt / stop / interrupt) to a managed session.
+    /// Returns the new command id.
+    public func remoteSendCommand(
+        sessionId: String,
+        kind: RemoteCommandKind,
+        payload: String = ""
+    ) async throws -> String {
+        struct Params: Encodable {
+            let p_session_id: String
+            let p_kind: String
+            let p_payload: String
+        }
+        struct Result: Decodable { let command_id: String }
+        let result: Result = try await rpc(
+            "remote_app_send_command",
+            params: Params(p_session_id: sessionId, p_kind: kind.rawValue, p_payload: payload)
+        )
+        return result.command_id
     }
 
     // MARK: - OAuth (Google / GitHub via Supabase)

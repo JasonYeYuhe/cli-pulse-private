@@ -69,6 +69,20 @@ HELPER_RPCS = {
     "helper_sync",
     "ingest_commits",
     "get_track_git_activity",
+    # Remote Agent Sessions / Remote Approvals (v0.26).
+    # Helper Python calls these via a generic `rpc_caller(...)` indirection in
+    # remote_hook.py / remote_agent.py rather than the literal
+    # `supabase_rpc("name", { ... })` shape this checker grep'd for, so they
+    # show up as orphans without an explicit allowlist. Tag them helper-facing
+    # so a reviewer can sanity-check the list when one is added or removed.
+    "remote_helper_register_session",
+    "remote_helper_post_event",
+    "remote_helper_pull_commands",
+    "remote_helper_complete_command",
+    "remote_helper_create_permission_request",
+    "remote_helper_poll_permission_decision",
+    "_remote_authenticate_helper_gated",
+    "_remote_control_enabled_for_caller",
 }
 
 # Internal/admin RPCs — never called from the client side. We skip the
@@ -77,8 +91,10 @@ INTERNAL_RPCS = {
     "cleanup_expired_data",
     "cleanup_retention_data",
     "cleanup_old_data",
+    "cleanup_remote_retention_data",
     "_cleanup_expired_data_internal",
     "_cleanup_retention_data_internal",
+    "_cleanup_remote_retention_internal",
     "_recompute_yield_scores_for_user_internal",
     "_recompute_yield_scores_for_days_internal",
     "recompute_yield_scores_for_user",
