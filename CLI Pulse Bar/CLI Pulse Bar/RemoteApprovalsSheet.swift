@@ -35,7 +35,19 @@ struct RemoteApprovalsSheet: View {
         }
         .frame(width: 380, height: 460)
         .task {
-            await state.refreshRemoteApprovals()
+            // Active polling while the sheet is on screen. SwiftUI cancels
+            // the .task on dismiss, so we don't track lifecycle ourselves.
+            // When Remote Control is off, refreshRemoteApprovals' own guard
+            // turns this into a slow heartbeat (no network request issued),
+            // so a remote toggle-off is honored on the next slow tick.
+            while !Task.isCancelled {
+                await state.refreshRemoteApprovals()
+                if !state.remoteControlEnabled {
+                    try? await Task.sleep(nanoseconds: 10_000_000_000)
+                } else {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                }
+            }
         }
     }
 
@@ -151,6 +163,14 @@ struct RemoteApprovalsSheet: View {
                 }
                 .padding(12)
             }
+            Divider()
+            // Approve-once vs Always-Allow disclaimer. Same wording as iOS.
+            Text("Approve here is per-request only — it does NOT add a Claude Code Always-Allow rule. The next time Claude needs the same tool, you'll see another request. Use Claude Code's own Always Allow for persistent rules.")
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

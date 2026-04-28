@@ -363,6 +363,7 @@ struct iOSSettingsTab: View {
                             "• provider API keys, cookies, OAuth tokens\n" +
                             "• full transcripts or session log files\n" +
                             "• full project paths (only basename + HMAC)\n\n" +
+                            "Approve here is per-request only — it does NOT add a Claude Code Always-Allow rule. Claude will ask again next time it needs the same tool. To set persistent rules, use Claude Code's own \"Always Allow\" UI on the Mac.\n\n" +
                             "Approving a request executes the tool call on your Mac. Only approve requests you understand."
                         )
                     }

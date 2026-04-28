@@ -476,6 +476,35 @@ def main() -> None:
                                     help="allow high-risk requests to round-trip (default: fail closed)")
     remote_hook_parser.set_defaults(func=_remote_approval_hook_cmd)
 
+    # Diagnostic / setup helpers for the Remote Approvals feature.
+    # All three are READ-ONLY — they never mutate ~/.claude/settings.json
+    # or any other user file. Designed to surface "why does Always-Allow
+    # keep re-prompting" without us silently rewriting the user's config.
+    remote_status_parser = subparsers.add_parser(
+        "remote-approvals-status",
+        help="print whether remote-approvals is wired up on this Mac",
+    )
+    remote_status_parser.set_defaults(func=_remote_approvals_status_cmd)
+
+    remote_print_parser = subparsers.add_parser(
+        "remote-approvals-print-claude-hook-config",
+        help="print the JSON snippet to paste into ~/.claude/settings.json",
+    )
+    remote_print_parser.add_argument(
+        "--python", default=None,
+        help="python3 interpreter to embed in the hook command (defaults to 'python3')",
+    )
+    remote_print_parser.set_defaults(func=_remote_approvals_print_hook_cmd)
+
+    remote_diagnose_parser = subparsers.add_parser(
+        "remote-approvals-diagnose-claude-permissions",
+        help="diagnose Claude Code permission rules + hook wiring (read-only)",
+    )
+    remote_diagnose_parser.add_argument(
+        "--json", action="store_true", help="emit a JSON report instead of human text",
+    )
+    remote_diagnose_parser.set_defaults(func=_remote_approvals_diagnose_cmd)
+
     args = parser.parse_args()
     args.func(args)
 
@@ -490,6 +519,91 @@ def _remote_approval_hook_cmd(args: argparse.Namespace) -> None:
         fail_closed_on_high_risk=not args.allow_high_risk,
     )
     run_hook(args.provider, config)
+
+
+def _remote_approvals_status_cmd(_: argparse.Namespace) -> None:
+    """Quick at-a-glance: is the helper paired, is Remote Control on,
+    is the Claude hook wired? Read-only.
+    """
+    import permissions_diagnose
+
+    print("CLI Pulse — Remote Approvals status")
+    # Helper pairing
+    try:
+        config = load_config()
+        print(f"  helper paired:           yes  (device_id={config.device_id})")
+    except ConfigError as exc:
+        print(f"  helper paired:           NO  ({exc})")
+        config = None
+
+    # Claude hook presence
+    report = permissions_diagnose.diagnose()
+    print(f"  Claude hook configured:  "
+          f"{'yes' if report.has_permission_request_hook else 'NO'}")
+    if report.has_pre_tool_use_hook and not report.has_permission_request_hook:
+        print("                            (PreToolUse hook found, but CLI Pulse "
+              "uses PermissionRequest)")
+
+    # Server-side gate: this needs network. Skip if not paired.
+    if config is None:
+        print("  remote_control_enabled:  unknown (helper not paired)")
+        return
+    try:
+        result = supabase_rpc("get_track_git_activity", {
+            "p_device_id": config.device_id,
+            "p_helper_secret": config.helper_secret,
+        })
+        # We don't have a dedicated get_remote_control_enabled RPC; the
+        # gated auth helper simply returns null when off, which is what
+        # we use here. Fall back to "unknown" rather than guess.
+        _ = result  # reserved for future direct-flag RPC
+        print("  remote_control_enabled:  unknown (no dedicated RPC; check the "
+              "iOS / Mac Settings → Privacy toggle)")
+    except SyncError as exc:
+        print(f"  remote_control_enabled:  unknown (network error: {exc})")
+
+
+def _remote_approvals_print_hook_cmd(args: argparse.Namespace) -> None:
+    """Print a copy-pasteable JSON snippet for ~/.claude/settings.json.
+
+    Uses absolute paths so the user can paste verbatim. Does NOT write
+    anywhere — the user pastes the snippet themselves so they can review
+    + merge with any existing hook config.
+    """
+    import permissions_diagnose
+
+    helper_path = Path(__file__).resolve()
+    snippet = permissions_diagnose.recommended_hook_config_snippet(
+        helper_path=helper_path,
+        python_path=args.python,
+    )
+    print(snippet)
+    print()
+    print("# Paste the `hooks.PermissionRequest` entry above into")
+    print("# ~/.claude/settings.json. If that file already has a `hooks`")
+    print("# section, MERGE rather than replace — keep your existing hooks.")
+    print("# Restart Claude Code after saving so it picks up the change.")
+
+
+def _remote_approvals_diagnose_cmd(args: argparse.Namespace) -> None:
+    """Read-only Claude Code permission diagnosis.
+
+    Surfaces:
+      - settings files present + parse status across all 4 scopes
+      - merged allow/ask/deny rule counts
+      - findings (deny overriding allow, allow-too-narrow, hook missing,
+        allow-only-in-local-scope, parse errors)
+
+    Never mutates user files. Output to stdout; errors / parse warnings
+    are visible inline via finding entries.
+    """
+    import permissions_diagnose
+
+    report = permissions_diagnose.diagnose()
+    if args.json:
+        print(json.dumps(report.to_json(), indent=2))
+    else:
+        print(permissions_diagnose.render_text_report(report))
 
 
 if __name__ == "__main__":

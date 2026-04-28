@@ -41,9 +41,23 @@ struct iOSRemoteApprovalsView: View {
             }
         }
         .task {
-            // Always run a fresh fetch when the screen opens; the no-op path
-            // inside refreshRemoteApprovals handles the gate-disabled case.
-            await state.refreshRemoteApprovals()
+            // Active polling while this screen is on screen, gated to ON.
+            // SwiftUI cancels the .task when the view disappears, so the
+            // loop ends automatically without us tracking lifecycle. When
+            // Remote Control is off, refreshRemoteApprovals's own guard
+            // makes the loop a no-op and we still pause between iterations
+            // — so toggling off is honored on the next 3s tick.
+            while !Task.isCancelled {
+                await state.refreshRemoteApprovals()
+                if !state.remoteControlEnabled {
+                    // Idle the loop entirely when the gate is off — wait a
+                    // longer interval before re-checking. No request is
+                    // issued on this slow path because of the inner guard.
+                    try? await Task.sleep(nanoseconds: 10_000_000_000)
+                } else {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                }
+            }
         }
         .refreshable {
             await state.refreshRemoteApprovals()
@@ -112,7 +126,7 @@ struct iOSRemoteApprovalsView: View {
                     approvalRow(request)
                 }
             } footer: {
-                Text("Approving executes the tool call on your Mac. Always-Allow is not available remotely — only the local CLI can grant persistent permission.")
+                Text("Approve is per-request only — it does NOT create a Claude Code Always-Allow rule. The next time Claude needs the same tool you'll see another request here. To set persistent rules, use Claude Code's own \"Always Allow\" UI on the Mac. Approving executes the tool call on your Mac.")
                     .font(.footnote)
                     .foregroundStyle(.tertiary)
             }
