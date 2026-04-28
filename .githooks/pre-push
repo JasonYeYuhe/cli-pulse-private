@@ -29,15 +29,23 @@ set -u
 remote_name="${1:-}"
 remote_url="${2:-}"
 
-# Identify the public repo. Match by name OR by URL substring.
+# Identify the public repo. Match by remote name OR by exact URL shape.
+# Patterns are anchored at the end with `.git`, `.git/...`, or end-of-URL,
+# so `JasonYeYuhe/cli-pulse-private` (the PRIVATE source repo) cannot
+# match the `cli-pulse` public-repo patterns.
 is_public_remote() {
     case "$remote_name" in
         public) return 0 ;;
     esac
     case "$remote_url" in
-        *JasonYeYuhe/cli-pulse.git*)        return 0 ;;
-        *github.com/JasonYeYuhe/cli-pulse*) return 0 ;;
-        *github.com:JasonYeYuhe/cli-pulse*) return 0 ;;
+        # HTTPS, with or without `.git`, with or without trailing path.
+        *JasonYeYuhe/cli-pulse.git)        return 0 ;;
+        *JasonYeYuhe/cli-pulse.git/*)      return 0 ;;
+        *JasonYeYuhe/cli-pulse)            return 0 ;;
+        *JasonYeYuhe/cli-pulse/*)          return 0 ;;
+        # SSH (`git@github.com:JasonYeYuhe/cli-pulse[.git]`).
+        *:JasonYeYuhe/cli-pulse.git)       return 0 ;;
+        *:JasonYeYuhe/cli-pulse)           return 0 ;;
     esac
     return 1
 }
