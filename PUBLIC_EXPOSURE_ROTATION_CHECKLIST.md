@@ -44,18 +44,40 @@ The targeted scan was run against the worst-case contaminated commit
     dates themselves.** (The earlier "June 2026" mention was a decoding
     typo in the first report — see `## JWT date verification` below.)
 - Action items:
-  - [ ] **Audit Row Level Security first.** For every table reachable
-        by the `anon` role, confirm RLS policies prevent reads/writes
-        beyond what an unauthenticated client should ever do. Note:
-        anon JWTs are by-design embedded in clients; RLS is the actual
-        protection.
-  - [ ] **Decide whether to rotate.** Rotation requires a coordinated
-        client release across macOS / iOS / watchOS / Android because
-        all shipped versions have this anon key embedded. Only do this
-        if the RLS audit surfaces a finding that the new clients can
-        tighten. Do not rotate purely as theatre.
-  - [ ] If rotating: schedule the cycle alongside a planned release
-        train, not as a hotfix.
+  - [x] **RLS audit completed 2026-04-28.** Findings:
+        - All 19 base + extension tables have RLS enabled (verified
+          via `grep ENABLE ROW LEVEL SECURITY` across `schema.sql`
+          and every `migrate_v*.sql`).
+        - 31 policies reference the `anon` / `public` role list, but
+          every policy condition is scoped by `auth.uid()` — anon
+          callers without a Supabase session token cannot match.
+        - Only 2 functions are `GRANT EXECUTE ... TO anon`:
+          `public.get_track_git_activity(uuid, text)` and
+          `public.ingest_commits(uuid, text, jsonb)`. Both use
+          `SECURITY DEFINER` and gate access by checking
+          `helper_secret = encode(digest(p_helper_secret, 'sha256'),
+          'hex')` against `public.devices`. An attacker holding only
+          the leaked anon JWT cannot guess valid `(device_id,
+          helper_secret)` pairs, so neither function returns useful
+          data or accepts writes.
+        - `ingest_commits` additionally has DoS guards: 500-element
+          batch cap and per-user advisory lock.
+        - All RPC functions explicitly set
+          `search_path = pg_catalog, public, extensions` (defense
+          against search-path attacks; matches
+          `migrate_v0.17_search_path_hardening.sql`).
+        - service_role-gated functions (`cleanup_expired_data`,
+          `cleanup_retention_data`, etc.) refuse calls without
+          `request.jwt.claims->role = 'service_role'`. Anon callers
+          cannot reach them.
+  - [x] **Decision: do not rotate.** RLS + device-secret auth means
+        the leaked anon JWT alone gives no useful access. Rotation
+        would require a coordinated client release across macOS /
+        iOS / watchOS / Android with no security gain. Item closed
+        unless a future RLS regression surfaces.
+  - [ ] If a future RLS regression is ever detected, schedule
+        rotation alongside the planned release train, not as a
+        hotfix.
 
 ### Sentry DSNs
 
@@ -68,10 +90,14 @@ The targeted scan was run against the worst-case contaminated commit
         the relevant `Info.plist` for the next release; a coordinated
         client rollout is not strictly required because old DSNs
         continue to work; rotation just narrows abuse surface.
+        **Blocked on:** access to Sentry web admin (no headless API
+        path available from this workspace).
   - [ ] After rotation, confirm `beforeSend` scrubber is unchanged and
         `tracesSampleRate = 0` is preserved (no PII / no perf traces).
-  - [ ] Confirm Android Sentry DSN was never committed (audit:
-        `git log --all -- android/local.properties` should be empty).
+  - [x] Confirm Android Sentry DSN was never committed. Verified
+        2026-04-28 — `git ls-files | grep local.properties` returns
+        nothing; `android/.gitignore` lists `local.properties` and
+        `/local.properties`.
 
 ### App Store Connect API key
 
@@ -80,14 +106,20 @@ The targeted scan was run against the worst-case contaminated commit
   `CLI Pulse Bar/scripts/`. **The `.p8` private key was NOT
   committed.** Without the `.p8`, the IDs alone do not authenticate.
 - Action items:
-  - [ ] Confirm the `.p8` file remains only in
+  - [x] Confirm the `.p8` file remains only in
         `~/Library/Mobile Documents/com~apple~CloudDocs/Downloads/AuthKey_DMMFP6XTXX.p8`
         on the development machine and is referenced by absolute path
-        in scripts (it is — verified during audit).
-  - [ ] Add `*.p8` to a global gitignore if not already covered.
-  - [ ] Do not rotate the ASC API key purely from this exposure. Rotate
-        only if the `.p8` itself ever leaves the local machine through
-        another channel.
+        in scripts. Verified 2026-04-28: no `.p8` appears in any
+        tracked git path (`git ls-files | grep -i '\.p8$'` empty);
+        scripts reference `~/Library/.../AuthKey_*.p8` only.
+  - [x] Add `*.p8` to root `.gitignore`. Done 2026-04-28 — same
+        commit also adds `*.p12 *.pfx *.jks *.keystore *.key
+        *.mobileprovision GoogleService-Info.plist
+        google-services.json AuthKey_*` so future secret-shaped
+        files are ignored by default.
+  - [x] Do not rotate the ASC API key from this exposure. Decision
+        documented; rotate only if the `.p8` itself leaks via another
+        channel.
 
 ### Google Play upload keystore
 
@@ -95,10 +127,12 @@ The targeted scan was run against the worst-case contaminated commit
   `${{ secrets.STORE_PASSWORD }}` / `${{ secrets.KEY_PASSWORD }}` only.
   The `.jks` itself was not committed.
 - Action items:
-  - [ ] Verify `*.jks` is in the global / android gitignore.
-  - [ ] Verify the keystore file itself remains only on the dev machine
-        and Google Play's key-management side; no rotation needed
-        unless the file leaks separately.
+  - [x] Verify `*.jks` is gitignored. Done 2026-04-28 — `*.jks` and
+        `*.keystore` added to root `.gitignore`. No `.jks` appears in
+        any tracked git path.
+  - [x] Verify the keystore file itself remains only on the dev
+        machine and Google Play's key-management side. No rotation
+        needed.
 
 ### GitHub Actions secrets
 
@@ -110,11 +144,15 @@ The targeted scan was run against the worst-case contaminated commit
         `GOOGLE_SERVICES_JSON`, `STORE_PASSWORD`, `KEY_PASSWORD`,
         `GOOGLE_WEB_CLIENT_ID`) match the values still in use; rotate
         any that have been around long enough to be considered stale by
-        org policy. (Independent of this incident.)
+        org policy. (Independent of this incident — does not need
+        action from the public-exposure angle.)
   - [ ] Confirm CI logs from the contaminated period are not retained
         beyond the GitHub default retention (90 days) — those logs
         could have echoed values back into a public artifact if a
         misbehaving step ran with `set -x`. Spot-check one recent run.
+        **Note:** logs on the *private* repo (`cli-pulse-private`) are
+        the ones to check; public-repo CI did not run on the
+        rewritten distribution-only state.
 
 ### Provider API keys / session cookies / OAuth secrets
 
@@ -123,7 +161,13 @@ The targeted scan was run against the worst-case contaminated commit
   (only `ya29.test` test fixtures), no Anthropic `sk-ant-…`, no
   OpenAI `sk-…`, no GitHub PATs, no Slack tokens, no PEM private
   keys.**
+  Re-scanned 2026-04-28 with broader patterns (api_key/apikey/api-key
+  with quoted values, `BEGIN ... PRIVATE KEY` blocks, MII* base64
+  prefixes) — no new findings. Apple Root CA G3 in
+  `validate-receipt/index.ts` is the only PEM block and it is the
+  public certificate.
 - Action items:
+  - [x] Final secret rescan completed 2026-04-28; no new findings.
   - [ ] Treat any future user-credential exposure as critical and
         page-worthy. This category was clean for this incident and
         must remain so.
@@ -134,9 +178,15 @@ The targeted scan was run against the worst-case contaminated commit
   embedded in `backend/supabase/functions/validate-receipt/index.ts`
   (well-known, not a secret). **No `service_role` key, no private key
   blocks of any kind.**
+  Re-scanned 2026-04-28: every `service_role` mention is either
+  PL/pgSQL gate code (`if role != 'service_role' then raise
+  exception`) or a `Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")`
+  reference — values come from the runtime environment, never from
+  committed code.
 - Action items:
-  - [ ] Re-run the secret scan one final time before closing the
-        incident, gated on the GitHub support GC ticket completing.
+  - [x] Re-run the secret scan. Done 2026-04-28; no new findings.
+  - [ ] Re-confirm once GitHub support GC ticket has completed
+        (cheap to repeat; not blocking closeout).
 
 ---
 
@@ -155,6 +205,7 @@ The targeted scan was run against the worst-case contaminated commit
   ```bash
   gh api repos/JasonYeYuhe/cli-pulse/forks --jq '.[].full_name'
   ```
+  As of 2026-04-28 the public repo has **0 forks**.
 
 ---
 

@@ -24,6 +24,18 @@ DerivedData/
 .env
 .env.local
 
+# Signing / credential material (never commit anywhere in the tree)
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.key
+*.mobileprovision
+GoogleService-Info.plist
+google-services.json
+AuthKey_*
+
 # Claude Code
 .claude/
 .mcp.json
