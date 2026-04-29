@@ -254,6 +254,96 @@ final class ProviderLimitMigrationTests: XCTestCase {
 
     // MARK: - activeKindsForMigrationBanner contract
 
+    /// Defensive regression: if the migration's call graph ever changes
+    /// to invoke `migrateProviderLimitsIfNeeded` after `state.providers`
+    /// has been populated by `refreshAll` (today it only runs at cold
+    /// launch with `providers = []`), tier-disabled providers' stale
+    /// usage rows MUST NOT re-trigger the banner. The user spec says
+    /// the banner-redux scenario is unacceptable.
+    ///
+    /// Setup: simulate the post-prune state — 3 enabled configs (the
+    /// "kept" set), 23 disabled (tier-disabled), and a `providers` array
+    /// still carrying rows for 6 kinds (3 kept + 3 stale-disabled).
+    /// Calling migrate again must:
+    ///   - Compute `activeCount = 3` (the 3 stale-disabled rows are
+    ///     filtered out by `enabledKinds.contains` in the helper).
+    ///   - Short-circuit at the `activeCount > maxProviders` guard.
+    ///   - NOT touch `providerLimitMigrationCount` upward (banner stays 0
+    ///     after the user dismissed it).
+    func testStaleUsageRowsForDisabledProvidersDoNotReactivateBanner() throws {
+        let state = AppState()
+        guard state.subscriptionManager.maxProviders > 0 else {
+            throw XCTSkip("Paid tier — skipping")
+        }
+        let limit = state.subscriptionManager.maxProviders  // 3 on free
+        let activeKinds: [ProviderKind] = [.claude, .codex, .gemini, .ollama, .openRouter, .cursor]
+
+        // First migration: prunes from 6 active down to 3.
+        state.providers = activeKinds.map { makeUsage($0.rawValue) }
+        state.migrateProviderLimitsIfNeeded()
+        XCTAssertEqual(state.providerLimitMigrationCount, activeKinds.count - limit,
+                       "test setup invariant: first migration should fire and report 3 disabled")
+
+        // User dismisses the banner.
+        state.dismissProviderLimitMigrationBanner()
+        XCTAssertEqual(state.providerLimitMigrationCount, 0)
+
+        // Capture the post-prune kept set to assert second-call no-op.
+        let keptAfterFirst = Set(state.providerConfigs.filter(\.isEnabled).map(\.kind))
+        XCTAssertEqual(keptAfterFirst.count, limit)
+
+        // Critical: leave `state.providers` UNCHANGED. The 6 server rows
+        // are still present, including 3 rows for kinds the migration
+        // just disabled. This simulates a hypothetical second-call
+        // scenario where the call graph evolves to re-invoke migrate
+        // after `refreshAll` has populated providers.
+        XCTAssertEqual(state.providers.count, activeKinds.count,
+                       "test setup invariant: providers array must NOT have been pruned")
+
+        // Second migration call.
+        state.migrateProviderLimitsIfNeeded()
+
+        // The defensive `enabledKinds` filter inside
+        // `activeKindsForMigrationBanner` must drop the 3 stale rows for
+        // disabled kinds, leaving activeCount = 3 ≤ limit, so the gate
+        // short-circuits and the banner stays at 0.
+        XCTAssertEqual(state.providerLimitMigrationCount, 0,
+                       "stale usage rows for tier-disabled providers must NOT re-fire banner")
+        XCTAssertEqual(Set(state.providerConfigs.filter(\.isEnabled).map(\.kind)), keptAfterFirst,
+                       "second migration must be a no-op on the toggle set")
+    }
+
+    /// Pin the static helper that powers the gate — same criteria as
+    /// `DataRefreshManager.activeProviderCount` (usage OR credentials),
+    /// PLUS the defensive `isEnabled` requirement on the usage branch.
+    /// See helper docstring for the rationale on the asymmetry.
+    func testActiveKindsHelperRespectsIsEnabledOnUsageBranch() {
+        // Setup: ollama has a fat usage row but its config is disabled
+        // (simulating a tier-disabled provider with stale server data).
+        let configs: [ProviderConfig] = [
+            ProviderConfig(kind: .claude, isEnabled: true),                    // no creds, no usage
+            ProviderConfig(kind: .codex, isEnabled: true, apiKey: "k"),         // creds → active
+            ProviderConfig(kind: .gemini, isEnabled: false, apiKey: "k"),       // disabled → ignored
+            ProviderConfig(kind: .ollama, isEnabled: false),                    // disabled → ignored even with usage row
+        ]
+        let usage = [
+            ProviderUsage(
+                provider: ProviderKind.ollama.rawValue,
+                today_usage: 9999, week_usage: 9999,
+                estimated_cost_today: 0, estimated_cost_week: 0,
+                cost_status_today: "", cost_status_week: "",
+                quota: nil, remaining: nil, tiers: [],
+                status_text: "", trend: [], recent_sessions: [], recent_errors: [],
+                metadata: nil
+            ),
+        ]
+        let active = AppState.activeKindsForMigrationBanner(
+            providers: usage, providerConfigs: configs
+        )
+        XCTAssertEqual(active, Set([.codex]),
+                       "tier-disabled ollama's stale usage row must NOT count as active; only credentialed+enabled codex remains")
+    }
+
     /// Pin the static helper that powers the gate — same criteria as
     /// `DataRefreshManager.activeProviderCount` (usage OR credentials).
     func testActiveKindsHelperCountsUsageAndCredentials() {

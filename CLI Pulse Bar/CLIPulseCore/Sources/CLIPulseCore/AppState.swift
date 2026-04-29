@@ -659,14 +659,48 @@ public final class AppState: ObservableObject {
     }
 
     /// Set of provider kinds that count as "active" for the migration
-    /// banner — must match `DataRefreshManager.activeProviderCount`'s
-    /// criteria (server-side usage in current period OR enabled config
-    /// with credentials). Pulled out as a static helper so tests can pin
-    /// the contract without instantiating an AppState.
+    /// banner — server-side usage in current period OR enabled config
+    /// with credentials. Both branches additionally require the
+    /// corresponding `ProviderConfig` to be `isEnabled = true`.
+    ///
+    /// Why the `isEnabled` requirement on the usage branch (asymmetric
+    /// vs `DataRefreshManager.activeProviderCount`):
+    ///
+    /// In production today, this helper is only invoked from
+    /// `migrateProviderLimitsIfNeeded`, which itself only runs once per
+    /// cold launch in `AuthManager.restoreSession()` — at which point
+    /// `state.providers` is still `[]` because `refreshAll()` hasn't
+    /// fired yet. So the stale-usage-row hazard is moot in the current
+    /// call graph.
+    ///
+    /// But this helper is the migration's *gating rule*. If a future
+    /// engineer adds a second call site (e.g. a "reset to plan defaults"
+    /// menu item or a tier-change observer that re-fires migrate during
+    /// a live session), the helper would suddenly see a populated
+    /// `providers` array carrying server rows for kinds the migration
+    /// previously tier-disabled. Counting those rows as "active" would
+    /// re-trip the gate (`activeCount > maxProviders`), the prune loop
+    /// would no-op (only 3 toggles enabled, all in keptKinds), and the
+    /// banner count would resolve to 0 — so the user-facing surface is
+    /// safe even today. The risk is rather that some future banner-
+    /// adjacent logic (e.g. "show 'upgrade to keep all your providers'
+    /// nudge while activeCount > maxProviders") could read the same
+    /// gate and surface a misleading message.
+    ///
+    /// Requiring `isEnabled` on the usage branch resolves the asymmetry
+    /// at the source: a tier-disabled provider's stale usage rows do
+    /// NOT count as active. Pinned by `testStaleUsageRowsForDisabled
+    /// ProvidersDoNotReactivateBanner` so this contract can't silently
+    /// drift back.
     nonisolated static func activeKindsForMigrationBanner(
         providers: [ProviderUsage],
         providerConfigs: [ProviderConfig]
     ) -> Set<ProviderKind> {
+        // Index enabled configs by kind so the usage-row pass can require
+        // both signal AND user-enabled status in O(1) per row.
+        let enabledKinds: Set<ProviderKind> = Set(
+            providerConfigs.filter(\.isEnabled).map(\.kind)
+        )
         var active = Set<ProviderKind>()
         for usage in providers {
             let hasUsage = usage.today_usage > 0
@@ -674,9 +708,13 @@ public final class AppState: ObservableObject {
                 || usage.estimated_cost_today > 0
                 || usage.estimated_cost_week > 0
             guard hasUsage else { continue }
-            if let kind = ProviderKind(rawValue: usage.provider) {
-                active.insert(kind)
-            }
+            guard let kind = ProviderKind(rawValue: usage.provider) else { continue }
+            // Defensive: tier-disabled providers' stale server rows must
+            // NOT count toward active even if the row still carries
+            // non-zero usage. See header comment for the call-graph
+            // analysis behind this requirement.
+            guard enabledKinds.contains(kind) else { continue }
+            active.insert(kind)
         }
         for config in providerConfigs where config.isEnabled && config.hasCredentials {
             active.insert(config.kind)
