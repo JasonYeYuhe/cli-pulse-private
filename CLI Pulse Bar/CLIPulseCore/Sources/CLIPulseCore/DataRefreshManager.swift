@@ -1721,6 +1721,23 @@ extension AppState {
             return
         }
         Task {
+            // iter20 (2026-04-29): re-guard auth INSIDE the Task body. The
+            // outer `guard isAuthenticated` at line 1711 is checked
+            // synchronously when `syncPushToken` is invoked — typically from
+            // AppDelegate's `didRegisterForRemoteNotificationsWithDeviceToken`
+            // immediately after APNs delivers the device token. Between
+            // that synchronous check and when the Task body actually runs,
+            // a sign-out can complete (`signOut()` flips `isAuthenticated
+            // = false` and the API client's access token is cleared by
+            // `authManager.signOut`). Without this re-guard, the
+            // `registerAppPushToken` RPC would fire with no/stale JWT,
+            // server-side RLS would 401, the catch branch would set
+            // `lastError`, and the now-logged-out login screen would
+            // display "Failed to register for push notifications: ..."
+            // — exactly the iter8 user-reported symptom we already fixed
+            // for the launch path. This guard closes the symmetric
+            // race during sign-out.
+            guard isAuthenticated else { return }
             do {
                 try await api.registerAppPushToken(
                     token: token, platform: platform, bundleId: bundleId

@@ -100,4 +100,125 @@ final class SignedOutLandingTests: XCTestCase {
         XCTAssertFalse(state.isLocalMode,
                        "sign-out must drop the local-mode flag so MenuBarView routes back to notConnectedView (Sign-In form)")
     }
+
+    // MARK: - iter20 Remote Approvals + push-token state cleanup
+
+    /// iter20 F1: same-session sign-out → sign-in (account switch with no
+    /// app relaunch) must not leak Remote Approvals UI state from the
+    /// previous user. Without this reset:
+    ///   - `remoteControlEnabled = true` would route the new user into
+    ///     `connectedView` immediately on sign-in instead of the proper
+    ///     post-sign-in shell;
+    ///   - `remotePendingApprovals` would render the previous user's
+    ///     approval rows as actionable until the next 120s refresh;
+    ///   - `remoteControlSaving = true` (mid-PATCH at sign-out) would
+    ///     leave the toggle disabled forever for the new session.
+    ///
+    /// Documenting the full set of remote-approval fields here so a
+    /// future refactor that drops one of them is caught by this test.
+    func testApplySignedOutStateClearsRemoteApprovalsState() {
+        let state = AppState()
+        state.remoteControlEnabled = true
+        state.remoteControlSaving = true
+        state.remotePendingApprovals = [
+            RemotePermissionRequest(
+                id: "req-1", session_id: nil, device_id: "dev-1",
+                device_name: "Test Mac",
+                provider: "claude", tool_name: "Bash",
+                summary: "$ ls -la", risk: "medium", status: "pending",
+                created_at: "2026-04-29T00:00:00Z",
+                expires_at: "2026-04-29T00:05:00Z"
+            )
+        ]
+        state.remoteApprovalsLastRefresh = Date()
+        state.remoteApprovalsError = "stale error from previous session"
+
+        state.applySignedOutState()
+
+        XCTAssertFalse(state.remoteControlEnabled,
+                       "remoteControlEnabled must clear so MenuBarView doesn't route into connectedView under the previous user's gate")
+        XCTAssertFalse(state.remoteControlSaving,
+                       "remoteControlSaving must clear so a mid-PATCH sign-out doesn't lock the new session's toggle")
+        XCTAssertTrue(state.remotePendingApprovals.isEmpty,
+                      "remotePendingApprovals must clear so the new session never sees previous-user approval rows")
+        XCTAssertNil(state.remoteApprovalsLastRefresh,
+                     "lastRefresh must clear so the polling loop's freshness gate starts cold for the new session")
+        XCTAssertNil(state.remoteApprovalsError,
+                     "stale error must clear so the new login screen doesn't display a previous-session error")
+    }
+
+    /// iter20 F1: push-token state must reset on sign-out. The concrete
+    /// failure window if `registeredPushToken` survives sign-out:
+    ///   1. User A signs in, APNs delivers token, `syncPushToken`
+    ///      writes `registeredPushToken = "abc..."` and registers
+    ///      server-side.
+    ///   2. User A taps Sign Out. iter11's `unregisterPushTokenOnLogout`
+    ///      DELETEs the server `app_push_tokens` row. But pre-iter20,
+    ///      `applySignedOutState` left `registeredPushToken = "abc..."`
+    ///      on AppState.
+    ///   3. User B signs in same-session (no app relaunch). APNs does
+    ///      NOT redeliver mid-session — the device token is only
+    ///      published once via `didRegister` at app launch. So the only
+    ///      replay surface is `flushPendingPushTokenIfAvailable`.
+    ///   4. `flushPendingPushTokenIfAvailable` calls `syncPushToken`
+    ///      with the cached pending tuple (or no-ops if already
+    ///      consumed). Either way, `syncPushToken`'s short-circuit at
+    ///      `if registeredPushToken == token` fires — no server-side
+    ///      registration happens for User B.
+    ///   5. User B receives no push notifications until app relaunch.
+    ///
+    /// Clearing `registeredPushToken` on sign-out forces a fresh
+    /// server-side registration for the next sign-in.
+    func testApplySignedOutStateClearsPushTokenState() {
+        let state = AppState()
+        let realisticToken = String(repeating: "a", count: 64)
+        state.registeredPushToken = realisticToken
+        state.pendingPushTokenRegistration = PendingPushTokenRegistration(
+            token: realisticToken,
+            platform: "ios",
+            bundleId: "yyh.CLI-Pulse"
+        )
+
+        state.applySignedOutState()
+
+        XCTAssertNil(state.registeredPushToken,
+                     "registeredPushToken must clear so the next sign-in's syncPushToken doesn't short-circuit on a stale acknowledgment")
+        XCTAssertNil(state.pendingPushTokenRegistration,
+                     "pendingPushTokenRegistration must clear so the previous user's cached tuple doesn't replay against the new user's JWT")
+    }
+
+    /// iter20 F1: defense-in-depth combined snapshot — every field
+    /// touched by the iter20 reset clears in a single applySignedOutState
+    /// call. If a future refactor splits the reset into branches that
+    /// might miss one field, this test catches the regression.
+    func testApplySignedOutStateClearsEntireRemotePushSurface() {
+        let state = AppState()
+        state.remoteControlEnabled = true
+        state.remoteControlSaving = true
+        state.remotePendingApprovals = [
+            RemotePermissionRequest(
+                id: "x", session_id: nil, device_id: "y", device_name: nil,
+                provider: "claude", tool_name: "Bash",
+                summary: "x", risk: "low", status: "pending",
+                created_at: "2026-04-29T00:00:00Z",
+                expires_at: "2026-04-29T00:05:00Z"
+            )
+        ]
+        state.remoteApprovalsLastRefresh = Date()
+        state.remoteApprovalsError = "x"
+        state.registeredPushToken = "x"
+        state.pendingPushTokenRegistration = PendingPushTokenRegistration(
+            token: "x", platform: "ios", bundleId: "y"
+        )
+
+        state.applySignedOutState()
+
+        XCTAssertFalse(state.remoteControlEnabled)
+        XCTAssertFalse(state.remoteControlSaving)
+        XCTAssertTrue(state.remotePendingApprovals.isEmpty)
+        XCTAssertNil(state.remoteApprovalsLastRefresh)
+        XCTAssertNil(state.remoteApprovalsError)
+        XCTAssertNil(state.registeredPushToken)
+        XCTAssertNil(state.pendingPushTokenRegistration)
+    }
 }

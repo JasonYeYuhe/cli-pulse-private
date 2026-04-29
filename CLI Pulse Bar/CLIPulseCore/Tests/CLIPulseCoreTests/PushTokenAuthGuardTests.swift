@@ -10,6 +10,36 @@ import XCTest
 /// APIClient — `syncPushToken` short-circuits before kicking off the
 /// network Task when the auth guard fails, so the assertions are
 /// observable purely on `pendingPushTokenRegistration` / `lastError`.
+///
+/// iter20 (2026-04-29) note: in addition to the outer
+/// `guard isAuthenticated` (covered by `testSyncPushTokenWhenUnauthenticated…`
+/// below), `syncPushToken`'s Task body now re-checks `isAuthenticated`
+/// *inside* the spawned Task. That defense-in-depth guard handles the
+/// sub-second race where APNs delivers the device token via
+/// `didRegisterForRemoteNotificationsWithDeviceToken`, the sync method
+/// passes its synchronous outer guard, queues a Task, and a sign-out
+/// completes before that Task actually runs. Without the inner guard
+/// the spawned Task's `api.registerAppPushToken` would fire under a
+/// stale/cleared JWT, the catch branch would write
+/// `lastError = "Failed to register for push notifications: ..."`, and
+/// the now-logged-out login screen would display that confusing message
+/// — exactly the iter8 user-reported symptom we already fixed for the
+/// outer launch path.
+///
+/// The inner guard is NOT unit-tested here because exercising it
+/// requires either (a) a mock APIClient that lets us hold the
+/// `await api.registerAppPushToken` mid-flight while we flip
+/// `isAuthenticated`, which would need an injection point that
+/// doesn't exist on the actor today, or (b) deterministic Task
+/// scheduling guarantees that Swift Concurrency doesn't expose.
+/// Instead the contract is verified by:
+///   1. Code-level invariant — the inner `guard isAuthenticated else
+///      { return }` is the very first statement inside the Task body,
+///      ahead of any await.
+///   2. The outer guard's tests below (which prove syncPushToken's
+///      synchronous half is correct).
+///   3. Real-device verification — the previously reported iter8
+///      symptom does not recur after sign-out + token redelivery.
 @MainActor
 final class PushTokenAuthGuardTests: XCTestCase {
 

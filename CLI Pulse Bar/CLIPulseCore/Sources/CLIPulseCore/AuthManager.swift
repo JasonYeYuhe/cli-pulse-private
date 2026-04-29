@@ -612,5 +612,45 @@ extension AppState {
         // plan" lock badges (Gemini 3.1 Pro review 2026-04-23).
         providerLimitMigrationCount = 0
         UserDefaults.standard.removeObject(forKey: "cli_pulse_providers_disabled_by_tier")
+
+        // iter20 (2026-04-29): clear Remote Approvals + push-token client
+        // state so same-session sign-out → sign-in (account switch without
+        // an app relaunch) doesn't leak stale UI or short-circuit the new
+        // user's push registration.
+        //
+        // Specifically:
+        //   - `remoteControlEnabled` / `remotePendingApprovals` /
+        //     `remoteApprovalsError` / `remoteApprovalsLastRefresh` /
+        //     `remoteControlSaving` are per-session UI state. Without this
+        //     reset, a brief window between sign-out and the first refresh
+        //     of the new session shows the previous user's pending
+        //     approvals as actionable, and the connectedView routing
+        //     gates on `remoteControlEnabled` so the new user lands in
+        //     the wrong shell until the next 120s refresh tick.
+        //   - `registeredPushToken` cached the previous user's
+        //     server-acknowledged token. iter11's
+        //     `unregisterPushTokenOnLogout` already DELETEs the row
+        //     server-side, but if `registeredPushToken` stayed populated,
+        //     the next user's `syncPushToken` short-circuits because
+        //     `registeredPushToken == token` already — the new user's
+        //     `app_push_tokens` row never gets created and they receive
+        //     no notifications until the app is killed and relaunched
+        //     (APNs only redelivers the device token via didRegister at
+        //     launch). Clearing here forces a fresh server registration
+        //     for the new user.
+        //   - `pendingPushTokenRegistration` is the pre-auth replay cache.
+        //     If APNs happens to redeliver the token mid-session, this
+        //     would be populated for the previous user; clearing avoids
+        //     the cached tuple replaying under the new user's JWT (the
+        //     replay is actually correct since the token is per-device,
+        //     but explicit reset matches the cleanup discipline of the
+        //     other auth/account fields above).
+        remoteControlEnabled = false
+        remoteControlSaving = false
+        remotePendingApprovals = []
+        remoteApprovalsLastRefresh = nil
+        remoteApprovalsError = nil
+        registeredPushToken = nil
+        pendingPushTokenRegistration = nil
     }
 }
