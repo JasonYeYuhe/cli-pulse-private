@@ -101,6 +101,9 @@ INTERNAL_RPCS = {
     "handle_new_user",
     "handle_new_profile",
     "handle_new_subscription",
+    # v0.32 push notification: trigger + cron worker, never client-called.
+    "remote_request_after_insert_push",
+    "process_app_push_jobs",
 }
 
 # Trigger / handler functions live in `schema.sql` and never need a client

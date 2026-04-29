@@ -950,6 +950,39 @@ public actor APIClient {
         )
     }
 
+    /// Register or transfer-ownership of an APNs push token to the
+    /// authenticated user. Idempotent: same user re-registering the same
+    /// token just refreshes `last_seen_at`. Different user registering
+    /// the same token (e.g. user B logs into the same iPhone after user A
+    /// logged out) atomically transfers the row to user B — by design,
+    /// this stops user A's pending approvals from pushing to that device.
+    /// See `app_push_tokens` schema (v0.32) for the unique(token) invariant.
+    public func registerAppPushToken(
+        token: String,
+        platform: String,
+        bundleId: String
+    ) async throws {
+        struct Params: Encodable {
+            let p_platform: String
+            let p_bundle_id: String
+            let p_token: String
+        }
+        let _: [String: String] = try await rpc(
+            "register_app_push_token",
+            params: Params(p_platform: platform, p_bundle_id: bundleId, p_token: token)
+        )
+    }
+
+    /// Delete an APNs push token. Server-side enforces "only the calling
+    /// user can delete their own row". Called by the app on logout.
+    public func unregisterAppPushToken(token: String) async throws {
+        struct Params: Encodable { let p_token: String }
+        let _: [String: String] = try await rpc(
+            "unregister_app_push_token",
+            params: Params(p_token: token)
+        )
+    }
+
     /// Send a control command (prompt / stop / interrupt) to a managed session.
     /// Returns the new command id.
     public func remoteSendCommand(

@@ -186,6 +186,15 @@ struct RemoteApprovalsSheet: View {
                     .foregroundStyle(.secondary)
                 Text(request.tool_name.isEmpty ? "Unknown tool" : request.tool_name)
                     .font(.system(size: 11, weight: .medium))
+                if let deviceName = request.device_name, !deviceName.isEmpty {
+                    Text("·")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                    Text(deviceName)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 Spacer()
                 riskBadge(risk)
             }

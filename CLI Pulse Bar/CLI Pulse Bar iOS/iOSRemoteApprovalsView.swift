@@ -150,6 +150,21 @@ struct iOSRemoteApprovalsView: View {
                 riskBadge(risk)
             }
 
+            // Device label so multi-Mac users know which Mac fired this
+            // request. Falls back to nothing when device_name is missing
+            // (older server response, or device row was deleted).
+            if let deviceName = request.device_name, !deviceName.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "desktopcomputer")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Text(deviceName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
             Text(request.summary.isEmpty ? "(no summary)" : request.summary)
                 .font(.callout.monospaced())
                 .foregroundStyle(.primary)

@@ -8,10 +8,20 @@ struct CLIPulseApp: App {
     @Environment(\.scenePhase) private var scenePhase
     private let phoneSession = PhoneSessionManager.shared
 
+    // SwiftUI is otherwise pure but the APNs registration + tap routing
+    // require a UIApplicationDelegate. `iOSAppDelegate` is iOS-target-only;
+    // the backing class lives in iOSAppDelegate.swift. See its docstring
+    // for why this AppDelegate adaptor exists alongside the SwiftUI app.
+    @UIApplicationDelegateAdaptor(iOSAppDelegate.self) private var appDelegate
+
     init() {
         SentryLogger.start(platform: .iOS)
         let state = AppState()
         _appState = StateObject(wrappedValue: state)
+        // Hand AppState to the delegate so the APNs token callback + the
+        // tap-handler can call into syncPushToken / refreshRemoteApprovals.
+        // The delegate holds a weak ref so it doesn't keep AppState alive.
+        iOSAppDelegate.sharedAppState = state
         // Activate the WatchConnectivity bridge as early as possible. The
         // previous call site (`.onAppear`) was losing the first auth
         // notification posted by AppState's restoreSession Task on cold

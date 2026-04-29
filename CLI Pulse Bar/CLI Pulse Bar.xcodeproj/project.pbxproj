@@ -39,6 +39,7 @@
 		A20011 /* iOSAlertsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20007 /* iOSAlertsTab.swift */; };
 		A20012 /* iOSSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20008 /* iOSSettingsTab.swift */; };
 		A20014 /* iOSRemoteApprovalsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20012 /* iOSRemoteApprovalsView.swift */; };
+		A20015 /* iOSAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20013 /* iOSAppDelegate.swift */; };
 		A20013 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B20009 /* Assets.xcassets */; };
 		A20020 /* CLIPulseIntentCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20020 /* CLIPulseIntentCache.swift */; };
 		A20021 /* GetStatusIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20021 /* GetStatusIntent.swift */; };
@@ -174,6 +175,7 @@
 		B20007 /* iOSAlertsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSAlertsTab.swift; sourceTree = "<group>"; };
 		B20008 /* iOSSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSSettingsTab.swift; sourceTree = "<group>"; };
 		B20012 /* iOSRemoteApprovalsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSRemoteApprovalsView.swift; sourceTree = "<group>"; };
+		B20013 /* iOSAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSAppDelegate.swift; sourceTree = "<group>"; };
 		B20009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B20010 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B20011 /* CLI_Pulse_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CLI_Pulse_iOS.entitlements; sourceTree = "<group>"; };
@@ -332,6 +334,7 @@
 				B20007 /* iOSAlertsTab.swift */,
 				B20008 /* iOSSettingsTab.swift */,
 				B20012 /* iOSRemoteApprovalsView.swift */,
+				B20013 /* iOSAppDelegate.swift */,
 				B20020 /* CLIPulseIntentCache.swift */,
 				B20021 /* GetStatusIntent.swift */,
 				B20022 /* GetProviderQuotaIntent.swift */,
@@ -628,6 +631,7 @@
 				A20011 /* iOSAlertsTab.swift in Sources */,
 				A20012 /* iOSSettingsTab.swift in Sources */,
 				A20014 /* iOSRemoteApprovalsView.swift in Sources */,
+				A20015 /* iOSAppDelegate.swift in Sources */,
 				A20020 /* CLIPulseIntentCache.swift in Sources */,
 				A20021 /* GetStatusIntent.swift in Sources */,
 				A20022 /* GetProviderQuotaIntent.swift in Sources */,

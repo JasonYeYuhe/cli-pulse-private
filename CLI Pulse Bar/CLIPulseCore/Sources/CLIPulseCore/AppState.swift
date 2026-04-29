@@ -266,6 +266,13 @@ public final class AppState: ObservableObject {
     /// review iter5 P1: latest-intent-wins).
     @Published public var remoteControlSaving: Bool = false
 
+    /// Last APNs token we successfully synced to the server, lower-case
+    /// hex. Nil = no token registered yet (or just unregistered on logout).
+    /// Lives in memory only — persistence is in the server's
+    /// `app_push_tokens` table; we re-register on each app launch when
+    /// APNs hands us a token, which costs one cheap RPC.
+    @Published public var registeredPushToken: String?
+
     // MARK: - Remote Approvals (v0.26 — Phase 1 MVP)
     /// Pending remote permission requests pulled from
     /// `remote_app_list_pending_approvals`. Refreshed lazily — only when the

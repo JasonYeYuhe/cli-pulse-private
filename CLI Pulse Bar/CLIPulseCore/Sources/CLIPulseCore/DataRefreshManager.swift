@@ -4,6 +4,10 @@ import os
 #if canImport(WidgetKit)
 import WidgetKit
 #endif
+// UIApplication.registerForRemoteNotifications lives in UIKit; iOS-only.
+#if canImport(UIKit) && os(iOS)
+import UIKit
+#endif
 
 private let refreshLogger = Logger(subsystem: "com.clipulse", category: "DataRefresh")
 
@@ -1083,7 +1087,24 @@ extension AppState {
     }
 
     public func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            // v0.32: also register for APNs so Remote Approvals can push.
+            // Only meaningful on iOS (UIApplication is iOS-only); macOS
+            // uses local notifications only for now. We register
+            // unconditionally on permission grant — the registered token
+            // is only USED server-side when remoteControlEnabled=true,
+            // and the registration cost is essentially free if Remote
+            // Control is off (token sits in app_push_tokens but no push
+            // ever fires).
+            #if os(iOS)
+            guard granted else { return }
+            DispatchQueue.main.async {
+                UIApplication.shared.registerForRemoteNotifications()
+            }
+            #else
+            _ = granted
+            #endif
+        }
     }
 
     func updateCostSummary() {
@@ -1455,6 +1476,57 @@ extension AppState {
             } catch {
                 lastError = "Failed to save git tracking setting: \(error.localizedDescription)"
             }
+        }
+    }
+
+    /// Register an APNs push token to this user on the server. Idempotent.
+    /// Called by the iOS AppDelegate from
+    /// `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
+    /// Only fires the network round-trip when Remote Control is enabled —
+    /// no point asking the server to track a token for users who haven't
+    /// opted in. Re-runs automatically when the user later toggles on
+    /// because `setRemoteControlEnabled(true)` triggers
+    /// `requestNotificationPermission()` which restarts the registration
+    /// loop.
+    public func syncPushToken(token: String, platform: String, bundleId: String) {
+        guard remoteControlEnabled else {
+            // Defer the actual upload until user opts in. Cache the token
+            // locally so we don't have to re-prompt for permission.
+            return
+        }
+        guard PushTokenSync.isValidTokenLength(token),
+              PushTokenSync.isValidBundleId(bundleId) else {
+            return
+        }
+        // Skip the round-trip if the server already has this exact token
+        // for this user (the typical re-launch path).
+        if registeredPushToken == token { return }
+        Task {
+            do {
+                try await api.registerAppPushToken(
+                    token: token, platform: platform, bundleId: bundleId
+                )
+                registeredPushToken = token
+            } catch {
+                lastError = "Failed to register for push notifications: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Drop the user's registered APNs token on the server. Called on
+    /// logout. The server-side RPC only deletes rows owned by the calling
+    /// user, so this can never delete someone else's token.
+    public func unregisterPushTokenOnLogout() {
+        guard let token = registeredPushToken else { return }
+        Task {
+            do {
+                try await api.unregisterAppPushToken(token: token)
+            } catch {
+                // Logout is racy by nature; don't surface as an error to
+                // the user. Server's own ON CONFLICT(token) DO UPDATE on
+                // the next user login will transfer ownership anyway.
+            }
+            registeredPushToken = nil
         }
     }
 

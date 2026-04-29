@@ -862,10 +862,17 @@ public struct RemoteSessionCommand: Codable, Sendable, Identifiable {
 }
 
 /// One pending or decided remote permission request.
+///
+/// `device_name` was added in v0.32 (the list_pending_approvals RPC now
+/// joins `devices.name`). It's optional because (a) older server versions
+/// won't return the field during rollout and (b) the device row may have
+/// been deleted between request creation and listing. UI falls back to a
+/// generic label when nil.
 public struct RemotePermissionRequest: Codable, Sendable, Identifiable {
     public let id: String
     public let session_id: String?
     public let device_id: String
+    public let device_name: String?
     public let provider: String
     public let tool_name: String
     public let summary: String
@@ -875,11 +882,12 @@ public struct RemotePermissionRequest: Codable, Sendable, Identifiable {
     public let expires_at: String
 
     public init(
-        id: String, session_id: String?, device_id: String, provider: String,
-        tool_name: String, summary: String, risk: String, status: String,
+        id: String, session_id: String?, device_id: String, device_name: String? = nil,
+        provider: String, tool_name: String, summary: String, risk: String, status: String,
         created_at: String, expires_at: String
     ) {
         self.id = id; self.session_id = session_id; self.device_id = device_id
+        self.device_name = device_name
         self.provider = provider; self.tool_name = tool_name; self.summary = summary
         self.risk = risk; self.status = status
         self.created_at = created_at; self.expires_at = expires_at
