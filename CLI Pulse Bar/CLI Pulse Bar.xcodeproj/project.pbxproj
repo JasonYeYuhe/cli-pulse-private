@@ -27,6 +27,7 @@
 		A10048 /* ProviderSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10048 /* ProviderSettingsSection.swift */; };
 		A10049 /* AdvancedSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10049 /* AdvancedSection.swift */; };
 		A10050 /* RemoteApprovalsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10050 /* RemoteApprovalsSheet.swift */; };
+		A10051 /* LocalModeGuideCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10051 /* LocalModeGuideCard.swift */; };
 		A10012 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10012 /* Assets.xcassets */; };
 		A10020 /* ProviderConfigEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10020 /* ProviderConfigEditor.swift */; };
 		A10021 /* NoAutoFillFields.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10021 /* NoAutoFillFields.swift */; };
@@ -161,6 +162,7 @@
 		B10048 /* ProviderSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSettingsSection.swift; sourceTree = "<group>"; };
 		B10049 /* AdvancedSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdvancedSection.swift; sourceTree = "<group>"; };
 		B10050 /* RemoteApprovalsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteApprovalsSheet.swift; sourceTree = "<group>"; };
+		B10051 /* LocalModeGuideCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalModeGuideCard.swift; sourceTree = "<group>"; };
 		B10012 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B10013 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B10014 /* CLI_Pulse_Bar.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CLI_Pulse_Bar.entitlements; sourceTree = "<group>"; };
@@ -301,6 +303,7 @@
 				B10048 /* ProviderSettingsSection.swift */,
 				B10049 /* AdvancedSection.swift */,
 				B10050 /* RemoteApprovalsSheet.swift */,
+				B10051 /* LocalModeGuideCard.swift */,
 				B10020 /* ProviderConfigEditor.swift */,
 				B10021 /* NoAutoFillFields.swift */,
 				B10012 /* Assets.xcassets */,
@@ -613,6 +616,7 @@
 				A10048 /* ProviderSettingsSection.swift in Sources */,
 				A10049 /* AdvancedSection.swift in Sources */,
 				A10050 /* RemoteApprovalsSheet.swift in Sources */,
+				A10051 /* LocalModeGuideCard.swift in Sources */,
 				A10020 /* ProviderConfigEditor.swift in Sources */,
 				A10021 /* NoAutoFillFields.swift in Sources */,
 			);

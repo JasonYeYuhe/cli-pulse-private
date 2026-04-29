@@ -16,6 +16,14 @@
 "dashboard.connect_helper" = "이 Mac에서 AI 도구를 사용하면 사용 데이터가 여기에 표시됩니다.";
 "dashboard.local_mode_ready_title" = "로컬 모드 준비 완료";
 "dashboard.local_mode_ready_body" = "이 Mac에서 Claude Code, Codex, Ollama 또는 다른 AI 도구를 사용하면 사용 데이터가 여기에 자동으로 표시됩니다. 설정에서 언제든지 로그인하여 iPhone에 동기화할 수 있습니다.";
+
+/* ── Local Mode Guide (iter18 — shown on macOS Overview while in unauth local mode) ── */
+"local_mode_guide.title" = "로컬 모드";
+"local_mode_guide.body" = "이 Mac의 사용 데이터를 로컬에서 수집하고 있습니다. 설정에서 로그인하면 여러 기기 간에 동기화할 수 있습니다.";
+"local_mode_guide.bullet1" = "이 Mac에서 Claude Code, Codex, Ollama 또는 다른 AI 도구 사용";
+"local_mode_guide.bullet2" = "토큰 수가 표시되지 않으면 설정에서 폴더 접근 권한을 허용하세요";
+"local_mode_guide.bullet3" = "나중에 로그인하여 사용 데이터를 iPhone 등 다른 기기에 동기화";
+"local_mode_guide.sign_in_cta" = "로그인하여 동기화";
 "dashboard.usage_today" = "오늘 사용량";
 "dashboard.cost_today" = "오늘 비용";
 "dashboard.est_cost" = "예상 비용";

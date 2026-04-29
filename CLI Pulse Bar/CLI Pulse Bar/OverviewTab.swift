@@ -25,6 +25,21 @@ struct OverviewTab: View {
                     refreshButton
                 }
 
+                // iter18 (2026-04-29): when the user is in unauthenticated
+                // local mode, show the LocalModeGuideCard at the TOP of
+                // the Overview content — regardless of whether
+                // collector data has populated `dashboard` yet. iter17
+                // had only an empty-state replacement, so once data
+                // started flowing the guide disappeared and the user
+                // had no reminder they were in local-only mode (or that
+                // they could sign in to sync to iPhone). The card is
+                // compact (~80–100pt) and slots above the metrics grid
+                // without crowding it.
+                if state.isLocalMode && !state.isAuthenticated {
+                    LocalModeGuideCard()
+                        .environmentObject(state)
+                }
+
                 // Metric Grid
                 if let dash = state.dashboard {
                     metricsGrid(dash)
@@ -55,20 +70,17 @@ struct OverviewTab: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 30)
                 } else if state.isLocalMode && !state.isAuthenticated {
-                    // iter17 (2026-04-29): user opted into local mode
-                    // via `Use local mode` on the signed-out Settings.
-                    // Pre-iter17 they'd land on the generic
-                    // "No Data Yet / Set up the helper..." card —
-                    // misleading because (a) they've explicitly chosen
-                    // local-only and (b) the helper text is itself a
-                    // pre-iter9 leftover. Surface a guide tailored to
-                    // local mode that points at AI tools instead of
-                    // pairing.
-                    EmptyStateView(
-                        icon: "checkmark.seal.fill",
-                        title: L10n.dashboard.localModeReadyTitle,
-                        subtitle: L10n.dashboard.localModeReadyBody
-                    )
+                    // iter18: the LocalModeGuideCard above already
+                    // explains "what now" via its three actionable
+                    // bullets, so no separate empty-state card is
+                    // needed for the local-mode no-data case. Show a
+                    // minimal "waiting…" placeholder so the screen
+                    // doesn't feel completely blank below the guide.
+                    Text(L10n.dashboard.noData)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 20)
                 } else {
                     EmptyStateView(
                         icon: "chart.bar.xaxis",

@@ -16,6 +16,14 @@
 "dashboard.connect_helper" = "この Mac で AI ツールを使い始めると、使用状況がここに表示されます。";
 "dashboard.local_mode_ready_title" = "ローカルモードの準備完了";
 "dashboard.local_mode_ready_body" = "この Mac で Claude Code、Codex、Ollama などの AI ツールを使うと、使用状況がここに自動表示されます。設定からいつでもサインインすれば iPhone に同期できます。";
+
+/* ── Local Mode Guide (iter18 — shown on macOS Overview while in unauth local mode) ── */
+"local_mode_guide.title" = "ローカルモード";
+"local_mode_guide.body" = "この Mac の使用状況をローカルで収集しています。設定からサインインすると複数の端末で同期できます。";
+"local_mode_guide.bullet1" = "この Mac で Claude Code、Codex、Ollama などの AI ツールを使う";
+"local_mode_guide.bullet2" = "トークン数が表示されない場合は、設定でフォルダアクセスを許可してください";
+"local_mode_guide.bullet3" = "後でサインインすれば、使用状況を iPhone や他の端末に同期できます";
+"local_mode_guide.sign_in_cta" = "サインインして同期";
 "dashboard.usage_today" = "本日の使用量";
 "dashboard.cost_today" = "本日のコスト";
 "dashboard.est_cost" = "推定コスト";

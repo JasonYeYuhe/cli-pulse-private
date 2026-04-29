@@ -16,6 +16,14 @@
 "dashboard.connect_helper" = "Empieza a usar herramientas de IA en este Mac para ver el uso aquí.";
 "dashboard.local_mode_ready_title" = "Modo local listo";
 "dashboard.local_mode_ready_body" = "Usa Claude Code, Codex, Ollama u otra herramienta de IA en este Mac y tu uso aparecerá aquí automáticamente. Inicia sesión en cualquier momento desde Ajustes para sincronizar estos datos con el iPhone.";
+
+/* ── Local Mode Guide (iter18 — shown on macOS Overview while in unauth local mode) ── */
+"local_mode_guide.title" = "Modo local";
+"local_mode_guide.body" = "Este Mac está recopilando el uso localmente. Inicia sesión desde Ajustes para sincronizar estos datos entre tus dispositivos.";
+"local_mode_guide.bullet1" = "Usa Claude Code, Codex, Ollama u otra herramienta de IA en este Mac";
+"local_mode_guide.bullet2" = "Concede acceso a las carpetas en Ajustes si faltan los conteos de tokens";
+"local_mode_guide.bullet3" = "Inicia sesión más tarde para sincronizar el uso con el iPhone y otros dispositivos";
+"local_mode_guide.sign_in_cta" = "Iniciar sesión para sincronizar";
 "dashboard.usage_today" = "Uso hoy";
 "dashboard.cost_today" = "Costo hoy";
 "dashboard.est_cost" = "Costo est.";

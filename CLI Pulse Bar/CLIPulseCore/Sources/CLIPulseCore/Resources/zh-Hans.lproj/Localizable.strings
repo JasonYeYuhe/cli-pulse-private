@@ -16,6 +16,14 @@
 "dashboard.connect_helper" = "在这台 Mac 上开始使用 AI 工具，使用量会自动出现在这里。";
 "dashboard.local_mode_ready_title" = "本地模式已就绪";
 "dashboard.local_mode_ready_body" = "在这台 Mac 上使用 Claude Code、Codex、Ollama 或其他 AI 工具，使用量会自动显示在这里。随时可在「设置」里登录，把数据同步到 iPhone。";
+
+/* ── Local Mode Guide (iter18 — shown on macOS Overview while in unauth local mode) ── */
+"local_mode_guide.title" = "本地模式";
+"local_mode_guide.body" = "正在本地采集这台 Mac 的使用情况。在「设置」里登录即可在多设备间同步。";
+"local_mode_guide.bullet1" = "在这台 Mac 上使用 Claude Code、Codex、Ollama 或其他 AI 工具";
+"local_mode_guide.bullet2" = "如果看不到 token 数据，请在「设置」里授予文件夹访问权限";
+"local_mode_guide.bullet3" = "稍后登录即可把使用量同步到 iPhone 等设备";
+"local_mode_guide.sign_in_cta" = "登录以同步";
 "dashboard.usage_today" = "今日用量";
 "dashboard.cost_today" = "今日费用";
 "dashboard.est_cost" = "预估费用";

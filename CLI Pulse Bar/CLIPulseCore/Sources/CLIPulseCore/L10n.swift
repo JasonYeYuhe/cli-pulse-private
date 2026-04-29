@@ -40,12 +40,13 @@ public enum L10n {
         public static var noData: String { tr("dashboard.no_data") }
         public static var connectHelper: String { tr("dashboard.connect_helper") }
         // iter17: dedicated empty-state copy for unauthenticated
-        // local mode. The generic `noData` / `connectHelper` strings
-        // mention "the helper" which doesn't apply to the simple
-        // account-scoped sync model — and is doubly confusing here
-        // since the user is signed out. The local-mode-ready strings
-        // explain "use AI tools on this Mac → data appears" without
-        // any mention of helper / pairing.
+        // local mode. iter18 moved this content into a richer
+        // `LocalModeGuideCard` (see `localModeGuide` enum below) that
+        // shows on Overview regardless of whether data is present.
+        // These two keys are kept (still localised) but no longer
+        // referenced from view code — preserved as a fallback string
+        // pool for any future caller and to avoid orphaning .strings
+        // entries already shipped on dev builds.
         public static var localModeReadyTitle: String { tr("dashboard.local_mode_ready_title") }
         public static var localModeReadyBody: String { tr("dashboard.local_mode_ready_body") }
         public static var usageToday: String { tr("dashboard.usage_today") }
@@ -416,6 +417,20 @@ public enum L10n {
         public static var local: String { tr("badge.local") }
         public static var aggregator: String { tr("badge.aggregator") }
         public static var ide: String { tr("badge.ide") }
+    }
+
+    // MARK: - Local Mode Guide (iter18)
+
+    /// Shown on the macOS Overview tab when the user is in
+    /// unauthenticated local mode (post-iter17 "Use local mode"
+    /// entry). See `LocalModeGuideCard.swift` for the rendered view.
+    public enum localModeGuide {
+        public static var title: String { tr("local_mode_guide.title") }
+        public static var body: String { tr("local_mode_guide.body") }
+        public static var bullet1: String { tr("local_mode_guide.bullet1") }
+        public static var bullet2: String { tr("local_mode_guide.bullet2") }
+        public static var bullet3: String { tr("local_mode_guide.bullet3") }
+        public static var signInCTA: String { tr("local_mode_guide.sign_in_cta") }
     }
 
     // MARK: - Onboarding / Sync Setup

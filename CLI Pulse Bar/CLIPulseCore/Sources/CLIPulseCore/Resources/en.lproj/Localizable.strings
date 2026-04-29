@@ -16,6 +16,14 @@
 "dashboard.connect_helper" = "Start using AI tools on this Mac to see usage here.";
 "dashboard.local_mode_ready_title" = "Local mode is ready";
 "dashboard.local_mode_ready_body" = "Use Claude Code, Codex, Ollama, or another AI tool on this Mac and your usage appears here automatically. Sign in any time from Settings to sync this data to iPhone.";
+
+/* ── Local Mode Guide (iter18 — shown on macOS Overview while in unauth local mode) ── */
+"local_mode_guide.title" = "Local Mode";
+"local_mode_guide.body" = "This Mac is collecting usage locally. Sign in from Settings to sync this data across your devices.";
+"local_mode_guide.bullet1" = "Run Claude Code, Codex, Ollama, or another AI tool on this Mac";
+"local_mode_guide.bullet2" = "Grant folder access in Settings if token counts are missing";
+"local_mode_guide.bullet3" = "Sign in later to sync usage to iPhone and other devices";
+"local_mode_guide.sign_in_cta" = "Sign in to sync";
 "dashboard.usage_today" = "Usage Today";
 "dashboard.cost_today" = "Cost Today";
 "dashboard.est_cost" = "Est. Cost";
