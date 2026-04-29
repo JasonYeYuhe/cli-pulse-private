@@ -273,6 +273,16 @@ public final class AppState: ObservableObject {
     /// APNs hands us a token, which costs one cheap RPC.
     @Published public var registeredPushToken: String?
 
+    /// In-memory cache of an APNs token that was delivered BEFORE the
+    /// user signed in. APNs delivers the token once per launch via the
+    /// `didRegisterForRemoteNotificationsWithDeviceToken` callback; if
+    /// we drop it pre-auth, the user has to relaunch the app post-login
+    /// to get push notifications working. Instead we cache here, then
+    /// `flushPendingPushTokenIfAvailable` replays it from
+    /// `applyAuthenticatedState` so every sign-in path picks it up.
+    /// Cleared after a successful server-side register.
+    public var pendingPushTokenRegistration: PendingPushTokenRegistration?
+
     // MARK: - Remote Approvals (v0.26 — Phase 1 MVP)
     /// Pending remote permission requests pulled from
     /// `remote_app_list_pending_approvals`. Refreshed lazily — only when the

@@ -219,11 +219,18 @@ struct iOSLoginView: View {
                 switch OAuthCallbackParser.parse(url: callbackURL) {
                 case .cancelled:
                     Task { @MainActor in state?.lastError = L10n.auth.signInCancelled }
-                case .failed:
-                    // OAuthCallbackParser already strips raw URL/code/state from
-                    // the description, but keep messaging generic here for parity
-                    // with the link-flow in iOSSettingsTab.
-                    Task { @MainActor in state?.lastError = L10n.auth.signInFailedGeneric }
+                case .failed(let description):
+                    // iter8 hotfix: surface the parser's description (already
+                    // sanitised — raw URL/code/state are stripped server-side
+                    // by OAuthCallbackParser). Helps the user (or us during
+                    // smoke testing) tell apart "redirect_to mismatch" vs
+                    // "state missing" vs "code missing" vs the generic case.
+                    // Falls back to the generic L10n string if description
+                    // is somehow empty.
+                    let safeDetail = description.isEmpty
+                        ? L10n.auth.signInFailedGeneric
+                        : "\(L10n.auth.signInFailedGeneric) (\(description))"
+                    Task { @MainActor in state?.lastError = safeDetail }
                 case .success(let code, let returnedState):
                     guard returnedState == expectedState else {
                         Task { @MainActor in state?.lastError = L10n.auth.signInFailedStateMismatch }

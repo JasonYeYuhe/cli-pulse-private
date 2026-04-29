@@ -32,9 +32,17 @@ struct iOSMainView: View {
             }
         }
         .preferredColorScheme(state.appearanceMode)
-        .task {
-            state.requestNotificationPermission()
-        }
+        // iter8 hotfix: do NOT call requestNotificationPermission() here.
+        // The previous unconditional .task fired BEFORE sign-in could
+        // complete, which made syncPushToken hit the server without a JWT
+        // and surface "Failed to register for push notifications: Session
+        // expired" right on the login screen. The permission prompt is
+        // now triggered at the right product moments instead:
+        //   1. setRemoteControlEnabled(true) — the user explicitly opts in
+        //   2. refreshYieldScore — when a returning user signs in and the
+        //      server reports remote_control_enabled = true
+        // Both gate on `isAuthenticated`, so the system permission alert
+        // never appears on the login screen.
     }
 
     // v1.10 P3-6: persistent banner shown when `SUPABASE_ANON_KEY` is missing

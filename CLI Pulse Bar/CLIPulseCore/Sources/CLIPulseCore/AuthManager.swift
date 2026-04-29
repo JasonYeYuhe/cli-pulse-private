@@ -435,6 +435,14 @@ extension AppState {
         isAuthenticated = true
         serverOnline = true
 
+        // iter8 hotfix: replay any APNs push token the iOS app cached
+        // before sign-in completed. APNs delivers the token once per
+        // launch via didRegister; if the user signed in AFTER that
+        // delivery, syncPushToken would otherwise wait for a relaunch
+        // before reaching the server. flushPendingPushTokenIfAvailable
+        // is idempotent + no-ops when nothing's cached.
+        flushPendingPushTokenIfAvailable()
+
         // Notify iOS companion to forward auth to watch
         NotificationCenter.default.post(
             name: .cliPulseDidAuthenticate,

@@ -1,5 +1,22 @@
 import Foundation
 
+/// In-memory cache of an APNs push token that was delivered to the iOS app
+/// BEFORE the user had finished signing in. Replayed by
+/// `flushPendingPushTokenIfAvailable()` after `applyAuthenticatedState`
+/// flips `isAuthenticated = true`, so the token reaches the server without
+/// requiring an app relaunch post-login.
+public struct PendingPushTokenRegistration: Equatable, Sendable {
+    public let token: String
+    public let platform: String
+    public let bundleId: String
+
+    public init(token: String, platform: String, bundleId: String) {
+        self.token = token
+        self.platform = platform
+        self.bundleId = bundleId
+    }
+}
+
 /// Pure helpers for syncing iOS / macOS APNs device tokens to Supabase.
 ///
 /// The actual UIKit / AppKit registration (`registerForRemoteNotifications()`)

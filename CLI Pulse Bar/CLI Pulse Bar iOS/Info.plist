@@ -18,6 +18,25 @@
 	<string>1.10.8</string>
 	<key>CFBundleVersion</key>
 	<string>43</string>
+	<!-- iter8 hotfix: register `clipulse://` scheme so the OAuth callback URL
+	     (clipulse://auth/callback) lands back in this app. ASWebAuthenticationSession
+	     binds `callbackURLScheme: "clipulse"` per-session and doesn't strictly
+	     require this entry, but Apple recommends registering the scheme
+	     explicitly so iOS tooling (universal links, Settings → Default Apps)
+	     can correlate. Defense-in-depth for the Google / GitHub OAuth path. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>yyh.CLI-Pulse.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>clipulse</string>
+			</array>
+		</dict>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>

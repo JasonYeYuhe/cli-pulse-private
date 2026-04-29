@@ -1155,7 +1155,37 @@ extension AppState {
         )
     }
 
+    /// Ask the user for local notification permission and (on iOS) trigger
+    /// APNs registration on grant.
+    ///
+    /// Auth contract (iter8 hotfix): pre-auth callers used to surface a
+    /// "Session expired" error on the login screen because the APNs
+    /// registration that follows here would race the JWT and fail.
+    /// We now refuse to even prompt unless the user is signed in, so
+    /// the system permission alert never appears for unauthenticated
+    /// launches. Callers (toggling Remote Control on, post-auth replay
+    /// from `applyAuthenticatedState`) gate on the right product moment.
     public func requestNotificationPermission() {
+        guard isAuthenticated else {
+            // Don't prompt unauthenticated users — they have no use for
+            // remote approvals yet, and the downstream
+            // registerForRemoteNotifications → syncPushToken chain would
+            // otherwise hit the server without a JWT. The
+            // pendingPushTokenRegistration cache covers users who DID
+            // somehow get a token delivered (e.g. permission was granted
+            // on a previous install) — `flushPendingPushTokenIfAvailable`
+            // replays after auth.
+            return
+        }
+        // xctest defense: UNUserNotificationCenter.requestAuthorization
+        // depends on a usernotificationsd connection that doesn't exist
+        // (or hangs) inside a headless xctest binary, so any test that
+        // sets up an authenticated AppState and triggers this path would
+        // hang the suite. Detect xctest via the standard env var Apple
+        // sets and short-circuit there.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return
+        }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
             // v0.32: also register for APNs so Remote Approvals can push.
             // Only meaningful on iOS (UIApplication is iOS-only); macOS
@@ -1528,6 +1558,15 @@ extension AppState {
             // latest-intent-wins). Once setRemoteControlEnabled clears
             // `remoteControlSaving`, the next refresh cycle will pick up the
             // canonical server value.
+            //
+            // iter8: deliberately NO requestNotificationPermission() side-
+            // effect from this branch. The permission prompt only fires from
+            // explicit user action (setRemoteControlEnabled(true) on
+            // toggle ON). Returning users with RC pre-enabled who haven't
+            // yet granted notification permission re-toggle in Settings to
+            // trigger it — the slightly-staler UX is intentional, both for
+            // testability (UNUserNotificationCenter blocks in xctest
+            // environments without a UI) and for explicit-consent posture.
             if !remoteControlSaving {
                 remoteControlEnabled = snapshot.remote_control_enabled
             }
@@ -1552,37 +1591,73 @@ extension AppState {
     /// Called by the iOS AppDelegate from
     /// `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
     ///
-    /// Audit fix (iter7): we register the token UNCONDITIONALLY, even when
-    /// `remoteControlEnabled` is false. Two reasons:
-    ///   1. APNs only delivers the device token once per launch via the
-    ///      didRegister callback. The previous "guard remoteControlEnabled
-    ///      else return" path silently dropped the token, so a user who
-    ///      had Remote Control off at launch and toggled it on later
-    ///      wouldn't get push until next app relaunch.
-    ///   2. Server-side gate is the actual safety net (trigger + edge
-    ///      function both re-check user_settings.remote_control_enabled
-    ///      before sending). The token sitting in app_push_tokens is
-    ///      inert metadata while the gate is off — no APNs traffic fires.
-    /// This matches the user's stated mental model: "Remote Control off
-    /// shouldn't unregister; server gate is enough."
+    /// Auth contract (iter8 hotfix):
+    ///   * If NOT authenticated, cache the (token, platform, bundleId) tuple
+    ///     in `pendingPushTokenRegistration` and return silently. Never
+    ///     surface "Session expired" on the login screen — that error chain
+    ///     was the previous behaviour and it shadowed the real sign-in flow.
+    ///   * After auth (`applyAuthenticatedState` → `flushPendingPushTokenIfAvailable`)
+    ///     we replay the cached tuple so the token reaches the server without
+    ///     requiring an app relaunch.
+    ///
+    /// Remote Control posture (unchanged from iter7):
+    ///   * We register the token regardless of `remoteControlEnabled`.
+    ///     Server-side gate (trigger + edge function) decides whether
+    ///     APNs traffic actually fires. The token sitting in
+    ///     `app_push_tokens` is inert metadata while the gate is off.
+    ///
+    /// APNs token lifetime (why we cache):
+    ///   APNs delivers the device token once per launch via the didRegister
+    ///   callback. If we silently drop it before auth, the user would have
+    ///   to relaunch the app post-login to get push working.
     public func syncPushToken(token: String, platform: String, bundleId: String) {
         guard PushTokenSync.isValidTokenLength(token),
               PushTokenSync.isValidBundleId(bundleId) else {
             return
         }
+        // Auth guard. Cache the token so a post-auth replay can register it
+        // without needing iOS to redeliver. NEVER set lastError here — the
+        // login screen displays state.lastError and we'd shadow the real
+        // sign-in flow with a confusing "Session expired" message.
+        guard isAuthenticated else {
+            pendingPushTokenRegistration = PendingPushTokenRegistration(
+                token: token, platform: platform, bundleId: bundleId
+            )
+            return
+        }
         // Skip the round-trip if the server already has this exact token
         // for this user (the typical re-launch path).
-        if registeredPushToken == token { return }
+        if registeredPushToken == token {
+            pendingPushTokenRegistration = nil
+            return
+        }
         Task {
             do {
                 try await api.registerAppPushToken(
                     token: token, platform: platform, bundleId: bundleId
                 )
                 registeredPushToken = token
+                pendingPushTokenRegistration = nil
             } catch {
                 lastError = "Failed to register for push notifications: \(error.localizedDescription)"
             }
         }
+    }
+
+    /// Replay a cached APNs token through `syncPushToken` after auth has
+    /// flipped to true. Called from `applyAuthenticatedState` so all
+    /// sign-in paths (Apple, Google, password, restoreSession,
+    /// exchangeOAuthCode) trigger it. No-op when there's no cached token.
+    /// Idempotent: if `registeredPushToken` already equals the cached value,
+    /// the inner syncPushToken short-circuits.
+    public func flushPendingPushTokenIfAvailable() {
+        guard let pending = pendingPushTokenRegistration else { return }
+        guard isAuthenticated else { return }   // belt-and-braces
+        syncPushToken(
+            token: pending.token,
+            platform: pending.platform,
+            bundleId: pending.bundleId
+        )
     }
 
     /// Drop the user's registered APNs token on the server. Called on
@@ -1661,7 +1736,17 @@ extension AppState {
                 try await api.updateSettings(APIClient.SettingsPatch(
                     remote_control_enabled: desired
                 ))
-                if !desired {
+                if desired {
+                    // First-time enable: now is the right product moment to
+                    // ask for notification permission. If the user has
+                    // already granted (e.g. previous install), this is a
+                    // no-op; the permission grant chain triggers
+                    // registerForRemoteNotifications which delivers the
+                    // APNs token via didRegister → syncPushToken. iter8
+                    // hotfix: this replaces the previous behaviour where
+                    // iOSMainView prompted unconditionally on launch.
+                    requestNotificationPermission()
+                } else {
                     // Successful toggle off — clear cached pending requests
                     // so the UI doesn't briefly show stale rows after the
                     // gate trips. Only on confirmed success; revert-after-
