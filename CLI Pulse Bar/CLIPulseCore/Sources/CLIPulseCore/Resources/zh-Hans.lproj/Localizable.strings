@@ -24,6 +24,15 @@
 "local_mode_guide.bullet2" = "如果看不到 token 数据，请在「设置」里授予文件夹访问权限";
 "local_mode_guide.bullet3" = "稍后登录即可把使用量同步到 iPhone 等设备";
 "local_mode_guide.sign_in_cta" = "登录以同步";
+
+/* ── Welcome Mode Choice (iter19 — shown on macOS Overview when unauth + no local mode picked) ── */
+"welcome_choice.title" = "欢迎使用 CLI Pulse";
+"welcome_choice.subtitle" = "选择你想要的 AI 工具使用追踪方式：";
+"welcome_choice.sign_in_title" = "登录以同步";
+"welcome_choice.sign_in_body" = "在 iPhone、Watch 等同账号设备间同步使用情况。";
+"welcome_choice.local_mode_title" = "使用本地模式";
+"welcome_choice.local_mode_body" = "只追踪这台 Mac 的使用情况——无需账号，不上传任何数据。";
+"welcome_choice.footnote" = "可以随时在「设置」里切换模式。";
 "dashboard.usage_today" = "今日用量";
 "dashboard.cost_today" = "今日费用";
 "dashboard.est_cost" = "预估费用";

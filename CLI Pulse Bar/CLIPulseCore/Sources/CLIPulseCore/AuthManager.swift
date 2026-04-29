@@ -482,7 +482,25 @@ extension AppState {
             startRefreshLoop()
             await refreshAll()
         case .unavailable:
-            break
+            // iter19 (2026-04-29): pre-iter19 this was just `break`,
+            // which left the AppState init's default
+            // `selectedTab = .overview` intact. For a cold launch with
+            // no stored token (fresh install, prior delete-account,
+            // Keychain wiped, onboarding ✕'d on a pre-iter16 build),
+            // the user opened the menu bar to a blank Overview with
+            // no clear next step — iter16's signOut→Settings landing
+            // only fixes the `.failed` branch and the explicit
+            // `signOut()` path, not this one. Mirror iter16 here so
+            // the user lands on Settings (Sign-In form + iter17 "Use
+            // local mode" escape) instead of Overview empty.
+            //
+            // This is a single-field assignment rather than a full
+            // `applySignedOutState()` call: at this point in cold
+            // launch, none of the auth/dashboard/error fields the
+            // full reset clears have been populated yet, so the only
+            // observable change a fresh user needs is the tab
+            // selection.
+            selectedTab = .settings
         case .failed:
             applySignedOutState()
         }

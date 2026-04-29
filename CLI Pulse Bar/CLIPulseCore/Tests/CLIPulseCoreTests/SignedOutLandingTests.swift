@@ -8,6 +8,22 @@ import XCTest
 /// "Continue without account" escape and the iter9 sign-in form both
 /// live on the Settings tab, so that's the right landing.
 ///
+/// iter19 (2026-04-29) note: the `restoreSession()` `.unavailable`
+/// branch (cold launch with no stored token) ALSO sets
+/// `selectedTab = .settings` directly — it was previously a `break`
+/// no-op, which left the AppState init default `.overview` intact and
+/// dropped fresh-install users onto a blank Overview. The iter19
+/// behavior isn't unit-tested here because exercising it requires
+/// touching live Keychain state (deleting the user's running tokens
+/// to simulate "no stored token"), which would either break the dev
+/// machine's session or be flaky depending on the order tests run.
+/// The contract is verified by:
+///   1. Code-level invariant — both `.unavailable` and `.failed`
+///      branches now route to the same destination (.settings).
+///   2. The tests below pinning `applySignedOutState → .settings`.
+///   3. Manual real-device verification (open menu bar after fresh
+///      install / Keychain wipe → land on Settings, not Overview).
+///
 /// `applySignedOutState` is `internal`, accessed via `@testable`. The
 /// public `signOut()` wrapper would also exercise this, but it spawns
 /// a Task to unregister the push token, so calling the inner reset

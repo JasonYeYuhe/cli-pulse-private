@@ -24,6 +24,15 @@
 "local_mode_guide.bullet2" = "Concede acceso a las carpetas en Ajustes si faltan los conteos de tokens";
 "local_mode_guide.bullet3" = "Inicia sesión más tarde para sincronizar el uso con el iPhone y otros dispositivos";
 "local_mode_guide.sign_in_cta" = "Iniciar sesión para sincronizar";
+
+/* ── Welcome Mode Choice (iter19 — shown on macOS Overview when unauth + no local mode picked) ── */
+"welcome_choice.title" = "Bienvenido a CLI Pulse";
+"welcome_choice.subtitle" = "Elige cómo quieres registrar el uso de tus herramientas de IA:";
+"welcome_choice.sign_in_title" = "Inicia sesión para sincronizar";
+"welcome_choice.sign_in_body" = "Registra el uso en el iPhone, Watch y otros dispositivos con la misma cuenta.";
+"welcome_choice.local_mode_title" = "Usar modo local";
+"welcome_choice.local_mode_body" = "Registra el uso solo en este Mac — sin cuenta, no se sube nada.";
+"welcome_choice.footnote" = "Puedes cambiar de modo en cualquier momento desde Ajustes.";
 "dashboard.usage_today" = "Uso hoy";
 "dashboard.cost_today" = "Costo hoy";
 "dashboard.est_cost" = "Costo est.";

@@ -81,6 +81,19 @@ struct OverviewTab: View {
                         .foregroundStyle(.tertiary)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 20)
+                } else if !state.isAuthenticated {
+                    // iter19 (2026-04-29): unauthenticated user who
+                    // hasn't picked local mode either. Pre-iter19 this
+                    // fell through to the generic
+                    // "No Data Yet / Start using AI tools…" empty
+                    // state, which gave the user no path forward —
+                    // they couldn't tell whether to sign in, install
+                    // something, or wait. The mode-choice card
+                    // surfaces the two real options as explicit big
+                    // buttons (per user feedback: 直接就让人登陆 或者
+                    // 选择 localmode 还是同步模式).
+                    WelcomeModeChoice()
+                        .environmentObject(state)
                 } else {
                     EmptyStateView(
                         icon: "chart.bar.xaxis",

@@ -24,6 +24,15 @@
 "local_mode_guide.bullet2" = "Grant folder access in Settings if token counts are missing";
 "local_mode_guide.bullet3" = "Sign in later to sync usage to iPhone and other devices";
 "local_mode_guide.sign_in_cta" = "Sign in to sync";
+
+/* ── Welcome Mode Choice (iter19 — shown on macOS Overview when unauth + no local mode picked) ── */
+"welcome_choice.title" = "Welcome to CLI Pulse";
+"welcome_choice.subtitle" = "Pick how you'd like to track your AI tool usage:";
+"welcome_choice.sign_in_title" = "Sign in to sync";
+"welcome_choice.sign_in_body" = "Track usage across iPhone, Watch, and other devices on the same account.";
+"welcome_choice.local_mode_title" = "Use local mode";
+"welcome_choice.local_mode_body" = "Track usage on this Mac only — no account, nothing uploaded.";
+"welcome_choice.footnote" = "You can switch between modes any time from Settings.";
 "dashboard.usage_today" = "Usage Today";
 "dashboard.cost_today" = "Cost Today";
 "dashboard.est_cost" = "Est. Cost";

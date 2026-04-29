@@ -433,6 +433,21 @@ public enum L10n {
         public static var signInCTA: String { tr("local_mode_guide.sign_in_cta") }
     }
 
+    // MARK: - Welcome Mode Choice (iter19)
+
+    /// Shown on the macOS Overview tab when the user has neither
+    /// authenticated nor explicitly chosen local mode. See
+    /// `WelcomeModeChoice.swift` for the rendered view.
+    public enum welcomeChoice {
+        public static var title: String { tr("welcome_choice.title") }
+        public static var subtitle: String { tr("welcome_choice.subtitle") }
+        public static var signInTitle: String { tr("welcome_choice.sign_in_title") }
+        public static var signInBody: String { tr("welcome_choice.sign_in_body") }
+        public static var localModeTitle: String { tr("welcome_choice.local_mode_title") }
+        public static var localModeBody: String { tr("welcome_choice.local_mode_body") }
+        public static var footnote: String { tr("welcome_choice.footnote") }
+    }
+
     // MARK: - Onboarding / Sync Setup
 
     public enum onboarding {
