@@ -367,6 +367,8 @@
 "auth.use_email_code" = "改用邮箱验证码";
 "auth.use_password" = "使用密码登录";
 "auth.password_label" = "密码";
+"auth.continue_without_account" = "不登录直接使用";
+"auth.continue_without_account_hint" = "随时可以登录以在多设备间同步。";
 "auth.watch_phone_prompt" = "在 iPhone 上打开 CLI Pulse 以登录";
 "auth.watch_phone_unreachable" = "无法连接到 iPhone。请确保 CLI Pulse 已在 iPhone 上打开，或在下方手动登录。";
 "auth.watch_complete_sign_in" = "完成登录";

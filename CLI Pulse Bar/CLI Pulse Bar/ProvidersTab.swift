@@ -346,7 +346,12 @@ struct EnhancedProviderCard: View {
                     // "Signed in as X — Connect Claude Code in Settings" etc.,
                     // which is more actionable than "/usage in the CLI").
                     let detailText: String = {
-                        let s = provider.status_text ?? ""
+                        // iter14: status_text is non-optional `String`,
+                        // so `?? ""` was a redundant coalesce that Swift
+                        // warns about. Keep the empty-string semantics
+                        // (the downstream `s.isEmpty` check handles the
+                        // collector-omitted case) by reading directly.
+                        let s = provider.status_text
                         // Treat generic / stale placeholders as "no guidance";
                         // fall back to a provider-agnostic line. Avoid the old
                         // "/usage in the CLI" hint — that command was removed

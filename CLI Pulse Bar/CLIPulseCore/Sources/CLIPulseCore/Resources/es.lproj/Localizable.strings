@@ -367,6 +367,8 @@
 "auth.use_email_code" = "Usar código por correo en su lugar";
 "auth.use_password" = "Iniciar sesión con contraseña";
 "auth.password_label" = "Contraseña";
+"auth.continue_without_account" = "Continuar sin cuenta";
+"auth.continue_without_account_hint" = "Inicia sesión en cualquier momento para sincronizar entre dispositivos.";
 "auth.watch_phone_prompt" = "Abre CLI Pulse en tu iPhone para iniciar sesión";
 "auth.watch_phone_unreachable" = "iPhone no disponible. Asegúrate de que CLI Pulse esté abierto en tu iPhone, o inicia sesión manualmente abajo.";
 "auth.watch_complete_sign_in" = "Completar inicio de sesión";

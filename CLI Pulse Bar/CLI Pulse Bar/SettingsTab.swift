@@ -151,6 +151,29 @@ struct SettingsTab: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.red)
             }
+
+            // iter14 hotfix (2026-04-29): pre-iter14 the only way out
+            // of this signed-out Settings panel was to sign in. After
+            // delete-account or sign-out, users complained they were
+            // "trapped" on a Sign-In form with no escape. The button
+            // below pivots `state.selectedTab` to `.overview`, where
+            // MenuBarView's iter14 routing change shows the empty-
+            // state shell instead of dropping back to this same
+            // SettingsTab. Users can come back here any time to log
+            // in via the Settings tab in the tab bar.
+            Divider()
+                .padding(.vertical, 2)
+            Button {
+                state.selectedTab = .overview
+            } label: {
+                Label(L10n.auth.continueWithoutAccount, systemImage: "arrow.right")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            Text(L10n.auth.continueWithoutAccountHint)
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
         }
     }
 

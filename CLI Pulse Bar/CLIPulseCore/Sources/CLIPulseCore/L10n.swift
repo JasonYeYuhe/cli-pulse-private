@@ -207,6 +207,12 @@ public enum L10n {
         public static var useEmailCode: String { tr("auth.use_email_code") }
         public static var usePassword: String { tr("auth.use_password") }
         public static var passwordLabel: String { tr("auth.password_label") }
+        // iter14: minimum-friction escape from the macOS signed-out
+        // SettingsTab. Tapping switches selectedTab to .overview so the
+        // user lands on the empty-state shell instead of being stuck
+        // on a Sign-In form.
+        public static var continueWithoutAccount: String { tr("auth.continue_without_account") }
+        public static var continueWithoutAccountHint: String { tr("auth.continue_without_account_hint") }
         public static var watchPhonePrompt: String { tr("auth.watch_phone_prompt") }
         public static var watchPhoneUnreachable: String { tr("auth.watch_phone_unreachable") }
         public static var watchCompleteSignIn: String { tr("auth.watch_complete_sign_in") }

@@ -367,6 +367,8 @@
 "auth.use_email_code" = "이메일 인증 코드 사용";
 "auth.use_password" = "비밀번호로 로그인";
 "auth.password_label" = "비밀번호";
+"auth.continue_without_account" = "로그인 없이 계속";
+"auth.continue_without_account_hint" = "기기 간 동기화하려면 언제든지 로그인할 수 있습니다.";
 "auth.watch_phone_prompt" = "iPhone에서 CLI Pulse를 열어 로그인하세요";
 "auth.watch_phone_unreachable" = "iPhone에 연결할 수 없습니다. iPhone에서 CLI Pulse가 열려 있는지 확인하거나 아래에서 수동으로 로그인하세요.";
 "auth.watch_complete_sign_in" = "로그인 완료";

@@ -367,6 +367,8 @@
 "auth.use_email_code" = "Use email code instead";
 "auth.use_password" = "Sign in with password";
 "auth.password_label" = "Password";
+"auth.continue_without_account" = "Continue without account";
+"auth.continue_without_account_hint" = "Sign in any time to sync across devices.";
 "auth.watch_phone_prompt" = "Open CLI Pulse on your iPhone to sign in";
 "auth.watch_phone_unreachable" = "iPhone not reachable. Make sure CLI Pulse is open on your iPhone, or sign in manually below.";
 "auth.watch_complete_sign_in" = "Complete Sign In";

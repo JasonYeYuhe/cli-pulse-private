@@ -76,6 +76,34 @@ struct MenuBarView: View {
             if !authState.isAuthenticated && !onboardingCompleted {
                 OnboardingWizardView()
                     .environmentObject(state)
+            } else if !authState.isAuthenticated {
+                // iter14 hotfix (2026-04-29): signed-out + onboarding
+                // already done. Pre-iter14 this branch ignored
+                // `state.selectedTab` and always rendered SettingsTab,
+                // so a user who tapped "Continue without account" in
+                // SettingsTab.loginSection had nowhere to land — the
+                // tab switch was effectively a no-op. Route through
+                // the same tab system as `connectedView` so Overview /
+                // Providers / Sessions / Alerts each render their
+                // own empty-state when there's no data, and the user
+                // can come back to Settings to log in any time.
+                //
+                // The signed-in-but-unpaired branch below is left
+                // unchanged on purpose: that flow expects users to
+                // land directly on SettingsTab so PairingSection is
+                // immediately visible.
+                tabBar
+                Group {
+                    switch state.selectedTab {
+                    case .overview:    OverviewTab()
+                    case .providers:   ProvidersTab()
+                    case .sessions:    SessionsTab()
+                    case .alerts:      AlertsTab()
+                    case .settings:    SettingsTab()
+                    }
+                }
+                .environmentObject(state)
+                .frame(maxHeight: .infinity)
             } else {
                 tabBar
                 SettingsTab()
