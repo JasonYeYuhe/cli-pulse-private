@@ -22,31 +22,66 @@ struct OnboardingWizardView: View {
     @State private var usePasswordLogin = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Step indicator
-            HStack(spacing: 6) {
-                ForEach(0..<5) { i in
-                    Circle()
-                        .fill(i <= step ? PulseTheme.accent : Color.gray.opacity(0.3))
-                        .frame(width: 6, height: 6)
+        // iter13 hotfix (2026-04-29): every step previously trapped the
+        // user behind the wizard's flow buttons. iter9 added "Skip for
+        // now" on step 3 and iter10 cleaned up the pair step, but
+        // steps 0/1/2 still had no escape — a user who launched the
+        // app, decided they didn't want to sign in, and just wanted the
+        // menu-bar shell had to click through Welcome → Features →
+        // Privacy → Sign In before they could even see the skip
+        // button. The fix: a permanent close button overlaid in the
+        // top-right that's visible on EVERY step. Setting
+        // `onboardingCompleted = true` flips the @AppStorage flag so
+        // MenuBarView swaps to the real UI; the flag persists, so
+        // re-opening the menu bar later does NOT replay the wizard
+        // (the user can manually re-trigger via the in-app "Reset
+        // onboarding" path if one exists).
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 0) {
+                // Step indicator
+                HStack(spacing: 6) {
+                    ForEach(0..<5) { i in
+                        Circle()
+                            .fill(i <= step ? PulseTheme.accent : Color.gray.opacity(0.3))
+                            .frame(width: 6, height: 6)
+                    }
                 }
-            }
-            .padding(.top, 12)
-            .padding(.bottom, 8)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
 
-            // Content
-            Group {
-                switch step {
-                case 0: welcomeStep
-                case 1: featuresStep
-                case 2: privacyStep
-                case 3: signInStep
-                case 4: pairStep
-                default: welcomeStep
+                // Content
+                Group {
+                    switch step {
+                    case 0: welcomeStep
+                    case 1: featuresStep
+                    case 2: privacyStep
+                    case 3: signInStep
+                    case 4: pairStep
+                    default: welcomeStep
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .animation(.easeInOut(duration: 0.25), value: step)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .animation(.easeInOut(duration: 0.25), value: step)
+
+            // Global close button — always present, always reachable.
+            // Uses `.plain` style + secondary tint so it doesn't draw
+            // attention away from the step's primary CTA, but the
+            // tap-target is wide enough (28×28) to hit reliably.
+            Button {
+                onboardingCompleted = true
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Close onboarding")
+            .accessibilityLabel("Close onboarding")
+            .padding(.top, 6)
+            .padding(.trailing, 8)
         }
         .onChange(of: authState.isAuthenticated) { isAuth in
             if isAuth {
