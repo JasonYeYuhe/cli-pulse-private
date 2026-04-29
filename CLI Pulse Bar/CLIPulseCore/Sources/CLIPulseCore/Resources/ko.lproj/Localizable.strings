@@ -13,7 +13,9 @@
 "dashboard.server_online" = "서버 온라인";
 "dashboard.server_offline" = "서버 오프라인";
 "dashboard.no_data" = "데이터 없음";
-"dashboard.connect_helper" = "Mac에서 도우미를 설정하여 동기화를 시작하세요";
+"dashboard.connect_helper" = "이 Mac에서 AI 도구를 사용하면 사용 데이터가 여기에 표시됩니다.";
+"dashboard.local_mode_ready_title" = "로컬 모드 준비 완료";
+"dashboard.local_mode_ready_body" = "이 Mac에서 Claude Code, Codex, Ollama 또는 다른 AI 도구를 사용하면 사용 데이터가 여기에 자동으로 표시됩니다. 설정에서 언제든지 로그인하여 iPhone에 동기화할 수 있습니다.";
 "dashboard.usage_today" = "오늘 사용량";
 "dashboard.cost_today" = "오늘 비용";
 "dashboard.est_cost" = "예상 비용";
@@ -367,8 +369,8 @@
 "auth.use_email_code" = "이메일 인증 코드 사용";
 "auth.use_password" = "비밀번호로 로그인";
 "auth.password_label" = "비밀번호";
-"auth.continue_without_account" = "로그인 없이 계속";
-"auth.continue_without_account_hint" = "기기 간 동기화하려면 언제든지 로그인할 수 있습니다.";
+"auth.use_local_mode" = "로컬 모드 사용";
+"auth.use_local_mode_hint" = "이 Mac의 사용 데이터만 표시합니다. 기기 간 동기화는 나중에 로그인할 수 있습니다.";
 "auth.watch_phone_prompt" = "iPhone에서 CLI Pulse를 열어 로그인하세요";
 "auth.watch_phone_unreachable" = "iPhone에 연결할 수 없습니다. iPhone에서 CLI Pulse가 열려 있는지 확인하거나 아래에서 수동으로 로그인하세요.";
 "auth.watch_complete_sign_in" = "로그인 완료";

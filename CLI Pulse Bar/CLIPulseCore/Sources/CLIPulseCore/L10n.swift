@@ -39,6 +39,15 @@ public enum L10n {
         public static var serverOffline: String { tr("dashboard.server_offline") }
         public static var noData: String { tr("dashboard.no_data") }
         public static var connectHelper: String { tr("dashboard.connect_helper") }
+        // iter17: dedicated empty-state copy for unauthenticated
+        // local mode. The generic `noData` / `connectHelper` strings
+        // mention "the helper" which doesn't apply to the simple
+        // account-scoped sync model — and is doubly confusing here
+        // since the user is signed out. The local-mode-ready strings
+        // explain "use AI tools on this Mac → data appears" without
+        // any mention of helper / pairing.
+        public static var localModeReadyTitle: String { tr("dashboard.local_mode_ready_title") }
+        public static var localModeReadyBody: String { tr("dashboard.local_mode_ready_body") }
         public static var usageToday: String { tr("dashboard.usage_today") }
         public static var costToday: String { tr("dashboard.cost_today") }
         public static var estCost: String { tr("dashboard.est_cost") }
@@ -208,11 +217,13 @@ public enum L10n {
         public static var usePassword: String { tr("auth.use_password") }
         public static var passwordLabel: String { tr("auth.password_label") }
         // iter14: minimum-friction escape from the macOS signed-out
-        // SettingsTab. Tapping switches selectedTab to .overview so the
-        // user lands on the empty-state shell instead of being stuck
-        // on a Sign-In form.
-        public static var continueWithoutAccount: String { tr("auth.continue_without_account") }
-        public static var continueWithoutAccountHint: String { tr("auth.continue_without_account_hint") }
+        // SettingsTab. iter17 renamed the keys from
+        // `continue_without_account` → `use_local_mode` to match the
+        // upgraded semantics: the button now actually opts the user
+        // into the unauthenticated local scanner path
+        // (`AppState.continueWithoutAccount()`), not just a tab switch.
+        public static var useLocalMode: String { tr("auth.use_local_mode") }
+        public static var useLocalModeHint: String { tr("auth.use_local_mode_hint") }
         public static var watchPhonePrompt: String { tr("auth.watch_phone_prompt") }
         public static var watchPhoneUnreachable: String { tr("auth.watch_phone_unreachable") }
         public static var watchCompleteSignIn: String { tr("auth.watch_complete_sign_in") }

@@ -29,6 +29,13 @@ internal final class DataRefreshManager {
         let maxDevices: Int
         let maxProviders: Int
         let currentTierName: String
+        /// iter17 (2026-04-29): macOS-only "use local mode" flag — true
+        /// when the user explicitly opted into the unauthenticated local
+        /// scanner path (`AppState.continueWithoutAccount()`). The
+        /// `RefreshRoute` decision in `decideRefreshRoute` reads this to
+        /// route unauthenticated macOS users into `refreshLocal` instead
+        /// of bailing with no-op. Has no meaning on iOS / Watch.
+        let isLocalMode: Bool
     }
 
     struct RefreshPayload {
@@ -110,14 +117,34 @@ internal final class DataRefreshManager {
     }
 
     func refreshAll(context: Context, callbacks: Callbacks) async {
-        guard context.isAuthenticated, !context.isDemoMode else { return }
-
+        // iter17 (2026-04-29): routing is now centralised in
+        // `RefreshRouter.decide`, which adds the unauthenticated
+        // local-mode branch (Mac-only) needed by the "Use local mode"
+        // entry point. See RefreshRoute.swift for the decision tree
+        // and RefreshRouterTests for the pinned contract.
         #if os(macOS)
-        if !context.isPaired {
-            await refreshLocal(context: context, callbacks: callbacks)
-            return
-        }
+        let onMacOS = true
         #else
+        let onMacOS = false
+        #endif
+        let route = RefreshRouter.decide(
+            isAuthenticated: context.isAuthenticated,
+            isDemoMode: context.isDemoMode,
+            isPaired: context.isPaired,
+            isLocalMode: context.isLocalMode,
+            isMacOS: onMacOS
+        )
+        switch route {
+        case .noOp:
+            return
+        case .localOnly:
+            #if os(macOS)
+            await refreshLocal(context: context, callbacks: callbacks)
+            #endif
+            return
+        case .cloud:
+            break  // fall through to existing cloud refresh body below
+        }
         // iter9 hotfix (2026-04-29): previously gated all iOS cloud
         // fetches on `context.isPaired`. That flag is set ONLY by the
         // external helper-daemon pairing handshake; the Mac menu-bar app
@@ -133,7 +160,6 @@ internal final class DataRefreshManager {
         // isolation server-side. `paired` still has meaning for the
         // helper-daemon flow used by Remote Approvals; we just no longer
         // hide the dashboard behind it on iOS.
-        #endif
 
         guard !context.isLoading else { return }
         callbacks.setLoading(true)
@@ -366,8 +392,11 @@ internal final class DataRefreshManager {
         refreshTask = nil
     }
 
-    func updateRefreshInterval(_ seconds: Int, isAuthenticated: Bool, onRefreshRequested: @escaping @MainActor () async -> Void) {
-        guard isAuthenticated else { return }
+    func updateRefreshInterval(_ seconds: Int, isAuthenticated: Bool, isLocalMode: Bool = false, onRefreshRequested: @escaping @MainActor () async -> Void) {
+        // iter17: also start the timer when the user opted into
+        // unauthenticated local mode, so collector data refreshes on a
+        // schedule rather than only on manual taps.
+        guard isAuthenticated || isLocalMode else { return }
         startRefreshLoop(interval: seconds, onRefreshRequested: onRefreshRequested)
     }
 
@@ -388,17 +417,31 @@ internal final class DataRefreshManager {
         let needsAccess = Self.needsFolderAccessNudge(scanIsEmpty: costScanResult == nil)
         await callbacks.setNeedsFolderAccess(needsAccess)
 
-        // Sync completed days to Supabase (non-blocking, best-effort)
-        if let costScanResult {
-            Task { await self.api.syncDailyUsage(costScanResult) }
+        // iter17 (2026-04-29): the cloud sync tasks below need a valid
+        // Supabase session — without one, every POST /rest/v1/... 401s
+        // and the resulting `lastError` ("HTTP 401: ...") would surface
+        // to the user as a noisy red banner on every refresh tick. Gate
+        // both Tasks on the authenticated callback so unauthenticated
+        // local-mode users never hit the cloud. Authenticated unpaired
+        // users still upload as before.
+        if callbacks.isAuthenticated() {
+            // Sync completed days to Supabase (non-blocking, best-effort)
+            if let costScanResult {
+                Task { await self.api.syncDailyUsage(costScanResult) }
+            }
+            // Push locally-collected quotas to Supabase (even in unpaired/local mode)
+            if !collectorResults.isEmpty {
+                Task { await api.syncProviderQuotas(collectorResults) }
+            }
         }
 
-        // Push locally-collected quotas to Supabase (even in unpaired/local mode)
-        if !collectorResults.isEmpty {
-            Task { await api.syncProviderQuotas(collectorResults) }
-        }
-
-        guard callbacks.isAuthenticated() else {
+        // iter17: previously bailed here when unauthenticated. Now we
+        // proceed to apply the local payload as long as the caller
+        // explicitly opted into local mode (set via the user-driven
+        // `continueWithoutAccount()` path) OR is authenticated. Without
+        // either signal we still bail — defends against a stale refresh
+        // landing after the user signed out.
+        guard callbacks.isAuthenticated() || context.isLocalMode else {
             callbacks.setLoading(false)
             return
         }
@@ -1165,6 +1208,7 @@ extension AppState {
         dataRefreshManager.updateRefreshInterval(
             seconds,
             isAuthenticated: isAuthenticated,
+            isLocalMode: isLocalMode,
             onRefreshRequested: refreshRequest()
         )
     }
@@ -1903,7 +1947,8 @@ extension AppState {
             providers: providers,
             maxDevices: subscriptionManager.maxDevices,
             maxProviders: subscriptionManager.maxProviders,
-            currentTierName: subscriptionManager.currentTier.rawValue
+            currentTierName: subscriptionManager.currentTier.rawValue,
+            isLocalMode: isLocalMode
         )
     }
 

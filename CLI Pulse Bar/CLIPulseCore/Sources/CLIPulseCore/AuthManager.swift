@@ -426,6 +426,42 @@ extension AppState {
         }
     }
 
+    /// iter17 (2026-04-29): user-driven entry into unauthenticated
+    /// local mode (macOS only). Triggered by the "Use local mode"
+    /// button in `SettingsTab.loginSection`.
+    ///
+    /// What it does:
+    ///   1. `isLocalMode = true` — flips `MenuBarView`'s routing so the
+    ///      popover renders the connected shell (tabs + footer +
+    ///      resize) instead of the signed-out SettingsTab + basic
+    ///      footer. Also drives `RefreshRouter.decide` to pick
+    ///      `.localOnly` so collector results actually get applied.
+    ///   2. `serverOnline = true` — suppresses the "Server offline"
+    ///      banner; we're not even trying to talk to Supabase.
+    ///   3. `selectedTab = .overview` — landing tab for the local-
+    ///      mode user. Local-mode-ready empty state explains what to
+    ///      do next.
+    ///   4. `Task { await refreshAll() }` — kick off a refresh now so
+    ///      collector data appears immediately, not after the next
+    ///      120s timer tick. Also starts the refresh loop via
+    ///      `startRefreshLoop` so periodic refreshes follow.
+    ///
+    /// On non-macOS targets this is a no-op (Watch / iOS have no
+    /// local collectors). The L10n strings still exist on those
+    /// targets to keep the shared localization bundle honest, but
+    /// the call sites are macOS-gated in SettingsTab.
+    #if os(macOS)
+    public func continueWithoutAccount() {
+        isLocalMode = true
+        serverOnline = true
+        selectedTab = .overview
+        // Spin up the same refresh loop the authenticated path uses,
+        // so collector data refreshes on the same cadence.
+        startRefreshLoop()
+        Task { await refreshAll() }
+    }
+    #endif
+
     public func restoreSession() async {
         switch await authManager.restoreSession(
             isDemoMode: isDemoMode,

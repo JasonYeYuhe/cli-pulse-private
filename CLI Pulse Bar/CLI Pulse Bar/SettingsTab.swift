@@ -155,23 +155,28 @@ struct SettingsTab: View {
             // iter14 hotfix (2026-04-29): pre-iter14 the only way out
             // of this signed-out Settings panel was to sign in. After
             // delete-account or sign-out, users complained they were
-            // "trapped" on a Sign-In form with no escape. The button
-            // below pivots `state.selectedTab` to `.overview`, where
-            // MenuBarView's iter14 routing change shows the empty-
-            // state shell instead of dropping back to this same
-            // SettingsTab. Users can come back here any time to log
-            // in via the Settings tab in the tab bar.
+            // "trapped" on a Sign-In form with no escape.
+            //
+            // iter17 (2026-04-29): the button now calls
+            // `state.continueWithoutAccount()` which actually flips
+            // the app into local mode (`isLocalMode = true`,
+            // `selectedTab = .overview`, and triggers a refresh so
+            // collector data appears immediately). The old version
+            // only mutated `selectedTab` — refresh still bailed at
+            // the `!isAuthenticated` gate, so users saw an empty
+            // dashboard. Copy updated to "Use local mode" to match
+            // the new semantics.
             Divider()
                 .padding(.vertical, 2)
             Button {
-                state.selectedTab = .overview
+                state.continueWithoutAccount()
             } label: {
-                Label(L10n.auth.continueWithoutAccount, systemImage: "arrow.right")
+                Label(L10n.auth.useLocalMode, systemImage: "arrow.right")
                     .font(.system(size: 11))
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            Text(L10n.auth.continueWithoutAccountHint)
+            Text(L10n.auth.useLocalModeHint)
                 .font(.system(size: 9))
                 .foregroundStyle(.tertiary)
         }

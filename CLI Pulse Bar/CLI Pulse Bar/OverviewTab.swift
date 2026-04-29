@@ -54,6 +54,21 @@ struct OverviewTab: View {
                     ProgressView()
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 30)
+                } else if state.isLocalMode && !state.isAuthenticated {
+                    // iter17 (2026-04-29): user opted into local mode
+                    // via `Use local mode` on the signed-out Settings.
+                    // Pre-iter17 they'd land on the generic
+                    // "No Data Yet / Set up the helper..." card —
+                    // misleading because (a) they've explicitly chosen
+                    // local-only and (b) the helper text is itself a
+                    // pre-iter9 leftover. Surface a guide tailored to
+                    // local mode that points at AI tools instead of
+                    // pairing.
+                    EmptyStateView(
+                        icon: "checkmark.seal.fill",
+                        title: L10n.dashboard.localModeReadyTitle,
+                        subtitle: L10n.dashboard.localModeReadyBody
+                    )
                 } else {
                     EmptyStateView(
                         icon: "chart.bar.xaxis",

@@ -13,7 +13,9 @@
 "dashboard.server_online" = "Server Online";
 "dashboard.server_offline" = "Server Offline";
 "dashboard.no_data" = "No Data Yet";
-"dashboard.connect_helper" = "Set up the helper on your Mac to start syncing";
+"dashboard.connect_helper" = "Start using AI tools on this Mac to see usage here.";
+"dashboard.local_mode_ready_title" = "Local mode is ready";
+"dashboard.local_mode_ready_body" = "Use Claude Code, Codex, Ollama, or another AI tool on this Mac and your usage appears here automatically. Sign in any time from Settings to sync this data to iPhone.";
 "dashboard.usage_today" = "Usage Today";
 "dashboard.cost_today" = "Cost Today";
 "dashboard.est_cost" = "Est. Cost";
@@ -367,8 +369,8 @@
 "auth.use_email_code" = "Use email code instead";
 "auth.use_password" = "Sign in with password";
 "auth.password_label" = "Password";
-"auth.continue_without_account" = "Continue without account";
-"auth.continue_without_account_hint" = "Sign in any time to sync across devices.";
+"auth.use_local_mode" = "Use local mode";
+"auth.use_local_mode_hint" = "Show usage from this Mac only. Sign in later to sync across devices.";
 "auth.watch_phone_prompt" = "Open CLI Pulse on your iPhone to sign in";
 "auth.watch_phone_unreachable" = "iPhone not reachable. Make sure CLI Pulse is open on your iPhone, or sign in manually below.";
 "auth.watch_complete_sign_in" = "Complete Sign In";

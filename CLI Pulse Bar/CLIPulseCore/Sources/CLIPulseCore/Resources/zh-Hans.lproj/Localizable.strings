@@ -13,7 +13,9 @@
 "dashboard.server_online" = "服务器在线";
 "dashboard.server_offline" = "服务器离线";
 "dashboard.no_data" = "暂无数据";
-"dashboard.connect_helper" = "在 Mac 上设置助手以开始同步";
+"dashboard.connect_helper" = "在这台 Mac 上开始使用 AI 工具，使用量会自动出现在这里。";
+"dashboard.local_mode_ready_title" = "本地模式已就绪";
+"dashboard.local_mode_ready_body" = "在这台 Mac 上使用 Claude Code、Codex、Ollama 或其他 AI 工具，使用量会自动显示在这里。随时可在「设置」里登录，把数据同步到 iPhone。";
 "dashboard.usage_today" = "今日用量";
 "dashboard.cost_today" = "今日费用";
 "dashboard.est_cost" = "预估费用";
@@ -367,8 +369,8 @@
 "auth.use_email_code" = "改用邮箱验证码";
 "auth.use_password" = "使用密码登录";
 "auth.password_label" = "密码";
-"auth.continue_without_account" = "不登录直接使用";
-"auth.continue_without_account_hint" = "随时可以登录以在多设备间同步。";
+"auth.use_local_mode" = "使用本地模式";
+"auth.use_local_mode_hint" = "只显示这台 Mac 的使用情况。可以稍后登录以在多设备间同步。";
 "auth.watch_phone_prompt" = "在 iPhone 上打开 CLI Pulse 以登录";
 "auth.watch_phone_unreachable" = "无法连接到 iPhone。请确保 CLI Pulse 已在 iPhone 上打开，或在下方手动登录。";
 "auth.watch_complete_sign_in" = "完成登录";

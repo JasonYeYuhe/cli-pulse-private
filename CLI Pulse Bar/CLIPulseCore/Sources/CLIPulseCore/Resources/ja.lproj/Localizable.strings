@@ -13,7 +13,9 @@
 "dashboard.server_online" = "サーバーオンライン";
 "dashboard.server_offline" = "サーバーオフライン";
 "dashboard.no_data" = "データなし";
-"dashboard.connect_helper" = "Macでヘルパーをセットアップして同期を開始";
+"dashboard.connect_helper" = "この Mac で AI ツールを使い始めると、使用状況がここに表示されます。";
+"dashboard.local_mode_ready_title" = "ローカルモードの準備完了";
+"dashboard.local_mode_ready_body" = "この Mac で Claude Code、Codex、Ollama などの AI ツールを使うと、使用状況がここに自動表示されます。設定からいつでもサインインすれば iPhone に同期できます。";
 "dashboard.usage_today" = "本日の使用量";
 "dashboard.cost_today" = "本日のコスト";
 "dashboard.est_cost" = "推定コスト";
@@ -367,8 +369,8 @@
 "auth.use_email_code" = "代わりにメール認証コードを使用";
 "auth.use_password" = "パスワードでサインイン";
 "auth.password_label" = "パスワード";
-"auth.continue_without_account" = "サインインせずに続ける";
-"auth.continue_without_account_hint" = "複数の端末で同期するには、いつでもサインインできます。";
+"auth.use_local_mode" = "ローカルモードを使用";
+"auth.use_local_mode_hint" = "この Mac の使用状況のみ表示します。複数端末で同期するには、後でサインインしてください。";
 "auth.watch_phone_prompt" = "iPhone で CLI Pulse を開いてサインイン";
 "auth.watch_phone_unreachable" = "iPhone に接続できません。iPhone で CLI Pulse を開いているか確認するか、下から手動でサインインしてください。";
 "auth.watch_complete_sign_in" = "サインインを完了";

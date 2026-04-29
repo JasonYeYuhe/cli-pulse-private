@@ -28,9 +28,18 @@ struct MenuBarView: View {
             if !SupabaseConstants.isConfigured {
                 configurationErrorBanner
             }
-            if !authState.isAuthenticated {
-                notConnectedView
-            } else if authState.isPaired || state.isLocalMode {
+            // iter17 (2026-04-29): route via `state.isLocalMode` even
+            // when unauthenticated — that's the new user-opt-in flag
+            // set by `AppState.continueWithoutAccount()`. Pre-iter17
+            // the very first check was `!authState.isAuthenticated →
+            // notConnectedView`, which made `isLocalMode` meaningful
+            // only for signed-in unpaired Mac users (a flow that's
+            // mostly obsolete post-iter9). Now any user — signed in
+            // or not — who has `isLocalMode = true` lands in the
+            // full tab shell and sees their local Mac collector data.
+            // The signed-in-but-unpaired-non-local-mode branch
+            // (PairingSection flow) stays in `notConnectedView`.
+            if state.isLocalMode || authState.isPaired {
                 connectedView
             } else {
                 notConnectedView

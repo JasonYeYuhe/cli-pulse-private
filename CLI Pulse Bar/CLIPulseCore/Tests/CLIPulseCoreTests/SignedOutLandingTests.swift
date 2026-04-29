@@ -67,4 +67,21 @@ final class SignedOutLandingTests: XCTestCase {
         XCTAssertNil(state.lastError, "stale error must clear")
         XCTAssertNil(state.dashboard, "dashboard must clear")
     }
+
+    /// iter17 contract: a sign-out from local mode must clear
+    /// `isLocalMode`. Otherwise re-opening the popover after sign-out
+    /// would still route to the connected shell (because MenuBarView
+    /// gates on `state.isLocalMode || authState.isPaired`), and the
+    /// user would land on the Overview empty card with stale provider
+    /// data — exactly the "what's going on" symptom this iter aims
+    /// to fix.
+    func testApplySignedOutStateClearsLocalMode() {
+        let state = AppState()
+        state.isLocalMode = true
+
+        state.applySignedOutState()
+
+        XCTAssertFalse(state.isLocalMode,
+                       "sign-out must drop the local-mode flag so MenuBarView routes back to notConnectedView (Sign-In form)")
+    }
 }
