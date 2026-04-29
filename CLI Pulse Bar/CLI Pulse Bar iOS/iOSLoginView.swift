@@ -194,7 +194,11 @@ struct iOSLoginView: View {
 
     private func signInWithProvider(_ provider: String) {
         Task {
-            guard let (authURL, codeVerifier, expectedState) = await state.oauthURL(provider: provider) else {
+            // iter8 hotfix (2026-04-29): no longer destructure a CSRF `state`
+            // here — Supabase's PKCE flow manages state internally and the
+            // `code_verifier` alone is the CSRF anchor. See
+            // `APIClient.oauthAuthorizeURL` for the full rationale.
+            guard let (authURL, codeVerifier) = await state.oauthURL(provider: provider) else {
                 state.lastError = L10n.auth.signInFailedGeneric
                 return
             }
@@ -221,21 +225,16 @@ struct iOSLoginView: View {
                     Task { @MainActor in state?.lastError = L10n.auth.signInCancelled }
                 case .failed(let description):
                     // iter8 hotfix: surface the parser's description (already
-                    // sanitised — raw URL/code/state are stripped server-side
-                    // by OAuthCallbackParser). Helps the user (or us during
+                    // sanitised — raw URL/code are stripped by
+                    // OAuthCallbackParser). Helps the user (and us during
                     // smoke testing) tell apart "redirect_to mismatch" vs
-                    // "state missing" vs "code missing" vs the generic case.
-                    // Falls back to the generic L10n string if description
-                    // is somehow empty.
+                    // a generic provider error. Falls back to the generic
+                    // L10n string if description is somehow empty.
                     let safeDetail = description.isEmpty
                         ? L10n.auth.signInFailedGeneric
                         : "\(L10n.auth.signInFailedGeneric) (\(description))"
                     Task { @MainActor in state?.lastError = safeDetail }
-                case .success(let code, let returnedState):
-                    guard returnedState == expectedState else {
-                        Task { @MainActor in state?.lastError = L10n.auth.signInFailedStateMismatch }
-                        return
-                    }
+                case .success(let code):
                     Task { await state?.exchangeOAuthCode(code: code, codeVerifier: codeVerifier) }
                 }
             }

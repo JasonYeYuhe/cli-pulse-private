@@ -3,12 +3,13 @@ import XCTest
 
 final class OAuthCallbackParserTests: XCTestCase {
 
-    // Happy path: Supabase returns ?code=...&state=... on the query.
+    // Happy path: Supabase returns ?code=... on the query.
+    // iter8 hotfix: state is now ignored (PKCE code_verifier handles CSRF).
     func testSuccessQueryParams() {
         let url = URL(string: "clipulse://auth/callback?code=abc123&state=xyz789")!
         XCTAssertEqual(
             OAuthCallbackParser.parse(url: url),
-            .success(code: "abc123", state: "xyz789")
+            .success(code: "abc123")
         )
     }
 
@@ -17,7 +18,19 @@ final class OAuthCallbackParserTests: XCTestCase {
         let url = URL(string: "clipulse://auth/callback#code=abc123&state=xyz789")!
         XCTAssertEqual(
             OAuthCallbackParser.parse(url: url),
-            .success(code: "abc123", state: "xyz789")
+            .success(code: "abc123")
+        )
+    }
+
+    // iter8 hotfix: Supabase's PKCE flow no longer needs us to round-trip
+    // `state`. A bare `?code=...` callback is now valid — the previous
+    // "state missing" failure was rejecting genuine successes when Supabase
+    // chose not to echo back our (now unused) state token.
+    func testSuccessCodeOnlyNoState() {
+        let url = URL(string: "clipulse://auth/callback?code=abc123")!
+        XCTAssertEqual(
+            OAuthCallbackParser.parse(url: url),
+            .success(code: "abc123")
         )
     }
 
@@ -44,6 +57,17 @@ final class OAuthCallbackParserTests: XCTestCase {
         )
     }
 
+    // Regression: pin the exact wording the iter8 hotfix is fixing. When
+    // Supabase emits `OAuth state parameter is invalid` we surface it
+    // verbatim so support-side diagnosis is unambiguous.
+    func testSurfacesSupabaseStateInvalidVerbatim() {
+        let url = URL(string: "clipulse://auth/callback?error=invalid_request&error_description=OAuth%20state%20parameter%20is%20invalid")!
+        XCTAssertEqual(
+            OAuthCallbackParser.parse(url: url),
+            .failed(description: "OAuth state parameter is invalid")
+        )
+    }
+
     // No recognizable params → .failed with a generic hint (NOT the raw URL,
     // which could contain PII).
     func testUnknownResponseFallback() {
@@ -54,37 +78,32 @@ final class OAuthCallbackParserTests: XCTestCase {
         )
     }
 
-    // Regression: a callback with `code` but no `state` must NOT echo the
-    // raw URL (and therefore the code) into a user-facing error. Codex
-    // flagged this as a blocking issue in the review.
-    func testCodeWithoutStateDoesNotLeakURL() {
-        let url = URL(string: "clipulse://auth/callback?code=leaky-code")!
+    // Defence-in-depth: a callback without a code must NOT echo the raw URL
+    // (and therefore any leaky params) into a user-facing error.
+    func testNoCodeDoesNotLeakURL() {
+        let url = URL(string: "clipulse://auth/callback?state=abc")!
         let result = OAuthCallbackParser.parse(url: url)
-        XCTAssertEqual(result, .failed(description: "state missing"))
+        XCTAssertEqual(result, .failed(description: "no OAuth parameters in callback"))
         if case .failed(let description) = result {
-            XCTAssertFalse(description.contains("leaky-code"))
             XCTAssertFalse(description.contains("clipulse://"))
+            XCTAssertFalse(description.contains("abc"))
         }
     }
 
-    // Symmetric: state but no code is also a malformed callback.
-    func testStateWithoutCodeFails() {
-        let url = URL(string: "clipulse://auth/callback?state=abc")!
+    // Don't let a code from the query and a state from the fragment ever
+    // synthesize success across boundaries — even though state is ignored
+    // for validation now, we still keep the source-of-truth invariant: if
+    // the query has any OAuth param, we read ONLY from the query. (A
+    // malicious shared link could otherwise smuggle a code in the query
+    // alongside a stale fragment.)
+    func testDoesNotMixQueryAndFragmentForCode() {
+        // Query has `state` (recognized) but no code → fragment is ignored
+        // even though it has a code. Result: failed (no code from the
+        // chosen authoritative source).
+        let url = URL(string: "clipulse://auth/callback?state=abc#code=fragmentCode")!
         XCTAssertEqual(
             OAuthCallbackParser.parse(url: url),
-            .failed(description: "code missing")
-        )
-    }
-
-    // Don't let a response carrying a code across query+fragment synthesize
-    // "success" from half-mixed inputs. If the query has any OAuth param, we
-    // read ONLY from the query; the fragment is ignored.
-    func testDoesNotMixQueryAndFragment() {
-        let url = URL(string: "clipulse://auth/callback?code=abc#state=xyz")!
-        // query has `code` → query wins, fragment `state` ignored → no state
-        XCTAssertEqual(
-            OAuthCallbackParser.parse(url: url),
-            .failed(description: "state missing")
+            .failed(description: "no OAuth parameters in callback")
         )
     }
 

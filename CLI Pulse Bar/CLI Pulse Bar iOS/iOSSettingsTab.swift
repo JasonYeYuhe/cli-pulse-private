@@ -783,7 +783,11 @@ struct LinkedAccountsSection: View {
     private func linkOAuthProvider(_ provider: String) {
         localError = nil
         Task {
-            guard let (authURL, codeVerifier, expectedState) = await state.linkIdentityURL(provider: provider) else {
+            // iter8 hotfix (2026-04-29): mirror the sign-in flow change —
+            // PKCE `code_verifier` is the CSRF anchor; client-side `state`
+            // is no longer round-tripped because Supabase manages PKCE
+            // flow_state server-side.
+            guard let (authURL, codeVerifier) = await state.linkIdentityURL(provider: provider) else {
                 localError = state.linkIdentityError ?? L10n.auth.linkFailedGeneric
                 return
             }
@@ -808,14 +812,10 @@ struct LinkedAccountsSection: View {
                 case .cancelled:
                     Task { @MainActor in self.localError = L10n.auth.linkCancelled }
                 case .failed:
-                    // The parser has already stripped raw URL/code/state from the description,
+                    // The parser has already stripped raw URL/code from the description,
                     // but for link-flow we still keep messaging generic — mirroring sign-in.
                     Task { @MainActor in self.localError = L10n.auth.linkFailedGeneric }
-                case .success(let code, let returnedState):
-                    guard returnedState == expectedState else {
-                        Task { @MainActor in self.localError = L10n.auth.linkFailedStateMismatch }
-                        return
-                    }
+                case .success(let code):
                     Task {
                         await state.completeLinkIdentity(code: code, codeVerifier: codeVerifier)
                     }

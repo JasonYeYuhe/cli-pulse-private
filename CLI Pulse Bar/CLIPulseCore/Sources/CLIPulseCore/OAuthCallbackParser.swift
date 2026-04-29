@@ -5,8 +5,17 @@ import Foundation
 /// URL fragment, and — when the user cancels at the provider consent screen —
 /// sends `error=access_denied` instead of a `code`.
 public enum OAuthCallbackResult: Equatable {
-    /// Happy path: exchange `code` for a session (after verifying `state`).
-    case success(code: String, state: String)
+    /// Happy path: exchange `code` for a session.
+    ///
+    /// iter8 hotfix (2026-04-29): we no longer carry a `state` field here.
+    /// The PKCE flow's `code_verifier` provides CSRF protection on its own —
+    /// only the device that generated the verifier can complete the token
+    /// exchange. The previous `state` round-trip was passing a client-generated
+    /// token to Supabase's `/authorize` endpoint, which collided with
+    /// Supabase's server-side `flow_state` management and surfaced as
+    /// "OAuth state parameter is invalid" on real device. See
+    /// `APIClient.oauthAuthorizeURL` for the full rationale.
+    case success(code: String)
     /// User cancelled at the provider. Show a friendly "Sign-in cancelled" toast.
     case cancelled
     /// Any other provider / Supabase error. `description` is the best available
@@ -58,20 +67,18 @@ public enum OAuthCallbackParser {
             return .failed(description: errorDesc ?? errorKind)
         }
 
-        let code = read("code")
-        let state = read("state")
-        if let code, let state {
-            return .success(code: code, state: state)
+        // Happy path: a `code` is sufficient. PKCE's `code_verifier`
+        // (held only on the originating device) provides CSRF protection —
+        // we don't need to round-trip a `state` token. Supabase MAY still
+        // include a state query param in the redirect; we deliberately
+        // ignore it because it's now a server-internal value, not the
+        // client-known one we used to validate against.
+        if let code = read("code"), !code.isEmpty {
+            return .success(code: code)
         }
         // Never echo the raw callback URL or the authorization code back into
         // a user-facing error — an OAuth code is short-lived but still
         // sensitive, and the URL may also contain PII.
-        if code != nil, state == nil {
-            return .failed(description: "state missing")
-        }
-        if code == nil, state != nil {
-            return .failed(description: "code missing")
-        }
         return .failed(description: "no OAuth parameters in callback")
     }
 }

@@ -1006,14 +1006,24 @@ public actor APIClient {
     // MARK: - OAuth (Google / GitHub via Supabase)
 
     /// Build the Supabase OAuth authorization URL for a given provider with PKCE.
-    /// Returns (authorizationURL, codeVerifier, state) — the `state` is a CSRF token that
-    /// Supabase echoes back in the redirect; callers must verify it matches before exchanging.
-    public func oauthAuthorizeURL(provider: String, redirectTo: String) -> (URL, String, String)? {
+    /// Returns (authorizationURL, codeVerifier).
+    ///
+    /// iter8 hotfix (2026-04-29): we deliberately do NOT pass a client-generated
+    /// `state` query parameter. Supabase GoTrue's PKCE flow manages OAuth state
+    /// internally — it stores a server-generated `flow_state.auth_code` token
+    /// and uses *that* as the OAuth state with the upstream provider (Google /
+    /// GitHub). Passing our own `state=...` collides with that internal state
+    /// management and causes Supabase to bounce the callback back with
+    /// `error_description=OAuth state parameter is invalid` (the user observed
+    /// this on real device). PKCE's `code_verifier` already provides full CSRF
+    /// protection: the verifier is generated and stored only on the originating
+    /// device, so even if an attacker intercepts the auth code, they cannot
+    /// complete the token exchange. supabase-js / supabase-swift behave the same
+    /// way — neither adds a custom state parameter to the authorize URL.
+    public func oauthAuthorizeURL(provider: String, redirectTo: String) -> (URL, String)? {
         // Generate PKCE code verifier + challenge
         guard let verifier = generateCodeVerifier(),
-              let stateSource = generateCodeVerifier(),
               let challenge = sha256Base64URL(verifier) else { return nil }
-        let state = String(stateSource.prefix(32))
 
         var components = URLComponents(string: "\(supabaseURL)/auth/v1/authorize")
         components?.queryItems = [
@@ -1021,10 +1031,9 @@ public actor APIClient {
             URLQueryItem(name: "redirect_to", value: redirectTo),
             URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
-            URLQueryItem(name: "state", value: state),
         ]
         guard let url = components?.url else { return nil }
-        return (url, verifier, state)
+        return (url, verifier)
     }
 
     /// Exchange an OAuth authorization code for a Supabase session (PKCE flow).
@@ -1162,23 +1171,23 @@ public actor APIClient {
     }
 
     /// Build a Supabase link-identity authorization URL for an OAuth provider (Google, GitHub).
-    /// Requires a valid current session. Returns (authorizationURL, codeVerifier, state).
-    /// The `state` is a CSRF token that Supabase propagates through the OAuth roundtrip and
-    /// echoes back in the redirect — callers must verify it matches before exchanging.
-    public func linkIdentityAuthorizeURL(provider: String, redirectTo: String) async throws -> (URL, String, String) {
+    /// Requires a valid current session. Returns (authorizationURL, codeVerifier).
+    ///
+    /// iter8 hotfix (2026-04-29): mirroring `oauthAuthorizeURL`, we no longer
+    /// pass a client-generated `state` query parameter. Supabase manages PKCE
+    /// state server-side via the `flow_state` table; PKCE's `code_verifier`
+    /// already provides CSRF protection. See `oauthAuthorizeURL` for details.
+    public func linkIdentityAuthorizeURL(provider: String, redirectTo: String) async throws -> (URL, String) {
         guard let verifier = generateCodeVerifier(),
-              let stateSource = generateCodeVerifier(),
               let challenge = sha256Base64URL(verifier) else {
             throw APIError.invalidResponse
         }
-        let state = String(stateSource.prefix(32))
         var components = URLComponents(string: "\(supabaseURL)/auth/v1/user/identities/authorize")
         components?.queryItems = [
             URLQueryItem(name: "provider", value: provider),
             URLQueryItem(name: "redirect_to", value: redirectTo),
             URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
-            URLQueryItem(name: "state", value: state),
             URLQueryItem(name: "skip_http_redirect", value: "true"),
         ]
         guard let url = components?.url else { throw APIError.invalidResponse }
@@ -1195,7 +1204,7 @@ public actor APIClient {
         struct AuthorizeResponse: Decodable { let url: String }
         let payload = try decode(AuthorizeResponse.self, from: data)
         guard let authURL = URL(string: payload.url) else { throw APIError.invalidResponse }
-        return (authURL, verifier, state)
+        return (authURL, verifier)
     }
 
     /// Exchange a link-identity PKCE code. Updates the session to reflect the newly linked identity.

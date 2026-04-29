@@ -237,9 +237,14 @@ extension AppState {
     }
 
     /// Build an OAuth URL for a given provider (PKCE flow).
-    /// Returns (url, codeVerifier, state) — caller must validate the returned state matches
-    /// the `state` query param on the callback URL to prevent CSRF.
-    public func oauthURL(provider: String) async -> (URL, String, String)? {
+    /// Returns (url, codeVerifier).
+    ///
+    /// CSRF protection comes from the PKCE `code_verifier` — only the client
+    /// that generated the verifier can complete the token exchange. The
+    /// `state` query param was removed in the iter8 hotfix because it
+    /// conflicted with Supabase's server-side PKCE flow_state management.
+    /// See `APIClient.oauthAuthorizeURL` for the full rationale.
+    public func oauthURL(provider: String) async -> (URL, String)? {
         let redirectTo = "clipulse://auth/callback"
         return await api.oauthAuthorizeURL(provider: provider, redirectTo: redirectTo)
     }
@@ -261,9 +266,11 @@ extension AppState {
     }
 
     /// Build a link-identity OAuth authorization URL (PKCE) for Google/GitHub.
-    /// Returns (url, codeVerifier, state). Caller opens in ASWebAuthenticationSession, verifies
-    /// the callback's `state` param matches, then calls `completeLinkIdentity(code:codeVerifier:)`.
-    public func linkIdentityURL(provider: String) async -> (URL, String, String)? {
+    /// Returns (url, codeVerifier). Caller opens in ASWebAuthenticationSession,
+    /// then calls `completeLinkIdentity(code:codeVerifier:)`. The `code_verifier`
+    /// alone provides CSRF protection — see `APIClient.linkIdentityAuthorizeURL`
+    /// for the iter8 rationale on dropping client-side `state`.
+    public func linkIdentityURL(provider: String) async -> (URL, String)? {
         do {
             let redirectTo = "clipulse://auth/callback"
             return try await api.linkIdentityAuthorizeURL(provider: provider, redirectTo: redirectTo)
