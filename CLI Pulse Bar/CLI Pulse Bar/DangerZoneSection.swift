@@ -5,21 +5,50 @@ import CLIPulseCore
 /// screen: About, Privacy, Terms, Sign Out, Delete Account, Quit.
 /// Pure structural move — behavior byte-identical to the pre-extraction
 /// `dangerZone` private var.
+///
+/// iter12 hotfix (2026-04-29): replaced the chained-`.alert` Delete
+/// Account flow with inline confirmation UI. Background:
+///
+/// The pre-iter12 implementation had three `.alert(...)` modifiers
+/// stacked on the Delete Account button (warning → DELETE-text confirm
+/// → failure). Inside `MenuBarExtra(style: .window)` the alert window
+/// is a separate NSPanel that takes key focus from the popover. macOS
+/// reads that focus transfer as "user clicked outside the popover" and
+/// dismisses the popover content. The button actions still fire (so
+/// Cancel and Continue *do* run), but:
+///   - On Cancel: popover dismisses; alert state stays bound to the
+///     same `@State` so the user just loses the menu-bar window.
+///   - On Continue: `showDeleteAccountConfirm = true` is set, but the
+///     popover dismisses before the next alert can present cleanly,
+///     and `showDeleteAccountAlert` doesn't reliably reset before the
+///     view detaches. Reopening the popover replays the original alert.
+///
+/// SwiftUI's `.alert` is fundamentally fragile inside `MenuBarExtra`
+/// (FB-tracked since 2023). The minimum reliable fix is to stop using
+/// system alerts in this surface entirely and render the confirmation
+/// inline — exactly the same lifecycle as every other settings row, no
+/// cross-window focus handoff to fight with.
+///
+/// iOS continues to use the system alert pattern (iOSSettingsTab) —
+/// that's a regular sheet-modal surface and the bug doesn't manifest
+/// there.
 struct DangerZoneSection: View {
     @EnvironmentObject var state: AppState
     @Environment(\.openWindow) private var openWindow
 
-    @State private var showDeleteAccountAlert = false
-    @State private var showDeleteAccountConfirm = false
+    /// Inline state machine for the Delete Account flow. `nil` means
+    /// "show the normal Delete Account button"; any other case replaces
+    /// the button with an inline confirmation card so the user never
+    /// has to navigate a separate alert window.
+    private enum DeleteAccountStep: Equatable {
+        case warning                  // step 1: danger description + Cancel/Continue
+        case confirmText              // step 2: TextField "DELETE" + Cancel/Delete
+        case deleting                 // RPC in flight
+        case failed(message: String)  // failed; offer Dismiss / Try Again
+    }
+
+    @State private var deleteStep: DeleteAccountStep?
     @State private var deleteConfirmText = ""
-    @State private var isDeletingAccount = false
-    // iter11 hotfix (2026-04-29): mirror the iOS settings tab — show
-    // a follow-up alert when delete-account fails on the server. The
-    // previous version of `performDeleteAccount` ignored the Bool
-    // return value, so a stale-JWT failure (or any RPC error) silently
-    // dropped the user back to the main settings view with no feedback,
-    // while their account remained intact server-side.
-    @State private var deleteFailedMessage: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -53,64 +82,19 @@ struct DangerZoneSection: View {
             .buttonStyle(.plain)
             .foregroundStyle(.orange)
 
-            // Delete Account
-            Button {
-                showDeleteAccountAlert = true
-            } label: {
-                HStack {
-                    if isDeletingAccount { ProgressView().controlSize(.small) }
+            // Delete Account — either the trigger button OR the inline
+            // confirmation card, never both.
+            if let step = deleteStep {
+                deleteConfirmationCard(step: step)
+            } else {
+                Button {
+                    deleteStep = .warning
+                } label: {
                     Label(L10n.account.deleteAccount, systemImage: "trash")
                         .font(.system(size: 11))
                 }
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.red)
-            .disabled(isDeletingAccount)
-            .alert(L10n.account.deleteConfirmTitle, isPresented: $showDeleteAccountAlert) {
-                Button(L10n.common.cancel, role: .cancel) { }
-                Button(L10n.account.deleteContinue, role: .destructive) {
-                    showDeleteAccountConfirm = true
-                }
-            } message: {
-                Text(L10n.account.deleteLongMessage)
-            }
-            .alert(L10n.account.deleteConfirmStepTitle, isPresented: $showDeleteAccountConfirm) {
-                TextField(L10n.account.deleteConfirmPlaceholder, text: $deleteConfirmText)
-                Button(L10n.common.cancel, role: .cancel) {
-                    deleteConfirmText = ""
-                }
-                Button(L10n.account.deleteConfirmButton, role: .destructive) {
-                    guard deleteConfirmText == "DELETE" else {
-                        deleteConfirmText = ""
-                        return
-                    }
-                    deleteConfirmText = ""
-                    Task { await performDeleteAccount() }
-                }
-                .disabled(deleteConfirmText != "DELETE")
-            } message: {
-                Text(L10n.account.deleteConfirmStepMessage)
-            }
-            // iter11 hotfix: surface delete-account failures. When
-            // `performDeleteAccount` records a non-nil `deleteFailedMessage`,
-            // this alert appears with the server-supplied error text or a
-            // generic fallback. On the session-expired path AppState's
-            // signOut runs before the message is set, so by the time this
-            // alert is shown the user is already on the SettingsTab login
-            // section — but the message still appears on whatever view is
-            // hosting the popover, which is what we want.
-            .alert(
-                L10n.account.deleteFailedTitle,
-                isPresented: Binding(
-                    get: { deleteFailedMessage != nil },
-                    set: { if !$0 { deleteFailedMessage = nil } }
-                )
-            ) {
-                Button(L10n.common.ok, role: .cancel) {
-                    deleteFailedMessage = nil
-                }
-            } message: {
-                Text(deleteFailedMessage ?? L10n.account.deleteFailedGeneric)
+                .buttonStyle(.plain)
+                .foregroundStyle(.red)
             }
 
             Button {
@@ -124,16 +108,160 @@ struct DangerZoneSection: View {
         }
     }
 
+    // MARK: - Inline Delete-account flow
+
+    @ViewBuilder
+    private func deleteConfirmationCard(step: DeleteAccountStep) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                Text(L10n.account.deleteConfirmTitle)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.red)
+            }
+
+            switch step {
+            case .warning:
+                deleteWarningBody
+            case .confirmText:
+                deleteConfirmTextBody
+            case .deleting:
+                deleteDeletingBody
+            case .failed(let message):
+                deleteFailedBody(message: message)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.red.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.red.opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    // Step 1: warning + Cancel / Continue.
+    private var deleteWarningBody: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(L10n.account.deleteLongMessage)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Button(L10n.common.cancel) {
+                    cancelDeleteFlow()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button(L10n.account.deleteContinue, role: .destructive) {
+                    deleteStep = .confirmText
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(.red)
+            }
+        }
+    }
+
+    // Step 2: type DELETE to confirm + Cancel / Delete My Account.
+    private var deleteConfirmTextBody: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(L10n.account.deleteConfirmStepMessage)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+
+            TextField(L10n.account.deleteConfirmPlaceholder, text: $deleteConfirmText)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11, design: .monospaced))
+                .disableAutocorrection(true)
+
+            HStack(spacing: 8) {
+                Button(L10n.common.cancel) {
+                    cancelDeleteFlow()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button(L10n.account.deleteConfirmButton, role: .destructive) {
+                    Task { await performDeleteAccount() }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(.red)
+                .disabled(deleteConfirmText != "DELETE")
+            }
+        }
+    }
+
+    // RPC in flight: spinner, no buttons (deletion is non-cancellable
+    // server-side once it starts).
+    private var deleteDeletingBody: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(L10n.account.deleteAccount + "…")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // Failure: show server-supplied or generic message + Dismiss / Try Again.
+    private func deleteFailedBody(message: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(message)
+                .font(.system(size: 10))
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Button(L10n.common.ok) {
+                    cancelDeleteFlow()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button(L10n.account.deleteContinue) {
+                    // "Try Again" — go straight back to the DELETE-text
+                    // step so the user doesn't have to re-confirm the
+                    // warning copy. They've already seen it.
+                    deleteConfirmText = ""
+                    deleteStep = .confirmText
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(.red)
+            }
+        }
+    }
+
+    // MARK: - Flow control
+
+    private func cancelDeleteFlow() {
+        deleteStep = nil
+        deleteConfirmText = ""
+    }
+
     private func performDeleteAccount() async {
-        isDeletingAccount = true
-        // iter11 hotfix: inspect the Bool result. On `false` the user
-        // is still signed in (account intact server-side) and we surface
-        // `state.lastError` via `deleteFailedMessage`. Falls back to a
+        deleteStep = .deleting
+        // iter11: inspect the Bool result. On `false` the user is still
+        // signed in (account intact server-side) and we surface
+        // `state.lastError` via the `.failed` step. Falls back to a
         // localized generic if `lastError` was somehow not populated.
         let succeeded = await state.deleteAccount()
-        isDeletingAccount = false
-        if !succeeded {
-            deleteFailedMessage = state.lastError ?? L10n.account.deleteFailedGeneric
+        if succeeded {
+            // signOut() was already called inside AppState.deleteAccount;
+            // resetting the inline state lets the now-signed-out
+            // SettingsTab login section render cleanly.
+            cancelDeleteFlow()
+        } else {
+            let message = state.lastError ?? L10n.account.deleteFailedGeneric
+            deleteStep = .failed(message: message)
+            // Don't clear deleteConfirmText yet — `Try Again` jumps
+            // straight back to the confirmText step.
         }
     }
 }
