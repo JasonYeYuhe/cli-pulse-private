@@ -73,42 +73,67 @@ struct MenuBarView: View {
 
     private var notConnectedView: some View {
         VStack(spacing: 0) {
-            if !authState.isAuthenticated && !onboardingCompleted {
-                OnboardingWizardView()
-                    .environmentObject(state)
-            } else if !authState.isAuthenticated {
-                // iter14 hotfix (2026-04-29): signed-out + onboarding
-                // already done. Pre-iter14 this branch ignored
-                // `state.selectedTab` and always rendered SettingsTab,
-                // so a user who tapped "Continue without account" in
-                // SettingsTab.loginSection had nowhere to land — the
-                // tab switch was effectively a no-op. Route through
-                // the same tab system as `connectedView` so Overview /
-                // Providers / Sessions / Alerts each render their
-                // own empty-state when there's no data, and the user
-                // can come back to Settings to log in any time.
-                //
-                // The signed-in-but-unpaired branch below is left
-                // unchanged on purpose: that flow expects users to
-                // land directly on SettingsTab so PairingSection is
-                // immediately visible.
-                tabBar
-                Group {
-                    switch state.selectedTab {
-                    case .overview:    OverviewTab()
-                    case .providers:   ProvidersTab()
-                    case .sessions:    SessionsTab()
-                    case .alerts:      AlertsTab()
-                    case .settings:    SettingsTab()
+            // Inner content branches by auth/onboarding state. Each
+            // branch is wrapped in a `.frame(maxHeight: .infinity)`
+            // container so the basic footer below sits flush against
+            // the bottom of the popover, matching the connected view's
+            // footer placement.
+            Group {
+                if !authState.isAuthenticated && !onboardingCompleted {
+                    OnboardingWizardView()
+                        .environmentObject(state)
+                } else if !authState.isAuthenticated {
+                    // iter14 hotfix (2026-04-29): signed-out + onboarding
+                    // already done. Pre-iter14 this branch ignored
+                    // `state.selectedTab` and always rendered SettingsTab,
+                    // so a user who tapped "Continue without account" in
+                    // SettingsTab.loginSection had nowhere to land — the
+                    // tab switch was effectively a no-op. Route through
+                    // the same tab system as `connectedView` so Overview /
+                    // Providers / Sessions / Alerts each render their
+                    // own empty-state when there's no data, and the user
+                    // can come back to Settings to log in any time.
+                    //
+                    // The signed-in-but-unpaired branch below is left
+                    // unchanged on purpose: that flow expects users to
+                    // land directly on SettingsTab so PairingSection is
+                    // immediately visible.
+                    VStack(spacing: 0) {
+                        tabBar
+                        Group {
+                            switch state.selectedTab {
+                            case .overview:    OverviewTab()
+                            case .providers:   ProvidersTab()
+                            case .sessions:    SessionsTab()
+                            case .alerts:      AlertsTab()
+                            case .settings:    SettingsTab()
+                            }
+                        }
+                        .environmentObject(state)
+                        .frame(maxHeight: .infinity)
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        tabBar
+                        SettingsTab()
+                            .environmentObject(state)
+                            .frame(maxHeight: .infinity)
                     }
                 }
-                .environmentObject(state)
-                .frame(maxHeight: .infinity)
-            } else {
-                tabBar
-                SettingsTab()
-                    .environmentObject(state)
             }
+            .frame(maxHeight: .infinity)
+
+            // iter15 hotfix (2026-04-29): every signed-out / onboarding
+            // surface gets the same bottom power button. Pre-iter15 only
+            // `connectedView` rendered the footer, so users in the
+            // onboarding wizard or signed-out tab shell had no
+            // bottom-right Quit affordance — the only way out of the app
+            // was Cmd-Q from the menubar, which is invisible if the user
+            // doesn't already know it. The basic variant strips the
+            // signed-in-only widgets (provider switcher, Remote Approvals,
+            // refresh) and shows version + power only.
+            basicFooter
+            resizeHandle
         }
     }
 
@@ -273,6 +298,41 @@ struct MenuBarView: View {
     }
 
     // MARK: - Footer
+
+    /// Minimal footer for signed-out / onboarding surfaces.
+    ///
+    /// Mirrors the connected `footer`'s shape (same height, same
+    /// background, same version-label centering, same power button on
+    /// the trailing edge) but omits widgets that require an
+    /// authenticated session: provider switcher, Remote Approvals
+    /// entry, refresh button. The power button uses the same
+    /// `NSApplication.shared.terminate(nil)` action so quit behavior
+    /// is identical regardless of which footer is showing.
+    private var basicFooter: some View {
+        HStack(spacing: 6) {
+            Spacer()
+
+            Text("CLI Pulse v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0")")
+                .font(.system(size: 8))
+                .foregroundStyle(.quaternary)
+
+            Spacer()
+
+            Button {
+                NSApplication.shared.terminate(nil)
+            } label: {
+                Image(systemName: "power")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Quit CLI Pulse")
+            .help("Quit CLI Pulse")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .background(Color(nsColor: .separatorColor).opacity(0.1))
+    }
 
     private var footer: some View {
         HStack(spacing: 6) {
