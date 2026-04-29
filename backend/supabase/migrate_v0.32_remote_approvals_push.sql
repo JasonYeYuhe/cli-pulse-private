@@ -44,12 +44,34 @@
 -- ============================================================
 
 -- ── 1. app_push_tokens table ────────────────────────────────
+-- Why `unique (token)` and NOT `unique (user_id, platform, token)` or
+-- `unique (platform, bundle_id, token)`:
+--
+--   * APNs issues tokens at the (device, bundle_id, environment) tuple
+--     level. Apple's contract guarantees: any two tokens that ever exist
+--     for different (device, bundle_id) pairs are distinct. So `token`
+--     alone is already a globally-unique identifier across platform and
+--     bundle_id — adding those columns to the unique constraint can only
+--     make it weaker (matches more conflicts), not stronger.
+--
+--   * The constraint must NOT include `user_id`. The whole point of the
+--     unique-on-token invariant is to atomically transfer ownership when
+--     user A logs out of an iPhone and user B logs in: APNs hands the
+--     same token T to user B's app install, and ON CONFLICT(token) DO
+--     UPDATE SET user_id = excluded.user_id flips the row to user B.
+--     If unique included user_id, both rows would coexist and user A's
+--     pending requests would keep pushing to user B's iPhone after the
+--     handoff.
+--
+--   * The (defensive) consequence: if the same APNs token ever appears
+--     under two user_ids, we treat the second register as authoritative
+--     and overwrite. Better than splitting traffic.
 create table if not exists public.app_push_tokens (
   id            uuid primary key default gen_random_uuid(),
   user_id       uuid not null references public.profiles(id) on delete cascade,
   platform      text not null check (platform in ('ios', 'macos')),
   bundle_id     text not null,
-  token         text not null unique,           -- ← key invariant: at most one user per APNs token
+  token         text not null unique,
   created_at    timestamptz not null default now(),
   last_seen_at  timestamptz not null default now()
 );

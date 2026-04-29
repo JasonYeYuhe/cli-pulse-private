@@ -345,6 +345,15 @@ extension AppState {
     public func signOut() {
         stopRefreshLoop()
         dataRefreshManager.cancelInFlightRefresh()
+        // Best-effort: drop the user's APNs token from app_push_tokens so
+        // their pending requests stop pushing to this device after logout.
+        // Server-side ON CONFLICT(token) on the next user's
+        // register_app_push_token would transfer ownership anyway, but
+        // that only protects same-device-different-user; explicit unregister
+        // also handles "user logs out and never logs back in".
+        // No-op when registeredPushToken is nil; never blocks logout
+        // because the implementation just spawns a Task and swallows errors.
+        unregisterPushTokenOnLogout()
         // Capture current token so async logout only clears the right session
         let currentToken = storedToken
         Task { await authManager.signOut(currentAccessToken: currentToken) }

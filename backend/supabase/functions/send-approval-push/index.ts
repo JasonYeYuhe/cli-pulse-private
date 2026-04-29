@@ -32,6 +32,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { assertPayloadIsClean, buildPushPayload } from "./payload.ts";
+import { checkInternalAuth } from "./auth.ts";
 
 interface Body {
   user_id: string;
@@ -168,6 +169,20 @@ async function dispatchToTokens(
 }
 
 Deno.serve(async (req) => {
+  // ── Auth gate (audit fix): reject everything but the AFTER INSERT
+  // trigger and the cron worker. See auth.ts for the contract.
+  // Edge logs only get the enumerated reason string ("missing_auth",
+  // "bad_auth", "missing_trigger", "bad_trigger", "no_service_key");
+  // never echoes caller-supplied content.
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const authResult = checkInternalAuth(req.headers, serviceRoleKey);
+  if (!authResult.ok) {
+    return new Response(
+      JSON.stringify({ error: authResult.reason }),
+      { status: 401, headers: { "content-type": "application/json" } },
+    );
+  }
+
   let body: Body;
   try {
     body = await req.json();
@@ -185,7 +200,7 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    serviceRoleKey,
   );
 
   // Defense-in-depth: re-check the gate. The trigger already gated, but

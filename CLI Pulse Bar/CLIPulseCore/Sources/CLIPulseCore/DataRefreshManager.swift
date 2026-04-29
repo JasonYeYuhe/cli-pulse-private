@@ -1482,18 +1482,21 @@ extension AppState {
     /// Register an APNs push token to this user on the server. Idempotent.
     /// Called by the iOS AppDelegate from
     /// `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
-    /// Only fires the network round-trip when Remote Control is enabled —
-    /// no point asking the server to track a token for users who haven't
-    /// opted in. Re-runs automatically when the user later toggles on
-    /// because `setRemoteControlEnabled(true)` triggers
-    /// `requestNotificationPermission()` which restarts the registration
-    /// loop.
+    ///
+    /// Audit fix (iter7): we register the token UNCONDITIONALLY, even when
+    /// `remoteControlEnabled` is false. Two reasons:
+    ///   1. APNs only delivers the device token once per launch via the
+    ///      didRegister callback. The previous "guard remoteControlEnabled
+    ///      else return" path silently dropped the token, so a user who
+    ///      had Remote Control off at launch and toggled it on later
+    ///      wouldn't get push until next app relaunch.
+    ///   2. Server-side gate is the actual safety net (trigger + edge
+    ///      function both re-check user_settings.remote_control_enabled
+    ///      before sending). The token sitting in app_push_tokens is
+    ///      inert metadata while the gate is off — no APNs traffic fires.
+    /// This matches the user's stated mental model: "Remote Control off
+    /// shouldn't unregister; server gate is enough."
     public func syncPushToken(token: String, platform: String, bundleId: String) {
-        guard remoteControlEnabled else {
-            // Defer the actual upload until user opts in. Cache the token
-            // locally so we don't have to re-prompt for permission.
-            return
-        }
         guard PushTokenSync.isValidTokenLength(token),
               PushTokenSync.isValidBundleId(bundleId) else {
             return
