@@ -390,3 +390,4 @@
 "account.delete_confirm_step_message" = "계정을 영구적으로 삭제하려면 DELETE를 입력하세요.";
 "account.delete_failed_title" = "계정을 삭제할 수 없습니다";
 "account.delete_failed_generic" = "계정을 삭제하지 못했습니다. 계정은 아직 활성 상태입니다. 네트워크 연결을 확인하고 다시 시도하거나, 로그아웃 후 다시 로그인하여 세션을 새로 고치십시오.";
+"account.delete_session_expired" = "계정을 삭제하기 전에 세션이 만료되었습니다. 계정은 아직 활성 상태입니다. 다시 로그인한 후 설정에서 '계정 삭제'를 다시 시도해 주세요.";

@@ -390,3 +390,4 @@
 "account.delete_confirm_step_message" = "Type DELETE to confirm permanent account deletion.";
 "account.delete_failed_title" = "Couldn't Delete Account";
 "account.delete_failed_generic" = "We couldn't delete your account. Your account is still active. Please check your connection and try again, or sign out and sign back in to refresh your session.";
+"account.delete_session_expired" = "Your session expired before we could delete your account. Your account is still active — please sign in again, then try Delete Account from Settings.";

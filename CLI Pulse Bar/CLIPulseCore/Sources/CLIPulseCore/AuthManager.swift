@@ -377,6 +377,21 @@ extension AppState {
     /// this method silently swallowed errors and called `signOut()` even
     /// in the catch branch, which made the user think the delete worked
     /// when it hadn't (iter10 user feedback: "delete account 无效").
+    ///
+    /// iter11 hotfix (2026-04-29): split the failure handling into two
+    /// branches via `DeleteAccountFailure.classify`:
+    ///   - `.sessionExpired`: the eager pre-RPC refresh failed (or any
+    ///     downstream call surfaced `tokenExpired`). The APIClient has
+    ///     already nil'd its in-memory tokens at this point, so the UI
+    ///     state ("you're signed in") no longer matches the API state
+    ///     ("you have no tokens"). We reconcile by signing out, then
+    ///     stash a clear "Session expired during account deletion"
+    ///     message into `lastError` *after* `signOut` clears it — so
+    ///     the login screen explains what happened.
+    ///   - `.other`: the server actively refused the delete (HTTP 4xx,
+    ///     RLS violation, FK conflict, network failure). Session is
+    ///     intact (or recoverable on next refresh). Show the error in
+    ///     place; user can retry without re-authenticating.
     @discardableResult
     public func deleteAccount() async -> Bool {
         isLoading = true
@@ -388,14 +403,26 @@ extension AppState {
             signOut()
             return true
         } catch {
-            // Server side did NOT confirm. Surface the error and keep the
-            // session intact so the user can retry without first having
-            // to sign in again. (Pre-iter10 this still fell through to a
-            // local signOut, which is misleading: the account row is
-            // intact server-side but the user is signed out.)
-            lastError = error.localizedDescription
-            isLoading = false
-            return false
+            switch DeleteAccountFailure.classify(error) {
+            case .sessionExpired:
+                // Refresh failed → APIClient tokens already nil. Reconcile
+                // UI: sign out (clears in-memory state) and then re-set
+                // `lastError` so the login screen surfaces the reason.
+                isLoading = false
+                signOut()
+                lastError = L10n.account.deleteSessionExpired
+                return false
+            case .other(let message):
+                // Server side did NOT confirm. Surface the error and keep
+                // the session intact so the user can retry without first
+                // having to sign in again. (Pre-iter10 this still fell
+                // through to a local signOut, which was misleading: the
+                // account row was intact server-side but the user was
+                // signed out.)
+                lastError = message
+                isLoading = false
+                return false
+            }
         }
     }
 

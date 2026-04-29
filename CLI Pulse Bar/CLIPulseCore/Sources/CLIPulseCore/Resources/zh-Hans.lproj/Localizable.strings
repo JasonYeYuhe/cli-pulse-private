@@ -390,3 +390,4 @@
 "account.delete_confirm_step_message" = "输入 DELETE 以确认永久删除账户。";
 "account.delete_failed_title" = "未能删除账户";
 "account.delete_failed_generic" = "未能删除你的账户，账户仍然有效。请检查网络后重试，或先登出再重新登录以刷新登录状态。";
+"account.delete_session_expired" = "登录状态在删除账户之前已过期。你的账户仍然有效——请重新登录后，从「设置」里再次点击「删除账户」。";

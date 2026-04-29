@@ -13,6 +13,13 @@ struct DangerZoneSection: View {
     @State private var showDeleteAccountConfirm = false
     @State private var deleteConfirmText = ""
     @State private var isDeletingAccount = false
+    // iter11 hotfix (2026-04-29): mirror the iOS settings tab — show
+    // a follow-up alert when delete-account fails on the server. The
+    // previous version of `performDeleteAccount` ignored the Bool
+    // return value, so a stale-JWT failure (or any RPC error) silently
+    // dropped the user back to the main settings view with no feedback,
+    // while their account remained intact server-side.
+    @State private var deleteFailedMessage: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -84,6 +91,27 @@ struct DangerZoneSection: View {
             } message: {
                 Text(L10n.account.deleteConfirmStepMessage)
             }
+            // iter11 hotfix: surface delete-account failures. When
+            // `performDeleteAccount` records a non-nil `deleteFailedMessage`,
+            // this alert appears with the server-supplied error text or a
+            // generic fallback. On the session-expired path AppState's
+            // signOut runs before the message is set, so by the time this
+            // alert is shown the user is already on the SettingsTab login
+            // section — but the message still appears on whatever view is
+            // hosting the popover, which is what we want.
+            .alert(
+                L10n.account.deleteFailedTitle,
+                isPresented: Binding(
+                    get: { deleteFailedMessage != nil },
+                    set: { if !$0 { deleteFailedMessage = nil } }
+                )
+            ) {
+                Button(L10n.common.ok, role: .cancel) {
+                    deleteFailedMessage = nil
+                }
+            } message: {
+                Text(deleteFailedMessage ?? L10n.account.deleteFailedGeneric)
+            }
 
             Button {
                 NSApplication.shared.terminate(nil)
@@ -98,7 +126,14 @@ struct DangerZoneSection: View {
 
     private func performDeleteAccount() async {
         isDeletingAccount = true
-        await state.deleteAccount()
+        // iter11 hotfix: inspect the Bool result. On `false` the user
+        // is still signed in (account intact server-side) and we surface
+        // `state.lastError` via `deleteFailedMessage`. Falls back to a
+        // localized generic if `lastError` was somehow not populated.
+        let succeeded = await state.deleteAccount()
         isDeletingAccount = false
+        if !succeeded {
+            deleteFailedMessage = state.lastError ?? L10n.account.deleteFailedGeneric
+        }
     }
 }

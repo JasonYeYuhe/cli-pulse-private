@@ -304,6 +304,11 @@ public enum L10n {
         // iter10: shown when the delete-account RPC fails on the server.
         public static var deleteFailedTitle: String { tr("account.delete_failed_title") }
         public static var deleteFailedGeneric: String { tr("account.delete_failed_generic") }
+        // iter11: shown after the delete-account flow detects a dead
+        // session and signs the user out. Surfaced on the login screen
+        // (via state.lastError) so the user understands why they were
+        // bounced and what to do next.
+        public static var deleteSessionExpired: String { tr("account.delete_session_expired") }
     }
 
     // MARK: - Session Details

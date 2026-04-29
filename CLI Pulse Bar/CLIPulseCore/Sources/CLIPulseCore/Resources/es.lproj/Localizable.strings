@@ -390,3 +390,4 @@
 "account.delete_confirm_step_message" = "Escribe DELETE para confirmar la eliminación permanente de la cuenta.";
 "account.delete_failed_title" = "No se pudo eliminar la cuenta";
 "account.delete_failed_generic" = "No pudimos eliminar tu cuenta. Tu cuenta sigue activa. Verifica tu conexión y vuelve a intentarlo, o cierra sesión y vuelve a iniciar sesión para refrescar tu sesión.";
+"account.delete_session_expired" = "Tu sesión expiró antes de que pudiéramos eliminar tu cuenta. Tu cuenta sigue activa — vuelve a iniciar sesión y prueba de nuevo Eliminar cuenta desde Ajustes.";

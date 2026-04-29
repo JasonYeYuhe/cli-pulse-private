@@ -856,15 +856,34 @@ public actor APIClient {
     /// user thought delete worked but the account still existed server-side.
     /// The eager refresh below rules out the stale-JWT failure mode; the
     /// AppState/UI layer adds the missing error surfacing.
+    ///
+    /// iter11 hotfix (2026-04-29): the iter10 version of the eager refresh
+    /// used `try?`, swallowing tokenExpired failures. `refreshAccessToken`
+    /// nils both `accessToken` and `refreshToken` on failure (intentional —
+    /// session is dead), so swallowing meant the RPC then ran without
+    /// Authorization, the server returned 4xx, AppState reported failure
+    /// and "preserved the session" — but the in-memory tokens were already
+    /// nil. The user ended up with a UI that looked signed in while the
+    /// API client had no auth: every subsequent call would fail.
+    /// The fix: on refresh failure, propagate `tokenExpired`. AppState's
+    /// catch arm signs the user out cleanly (via `signOut()`) and stashes
+    /// a "Session expired" message into `lastError` after `signOut`, so
+    /// the login screen explains what happened.
     public func deleteAccount() async throws {
-        // Eagerly refresh the access token if we have a refresh token. We
-        // don't fail the whole flow if the refresh itself fails — there are
-        // edge cases (no stored refresh token, network blip, server outage)
-        // where the existing access token is still valid and the delete
-        // call itself can still succeed. Errors there are reported by the
-        // RPC's HTTP response, which surfaces via APIError.httpError below.
+        // Eagerly refresh the access token if we have a refresh token. The
+        // happy path replaces the access token with a fresh one before the
+        // delete RPC runs, ruling out the stale-JWT silent-failure mode.
         if refreshToken != nil {
-            _ = try? await refreshAccessToken()
+            do {
+                _ = try await refreshAccessToken()
+            } catch {
+                // Refresh failed → session is dead and `refreshAccessToken`
+                // has already nil'd `accessToken` / `refreshToken`. Don't
+                // try to push the RPC through with no auth header — bail
+                // out with the tokenExpired marker so the caller can put
+                // the UI back into a coherent signed-out state.
+                throw APIError.tokenExpired
+            }
         }
 
         guard let url = URL(string: "\(supabaseURL)/rest/v1/rpc/delete_user_account") else {

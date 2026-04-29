@@ -390,3 +390,4 @@
 "account.delete_confirm_step_message" = "アカウントを完全に削除するには DELETE と入力してください。";
 "account.delete_failed_title" = "アカウントを削除できませんでした";
 "account.delete_failed_generic" = "アカウントを削除できませんでした。アカウントはまだ有効です。ネットワーク接続を確認して再試行するか、一度サインアウトしてからサインインし直してセッションを更新してください。";
+"account.delete_session_expired" = "アカウントを削除する前にセッションが期限切れになりました。アカウントはまだ有効です。再度サインインしてから、設定の「アカウントを削除」をもう一度お試しください。";
