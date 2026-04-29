@@ -266,10 +266,31 @@ struct OnboardingWizardView: View {
 
             Spacer()
 
-            Button("Back") { step = 2 }
+            // iter10 hotfix (2026-04-29): step 3 was previously a hard
+            // trap — the only button was "Back" (which loops to step 2)
+            // and the wizard's `onboardingCompleted` flag was set ONLY
+            // by step 4's "Skip for now" / "Done" buttons. Step 4 is
+            // reachable only via the `.onChange(of: authState.isAuth-
+            // enticated)` auto-advance, which fires only after the user
+            // signs in. Net result: a user who didn't want to sign in
+            // had no way out of the wizard short of force-quitting.
+            //
+            // Adding a "Skip for now" sibling here lets the user proceed
+            // to the menu-bar shell unauthenticated. The Mac app's local
+            // mode (`refreshLocal`) handles unauthenticated collectors,
+            // so this is a graceful exit, not a broken state.
+            HStack(spacing: 12) {
+                Button("Back") { step = 2 }
+                    .buttonStyle(.bordered)
+                    .disabled(state.isLoading)
+
+                Button("Skip for now") {
+                    onboardingCompleted = true
+                }
                 .buttonStyle(.bordered)
-                .padding(.bottom, 20)
                 .disabled(state.isLoading)
+            }
+            .padding(.bottom, 20)
         }
         .padding(.horizontal, 20)
     }
@@ -382,49 +403,56 @@ struct OnboardingWizardView: View {
         Task { await state.signInWithPassword(email: email, password: password) }
     }
 
-    // MARK: - Step 4: Pair Device
+    // MARK: - Step 4: All set
+    //
+    // iter10 hotfix (2026-04-29): this step previously read "Pair Your
+    // First Device" and showed three `pip install cli-pulse-helper`
+    // commands as if helper pairing was a required setup step. That
+    // contradicts the iter9 product reality — sync is account-scoped:
+    // the Mac app uploads usage data to the user's Supabase account
+    // automatically, and any signed-in iOS / Watch device fetches it
+    // back without manual pairing. The helper daemon is now an opt-in
+    // enhancement (Remote Approvals' permission-prompt forwarding,
+    // headless server scenarios), NOT a basic-sync prerequisite. The
+    // step's new copy reflects that — and points to Settings for users
+    // who DO want the optional helper.
 
     private var pairStep: some View {
         VStack(spacing: 12) {
-            Text("Pair Your First Device")
+            Text("You're All Set")
                 .font(.headline)
                 .padding(.top, 12)
 
-            Image(systemName: "link.badge.plus")
+            Image(systemName: "checkmark.seal.fill")
                 .font(.system(size: 30))
-                .foregroundStyle(PulseTheme.accent)
+                .foregroundStyle(.green)
 
-            Text("Install the CLI Pulse Helper on your development machine to start collecting usage data.")
+            Text("Sync runs automatically while the Mac app is running. Sign in to any other device with the same account and your usage data appears there too — no pairing or setup needed.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 20)
 
-            VStack(alignment: .leading, spacing: 8) {
-                setupStep(1, "Install: pip install cli-pulse-helper")
-                setupStep(2, "Run: cli-pulse-helper pair <your-code>")
-                setupStep(3, "Start: cli-pulse-helper daemon")
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 8)
+            // Optional-helper hint as a low-key footnote. Don't bury it
+            // (some users genuinely want headless / Remote-Approvals
+            // setups) but don't lead with it either.
+            Text("Looking for the optional helper for headless servers or Claude Remote Approvals? Open Settings → Helper after onboarding.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
 
             Spacer()
 
-            HStack(spacing: 12) {
-                Button("Skip for now") {
-                    onboardingCompleted = true
-                }
-                .buttonStyle(.bordered)
-
-                Button {
-                    onboardingCompleted = true
-                } label: {
-                    Text("Done")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(PulseTheme.accent)
+            Button {
+                onboardingCompleted = true
+            } label: {
+                Text("Done")
+                    .frame(maxWidth: .infinity)
             }
+            .buttonStyle(.borderedProminent)
+            .tint(PulseTheme.accent)
             .padding(.horizontal, 40)
             .padding(.bottom, 20)
         }

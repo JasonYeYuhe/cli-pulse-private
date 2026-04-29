@@ -1200,23 +1200,54 @@ extension AppState {
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
             return
         }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-            // v0.32: also register for APNs so Remote Approvals can push.
-            // Only meaningful on iOS (UIApplication is iOS-only); macOS
-            // uses local notifications only for now. We register
-            // unconditionally on permission grant — the registered token
-            // is only USED server-side when remoteControlEnabled=true,
-            // and the registration cost is essentially free if Remote
-            // Control is off (token sits in app_push_tokens but no push
-            // ever fires).
-            #if os(iOS)
-            guard granted else { return }
-            DispatchQueue.main.async {
-                UIApplication.shared.registerForRemoteNotifications()
+        // iter10 hotfix (2026-04-29): only call `requestAuthorization`
+        // when the system status is `.notDetermined`. After the user has
+        // granted or denied once, iOS will never re-show the system
+        // dialog regardless of how many times we call it — but going
+        // through the full request path on every Remote-Control toggle
+        // is wasteful and (more importantly) closes the door on any
+        // future regression where a callsite mistakenly fires this in
+        // a loop (e.g. a tier-change observer or a refresh-cycle
+        // callback). On `.authorized` we skip straight to APNs
+        // registration; on `.denied` we no-op so we don't keep nagging
+        // the platform; on `.notDetermined` we run the original prompt.
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .notDetermined:
+                center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+                    // v0.32: also register for APNs so Remote Approvals can push.
+                    // Only meaningful on iOS (UIApplication is iOS-only); macOS
+                    // uses local notifications only for now. We register
+                    // unconditionally on permission grant — the registered token
+                    // is only USED server-side when remoteControlEnabled=true,
+                    // and the registration cost is essentially free if Remote
+                    // Control is off (token sits in app_push_tokens but no push
+                    // ever fires).
+                    #if os(iOS)
+                    guard granted else { return }
+                    DispatchQueue.main.async {
+                        UIApplication.shared.registerForRemoteNotifications()
+                    }
+                    #else
+                    _ = granted
+                    #endif
+                }
+            case .authorized, .provisional, .ephemeral:
+                // Already-granted state: skip the request (which would be
+                // a no-op anyway) and go directly to APNs registration so
+                // a fresh install/reinstall picks up the existing grant.
+                #if os(iOS)
+                DispatchQueue.main.async {
+                    UIApplication.shared.registerForRemoteNotifications()
+                }
+                #endif
+            case .denied:
+                // User has explicitly denied. Never re-ask.
+                break
+            @unknown default:
+                break
             }
-            #else
-            _ = granted
-            #endif
         }
     }
 

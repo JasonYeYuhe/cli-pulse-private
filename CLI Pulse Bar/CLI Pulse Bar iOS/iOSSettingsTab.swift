@@ -13,6 +13,12 @@ struct iOSSettingsTab: View {
     @EnvironmentObject var providerState: ProviderState
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showDeleteConfirmation = false
+    // iter10 hotfix: surface delete-account failures. Previously the
+    // confirm-alert called `state.deleteAccount()` and ignored the
+    // outcome; if the RPC failed (most commonly: stale JWT → "Not
+    // authenticated"), `state.lastError` was set but never displayed
+    // anywhere on this screen, so the user thought the delete succeeded.
+    @State private var deleteAccountErrorMessage: String?
     @State private var alertThresholds: AlertThresholds = AlertThresholdsStore.load()
     @State private var showRemoteControlConsent = false
 
@@ -460,10 +466,36 @@ struct iOSSettingsTab: View {
                         .alert(L10n.account.deleteConfirmTitle, isPresented: $showDeleteConfirmation) {
                             Button(L10n.common.cancel, role: .cancel) { }
                             Button(L10n.common.delete, role: .destructive) {
-                                Task { await state.deleteAccount() }
+                                // iter10 hotfix: inspect the result so we
+                                // can show an alert when the server-side
+                                // RPC fails. On `false` the user is still
+                                // signed in (account intact server-side),
+                                // and we surface `state.lastError` via
+                                // `deleteAccountErrorMessage` so the user
+                                // knows to retry.
+                                Task {
+                                    let succeeded = await state.deleteAccount()
+                                    if !succeeded {
+                                        deleteAccountErrorMessage = state.lastError
+                                            ?? L10n.account.deleteFailedGeneric
+                                    }
+                                }
                             }
                         } message: {
                             Text(L10n.account.deleteConfirmMessage)
+                        }
+                        .alert(
+                            L10n.account.deleteFailedTitle,
+                            isPresented: Binding(
+                                get: { deleteAccountErrorMessage != nil },
+                                set: { if !$0 { deleteAccountErrorMessage = nil } }
+                            )
+                        ) {
+                            Button(L10n.common.ok, role: .cancel) {
+                                deleteAccountErrorMessage = nil
+                            }
+                        } message: {
+                            Text(deleteAccountErrorMessage ?? L10n.account.deleteFailedGeneric)
                         }
                     }
                 } else {

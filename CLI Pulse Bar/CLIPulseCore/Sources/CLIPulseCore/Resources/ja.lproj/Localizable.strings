@@ -222,6 +222,7 @@
 "common.navigation" = "ナビゲーション";
 "common.data" = "データ";
 "common.refresh" = "更新";
+"common.ok" = "OK";
 
 /* ── アカウント ── */
 "account.delete_account" = "アカウント削除";
@@ -302,7 +303,7 @@
 "onboarding.check_sync" = "同期ステータスを確認";
 "onboarding.set_up_sync" = "クラウド同期をセットアップ";
 "onboarding.synced_mode" = "クラウド同期 — デバイス間でデータ同期中";
-"onboarding.not_synced_hint" = "Macでヘルパーをセットアップして、マルチデバイス同期、履歴、iPhoneアクセスを有効にしましょう。";
+"onboarding.not_synced_hint" = "サインインすると、使用データがアカウントに同期されます。同じアカウントでサインインしている端末（iPhone を含む）にも自動で表示されます。";
 "onboarding.helper_not_connected_yet" = "ヘルパーがまだ接続されていません。上記のコマンドを実行してから、もう一度お試しください。";
 
 /* ── チーム ── */
@@ -387,3 +388,5 @@
 "account.delete_confirm_placeholder" = "DELETE と入力して確認";
 "account.delete_confirm_button" = "アカウントを削除";
 "account.delete_confirm_step_message" = "アカウントを完全に削除するには DELETE と入力してください。";
+"account.delete_failed_title" = "アカウントを削除できませんでした";
+"account.delete_failed_generic" = "アカウントを削除できませんでした。アカウントはまだ有効です。ネットワーク接続を確認して再試行するか、一度サインアウトしてからサインインし直してセッションを更新してください。";

@@ -838,7 +838,35 @@ public actor APIClient {
 
     // MARK: - Account Deletion
 
+    /// Delete the authenticated user's account.
+    ///
+    /// Calls the `delete_user_account` RPC (SECURITY DEFINER, owner postgres,
+    /// authenticated via `auth.uid()`), which deletes the row from
+    /// `public.profiles` (cascading to ~20 child tables: alerts, sessions,
+    /// devices, app_push_tokens, subscriptions, remote_sessions, …) and then
+    /// from `auth.users`. Both rows are gone after a successful call.
+    ///
+    /// iter10 hotfix (2026-04-29): the previous version of this method
+    /// uncritically sent whatever access token happened to be in
+    /// `self.accessToken`. On real device, if the user had been idle long
+    /// enough for the JWT to expire (Supabase default: 1 hour), `auth.uid()`
+    /// inside the RPC returned NULL → "Not authenticated" exception → HTTP
+    /// 4xx → client throw → AppState.deleteAccount swallowed the error
+    /// without surfacing it (iOSSettingsTab didn't bind to lastError) → the
+    /// user thought delete worked but the account still existed server-side.
+    /// The eager refresh below rules out the stale-JWT failure mode; the
+    /// AppState/UI layer adds the missing error surfacing.
     public func deleteAccount() async throws {
+        // Eagerly refresh the access token if we have a refresh token. We
+        // don't fail the whole flow if the refresh itself fails — there are
+        // edge cases (no stored refresh token, network blip, server outage)
+        // where the existing access token is still valid and the delete
+        // call itself can still succeed. Errors there are reported by the
+        // RPC's HTTP response, which surfaces via APIError.httpError below.
+        if refreshToken != nil {
+            _ = try? await refreshAccessToken()
+        }
+
         guard let url = URL(string: "\(supabaseURL)/rest/v1/rpc/delete_user_account") else {
             throw APIError.invalidResponse
         }

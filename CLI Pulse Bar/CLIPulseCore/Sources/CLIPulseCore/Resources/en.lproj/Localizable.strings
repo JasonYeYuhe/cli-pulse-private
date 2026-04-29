@@ -222,6 +222,7 @@
 "common.navigation" = "Navigation";
 "common.data" = "Data";
 "common.refresh" = "Refresh";
+"common.ok" = "OK";
 
 /* ── Account ── */
 "account.delete_account" = "Delete Account";
@@ -302,7 +303,7 @@
 "onboarding.check_sync" = "Check Sync Status";
 "onboarding.set_up_sync" = "Set Up Cloud Sync";
 "onboarding.synced_mode" = "Cloud Sync — data syncing across devices";
-"onboarding.not_synced_hint" = "Set up the helper on your Mac for multi-device sync, history, and iPhone access.";
+"onboarding.not_synced_hint" = "Sign in to sync usage data to your account. Any other device with the same account — including iPhone — sees the data automatically.";
 "onboarding.helper_not_connected_yet" = "Helper hasn't connected yet. Run the command above, then try again.";
 
 /* ── Team ── */
@@ -387,3 +388,5 @@
 "account.delete_confirm_placeholder" = "Type DELETE to confirm";
 "account.delete_confirm_button" = "Delete My Account";
 "account.delete_confirm_step_message" = "Type DELETE to confirm permanent account deletion.";
+"account.delete_failed_title" = "Couldn't Delete Account";
+"account.delete_failed_generic" = "We couldn't delete your account. Your account is still active. Please check your connection and try again, or sign out and sign back in to refresh your session.";

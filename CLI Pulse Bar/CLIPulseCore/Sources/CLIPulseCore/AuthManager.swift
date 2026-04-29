@@ -371,16 +371,31 @@ extension AppState {
         NotificationCenter.default.post(name: .cliPulseDidSignOut, object: nil)
     }
 
-    public func deleteAccount() async {
+    /// Delete the user's account. Returns `true` on confirmed server-side
+    /// success, `false` if the API call failed. On failure, the caller
+    /// MUST inspect `lastError` and surface it — the previous version of
+    /// this method silently swallowed errors and called `signOut()` even
+    /// in the catch branch, which made the user think the delete worked
+    /// when it hadn't (iter10 user feedback: "delete account 无效").
+    @discardableResult
+    public func deleteAccount() async -> Bool {
         isLoading = true
         lastError = nil
         do {
             try await authManager.deleteAccount()
+            // Server confirmed deletion. Now safe to clear local state.
             isLoading = false
             signOut()
+            return true
         } catch {
+            // Server side did NOT confirm. Surface the error and keep the
+            // session intact so the user can retry without first having
+            // to sign in again. (Pre-iter10 this still fell through to a
+            // local signOut, which is misleading: the account row is
+            // intact server-side but the user is signed out.)
             lastError = error.localizedDescription
             isLoading = false
+            return false
         }
     }
 

@@ -222,6 +222,7 @@
 "common.navigation" = "导航";
 "common.data" = "数据";
 "common.refresh" = "刷新";
+"common.ok" = "好";
 
 /* ── 账户 ── */
 "account.delete_account" = "删除账户";
@@ -302,7 +303,7 @@
 "onboarding.check_sync" = "检查同步状态";
 "onboarding.set_up_sync" = "设置云同步";
 "onboarding.synced_mode" = "云同步 — 数据在设备间同步";
-"onboarding.not_synced_hint" = "在 Mac 上设置助手以启用多设备同步、历史记录和 iPhone 访问。";
+"onboarding.not_synced_hint" = "登录后即可将使用数据同步到你的账户。任何使用同一账户登录的设备（包括 iPhone）都会自动看到数据。";
 "onboarding.helper_not_connected_yet" = "助手尚未连接。请运行上方命令后重试。";
 
 /* ── 团队 ── */
@@ -387,3 +388,5 @@
 "account.delete_confirm_placeholder" = "输入 DELETE 以确认";
 "account.delete_confirm_button" = "删除我的账户";
 "account.delete_confirm_step_message" = "输入 DELETE 以确认永久删除账户。";
+"account.delete_failed_title" = "未能删除账户";
+"account.delete_failed_generic" = "未能删除你的账户，账户仍然有效。请检查网络后重试，或先登出再重新登录以刷新登录状态。";

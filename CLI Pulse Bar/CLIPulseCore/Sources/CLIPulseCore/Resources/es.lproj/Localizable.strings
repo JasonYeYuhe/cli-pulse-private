@@ -222,6 +222,7 @@
 "common.navigation" = "Navegación";
 "common.data" = "Datos";
 "common.refresh" = "Actualizar";
+"common.ok" = "OK";
 
 /* ── Cuenta ── */
 "account.delete_account" = "Eliminar cuenta";
@@ -302,7 +303,7 @@
 "onboarding.check_sync" = "Verificar estado de sincronización";
 "onboarding.set_up_sync" = "Configurar sincronización en la nube";
 "onboarding.synced_mode" = "Sincronización en la nube — datos sincronizando entre dispositivos";
-"onboarding.not_synced_hint" = "Configure el auxiliar en su Mac para sincronización multidispositivo, historial y acceso desde iPhone.";
+"onboarding.not_synced_hint" = "Inicia sesión para sincronizar tus datos de uso a tu cuenta. Cualquier dispositivo con la misma cuenta — incluyendo el iPhone — verá los datos automáticamente.";
 "onboarding.helper_not_connected_yet" = "El auxiliar aún no se ha conectado. Ejecute el comando anterior y vuelva a intentarlo.";
 
 /* ── Equipo ── */
@@ -387,3 +388,5 @@
 "account.delete_confirm_placeholder" = "Escribe DELETE para confirmar";
 "account.delete_confirm_button" = "Eliminar mi cuenta";
 "account.delete_confirm_step_message" = "Escribe DELETE para confirmar la eliminación permanente de la cuenta.";
+"account.delete_failed_title" = "No se pudo eliminar la cuenta";
+"account.delete_failed_generic" = "No pudimos eliminar tu cuenta. Tu cuenta sigue activa. Verifica tu conexión y vuelve a intentarlo, o cierra sesión y vuelve a iniciar sesión para refrescar tu sesión.";

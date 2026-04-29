@@ -301,6 +301,9 @@ public enum L10n {
         public static var deleteConfirmPlaceholder: String { tr("account.delete_confirm_placeholder") }
         public static var deleteConfirmButton: String { tr("account.delete_confirm_button") }
         public static var deleteConfirmStepMessage: String { tr("account.delete_confirm_step_message") }
+        // iter10: shown when the delete-account RPC fails on the server.
+        public static var deleteFailedTitle: String { tr("account.delete_failed_title") }
+        public static var deleteFailedGeneric: String { tr("account.delete_failed_generic") }
     }
 
     // MARK: - Session Details
@@ -483,6 +486,8 @@ public enum L10n {
         public static var navigation: String { tr("common.navigation") }
         public static var data: String { tr("common.data") }
         public static var refresh: String { tr("common.refresh") }
+        // iter10: dismiss button on simple notice/error alerts.
+        public static var ok: String { tr("common.ok") }
     }
 
     /// v1.10 P3-2: accessibility labels for icon-only controls and
