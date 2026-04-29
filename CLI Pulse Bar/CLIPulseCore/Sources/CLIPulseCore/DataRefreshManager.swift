@@ -20,6 +20,12 @@ internal final class DataRefreshManager {
         let isLoading: Bool
         let notificationsEnabled: Bool
         let providerConfigs: [ProviderConfig]
+        /// Snapshot of `state.providers` from the END of the previous refresh
+        /// cycle. Used by `activeProviderCount` to compute the plan-limit
+        /// warning at the START of THIS refresh — i.e. one cycle stale, but
+        /// fine because plan-limit gating doesn't need real-time freshness.
+        /// (See `activeProviderCount` doc for the dedup rule.)
+        let providers: [ProviderUsage]
         let maxDevices: Int
         let maxProviders: Int
         let currentTierName: String
@@ -211,7 +217,10 @@ internal final class DataRefreshManager {
 
             let warning = Self.tierLimitWarning(
                 deviceCount: deviceData.count,
-                enabledProviderCount: context.providerConfigs.filter(\.isEnabled).count,
+                activeProviderCount: Self.activeProviderCount(
+                    providers: context.providers,
+                    providerConfigs: context.providerConfigs
+                ),
                 maxDevices: context.maxDevices,
                 maxProviders: context.maxProviders,
                 currentTierName: context.currentTierName
@@ -855,7 +864,7 @@ internal final class DataRefreshManager {
 
     private static func tierLimitWarning(
         deviceCount: Int,
-        enabledProviderCount: Int,
+        activeProviderCount: Int,
         maxDevices: Int,
         maxProviders: Int,
         currentTierName: String
@@ -864,11 +873,71 @@ internal final class DataRefreshManager {
         if maxDevices >= 0, deviceCount > maxDevices {
             warnings.append("Devices: \(deviceCount)/\(maxDevices)")
         }
-        if maxProviders >= 0, enabledProviderCount > maxProviders {
-            warnings.append("Providers: \(enabledProviderCount)/\(maxProviders)")
+        if maxProviders >= 0, activeProviderCount > maxProviders {
+            warnings.append("Providers: \(activeProviderCount)/\(maxProviders)")
         }
         guard !warnings.isEmpty else { return nil }
         return "Over \(currentTierName) plan limits — \(warnings.joined(separator: ", ")). Upgrade or reduce usage."
+    }
+
+    /// "Active providers" for plan-limit gating purposes. Counts distinct
+    /// `ProviderKind`s where any of:
+    ///   (a) the server-reported `ProviderUsage` row shows non-zero usage
+    ///       this period (today_usage / week_usage / cost), OR
+    ///   (b) the local `ProviderConfig` is enabled AND has credentials
+    ///       configured (apiKey or cookieSource).
+    ///
+    /// Why this exists: `providerConfigs.filter(\.isEnabled).count` was the
+    /// previous gating signal. `ProviderConfig.defaults()` enables ALL 26
+    /// known ProviderKinds, so users on the free plan saw "Providers: 26/3"
+    /// after a fresh launch even when their actual provider usage was
+    /// just Ollama + Claude. The toggles count is also the wrong thing for
+    /// the plan-limit warning conceptually — the toggles are a UI grid, the
+    /// plan limit caps actual billable provider usage.
+    ///
+    /// Dedup is keyed on `ProviderKind` (not raw string) so:
+    ///   - Ollama with 20 local models → 1 (server collapses sessions to
+    ///     one provider="Ollama" row already; we count it as 1 here)
+    ///   - "Claude" string from server + Claude config with API key → 1
+    ///   - same provider visible via 2 Macs (multi-device) → 1 (server
+    ///     `provider_quotas` is keyed on (user_id, provider) UNIQUE, so
+    ///     this is already deduped at the data layer)
+    /// Server provider rows whose `provider` string doesn't map to any
+    /// `ProviderKind` (legacy / typo / unknown future kind) are silently
+    /// skipped — we'd rather undercount than over-warn the user.
+    ///
+    /// Note this is an "active providers" count for the WARNING surface
+    /// only. `migrateProviderLimitsIfNeeded` continues to operate on the
+    /// raw enabled-toggle count because that controls UI grid pruning,
+    /// which is a different concern (Settings → Providers grid behaviour).
+    nonisolated static func activeProviderCount(
+        providers: [ProviderUsage],
+        providerConfigs: [ProviderConfig]
+    ) -> Int {
+        var active = Set<ProviderKind>()
+
+        // (a) server-side rows with any usage signal in the current period.
+        for usage in providers {
+            let hasUsage = usage.today_usage > 0
+                || usage.week_usage > 0
+                || usage.estimated_cost_today > 0
+                || usage.estimated_cost_week > 0
+            guard hasUsage else { continue }
+            // Map raw provider string → canonical ProviderKind via Codable
+            // raw-value lookup. Unknown strings drop out.
+            if let kind = ProviderKind(rawValue: usage.provider) {
+                active.insert(kind)
+            }
+        }
+
+        // (b) local configs the user actively configured credentials for —
+        // a provider that has credentials but no usage YET still counts
+        // toward the plan limit (the user is set up to use it).
+        for config in providerConfigs where config.isEnabled && config.hasCredentials {
+            active.insert(config.kind)
+        }
+
+        return active.count
     }
 }
 
@@ -1701,6 +1770,7 @@ extension AppState {
             isLoading: isLoading,
             notificationsEnabled: notificationsEnabled,
             providerConfigs: providerConfigs,
+            providers: providers,
             maxDevices: subscriptionManager.maxDevices,
             maxProviders: subscriptionManager.maxProviders,
             currentTierName: subscriptionManager.currentTier.rawValue
