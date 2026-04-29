@@ -524,7 +524,23 @@ extension AppState {
         tierLimitWarning = nil
         lastRefresh = nil
         locallySupplementedProviders = []
-        selectedTab = .overview
+        // iter16 hotfix (2026-04-29): signed-out + onboarding-completed
+        // users used to land on `.overview` after a sign-out / delete-
+        // account, which renders an empty "No Data Yet" state — a
+        // confusing first impression that gives no hint about what to
+        // do next. The intended UX is to land on `.settings` so the
+        // user sees the Sign-In form, the password / OAuth buttons,
+        // and the iter14 "Continue without account" escape. Users who
+        // intentionally browse to Overview / Providers / Sessions /
+        // Alerts during the same popover session keep that selection
+        // — only sign-out / restoreSession-failed paths reset.
+        //
+        // For signed-IN users this reset doesn't matter at the surface
+        // level: by the time they land in `connectedView`, they've
+        // already gone through `applyAuthenticatedState`, which leaves
+        // `selectedTab` alone (so they keep whatever tab they had,
+        // typically the AppState init default of `.overview`).
+        selectedTab = .settings
         // Clear account-scoped auth/account UI state so a different account
         // signing in on the same device doesn't briefly inherit the previous
         // user's linked identities, pairing artifacts, or stale errors.

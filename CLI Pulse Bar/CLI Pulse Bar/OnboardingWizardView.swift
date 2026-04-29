@@ -68,7 +68,16 @@ struct OnboardingWizardView: View {
             // Uses `.plain` style + secondary tint so it doesn't draw
             // attention away from the step's primary CTA, but the
             // tap-target is wide enough (28×28) to hit reliably.
+            //
+            // iter16 (2026-04-29): on dismiss, also pivot the
+            // selectedTab to `.settings` so the user lands on the
+            // Sign-In form (mirrors the post-sign-out landing fixed
+            // in `AuthManager.applySignedOutState`). Without this, a
+            // wizard-skip without prior sign-in would land on the
+            // default `.overview` and the user would see an empty
+            // "No Data Yet" view as their first impression.
             Button {
+                state.selectedTab = .settings
                 onboardingCompleted = true
             } label: {
                 Image(systemName: "xmark")
