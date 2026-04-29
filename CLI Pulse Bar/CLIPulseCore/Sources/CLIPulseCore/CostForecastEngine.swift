@@ -72,11 +72,23 @@ public enum CostForecastEngine {
         let regression = linearRegression(dataPoints)
         let remainingDays = daysInMonth - dayOfMonth
 
-        // Project remaining days using regression slope
+        // Project remaining days using regression slope.
+        //
+        // iter21 hotfix (2026-04-30, real-device crash):
+        // On the LAST DAY of the month (e.g. Apr 30) `dayOfMonth ==
+        // daysInMonth`, so `(dayOfMonth + 1)...daysInMonth` becomes
+        // `31...30` — an invalid closed-range that traps Swift with
+        // EXC_BREAKPOINT (Sentry issue 7450581409, fired every refresh
+        // cycle on a real iPhone Air running v1.11.0 build 44). Guard
+        // before constructing the range: when `remainingDays == 0`
+        // there are no future days to project, so the projection
+        // equals the actual-to-date.
         var projected = actualToDate
-        for day in (dayOfMonth + 1)...daysInMonth {
-            let predicted = regression.slope * Double(day) + regression.intercept
-            projected += max(predicted, 0) // Don't let predicted daily cost go negative
+        if remainingDays > 0 {
+            for day in (dayOfMonth + 1)...daysInMonth {
+                let predicted = regression.slope * Double(day) + regression.intercept
+                projected += max(predicted, 0) // Don't let predicted daily cost go negative
+            }
         }
 
         // Blend: weight regression more when we have more data
