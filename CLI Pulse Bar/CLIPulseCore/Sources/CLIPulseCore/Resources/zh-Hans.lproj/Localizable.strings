@@ -287,18 +287,18 @@
 /* ── 引导 / 同步设置 ── */
 "onboarding.how_it_works" = "CLI Pulse 工作原理";
 "onboarding.cloud_sync_title" = "云同步";
-"onboarding.cloud_sync_desc" = "助手脚本在 Mac 上运行，将 AI 工具使用数据同步到云端。然后任何设备（包括此 iPhone）都可以查看数据。";
-"onboarding.not_bluetooth" = "这不是蓝牙或直接设备配对。";
+"onboarding.cloud_sync_desc" = "Mac 应用会在本地扫描 AI 工具使用情况并上传到你的账户。任何使用同一账户登录的设备（包括 iPhone）都会自动显示数据。";
+"onboarding.not_bluetooth" = "这不是蓝牙或直接设备配对——同步以账户为单位。";
 "onboarding.setup_steps_title" = "开始使用";
 "onboarding.step1_mac" = "在 Mac 应用上登录";
-"onboarding.step2_helper" = "在终端中运行助手脚本";
+"onboarding.step2_helper" = "在此设备上用同一账户登录";
 "onboarding.step3_phone" = "数据将自动显示在这里";
 "onboarding.local_mode_title" = "本地模式";
 "onboarding.local_mode_desc" = "检测在此 Mac 上运行的 AI 工具，无需云设置。";
 "onboarding.cloud_mode_title" = "云同步（可选）";
 "onboarding.cloud_mode_desc" = "助手脚本将数据同步到云端，可在任何设备（包括 iPhone）上查看。";
 "onboarding.ios_waiting" = "等待数据";
-"onboarding.ios_waiting_desc" = "Mac 上的助手运行后，使用数据将显示在这里。";
+"onboarding.ios_waiting_desc" = "在 Mac 应用上用同一账户登录即可，使用数据会自动出现在这里——无需手动配对。";
 "onboarding.check_sync" = "检查同步状态";
 "onboarding.set_up_sync" = "设置云同步";
 "onboarding.synced_mode" = "云同步 — 数据在设备间同步";

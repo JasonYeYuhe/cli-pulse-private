@@ -532,13 +532,51 @@ public final class AppState: ObservableObject {
             return
         }
 
-        let enabledConfigs = providerConfigs.filter(\.isEnabled)
-        guard enabledConfigs.count > maxProviders else {
-            // Already at or under limit — nothing to migrate. Clear badges
-            // too, since the user may have manually re-curated.
+        // iter9 hotfix (2026-04-29): previously the gate compared raw
+        // enabled-toggle count (`providerConfigs.filter(\.isEnabled).count`)
+        // against `maxProviders`. For a fresh user, `ProviderConfig.defaults()`
+        // sets `isEnabled: true` for every one of the 26 ProviderKind cases,
+        // so 26 > 3 always tripped the migration on free plan even when the
+        // user only had 2 actually-used providers (Ollama + Claude). The
+        // banner then said "Disabled 23 — edit in Settings → Providers",
+        // which made it look like we silently nuked the user's setup when
+        // really we just pruned defaults they'd never touched.
+        //
+        // The fix: gate the migration on `activeProviderCount` — the same
+        // canonical "really being used" count already used by the plan-limit
+        // warning (see `DataRefreshManager.activeProviderCount`). A user is
+        // "active" on a provider if either the server has non-zero usage for
+        // them OR they've configured credentials for that kind. Toggles
+        // alone do not count.
+        //
+        // Behavior after the fix:
+        //   - Fresh free user (0–3 active providers, 26 default toggles):
+        //     no migration, no banner. Toggles remain enabled as defaults
+        //     until the user activates a 4th provider.
+        //   - Free user actively using 6 providers: migration runs, prunes
+        //     toggles to top 3 by usage/credentials, banner shows "Disabled
+        //     N actively-used providers" — accurate and actionable.
+        //   - Paid user downgraded to free: same behavior — banner only if
+        //     they're actively over the new limit.
+        let activeCount = Self.activeKindsForMigrationBanner(
+            providers: providers,
+            providerConfigs: providerConfigs
+        ).count
+        guard activeCount > maxProviders else {
+            // At or under limit by the canonical measure — nothing to
+            // migrate, no banner. Clear any stale "Limited by free plan"
+            // badges since the situation no longer applies.
             UserDefaults.standard.removeObject(forKey: disabledByTierKey)
+            providerLimitMigrationCount = 0
             return
         }
+
+        // Active providers exceed the plan limit. Proceed with the prune
+        // body using the (still raw) enabled-toggle list as input — the
+        // ranking heuristic below already prefers active providers, so
+        // when we keep the top `maxProviders` we keep the actively-used
+        // ones first.
+        let enabledConfigs = providerConfigs.filter(\.isEnabled)
 
         // Rank the enabled configs.
         let usageByKind: [String: ProviderUsage] = Dictionary(
@@ -577,10 +615,25 @@ public final class AppState: ObservableObject {
 
         let keptKinds = Set(ranked.prefix(maxProviders).map(\.kind))
         var disabledByMigration: [ProviderKind] = []
+        // iter9 hotfix: also track which of the disabled kinds were
+        // *actually* in active use (had usage or credentials) so we can
+        // report only the user-visible impact in the banner. Disabling 20
+        // default-but-untouched toggles alongside the 3 actively-used ones
+        // is implementation detail; the user's mental model says "you
+        // disabled 3 things I was using", not "you disabled 23 toggles".
+        var disabledActiveByMigration: [ProviderKind] = []
+        let activeKinds = Self.activeKindsForMigrationBanner(
+            providers: providers,
+            providerConfigs: providerConfigs
+        )
         for i in providerConfigs.indices where providerConfigs[i].isEnabled {
             if !keptKinds.contains(providerConfigs[i].kind) {
+                let kind = providerConfigs[i].kind
                 providerConfigs[i].isEnabled = false
-                disabledByMigration.append(providerConfigs[i].kind)
+                disabledByMigration.append(kind)
+                if activeKinds.contains(kind) {
+                    disabledActiveByMigration.append(kind)
+                }
             }
         }
 
@@ -588,6 +641,9 @@ public final class AppState: ObservableObject {
         // Settings can show a distinct "Limited by free plan" state later.
         // Merge with any existing set so a second downgrade doesn't lose
         // providers that were disabled by an earlier migration run.
+        // Note: store ALL disabled kinds (including default toggles) here
+        // so the Settings UI keeps the per-row badge distinction. Only the
+        // BANNER count is filtered to the active subset.
         let existingRaw = UserDefaults.standard.stringArray(forKey: disabledByTierKey) ?? []
         let mergedRaw = Set(existingRaw).union(disabledByMigration.map(\.rawValue))
         UserDefaults.standard.set(Array(mergedRaw), forKey: disabledByTierKey)
@@ -595,7 +651,37 @@ public final class AppState: ObservableObject {
         saveProviderConfigs()
         buildProviderDetails()
 
-        providerLimitMigrationCount = disabledByMigration.count
+        // iter9 hotfix: banner reflects the actively-used provider count
+        // disabled, not the raw toggle count. If only default toggles were
+        // pruned (no active provider lost), the banner stays at 0 — silent
+        // tidy-up rather than a scary alert.
+        providerLimitMigrationCount = disabledActiveByMigration.count
+    }
+
+    /// Set of provider kinds that count as "active" for the migration
+    /// banner — must match `DataRefreshManager.activeProviderCount`'s
+    /// criteria (server-side usage in current period OR enabled config
+    /// with credentials). Pulled out as a static helper so tests can pin
+    /// the contract without instantiating an AppState.
+    nonisolated static func activeKindsForMigrationBanner(
+        providers: [ProviderUsage],
+        providerConfigs: [ProviderConfig]
+    ) -> Set<ProviderKind> {
+        var active = Set<ProviderKind>()
+        for usage in providers {
+            let hasUsage = usage.today_usage > 0
+                || usage.week_usage > 0
+                || usage.estimated_cost_today > 0
+                || usage.estimated_cost_week > 0
+            guard hasUsage else { continue }
+            if let kind = ProviderKind(rawValue: usage.provider) {
+                active.insert(kind)
+            }
+        }
+        for config in providerConfigs where config.isEnabled && config.hasCredentials {
+            active.insert(config.kind)
+        }
+        return active
     }
 
     /// Dismiss the one-time migration banner on Overview.

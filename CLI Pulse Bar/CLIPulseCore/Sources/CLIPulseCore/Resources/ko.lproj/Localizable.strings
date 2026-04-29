@@ -287,18 +287,18 @@
 /* ── 온보딩 / 동기화 설정 ── */
 "onboarding.how_it_works" = "CLI Pulse 작동 방식";
 "onboarding.cloud_sync_title" = "클라우드 동기화";
-"onboarding.cloud_sync_desc" = "도우미 스크립트가 Mac에서 실행되어 AI 도구 사용 데이터를 클라우드에 동기화합니다. 이 iPhone을 포함한 모든 기기에서 데이터를 볼 수 있습니다.";
-"onboarding.not_bluetooth" = "블루투스 또는 직접 기기 페어링이 아닙니다.";
+"onboarding.cloud_sync_desc" = "Mac 앱이 AI 도구 사용 내역을 로컬에서 스캔하고 계정에 업로드합니다. 같은 계정으로 로그인된 모든 기기(이 iPhone 포함)에 자동으로 표시됩니다.";
+"onboarding.not_bluetooth" = "블루투스 또는 직접 기기 페어링이 아닙니다 — 동기화는 계정 단위입니다.";
 "onboarding.setup_steps_title" = "시작하기";
 "onboarding.step1_mac" = "Mac 앱에서 로그인";
-"onboarding.step2_helper" = "터미널에서 도우미 스크립트 실행";
+"onboarding.step2_helper" = "이 기기에서 같은 계정으로 로그인";
 "onboarding.step3_phone" = "데이터가 자동으로 여기에 표시됩니다";
 "onboarding.local_mode_title" = "로컬 모드";
 "onboarding.local_mode_desc" = "이 Mac에서 실행 중인 AI 도구를 감지합니다. 클라우드 설정 불필요.";
 "onboarding.cloud_mode_title" = "클라우드 동기화 (선택사항)";
 "onboarding.cloud_mode_desc" = "도우미 스크립트가 데이터를 클라우드에 동기화하여 iPhone을 포함한 모든 기기에서 볼 수 있습니다.";
 "onboarding.ios_waiting" = "데이터 대기 중";
-"onboarding.ios_waiting_desc" = "Mac에서 도우미가 실행되면 사용 데이터가 여기에 표시됩니다.";
+"onboarding.ios_waiting_desc" = "Mac 앱에서 같은 계정으로 로그인하면 사용 데이터가 자동으로 여기에 표시됩니다 — 수동 페어링 불필요.";
 "onboarding.check_sync" = "동기화 상태 확인";
 "onboarding.set_up_sync" = "클라우드 동기화 설정";
 "onboarding.synced_mode" = "클라우드 동기화 — 기기 간 데이터 동기화 중";

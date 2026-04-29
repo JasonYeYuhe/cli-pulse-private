@@ -287,18 +287,18 @@
 /* ── オンボーディング / 同期セットアップ ── */
 "onboarding.how_it_works" = "CLI Pulse の仕組み";
 "onboarding.cloud_sync_title" = "クラウド同期";
-"onboarding.cloud_sync_desc" = "ヘルパースクリプトがMacで実行され、AIツールの使用データをクラウドに同期します。この iPhone を含むすべてのデバイスでデータを閲覧できます。";
-"onboarding.not_bluetooth" = "Bluetooth やデバイスの直接ペアリングではありません。";
+"onboarding.cloud_sync_desc" = "Mac アプリが AI ツールの使用状況をローカルでスキャンし、あなたのアカウントにアップロードします。同じアカウントでサインインしている端末（この iPhone を含む）に自動的に反映されます。";
+"onboarding.not_bluetooth" = "Bluetooth やデバイスの直接ペアリングではありません — 同期はアカウント単位です。";
 "onboarding.setup_steps_title" = "はじめに";
 "onboarding.step1_mac" = "Mac アプリでサインイン";
-"onboarding.step2_helper" = "ターミナルでヘルパースクリプトを実行";
+"onboarding.step2_helper" = "この端末でも同じアカウントでサインイン";
 "onboarding.step3_phone" = "データが自動的にここに表示されます";
 "onboarding.local_mode_title" = "ローカルモード";
 "onboarding.local_mode_desc" = "この Mac で実行中のAIツールを検出します。クラウド設定は不要です。";
 "onboarding.cloud_mode_title" = "クラウド同期（オプション）";
 "onboarding.cloud_mode_desc" = "ヘルパースクリプトがデータをクラウドに同期し、iPhoneを含むすべてのデバイスで閲覧できます。";
 "onboarding.ios_waiting" = "データ待機中";
-"onboarding.ios_waiting_desc" = "Macでヘルパーが実行されると、使用データがここに表示されます。";
+"onboarding.ios_waiting_desc" = "Mac アプリで同じアカウントにサインインすれば、使用データが自動的にここに表示されます — 手動ペアリングは不要です。";
 "onboarding.check_sync" = "同期ステータスを確認";
 "onboarding.set_up_sync" = "クラウド同期をセットアップ";
 "onboarding.synced_mode" = "クラウド同期 — デバイス間でデータ同期中";

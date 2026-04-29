@@ -287,18 +287,18 @@
 /* ── Onboarding / Sync Setup ── */
 "onboarding.how_it_works" = "How CLI Pulse Works";
 "onboarding.cloud_sync_title" = "Cloud Sync";
-"onboarding.cloud_sync_desc" = "A helper script runs on your Mac and syncs AI tool usage to the cloud. Then any device — including this iPhone — can display the data.";
-"onboarding.not_bluetooth" = "This is not Bluetooth or direct device pairing.";
+"onboarding.cloud_sync_desc" = "The Mac app scans your AI tool usage locally and uploads it to your account. Any device signed in with the same account — including this iPhone — shows the data automatically.";
+"onboarding.not_bluetooth" = "This is not Bluetooth or direct device pairing — sync is account-scoped.";
 "onboarding.setup_steps_title" = "Getting Started";
 "onboarding.step1_mac" = "Sign in on the Mac app";
-"onboarding.step2_helper" = "Run the helper script in Terminal";
+"onboarding.step2_helper" = "Sign in here with the same account";
 "onboarding.step3_phone" = "Data appears here automatically";
 "onboarding.local_mode_title" = "Local Mode";
 "onboarding.local_mode_desc" = "Detects AI tools running on this Mac. No cloud setup needed.";
 "onboarding.cloud_mode_title" = "Cloud Sync (Optional)";
 "onboarding.cloud_mode_desc" = "A helper script syncs data to the cloud so you can view from any device, including iPhone.";
 "onboarding.ios_waiting" = "Waiting for data";
-"onboarding.ios_waiting_desc" = "Once the helper is running on your Mac, usage data will appear here.";
+"onboarding.ios_waiting_desc" = "Open the Mac app and sign in with the same account. Usage data appears here automatically — no manual pairing needed.";
 "onboarding.check_sync" = "Check Sync Status";
 "onboarding.set_up_sync" = "Set Up Cloud Sync";
 "onboarding.synced_mode" = "Cloud Sync — data syncing across devices";

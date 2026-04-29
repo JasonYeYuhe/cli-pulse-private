@@ -13,8 +13,13 @@ struct OnboardingWizardView: View {
     // v1.10.3 rejection fix: add password sign-in to the onboarding wizard.
     // macOS first-launch users are forced through this wizard (MenuBarView.swift:73),
     // and the ASC demo mailbox cannot receive OTP (clipulse.app has no MX record),
-    // so OTP-only here was the actual blocker. Mirrors iOSLoginView.emailEntryView.
+    // so OTP-only here was the actual blocker.
     @State private var password = ""
+    // iter9 hotfix (2026-04-29): explicit two-mode picker for the email
+    // sign-in form. Default `.emailCode` (single button "Send Verification
+    // Code", label never changes); `.password` opt-in for App Store
+    // reviewers. Mirrors `SettingsTab.loginSection` and `iOSLoginView`.
+    @State private var usePasswordLogin = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,6 +58,7 @@ struct OnboardingWizardView: View {
                 // a later sign-out. (Gemini 3.1 Pro review 2026-04-23.)
                 password = ""
                 otpCode = ""
+                usePasswordLogin = false
                 if step == 3 {
                     step = 4
                 }
@@ -223,61 +229,28 @@ struct OnboardingWizardView: View {
                 .font(.headline)
                 .padding(.top, 12)
 
-            Text("Create an account or sign in to sync your data.")
+            // iter9 hotfix: copy no longer says "Create an account or
+            // sign in" — there is no separate registration step. Supabase
+            // `sendOTP` runs with `create_user: true`, so the first
+            // OTP-verify auto-creates the account. Tell the user that
+            // honestly instead of pretending there are two paths.
+            Text("Sign in to sync your data — we'll create your account on first verify.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
             Spacer()
 
+            // Three mutually-exclusive modes routed by `usePasswordLogin`
+            // and `state.otpSent`. The button labels in each mode are
+            // hard-coded — no semantic shape-shifting based on whether
+            // adjacent fields are empty.
             if state.otpSent {
-                Text("Code sent to \(state.otpEmail)")
-                    .font(.caption)
-                    .foregroundStyle(.green)
-
-                TextField(L10n.auth.codePlaceholder, text: $otpCode)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 200)
-
-                Button {
-                    Task { await state.verifyOTP(code: otpCode) }
-                } label: {
-                    Text("Verify")
-                        .frame(width: 200)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(PulseTheme.accent)
-                .disabled(otpCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                Button("Back to email") {
-                    otpCode = ""
-                    password = ""
-                    state.resetOTP()
-                }
-                .font(.caption)
+                otpVerifyForm
+            } else if usePasswordLogin {
+                passwordForm
             } else {
-                TextField("Email", text: $email)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 260)
-                    .onSubmit { submitSignIn() }
-
-                // v1.10.3 rejection fix: password field (optional). If filled,
-                // tap routes to signInWithPassword; if left empty, falls through
-                // to the existing OTP path. Matches iOSLoginView.emailEntryView.
-                SecureField(L10n.auth.passwordPlaceholder, text: $password)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 260)
-                    .onSubmit { submitSignIn() }
-
-                Button {
-                    submitSignIn()
-                } label: {
-                    Text(password.isEmpty ? L10n.auth.sendCode : L10n.settings.signIn)
-                        .frame(width: 200)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(PulseTheme.accent)
-                .disabled(email.isEmpty || !email.contains("@") || state.isLoading)
+                emailCodeForm
             }
 
             if let error = state.lastError {
@@ -301,18 +274,112 @@ struct OnboardingWizardView: View {
         .padding(.horizontal, 20)
     }
 
-    // Shared submit handler for the email/password form — invoked both by the
-    // primary button tap and by Return-key submission on either field.
-    // When password is empty, falls through to the existing OTP send.
-    private func submitSignIn() {
-        guard !email.isEmpty, email.contains("@"), !state.isLoading else { return }
-        Task {
-            if !password.isEmpty {
-                await state.signInWithPassword(email: email, password: password)
-            } else {
-                await state.sendOTP(email: email)
+    // MARK: - Sign-in sub-forms (iter9)
+
+    private var emailCodeForm: some View {
+        VStack(spacing: 8) {
+            TextField("Email", text: $email)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 260)
+                .onSubmit { sendCode() }
+
+            Button {
+                sendCode()
+            } label: {
+                Text(L10n.auth.sendCode)
+                    .frame(width: 200)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(PulseTheme.accent)
+            .disabled(email.isEmpty || !email.contains("@") || state.isLoading)
+
+            // Tiny disclosure for App Store reviewers — password is not
+            // part of the regular user path on macOS either.
+            Button {
+                usePasswordLogin = true
+                state.lastError = nil
+            } label: {
+                Text(L10n.auth.usePassword)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var passwordForm: some View {
+        VStack(spacing: 8) {
+            TextField("Email", text: $email)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 260)
+                .onSubmit { signInWithPassword() }
+
+            SecureField(L10n.auth.passwordPlaceholder, text: $password)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 260)
+                .onSubmit { signInWithPassword() }
+
+            Button {
+                signInWithPassword()
+            } label: {
+                // Hard-coded "Sign In" — never flips to "Send Code".
+                Text(L10n.auth.passwordSignIn)
+                    .frame(width: 200)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(PulseTheme.accent)
+            .disabled(email.isEmpty || !email.contains("@") || password.isEmpty || state.isLoading)
+
+            Button {
+                usePasswordLogin = false
+                password = ""
+                state.lastError = nil
+            } label: {
+                Text(L10n.auth.useEmailCode)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var otpVerifyForm: some View {
+        VStack(spacing: 8) {
+            Text("Code sent to \(state.otpEmail)")
+                .font(.caption)
+                .foregroundStyle(.green)
+
+            TextField(L10n.auth.codePlaceholder, text: $otpCode)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 200)
+
+            Button {
+                Task { await state.verifyOTP(code: otpCode) }
+            } label: {
+                Text("Verify")
+                    .frame(width: 200)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(PulseTheme.accent)
+            .disabled(otpCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            Button("Back to email") {
+                otpCode = ""
+                password = ""
+                state.resetOTP()
+            }
+            .font(.caption)
+        }
+    }
+
+    // MARK: - Submit handlers (iter9 — single-purpose, no flip logic)
+
+    private func sendCode() {
+        guard !email.isEmpty, email.contains("@"), !state.isLoading else { return }
+        Task { await state.sendOTP(email: email) }
+    }
+
+    private func signInWithPassword() {
+        guard !email.isEmpty, email.contains("@"), !password.isEmpty, !state.isLoading else { return }
+        Task { await state.signInWithPassword(email: email, password: password) }
     }
 
     // MARK: - Step 4: Pair Device

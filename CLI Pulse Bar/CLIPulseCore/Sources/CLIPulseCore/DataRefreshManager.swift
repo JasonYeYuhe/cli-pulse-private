@@ -118,7 +118,21 @@ internal final class DataRefreshManager {
             return
         }
         #else
-        guard context.isPaired else { return }
+        // iter9 hotfix (2026-04-29): previously gated all iOS cloud
+        // fetches on `context.isPaired`. That flag is set ONLY by the
+        // external helper-daemon pairing handshake; the Mac menu-bar app
+        // (which most users actually run) does not flip `paired = true`,
+        // so signed-in iOS users with a working Mac collector saw a
+        // permanent "Waiting for data" empty state — the cloud rows the
+        // Mac app uploaded to `provider_quotas` / `daily_usage_metrics`
+        // were never fetched on iOS. The product direction is
+        // same-account auto-sync (no manual device pairing required), so
+        // the gate is removed here. `dashboard_summary` and
+        // `provider_summary` RPCs are already account-scoped (auth.uid()
+        // via JWT bearer), so this is safe — RLS enforces account
+        // isolation server-side. `paired` still has meaning for the
+        // helper-daemon flow used by Remote Approvals; we just no longer
+        // hide the dashboard behind it on iOS.
         #endif
 
         guard !context.isLoading else { return }

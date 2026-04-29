@@ -287,18 +287,18 @@
 /* ── Incorporación / Configuración de sincronización ── */
 "onboarding.how_it_works" = "Cómo funciona CLI Pulse";
 "onboarding.cloud_sync_title" = "Sincronización en la nube";
-"onboarding.cloud_sync_desc" = "Un script auxiliar se ejecuta en su Mac y sincroniza los datos de uso de herramientas de IA a la nube. Cualquier dispositivo, incluyendo este iPhone, puede ver los datos.";
-"onboarding.not_bluetooth" = "Esto no es Bluetooth ni emparejamiento directo de dispositivos.";
+"onboarding.cloud_sync_desc" = "La aplicación de Mac escanea localmente el uso de herramientas de IA y lo sube a su cuenta. Cualquier dispositivo con la misma cuenta — incluyendo este iPhone — muestra los datos automáticamente.";
+"onboarding.not_bluetooth" = "Esto no es Bluetooth ni emparejamiento directo de dispositivos — la sincronización es por cuenta.";
 "onboarding.setup_steps_title" = "Primeros pasos";
 "onboarding.step1_mac" = "Inicie sesión en la aplicación de Mac";
-"onboarding.step2_helper" = "Ejecute el script auxiliar en Terminal";
+"onboarding.step2_helper" = "Inicie sesión aquí con la misma cuenta";
 "onboarding.step3_phone" = "Los datos aparecerán aquí automáticamente";
 "onboarding.local_mode_title" = "Modo local";
 "onboarding.local_mode_desc" = "Detecta herramientas de IA ejecutándose en este Mac. Sin configuración en la nube.";
 "onboarding.cloud_mode_title" = "Sincronización en la nube (opcional)";
 "onboarding.cloud_mode_desc" = "Un script auxiliar sincroniza datos a la nube para verlos desde cualquier dispositivo, incluyendo iPhone.";
 "onboarding.ios_waiting" = "Esperando datos";
-"onboarding.ios_waiting_desc" = "Cuando el auxiliar esté ejecutándose en su Mac, los datos de uso aparecerán aquí.";
+"onboarding.ios_waiting_desc" = "Inicie sesión en la aplicación de Mac con la misma cuenta. Los datos de uso aparecerán aquí automáticamente — sin emparejamiento manual.";
 "onboarding.check_sync" = "Verificar estado de sincronización";
 "onboarding.set_up_sync" = "Configurar sincronización en la nube";
 "onboarding.synced_mode" = "Sincronización en la nube — datos sincronizando entre dispositivos";

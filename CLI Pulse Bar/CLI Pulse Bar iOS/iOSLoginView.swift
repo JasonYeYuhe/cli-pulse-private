@@ -10,6 +10,18 @@ struct iOSLoginView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var otpCode = ""
+    // iter9 hotfix (2026-04-29): explicit two-mode picker for the email
+    // sign-in section. Previously the same form had a single "Sign In /
+    // Send Verification Code" button whose label flipped with whether the
+    // password field was empty — users couldn't tell whether they were
+    // signing in, registering, or requesting a magic code. The product
+    // truth is: OTP IS the registration path (Supabase `sendOTP` is called
+    // with `create_user: true`, so first-time OTP-verify auto-creates the
+    // account). Password sign-in only exists for App Store reviewers who
+    // can't receive OTP at clipulse.app (no MX record). So the default
+    // mode is `.emailCode` and `.password` is opt-in via a small
+    // disclosure — mirrors the macOS SettingsTab pattern.
+    @State private var usePasswordLogin = false
     @State private var currentNonce: String?
     @State private var webAuthSession: ASWebAuthenticationSession?
     @FocusState private var codeFieldFocused: Bool
@@ -144,13 +156,25 @@ struct iOSLoginView: View {
                     }
                     .padding(.horizontal)
 
-                    // OTP Email flow
-                    if state.otpSent {
-                        // Step 2: Enter verification code
+                    // Email sign-in section: three mutually-exclusive states
+                    // routed by `usePasswordLogin` and `state.otpSent`.
+                    //
+                    //   default (usePasswordLogin=false, otpSent=false):
+                    //     emailCodeEntryView — single button "Send
+                    //     Verification Code" (label never changes); tiny
+                    //     "Sign in with password" disclosure below.
+                    //   password mode (usePasswordLogin=true):
+                    //     passwordEntryView — email + password fields,
+                    //     button "Sign In" (label never changes); "Use
+                    //     email code instead" link to flip back.
+                    //   verify mode (otpSent=true):
+                    //     otpVerifyView — code entry + verify button.
+                    if usePasswordLogin {
+                        passwordEntryView
+                    } else if state.otpSent {
                         otpVerifyView
                     } else {
-                        // Step 1: Enter email
-                        emailEntryView
+                        emailCodeEntryView
                     }
 
                     // Demo mode
@@ -176,6 +200,7 @@ struct iOSLoginView: View {
                 email = ""
                 password = ""
                 otpCode = ""
+                usePasswordLogin = false
                 state.lastError = nil
                 if currentNonce == nil { prepareNonce() }
             }
@@ -184,6 +209,7 @@ struct iOSLoginView: View {
                     email = ""
                     password = ""
                     otpCode = ""
+                    usePasswordLogin = false
                     state.resetOTP()
                 }
             }
@@ -245,9 +271,67 @@ struct iOSLoginView: View {
         }
     }
 
-    // MARK: - Step 1: Email Entry
+    // MARK: - Email Code mode (default)
+    //
+    // Single-purpose view for the magic-code path. The button label is
+    // hard-coded to "Send Verification Code" — it never changes based on
+    // other field state, which is the iter9 contract: no semantic
+    // shape-shifting buttons. First-time users land here and get auto-
+    // registered on verify (Supabase `sendOTP` uses `create_user: true`).
 
-    private var emailEntryView: some View {
+    private var emailCodeEntryView: some View {
+        VStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(L10n.settings.email)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField(L10n.login.emailPlaceholder, text: $email)
+                    .textFieldStyle(.roundedBorder)
+                    .keyboardType(.emailAddress)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+            }
+            .padding(.horizontal)
+
+            Button {
+                Task { await state.sendOTP(email: email) }
+            } label: {
+                HStack {
+                    if state.isLoading {
+                        ProgressView()
+                            .tint(.white)
+                    }
+                    Text(L10n.auth.sendCode)
+                        .font(.headline)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(PulseTheme.accent)
+            .disabled(email.isEmpty || !email.contains("@") || state.isLoading)
+            .padding(.horizontal)
+
+            // Tiny disclosure to flip into password mode. We deliberately
+            // bury this — password sign-in is an App-Store-reviewer escape
+            // hatch (clipulse.app cannot receive OTP), not a real user
+            // path. Treated as opt-in so default users see the clean
+            // single-button OTP flow.
+            Button {
+                usePasswordLogin = true
+                state.lastError = nil
+            } label: {
+                Text(L10n.auth.usePassword)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    // MARK: - Password mode (opt-in, App Store reviewer escape hatch)
+
+    private var passwordEntryView: some View {
         VStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(L10n.settings.email)
@@ -262,7 +346,7 @@ struct iOSLoginView: View {
             .padding(.horizontal)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(L10n.auth.passwordOptional)
+                Text(L10n.auth.passwordLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 SecureField(L10n.auth.passwordPlaceholder, text: $password)
@@ -271,20 +355,17 @@ struct iOSLoginView: View {
             .padding(.horizontal)
 
             Button {
-                Task {
-                    if !password.isEmpty {
-                        await state.signInWithPassword(email: email, password: password)
-                    } else {
-                        await state.sendOTP(email: email)
-                    }
-                }
+                Task { await state.signInWithPassword(email: email, password: password) }
             } label: {
                 HStack {
                     if state.isLoading {
                         ProgressView()
                             .tint(.white)
                     }
-                    Text(password.isEmpty ? L10n.auth.sendCode : L10n.settings.signIn)
+                    // Hard-coded "Sign In" — does not flip when password
+                    // is empty. The disabled() modifier handles empty
+                    // state; the label never moves.
+                    Text(L10n.auth.passwordSignIn)
                         .font(.headline)
                 }
                 .frame(maxWidth: .infinity)
@@ -292,8 +373,19 @@ struct iOSLoginView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(PulseTheme.accent)
-            .disabled(email.isEmpty || !email.contains("@") || state.isLoading)
+            .disabled(email.isEmpty || !email.contains("@") || password.isEmpty || state.isLoading)
             .padding(.horizontal)
+
+            Button {
+                usePasswordLogin = false
+                password = ""
+                state.lastError = nil
+            } label: {
+                Text(L10n.auth.useEmailCode)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.top, 4)
         }
     }
 
