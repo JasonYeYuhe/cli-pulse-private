@@ -172,14 +172,37 @@ build_and_upload_android() {
         return 1
     fi
 
-    # Build release APK
-    ./gradlew assembleRelease --no-daemon -q 2>&1
+    # Clean first so stale intermediates can't poison the next build (and a
+    # failed build can't leave a previous-version APK in outputs/ that we'd
+    # then ship by mistake).
+    if ! ./gradlew clean --no-daemon -q 2>&1; then
+        log "ERROR: gradle clean failed"
+        return 1
+    fi
+
+    # Build release APK — must check exit status. A previous bug shipped a
+    # stale APK because the script ignored gradle's failure here.
+    if ! ./gradlew assembleRelease --no-daemon 2>&1; then
+        log "ERROR: gradle assembleRelease failed"
+        return 1
+    fi
 
     local APK_PATH
     APK_PATH=$(find "$ANDROID_DIR/app/build/outputs/apk/release" -name "*.apk" | head -1)
     if [[ -z "$APK_PATH" ]]; then
         log "ERROR: APK not found after build"
         return 1
+    fi
+
+    # Sanity check: verify the APK we're about to ship has the expected version.
+    local META="$ANDROID_DIR/app/build/outputs/apk/release/output-metadata.json"
+    if [[ -f "$META" ]]; then
+        local APK_VERSION
+        APK_VERSION=$(grep -o '"versionName": *"[^"]*"' "$META" | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+        if [[ "$APK_VERSION" != "$version" ]]; then
+            log "ERROR: APK versionName ($APK_VERSION) does not match target ($version) — aborting upload"
+            return 1
+        fi
     fi
 
     local RELEASE_NAME="CLI-Pulse-Android-v${version}.apk"
@@ -219,6 +242,8 @@ if [[ "$CMP" == "0" ]]; then
     exit 0
 fi
 
+SYNC_OK=false
+
 if [[ "$CMP" == "1" ]]; then
     # iOS is ahead — bump Android
     log "iOS ($IOS_VERSION) is ahead of Android ($ANDROID_VERSION)"
@@ -228,6 +253,7 @@ if [[ "$CMP" == "1" ]]; then
     # Build and publish Android
     if build_and_upload_android "$TARGET_VERSION"; then
         log "✓ Android synced to v$TARGET_VERSION"
+        SYNC_OK=true
     else
         log "⚠ Android build/upload failed — manual intervention needed"
     fi
@@ -241,13 +267,16 @@ elif [[ "$CMP" == "2" ]]; then
     # Build and publish iOS
     if build_and_upload_ios "$TARGET_VERSION"; then
         log "✓ iOS synced to v$TARGET_VERSION"
+        SYNC_OK=true
     else
         log "⚠ iOS build/upload failed — manual intervention needed"
     fi
 fi
 
-# Commit version bump if changes were made
-if ! $DRY_RUN; then
+# Only commit + push the version bump if the build/upload actually succeeded.
+# Otherwise we'd be advertising a synced version that doesn't exist on the
+# distribution channel.
+if $SYNC_OK && ! $DRY_RUN; then
     cd "$REPO_ROOT"
     if [[ -n "$(git status --porcelain "$PBXPROJ" "$GRADLE_FILE" 2>/dev/null)" ]]; then
         git add "$PBXPROJ" "$GRADLE_FILE"
@@ -255,6 +284,15 @@ if ! $DRY_RUN; then
         git push origin main
         log "✓ Version bump committed and pushed"
     fi
+elif ! $SYNC_OK && ! $DRY_RUN; then
+    # Roll back the local version bump so a future sync run will retry.
+    cd "$REPO_ROOT"
+    if [[ -n "$(git status --porcelain "$PBXPROJ" "$GRADLE_FILE" 2>/dev/null)" ]]; then
+        log "Rolling back local version-file changes (build failed)"
+        git checkout -- "$PBXPROJ" "$GRADLE_FILE"
+    fi
+    log "=== Sync FAILED ==="
+    exit 1
 fi
 
 log "=== Sync complete ==="
