@@ -38,6 +38,60 @@ public struct CostUsageScanResult: Sendable {
 
     public let entries: [DailyEntry]
 
+    /// Per-JSONL summary of activity recorded during the most recent scan.
+    /// Populated for Codex (`~/.codex/sessions/...`) and Claude
+    /// (`~/.claude/projects/.../<id>.jsonl`) so callers can reconstruct an
+    /// "active session" view when process enumeration is denied by the
+    /// sandbox. `lastModified` is the JSONL file mtime; freshness is the
+    /// caller's responsibility (see
+    /// `CostUsageScanner.activeSessionFreshnessWindow` on macOS).
+    public let activeSessionCandidates: [ActiveSessionCandidate]
+
+    public init(
+        entries: [DailyEntry],
+        activeSessionCandidates: [ActiveSessionCandidate] = []
+    ) {
+        self.entries = entries
+        self.activeSessionCandidates = activeSessionCandidates
+    }
+
+    /// Lightweight per-JSONL session summary. Cross-platform so that test
+    /// fixtures and downstream synthesis helpers can compose it on iOS
+    /// targets that don't compile the macOS-only `CostUsageScanner` enum.
+    public struct ActiveSessionCandidate: Sendable, Equatable {
+        public let provider: String       // "Codex" | "Claude"
+        public let filePath: String       // absolute path to the JSONL on disk
+        public let projectName: String    // display label
+        public let projectRoot: String?   // absolute path if confidently known; else nil
+        public let sessionId: String?     // stable id when the JSONL exposes one
+        public let lastModified: Date     // JSONL file mtime
+        public let totalTokens: Int       // input + output (matches "I/O tokens" UI)
+        public let totalCost: Double
+        public let messageCount: Int      // assistant-message count for Claude; 0 for Codex
+
+        public init(
+            provider: String,
+            filePath: String,
+            projectName: String,
+            projectRoot: String?,
+            sessionId: String?,
+            lastModified: Date,
+            totalTokens: Int,
+            totalCost: Double,
+            messageCount: Int
+        ) {
+            self.provider = provider
+            self.filePath = filePath
+            self.projectName = projectName
+            self.projectRoot = projectRoot
+            self.sessionId = sessionId
+            self.lastModified = lastModified
+            self.totalTokens = totalTokens
+            self.totalCost = totalCost
+            self.messageCount = messageCount
+        }
+    }
+
     public func totalCost(for date: String) -> Double {
         entries.filter { $0.date == date }.compactMap(\.costUSD).reduce(0, +)
     }
@@ -100,6 +154,11 @@ public enum CostUsageScanner {
         }
     }
 
+    /// Maximum age (seconds) of a JSONL file mtime for it to be treated as
+    /// an "active session" candidate. Conservative on purpose so a stalled
+    /// Codex/Claude tab doesn't keep showing a green "Running" status.
+    public static let activeSessionFreshnessWindow: TimeInterval = 300
+
     /// Main entry point. Scans Codex and Claude JSONL logs for the last N days.
     public static func scan(options: Options = Options()) -> CostUsageScanResult {
         let now = Date()
@@ -107,16 +166,23 @@ public enum CostUsageScanner {
         let range = DayRange(since: since, until: now)
 
         var allEntries: [CostUsageScanResult.DailyEntry] = []
+        var allCandidates: [CostUsageScanResult.ActiveSessionCandidate] = []
 
         // Scan Codex
         let codexCache = scanCodexProvider(range: range, now: now, options: options)
         allEntries.append(contentsOf: entriesFromCodexCache(codexCache, range: range))
+        allCandidates.append(contentsOf: buildCodexCandidates(
+            options: options, range: range, cache: codexCache, now: now
+        ))
 
         // Scan Claude
         let claudeCache = scanClaudeProvider(range: range, now: now, options: options)
         allEntries.append(contentsOf: entriesFromClaudeCache(claudeCache, range: range))
+        allCandidates.append(contentsOf: buildClaudeCandidates(
+            options: options, cache: claudeCache, now: now
+        ))
 
-        return CostUsageScanResult(entries: allEntries)
+        return CostUsageScanResult(entries: allEntries, activeSessionCandidates: allCandidates)
     }
 
     // MARK: - Sandbox-aware entry point (v1.9.4)
@@ -1035,6 +1101,309 @@ public enum CostUsageScanner {
         comps.timeZone = TimeZone.current
         comps.year = y; comps.month = m; comps.day = d; comps.hour = 12
         return comps.date
+    }
+
+    // MARK: - Active Session Candidates
+
+    /// Walk Codex JSONL files we just scanned and emit a candidate per file
+    /// whose mtime is within `activeSessionFreshnessWindow` of `now`.
+    /// Token / cost totals are summed across the cached daily buckets the
+    /// file contributed to. Project label is `"Codex"` because Codex JSONL
+    /// paths are date-partitioned (`<root>/YYYY/MM/DD/<id>.jsonl`) and don't
+    /// carry a project root we can derive without re-parsing the line.
+    private static func buildCodexCandidates(
+        options: Options,
+        range: DayRange,
+        cache: CostUsageCache,
+        now: Date
+    ) -> [CostUsageScanResult.ActiveSessionCandidate] {
+        let cutoff = now.addingTimeInterval(-activeSessionFreshnessWindow)
+        var seen: Set<String> = []
+        var candidates: [CostUsageScanResult.ActiveSessionCandidate] = []
+        for root in codexSessionsRoots(options: options) {
+            for url in listCodexSessionFiles(root: root, scanSinceKey: range.scanSinceKey, scanUntilKey: range.scanUntilKey) {
+                let path = url.path
+                guard !seen.contains(path) else { continue }
+                seen.insert(path)
+                guard let mtime = fileModificationDate(at: path), mtime >= cutoff else { continue }
+                let usage = cache.files[path]
+                let totals = sumCodexTotals(usage: usage)
+                let cost = computeCodexCost(usage: usage)
+                let sessionId = usage?.sessionId
+                candidates.append(.init(
+                    provider: "Codex",
+                    filePath: path,
+                    projectName: "Codex",
+                    projectRoot: nil,
+                    sessionId: sessionId,
+                    lastModified: mtime,
+                    totalTokens: totals.input + totals.output,
+                    totalCost: cost,
+                    messageCount: 0
+                ))
+            }
+        }
+        return candidates
+    }
+
+    /// Walk Claude JSONL files under each `~/.claude/projects/...` (or
+    /// `~/.config/claude/projects/...`) root and emit a candidate per file
+    /// whose mtime is within `activeSessionFreshnessWindow`. Project label
+    /// comes from the parent directory name with the leading `-` stripped
+    /// (Claude Code encodes project paths as `-Users-jason-myproject`).
+    /// Session id comes from the JSONL filename stem.
+    private static func buildClaudeCandidates(
+        options: Options,
+        cache: CostUsageCache,
+        now: Date
+    ) -> [CostUsageScanResult.ActiveSessionCandidate] {
+        let cutoff = now.addingTimeInterval(-activeSessionFreshnessWindow)
+        let keys: [URLResourceKey] = [.isRegularFileKey, .contentModificationDateKey]
+        var seen: Set<String> = []
+        var candidates: [CostUsageScanResult.ActiveSessionCandidate] = []
+        for root in defaultClaudeProjectsRoots(options: options) {
+            guard FileManager.default.fileExists(atPath: root.path) else { continue }
+            guard let enumerator = FileManager.default.enumerator(
+                at: root,
+                includingPropertiesForKeys: keys,
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else { continue }
+            for case let url as URL in enumerator {
+                guard url.pathExtension.lowercased() == "jsonl" else { continue }
+                let path = url.path
+                guard !seen.contains(path) else { continue }
+                seen.insert(path)
+                guard let values = try? url.resourceValues(forKeys: Set(keys)),
+                      values.isRegularFile == true,
+                      let mtime = values.contentModificationDate,
+                      mtime >= cutoff else { continue }
+                let usage = cache.files[path]
+                let totals = sumClaudeTotals(usage: usage)
+                let parentDir = url.deletingLastPathComponent().lastPathComponent
+                let projectName = humanReadableClaudeProject(encodedDir: parentDir)
+                let sessionId = url.deletingPathExtension().lastPathComponent
+                candidates.append(.init(
+                    provider: "Claude",
+                    filePath: path,
+                    projectName: projectName,
+                    projectRoot: nil,
+                    sessionId: sessionId,
+                    lastModified: mtime,
+                    totalTokens: totals.input + totals.output,
+                    totalCost: totals.cost,
+                    messageCount: totals.messages
+                ))
+            }
+        }
+        return candidates
+    }
+
+    private static func fileModificationDate(at path: String) -> Date? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path) else { return nil }
+        return attrs[.modificationDate] as? Date
+    }
+
+    private struct CodexFileTotals {
+        var input: Int
+        var cached: Int
+        var output: Int
+    }
+
+    private static func sumCodexTotals(usage: CostUsageFileUsage?) -> CodexFileTotals {
+        var totals = CodexFileTotals(input: 0, cached: 0, output: 0)
+        guard let usage else { return totals }
+        for (_, models) in usage.days {
+            for (_, packed) in models {
+                totals.input += packed[safeIdx: 0] ?? 0
+                totals.cached += packed[safeIdx: 1] ?? 0
+                totals.output += packed[safeIdx: 2] ?? 0
+            }
+        }
+        return totals
+    }
+
+    private static func computeCodexCost(usage: CostUsageFileUsage?) -> Double {
+        guard let usage else { return 0 }
+        var total = 0.0
+        for (_, models) in usage.days {
+            for (model, packed) in models {
+                let input = packed[safeIdx: 0] ?? 0
+                let cached = packed[safeIdx: 1] ?? 0
+                let output = packed[safeIdx: 2] ?? 0
+                if input == 0 && cached == 0 && output == 0 { continue }
+                if let cost = Pricing.codexCostUSD(model: model, inputTokens: input, cachedInputTokens: cached, outputTokens: output) {
+                    total += cost
+                }
+            }
+        }
+        return total
+    }
+
+    private struct ClaudeFileTotals {
+        var input: Int
+        var cacheRead: Int
+        var cacheCreate: Int
+        var output: Int
+        var cost: Double
+        var messages: Int
+    }
+
+    private static func sumClaudeTotals(usage: CostUsageFileUsage?) -> ClaudeFileTotals {
+        var totals = ClaudeFileTotals(input: 0, cacheRead: 0, cacheCreate: 0, output: 0, cost: 0, messages: 0)
+        guard let usage else { return totals }
+        let costScale = 1_000_000_000.0
+        for (_, models) in usage.days {
+            for (model, packed) in models {
+                let input = packed[safeIdx: 0] ?? 0
+                let cacheRead = packed[safeIdx: 1] ?? 0
+                let cacheCreate = packed[safeIdx: 2] ?? 0
+                let output = packed[safeIdx: 3] ?? 0
+                let costNanos = packed[safeIdx: 4] ?? 0
+                let msgs = packed[safeIdx: 5] ?? 0
+                // The synthetic msg-bucket only carries message counts, not
+                // tokens; it is included in `messages` but not `tokens/cost`.
+                if model != claudeMsgBucketModel {
+                    totals.input += input
+                    totals.cacheRead += cacheRead
+                    totals.cacheCreate += cacheCreate
+                    totals.output += output
+                    if costNanos > 0 {
+                        totals.cost += Double(costNanos) / costScale
+                    } else if let cost = Pricing.claudeCostUSD(
+                        model: model,
+                        inputTokens: input,
+                        cacheReadInputTokens: cacheRead,
+                        cacheCreationInputTokens: cacheCreate,
+                        outputTokens: output
+                    ) {
+                        totals.cost += cost
+                    }
+                }
+                totals.messages += msgs
+            }
+        }
+        return totals
+    }
+
+    /// Convert Claude Code's encoded project directory name back to a
+    /// readable label. Claude encodes a path like `/Users/jason/cli-pulse`
+    /// as `-Users-jason-cli-pulse`. Decoding is fundamentally ambiguous
+    /// because `-` does double duty as both the path separator and as a
+    /// literal hyphen inside a single segment (e.g. `cli-pulse`). We
+    /// therefore don't reconstruct an absolute path; instead we strip
+    /// the user-root prefix (`Users-<username>-` on macOS, `home-<username>-`
+    /// on Linux) and return the user-relative remainder verbatim, which
+    /// preserves hyphenated repo names.
+    ///
+    /// Examples:
+    ///   `-Users-jason-cli-pulse` → `cli-pulse`
+    ///   `-Users-jason-Documents-cli-pulse` → `Documents-cli-pulse`
+    ///   `-home-alice-myrepo` → `myrepo`
+    ///   `myrepo` → `myrepo`
+    static func humanReadableClaudeProject(encodedDir: String) -> String {
+        var s = encodedDir
+        if s.hasPrefix("-") { s = String(s.dropFirst()) }
+
+        // Strip "Users-<username>-" or "home-<username>-" if present, so a
+        // typical encoded dir collapses to just its user-relative path.
+        let lower = s.lowercased()
+        for rootPrefix in ["users-", "home-"] where lower.hasPrefix(rootPrefix) {
+            let afterRoot = s.index(s.startIndex, offsetBy: rootPrefix.count)
+            let remainder = s[afterRoot...]
+            if let firstDash = remainder.firstIndex(of: "-") {
+                let projectPart = remainder[remainder.index(after: firstDash)...]
+                if !projectPart.isEmpty {
+                    return String(projectPart)
+                }
+            }
+            // No further `-` after the username segment — encoded dir was
+            // something like `-Users-jason`. Fall through to returning the
+            // de-prefixed string so the user still gets *something* readable.
+            break
+        }
+
+        return s.isEmpty ? encodedDir : s
+    }
+
+    // MARK: - Session Synthesis
+
+    /// Convert active-session candidates into `SessionRecord`s that the
+    /// dashboard / Sessions tab can render. Used by `DataRefreshManager`
+    /// when `LocalScanner.shared.scan()` returns no sessions because
+    /// `proc_listallpids` was denied by the App Store sandbox.
+    ///
+    /// Dedup rule: keep at most one candidate per `(provider, sessionId)`,
+    /// or per `(provider, filePath)` when `sessionId` is nil. Within a
+    /// dedup group, keep the most recently modified entry.
+    ///
+    /// Defensive freshness filter: even though `buildCodexCandidates` /
+    /// `buildClaudeCandidates` already drop stale JSONLs at scan time,
+    /// this function re-applies the `activeSessionFreshnessWindow`
+    /// against `now` so callers that synthesize from cached candidates
+    /// (or from a manually-constructed list in a test) can't
+    /// accidentally surface a "Running" session for a tool that exited
+    /// hours ago.
+    public static func synthesizeSessions(
+        candidates: [CostUsageScanResult.ActiveSessionCandidate],
+        now: Date,
+        deviceName: String
+    ) -> [SessionRecord] {
+        let cutoff = now.addingTimeInterval(-activeSessionFreshnessWindow)
+        let fresh = candidates.filter { $0.lastModified >= cutoff }
+        // Dedup
+        var byKey: [String: CostUsageScanResult.ActiveSessionCandidate] = [:]
+        for c in fresh {
+            let id = c.sessionId ?? c.filePath
+            let key = "\(c.provider)|\(id)"
+            if let existing = byKey[key] {
+                if c.lastModified > existing.lastModified {
+                    byKey[key] = c
+                }
+            } else {
+                byKey[key] = c
+            }
+        }
+        let ordered = byKey.values.sorted { $0.lastModified > $1.lastModified }
+
+        return ordered.map { c -> SessionRecord in
+            let stableSuffix: String
+            if let sid = c.sessionId, !sid.isEmpty {
+                stableSuffix = sid
+            } else {
+                // Filename stem is stable enough for a fallback id; we
+                // include the filename's hash so collisions across
+                // providers can't happen.
+                stableSuffix = (c.filePath as NSString).lastPathComponent
+            }
+            let id = "jsonl-\(c.provider.lowercased())-\(stableSuffix)"
+            // We don't have a real "started_at" — use lastModified shifted
+            // back by the freshness window so the UI shows a non-zero
+            // duration without claiming false precision.
+            let started = c.lastModified.addingTimeInterval(-activeSessionFreshnessWindow)
+            let costStatus = c.totalCost > 1 ? "warning" : "normal"
+            let requests = max(1, c.messageCount)
+            return SessionRecord(
+                id: id,
+                name: "\(c.provider) session",
+                provider: c.provider,
+                project: c.projectName,
+                device_name: deviceName,
+                started_at: sharedISO8601Formatter.string(from: started),
+                last_active_at: sharedISO8601Formatter.string(from: c.lastModified),
+                status: "Running",
+                total_usage: c.totalTokens,
+                estimated_cost: c.totalCost,
+                cost_status: costStatus,
+                requests: requests,
+                error_count: 0,
+                // "medium" because JSONL freshness is strong evidence the
+                // tool was active recently, but we cannot prove the process
+                // is still alive (could be a stale write from a tool that
+                // exited after `lastModified`).
+                collection_confidence: "medium",
+                project_hash: nil
+            )
+        }
     }
 }
 

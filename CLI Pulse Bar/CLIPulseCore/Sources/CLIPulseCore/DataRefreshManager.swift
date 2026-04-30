@@ -417,6 +417,20 @@ internal final class DataRefreshManager {
         let needsAccess = Self.needsFolderAccessNudge(scanIsEmpty: costScanResult == nil)
         await callbacks.setNeedsFolderAccess(needsAccess)
 
+        // App Store sandbox fallback: when `proc_listallpids` is denied
+        // (sandbox restricts process enumeration), `LocalScanner` returns
+        // an empty session list. Synthesize one session per fresh JSONL
+        // candidate so the Sessions tab + dashboard "active session" count
+        // reflect actual recent activity instead of always reading zero.
+        let synthesizedSessions = Self.resolveLocalSessions(
+            scannerSessions: scanResult.sessions,
+            scanResult: costScanData,
+            deviceName: ProcessInfo.processInfo.hostName,
+            now: Date()
+        )
+        let activeSessionCount = synthesizedSessions.count
+        let totalRequestsToday = synthesizedSessions.reduce(0) { $0 + $1.requests }
+
         // iter17 (2026-04-29): the cloud sync tasks below need a valid
         // Supabase session — without one, every POST /rest/v1/... 401s
         // and the resulting `lastError` ("HTTP 401: ...") would surface
@@ -465,7 +479,7 @@ internal final class DataRefreshManager {
             status: "online",
             last_sync_at: sharedISO8601Formatter.string(from: Date()),
             helper_version: "local",
-            current_session_count: scanResult.activeSessionCount,
+            current_session_count: activeSessionCount,
             cpu_usage: nil,
             memory_usage: nil
         )]
@@ -487,8 +501,8 @@ internal final class DataRefreshManager {
             total_usage_today: providers.reduce(0) { $0 + $1.today_usage },
             total_estimated_cost_today: providers.reduce(0) { $0 + $1.estimated_cost_today },
             cost_status: "Estimated",
-            total_requests_today: scanResult.sessions.reduce(0) { $0 + $1.requests },
-            active_sessions: scanResult.activeSessionCount,
+            total_requests_today: totalRequestsToday,
+            active_sessions: activeSessionCount,
             online_devices: 1,
             unresolved_alerts: 0,
             provider_breakdown: providers.map {
@@ -499,7 +513,10 @@ internal final class DataRefreshManager {
             top_projects: [],
             trend: [],
             recent_activity: [],
-            risk_signals: scanResult.isEmpty && collectorResults.isEmpty
+            // Suppress the "No AI tools detected" hint when either the live
+            // process scanner OR the JSONL synthesis surfaced any sessions,
+            // and when at least one provider collector returned data.
+            risk_signals: synthesizedSessions.isEmpty && collectorResults.isEmpty
                 ? ["No AI tools detected. Start a coding session to see data."] : [],
             alert_summary: AlertSummaryDTO(critical: 0, warning: 0, info: 0)
         )
@@ -514,7 +531,7 @@ internal final class DataRefreshManager {
             RefreshPayload(
                 dashboard: dashboard,
                 providers: providers,
-                sessions: scanResult.sessions,
+                sessions: synthesizedSessions,
                 devices: devices,
                 alerts: alerts,
                 locallySupplementedProviders: [],
@@ -665,6 +682,29 @@ internal final class DataRefreshManager {
     /// normalise the main-app + helper result lists before merging or
     /// uploading — prevents SQLSTATE 21000 on Supabase upserts when the
     /// same provider's quota row appears twice.
+    /// Pure session-source resolver for local mode. When `LocalScanner.shared.scan()`
+    /// returns a non-empty session list, we trust it (process enumeration succeeded —
+    /// usually unsandboxed dev builds). When it's empty (App Store sandbox typically
+    /// denies `proc_listallpids`), synthesize a session list from
+    /// `CostUsageScanResult.activeSessionCandidates` so the Sessions tab and dashboard
+    /// don't lie about activity. The result is always the concrete session list to
+    /// display; callers should also use `.isEmpty` to gate the "No AI tools detected"
+    /// risk signal.
+    nonisolated static func resolveLocalSessions(
+        scannerSessions: [SessionRecord],
+        scanResult: CostUsageScanResult,
+        deviceName: String,
+        now: Date
+    ) -> [SessionRecord] {
+        if !scannerSessions.isEmpty { return scannerSessions }
+        guard !scanResult.activeSessionCandidates.isEmpty else { return [] }
+        return CostUsageScanner.synthesizeSessions(
+            candidates: scanResult.activeSessionCandidates,
+            now: now,
+            deviceName: deviceName
+        )
+    }
+
     nonisolated static func dedupedByProvider(_ results: [CollectorResult]) -> [CollectorResult] {
         var seen: Set<String> = []
         var out: [CollectorResult] = []

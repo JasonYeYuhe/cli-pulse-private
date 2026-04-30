@@ -88,6 +88,57 @@ public final class LocalScanner: @unchecked Sendable {
 
     private init() {}
 
+    // MARK: - Testability hook for proc_listallpids
+
+    /// Override only in unit tests. Receives the buffer + bufsize that
+    /// `listProcesses()` was about to hand to `proc_listallpids`; returns
+    /// `(bytesWritten, errno)` to feed back into the classification logic.
+    /// Production callers always go through `defaultProcListAllPids`.
+    nonisolated(unsafe) static var procListAllPidsImpl: (UnsafeMutablePointer<pid_t>?, Int32) -> (Int32, Int32) =
+        LocalScanner.defaultProcListAllPids
+
+    static func defaultProcListAllPids(
+        _ buffer: UnsafeMutablePointer<pid_t>?,
+        _ bufSize: Int32
+    ) -> (Int32, Int32) {
+        let written = proc_listallpids(buffer, bufSize)
+        return (written, errno)
+    }
+
+    // MARK: - Sandbox denial logging (once per process)
+
+    private static let denialLogLock = NSLock()
+    nonisolated(unsafe) private static var loggedSandboxDenied = false
+    nonisolated(unsafe) private static var loggedNoVisiblePids = false
+
+    private static func logSandboxDeniedOnce(errno: Int32) {
+        denialLogLock.lock()
+        let already = loggedSandboxDenied
+        loggedSandboxDenied = true
+        denialLogLock.unlock()
+        guard !already else { return }
+        scanLogger.info("proc_listallpids denied by sandbox (errno=\(errno)); LocalScanner will return empty — Sessions tab falls back to CostUsageScanner.activeSessionCandidates")
+    }
+
+    private static func logNoVisiblePidsOnce() {
+        denialLogLock.lock()
+        let already = loggedNoVisiblePids
+        loggedNoVisiblePids = true
+        denialLogLock.unlock()
+        guard !already else { return }
+        scanLogger.info("proc_listallpids returned 0 pids; sandbox profile likely filters to caller-owned processes only — falling back to CostUsageScanner.activeSessionCandidates")
+    }
+
+    /// Test-only reset for the log-once flags so `LocalScannerTests` can
+    /// re-exercise the sandbox-denied / no-visible-pids paths within a
+    /// single test process.
+    static func resetDenialLogStateForTesting() {
+        denialLogLock.lock()
+        loggedSandboxDenied = false
+        loggedNoVisiblePids = false
+        denialLogLock.unlock()
+    }
+
     /// Scan running processes and return detected AI sessions + provider summary.
     /// - Parameter costRateLookup: Optional closure to look up cost rate per 1K tokens by provider name.
     ///   Falls back to `ProviderKind.defaultCostRate` if nil or if the closure returns nil.
@@ -219,11 +270,16 @@ public final class LocalScanner: @unchecked Sendable {
     /// Previous implementation forked /bin/ps, which returned zero rows when
     /// called from the MAS-sandboxed CLIPulseHelper LoginItem even though the
     /// main app's identical call worked. libproc avoids the subprocess hop
-    /// entirely and is permitted in the default sandbox for user-owned
-    /// processes.
+    /// entirely and works in unsandboxed dev builds.
     ///
-    /// IMPORTANT: `proc_pidpath` only returns the executable path, not argv.
-    /// Many AI CLIs (Claude Code, Codex CLI, Gemini CLI, …) run as
+    /// **Sandbox caveat**: in the App Store sandbox profile, `proc_listallpids`
+    /// can return `< 0` with `errno = EPERM/EACCES` (call denied) or `0`
+    /// (no visible pids). Both are handled by returning an empty list here;
+    /// callers should fall back to `CostUsageScanner.activeSessionCandidates`
+    /// for evidence of recently-active AI sessions.
+    ///
+    /// `proc_pidpath` only returns the executable path, not argv. Many AI CLIs
+    /// (Claude Code, Codex CLI, Gemini CLI, …) run as
     /// `/usr/local/bin/node /path/to/tool.js` — the executable is `node`, so
     /// pattern-matching on the path alone misses them. We additionally read
     /// `KERN_PROCARGS2` via sysctl to get argv[0..n] and match on the full
@@ -232,9 +288,23 @@ public final class LocalScanner: @unchecked Sendable {
         let nowEpoch = Int(Date().timeIntervalSince1970)
         var pidBuf = [pid_t](repeating: 0, count: 8192)
         let bufSize = Int32(pidBuf.count * MemoryLayout<pid_t>.size)
-        let bytesWritten = proc_listallpids(&pidBuf, bufSize)
-        if bytesWritten <= 0 {
-            Self.scanLogger.error("proc_listallpids failed errno=\(errno)")
+        let (bytesWritten, errnoCode) = Self.procListAllPidsImpl(&pidBuf, bufSize)
+        if bytesWritten < 0 {
+            // App Store sandbox typically returns EPERM/EACCES here. Log once
+            // at info so the user-visible Console isn't spammed every refresh
+            // tick (5–30 s cadence) with the same denial.
+            if errnoCode == EPERM || errnoCode == EACCES {
+                Self.logSandboxDeniedOnce(errno: errnoCode)
+            } else {
+                Self.scanLogger.error("proc_listallpids failed errno=\(errnoCode)")
+            }
+            return []
+        }
+        if bytesWritten == 0 {
+            // The kernel returned successfully with an empty pid set. Common
+            // in MAS sandbox profiles that filter the result to "your own
+            // processes only". Treat as no-data, not error.
+            Self.logNoVisiblePidsOnce()
             return []
         }
         let count = Int(bytesWritten) / MemoryLayout<pid_t>.size

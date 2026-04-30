@@ -286,6 +286,55 @@ final class LocalScannerTests: XCTestCase {
         XCTAssertNotEqual(label, "Contents")
         XCTAssertEqual(label, "unknown", "Claude.app is a dead-end for project labelling")
     }
+
+    // MARK: - proc_listallpids classification (sandbox-denied / no-visible-pids)
+
+    /// When `proc_listallpids` returns `< 0` with `EPERM` (App Store sandbox
+    /// denial), the scanner must emit an empty result without throwing or
+    /// looping — the dashboard / Sessions tab fallback path then synthesizes
+    /// from `CostUsageScanResult.activeSessionCandidates`.
+    func testScanReturnsEmptyWhenProcListAllPidsDeniedEPERM() {
+        let saved = LocalScanner.procListAllPidsImpl
+        LocalScanner.resetDenialLogStateForTesting()
+        defer {
+            LocalScanner.procListAllPidsImpl = saved
+            LocalScanner.resetDenialLogStateForTesting()
+        }
+        LocalScanner.procListAllPidsImpl = { _, _ in (-1, EPERM) }
+        let result = scanner.scan()
+        XCTAssertTrue(result.sessions.isEmpty)
+        XCTAssertTrue(result.providers.isEmpty)
+        XCTAssertTrue(result.isEmpty)
+        XCTAssertEqual(result.activeSessionCount, 0)
+    }
+
+    /// `EACCES` is the other denial errno macOS sandbox policies can set
+    /// instead of `EPERM`. Same outcome: empty result, no crash.
+    func testScanReturnsEmptyWhenProcListAllPidsDeniedEACCES() {
+        let saved = LocalScanner.procListAllPidsImpl
+        LocalScanner.resetDenialLogStateForTesting()
+        defer {
+            LocalScanner.procListAllPidsImpl = saved
+            LocalScanner.resetDenialLogStateForTesting()
+        }
+        LocalScanner.procListAllPidsImpl = { _, _ in (-1, EACCES) }
+        let result = scanner.scan()
+        XCTAssertTrue(result.sessions.isEmpty)
+    }
+
+    /// When the kernel returns 0 pids (sandbox profile filtered visibility
+    /// rather than denying outright), the scanner also returns empty cleanly.
+    func testScanReturnsEmptyWhenNoVisiblePids() {
+        let saved = LocalScanner.procListAllPidsImpl
+        LocalScanner.resetDenialLogStateForTesting()
+        defer {
+            LocalScanner.procListAllPidsImpl = saved
+            LocalScanner.resetDenialLogStateForTesting()
+        }
+        LocalScanner.procListAllPidsImpl = { _, _ in (0, 0) }
+        let result = scanner.scan()
+        XCTAssertTrue(result.sessions.isEmpty)
+    }
 }
 
 #endif
