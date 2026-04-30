@@ -6,6 +6,7 @@ import com.clipulse.android.data.remote.SupabaseClient
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.test.runTest
@@ -40,7 +41,11 @@ class SessionsViewModelTest {
 
     @Test
     fun `initial state is loading`() = runTest {
-        coEvery { supabase.sessions() } returns testSessions
+        // Suspend the only suspending call inside `init { refresh() }` so
+        // the test can observe the transient `isLoading = true` state.
+        // Without this hang, UnconfinedTestDispatcher runs `refresh()`
+        // synchronously and flips the flag to `false` before the assertion.
+        coEvery { supabase.sessions() } coAnswers { awaitCancellation() }
         val vm = SessionsViewModel(supabase)
         assertTrue(vm.state.value.isLoading)
         vm.viewModelScope.cancel()

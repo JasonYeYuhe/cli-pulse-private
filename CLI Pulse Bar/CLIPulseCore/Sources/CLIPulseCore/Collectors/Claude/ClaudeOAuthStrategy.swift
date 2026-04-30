@@ -41,8 +41,12 @@ public struct ClaudeOAuthStrategy: ClaudeSourceStrategy, Sendable {
             weeklyUsed: usage.sevenDay?.utilization,
             opusUsed: usage.sevenDayOpus?.utilization,
             sonnetUsed: usage.sevenDaySonnet?.utilization,
+            designsUsed: usage.iguanaNecktie?.utilization,
+            dailyRoutinesUsed: usage.sevenDayOmelette?.utilization,
             sessionReset: usage.fiveHour?.resetsAt,
             weeklyReset: usage.sevenDay?.resetsAt,
+            designsReset: usage.iguanaNecktie?.resetsAt,
+            dailyRoutinesReset: usage.sevenDayOmelette?.resetsAt,
             extraUsage: usage.extraUsage.flatMap { e in
                 e.isEnabled ? ClaudeExtraUsage(
                     isEnabled: true,
@@ -103,6 +107,15 @@ public struct ClaudeOAuthStrategy: ClaudeSourceStrategy, Sendable {
         let sevenDayOpus: UsageWindow?
         let sevenDaySonnet: UsageWindow?
         let sevenDayOAuthApps: UsageWindow?
+        /// Designs (raw key `iguana_necktie`). Launch-window null semantics:
+        /// a present-but-null value parses as `UsageWindow(utilization: 0,
+        /// resetsAt: nil)` (enabled-but-unused bucket). An absent key still
+        /// yields `nil` so accounts where the rollout hasn't reached them
+        /// don't see a phantom row.
+        let iguanaNecktie: UsageWindow?
+        /// Daily Routines (raw key `seven_day_omelette`). Same launch-window
+        /// null semantics as `iguanaNecktie`.
+        let sevenDayOmelette: UsageWindow?
         let extraUsage: ExtraUsage?
     }
 
@@ -130,6 +143,24 @@ public struct ClaudeOAuthStrategy: ClaudeSourceStrategy, Sendable {
                 resetsAt: w["resets_at"] as? String
             )
         }
+        // Launch-window probe: distinguishes "key absent" (skip) from
+        // "key present-but-null" (emit a 0/nil bucket). Mirrors the
+        // helper's `_add_launch_window` semantics. Existing optional
+        // model windows (Opus, OAuth Apps) keep `parseWindow`'s
+        // present-but-null → nil behavior.
+        func parseLaunchWindow(_ key: String) -> UsageWindow? {
+            guard let value = json[key] else { return nil }            // absent
+            if value is NSNull {
+                return UsageWindow(utilization: 0, resetsAt: nil)      // present-but-null
+            }
+            if let w = value as? [String: Any] {
+                return UsageWindow(
+                    utilization: intFromJSON(w["utilization"]) ?? 0,
+                    resetsAt: w["resets_at"] as? String
+                )
+            }
+            return nil
+        }
         var extra: ExtraUsage? = nil
         if let e = json["extra_usage"] as? [String: Any] {
             extra = ExtraUsage(
@@ -141,9 +172,14 @@ public struct ClaudeOAuthStrategy: ClaudeSourceStrategy, Sendable {
             )
         }
         return OAuthUsageResponse(
-            fiveHour: parseWindow("five_hour"), sevenDay: parseWindow("seven_day"),
-            sevenDayOpus: parseWindow("seven_day_opus"), sevenDaySonnet: parseWindow("seven_day_sonnet"),
-            sevenDayOAuthApps: parseWindow("seven_day_oauth_apps"), extraUsage: extra
+            fiveHour: parseWindow("five_hour"),
+            sevenDay: parseWindow("seven_day"),
+            sevenDayOpus: parseWindow("seven_day_opus"),
+            sevenDaySonnet: parseWindow("seven_day_sonnet"),
+            sevenDayOAuthApps: parseWindow("seven_day_oauth_apps"),
+            iguanaNecktie: parseLaunchWindow("iguana_necktie"),
+            sevenDayOmelette: parseLaunchWindow("seven_day_omelette"),
+            extraUsage: extra
         )
     }
 }

@@ -61,6 +61,30 @@ final class ClaudeCollectorTests: XCTestCase {
         XCTAssertNil(usage.sevenDay)
     }
 
+    // P3 — same launch-window contract from the collector-facing static.
+    // Real scrubbed payload: `iguana_necktie: null` → utilization-0 bucket,
+    // `seven_day_omelette: {...}` → normal parse, `seven_day_opus: null` →
+    // still nil (existing optional-window behavior preserved).
+    func testParseUsageDesignsAndDailyRoutinesLaunchSemantics() throws {
+        let json = """
+        {
+            "five_hour": { "utilization": 0.0, "resets_at": null },
+            "seven_day": { "utilization": 18.0, "resets_at": "2026-05-05T12:00:01Z" },
+            "iguana_necktie": null,
+            "seven_day_opus": null,
+            "seven_day_omelette": { "utilization": 5.0, "resets_at": null },
+            "seven_day_sonnet": { "utilization": 2.0, "resets_at": "2026-05-05T12:00:00Z" }
+        }
+        """.data(using: .utf8)!
+        let usage = try ClaudeCollector.parseUsage(json)
+        XCTAssertEqual(usage.iguanaNecktie?.utilization, 0)
+        XCTAssertNil(usage.iguanaNecktie?.resetsAt)
+        XCTAssertEqual(usage.sevenDayOmelette?.utilization, 5)
+        XCTAssertNil(usage.sevenDayOmelette?.resetsAt)
+        XCTAssertNil(usage.sevenDayOpus, "null Opus must remain skipped, not 0-bucket")
+        XCTAssertEqual(usage.sevenDaySonnet?.utilization, 2)
+    }
+
     // MARK: - Credentials parsing
 
     func testParseSnakeCaseCredentials() {

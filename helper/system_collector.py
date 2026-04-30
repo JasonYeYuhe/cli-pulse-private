@@ -514,6 +514,23 @@ def _write_claude_snapshot(result: dict, tier_raw: str, source: str) -> None:
                 return None
             return max(0, t["quota"] - t["remaining"])
 
+        # Additive launch-window passthrough: the legacy 4 *_used keys stay
+        # exactly as they are so older app builds keep parsing snapshots
+        # unchanged. New named tiers (currently Designs / Daily Routines)
+        # ride alongside in `extra_tiers`. Extra Usage stays in its own
+        # `extra_usage` field — don't duplicate it here.
+        _LAUNCH_TIER_NAMES = ("Designs", "Daily Routines")
+        extra_tiers = []
+        for name in _LAUNCH_TIER_NAMES:
+            t = tier_map.get(name)
+            if t is None:
+                continue
+            extra_tiers.append({
+                "name": name,
+                "used": max(0, t["quota"] - t["remaining"]),
+                "reset": t.get("reset_time"),
+            })
+
         snapshot = {
             "session_used": _used_pct("5h Window"),
             "weekly_used": _used_pct("Weekly"),
@@ -524,6 +541,7 @@ def _write_claude_snapshot(result: dict, tier_raw: str, source: str) -> None:
             "rate_limit_tier": tier_raw or None,
             "account_email": None,
             "extra_usage": None,
+            "extra_tiers": extra_tiers,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
             "source": source,
         }
@@ -879,17 +897,50 @@ def _parse_claude_api_response(data: dict, plan_type: str | None = None) -> dict
     """
     tiers = []
 
+    def _coerce_util(raw) -> int:
+        # Accept int or float. Reject bool explicitly even though it's an
+        # int subclass in Python — `True/False` should never silently
+        # become utilization=1/0. Anything else (string, None, dict, …)
+        # collapses to 0 for that window so a single malformed key can't
+        # crash the whole parse. Matches the v1.10.4 OAuth Double-vs-Int
+        # regression fix on the Swift side.
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            try:
+                return max(0, int(round(float(raw))))
+            except (TypeError, ValueError, OverflowError):
+                return 0
+        return 0
+
     def _add_window(key: str, name: str, reset_key: str = "resets_at"):
         w = data.get(key)
         if isinstance(w, dict):
-            util = w.get("utilization", 0)
+            util = _coerce_util(w.get("utilization", 0))
             reset = w.get(reset_key)
-            tiers.append({"name": name, "quota": 100, "remaining": max(0, 100 - int(util)), "reset_time": reset})
+            tiers.append({"name": name, "quota": 100, "remaining": max(0, 100 - util), "reset_time": reset})
+
+    def _add_launch_window(key: str, name: str, reset_key: str = "resets_at"):
+        # Launch-only quota windows (Designs, Daily Routines).
+        # Distinct null semantics: a present-but-null raw value means
+        # "enabled-but-unused bucket" (full remaining), not "skip". An
+        # absent key still skips so accounts where the windows haven't
+        # rolled out don't see a phantom row.
+        if key not in data:
+            return
+        w = data.get(key)
+        if w is None:
+            tiers.append({"name": name, "quota": 100, "remaining": 100, "reset_time": None})
+            return
+        if isinstance(w, dict):
+            util = _coerce_util(w.get("utilization", 0))
+            reset = w.get(reset_key)
+            tiers.append({"name": name, "quota": 100, "remaining": max(0, 100 - util), "reset_time": reset})
 
     _add_window("five_hour", "5h Window")
     _add_window("seven_day", "Weekly")
     _add_window("seven_day_opus", "Opus (Weekly)")
     _add_window("seven_day_sonnet", "Sonnet (Weekly)")
+    _add_launch_window("iguana_necktie", "Designs")
+    _add_launch_window("seven_day_omelette", "Daily Routines")
 
     # Extra usage / overage credits
     eu = data.get("extra_usage")

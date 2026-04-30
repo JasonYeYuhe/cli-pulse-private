@@ -27,6 +27,60 @@ final class ClaudeStrategyTests: XCTestCase {
         XCTAssertEqual(result.dataKind, .quota)
     }
 
+    // P3: Designs (`iguana_necktie`) and Daily Routines (`seven_day_omelette`)
+    // append after the existing Sonnet/Opus row in the order
+    // [5h, Weekly, Sonnet only, Designs, Daily Routines]. Sonnet/Opus
+    // coalescing is unchanged — it still produces a single "Sonnet only"
+    // bar regardless of which of the two carried the value.
+    func testResultBuilderAppendsDesignsAndDailyRoutines() {
+        let snapshot = ClaudeSnapshot(
+            sessionUsed: 22,
+            weeklyUsed: 18,
+            sonnetUsed: 2,
+            designsUsed: 25,
+            dailyRoutinesUsed: 5,
+            sessionReset: "2026-05-05T08:00:00Z",
+            weeklyReset: "2026-05-05T12:00:01Z",
+            designsReset: "2026-05-05T12:00:01Z",
+            dailyRoutinesReset: nil,
+            rateLimitTier: "max_20x",
+            sourceLabel: "oauth"
+        )
+        let result = ClaudeResultBuilder.build(from: snapshot)
+        XCTAssertEqual(result.usage.tiers.map(\.name),
+                       ["5h Window", "Weekly", "Sonnet only", "Designs", "Daily Routines"])
+        let byName = Dictionary(uniqueKeysWithValues: result.usage.tiers.map { ($0.name, $0) })
+        XCTAssertEqual(byName["Designs"]?.remaining, 75)
+        XCTAssertEqual(byName["Designs"]?.reset_time, "2026-05-05T12:00:01Z")
+        XCTAssertEqual(byName["Daily Routines"]?.remaining, 95)
+        XCTAssertNil(byName["Daily Routines"]?.reset_time)
+    }
+
+    // Regression guard: snapshots WITHOUT the new launch-window fields
+    // must still produce exactly the legacy three-row layout. Locks the
+    // additive contract so old helper builds keep rendering unchanged.
+    func testResultBuilderLegacySnapshotKeepsThreeRows() {
+        let snapshot = ClaudeSnapshot(
+            sessionUsed: 45, weeklyUsed: 60, sonnetUsed: 55,
+            sessionReset: "2026-04-02T22:00:00Z",
+            weeklyReset: "2026-04-09T00:00:00Z",
+            rateLimitTier: "pro", sourceLabel: "oauth"
+        )
+        let result = ClaudeResultBuilder.build(from: snapshot)
+        XCTAssertEqual(result.usage.tiers.map(\.name),
+                       ["5h Window", "Weekly", "Sonnet only"])
+    }
+
+    // hasAnyUsage must consider the launch windows so a Designs-only
+    // payload still emits a real quota envelope (otherwise it would be
+    // mis-classified as "unavailable" and the new bar would never show).
+    func testHasAnyUsageIncludesLaunchWindows() {
+        let onlyDesigns = ClaudeSnapshot(designsUsed: 25, sourceLabel: "oauth")
+        XCTAssertTrue(onlyDesigns.hasAnyUsage)
+        let onlyDailyRoutines = ClaudeSnapshot(dailyRoutinesUsed: 5, sourceLabel: "oauth")
+        XCTAssertTrue(onlyDailyRoutines.hasAnyUsage)
+    }
+
     func testResultBuilderMinimalSnapshot() {
         let snapshot = ClaudeSnapshot(sessionUsed: 10, sourceLabel: "cli-pty")
         let result = ClaudeResultBuilder.build(from: snapshot)
@@ -228,6 +282,64 @@ final class ClaudeStrategyTests: XCTestCase {
         XCTAssertNil(ClaudeOAuthStrategy.intFromJSON("9"))
     }
 
+    // P3 — launch-window null semantics on the OAuth parser.
+    // - `iguana_necktie: null` must parse as a window with utilization 0
+    //   (enabled-but-unused bucket), NOT skipped.
+    // - `seven_day_omelette: {"utilization": 5.0, "resets_at": null}` parses
+    //   normally — utilization 5, no reset.
+    // - `seven_day_opus: null` keeps the existing optional-window behavior
+    //   and parses as nil (NOT a 0-bucket). This is the key invariant the
+    //   launch-window split must not regress.
+    func testOAuthParseLaunchWindowsAndOpusNullDistinct() throws {
+        let json = """
+        {
+            "five_hour": { "utilization": 0.0, "resets_at": null },
+            "seven_day": { "utilization": 18.0, "resets_at": "2026-05-05T12:00:01Z" },
+            "seven_day_opus": null,
+            "seven_day_sonnet": { "utilization": 2.0, "resets_at": "2026-05-05T12:00:00Z" },
+            "iguana_necktie": null,
+            "seven_day_omelette": { "utilization": 5.0, "resets_at": null }
+        }
+        """.data(using: .utf8)!
+        let usage = try ClaudeOAuthStrategy.parseUsage(json)
+        XCTAssertNotNil(usage.iguanaNecktie)
+        XCTAssertEqual(usage.iguanaNecktie?.utilization, 0)
+        XCTAssertNil(usage.iguanaNecktie?.resetsAt)
+        XCTAssertNotNil(usage.sevenDayOmelette)
+        XCTAssertEqual(usage.sevenDayOmelette?.utilization, 5)
+        XCTAssertNil(usage.sevenDayOmelette?.resetsAt)
+        XCTAssertNil(usage.sevenDayOpus,
+                     "Existing optional model windows must keep parseWindow's nil-on-null behavior")
+    }
+
+    // P3 — absent launch keys still skip. If the API hasn't started returning
+    // the new buckets at all yet, neither field should fabricate a window.
+    func testOAuthParseLaunchWindowsAbsentSkipped() throws {
+        let json = """
+        {
+            "five_hour": { "utilization": 10.0, "resets_at": null }
+        }
+        """.data(using: .utf8)!
+        let usage = try ClaudeOAuthStrategy.parseUsage(json)
+        XCTAssertNil(usage.iguanaNecktie)
+        XCTAssertNil(usage.sevenDayOmelette)
+    }
+
+    // P3 — malformed utilization on a launch window collapses to 0 for that
+    // window, not the whole parse. Mirrors the helper's `_coerce_util` rule.
+    func testOAuthParseLaunchWindowMalformedUtilizationFallsBack() throws {
+        let json = """
+        {
+            "five_hour": { "utilization": 5, "resets_at": null },
+            "iguana_necktie": { "utilization": "garbage", "resets_at": null }
+        }
+        """.data(using: .utf8)!
+        let usage = try ClaudeOAuthStrategy.parseUsage(json)
+        XCTAssertEqual(usage.iguanaNecktie?.utilization, 0)
+        XCTAssertEqual(usage.fiveHour?.utilization, 5,
+                       "A single bad launch-window value must not poison sibling parses")
+    }
+
     // MARK: - ClaudeSourceResolver
 
     func testResolverDefaultOrder() {
@@ -284,6 +396,53 @@ final class ClaudeStrategyTests: XCTestCase {
         XCTAssertEqual(read?.rateLimitTier, "pro")
         XCTAssertEqual(read?.accountEmail, "test@example.com")
         XCTAssertEqual(read?.sourceLabel, "helper-web")
+        // Legacy snapshots carry no extra_tiers — new launch-window fields
+        // must round-trip as nil for back-compat.
+        XCTAssertNil(read?.designsUsed)
+        XCTAssertNil(read?.dailyRoutinesUsed)
+        XCTAssertNil(read?.designsReset)
+        XCTAssertNil(read?.dailyRoutinesReset)
+    }
+
+    // P3 — extra_tiers round-trip. A snapshot carrying Designs and Daily
+    // Routines must serialize to disk and re-emerge with the same values
+    // through ClaudeWebStrategy.readHelperSnapshot, including a null reset
+    // for Daily Routines (mirrors the live "enabled-but-unused" payload).
+    func testHelperSnapshotRoundTripCarriesExtraTiers() throws {
+        let prodPath = ClaudeHelperContract.snapshotPath
+        let hadExisting = FileManager.default.fileExists(atPath: prodPath)
+        let existingData = hadExisting ? FileManager.default.contents(atPath: prodPath) : nil
+
+        let snapshot = ClaudeSnapshot(
+            sessionUsed: 22, weeklyUsed: 18, sonnetUsed: 2,
+            designsUsed: 25, dailyRoutinesUsed: 5,
+            sessionReset: "2026-05-05T08:00:00Z",
+            weeklyReset: "2026-05-05T12:00:01Z",
+            designsReset: "2026-05-05T12:00:01Z",
+            dailyRoutinesReset: nil,
+            rateLimitTier: "max_20x",
+            accountEmail: "test@example.com",
+            sourceLabel: "web"
+        )
+        try ClaudeHelperContract.writeSnapshot(snapshot)
+        defer {
+            if let data = existingData {
+                try? data.write(to: URL(fileURLWithPath: prodPath), options: .atomic)
+            } else {
+                try? FileManager.default.removeItem(atPath: prodPath)
+            }
+        }
+
+        let read = ClaudeWebStrategy.readHelperSnapshot()
+        XCTAssertNotNil(read)
+        XCTAssertEqual(read?.designsUsed, 25)
+        XCTAssertEqual(read?.designsReset, "2026-05-05T12:00:01Z")
+        XCTAssertEqual(read?.dailyRoutinesUsed, 5)
+        XCTAssertNil(read?.dailyRoutinesReset)
+        // Legacy fields still survive on the same round-trip
+        XCTAssertEqual(read?.sessionUsed, 22)
+        XCTAssertEqual(read?.weeklyUsed, 18)
+        XCTAssertEqual(read?.sonnetUsed, 2)
     }
 
     // MARK: - Strategy error fallback logic

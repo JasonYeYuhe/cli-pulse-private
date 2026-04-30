@@ -184,6 +184,12 @@ public enum AlertGenerator {
         let now = sharedISO8601Formatter.string(from: Date())
         let sortedThresholds = thresholds.sorted(by: >) // highest first
 
+        // Claude launch-window quotas (Designs, Daily Routines) intentionally
+        // skip notifications this round — the brief explicitly excludes them.
+        // Suppression is provider-scoped: a non-Claude provider that happens
+        // to ship a tier named "Designs" still alerts.
+        let claudeNonAlertingTiers: Set<String> = ["Designs", "Daily Routines"]
+
         for provider in providers {
             // If provider ships per-tier data, evaluate each tier; otherwise
             // fall back to the overall quota/remaining pair.
@@ -191,6 +197,10 @@ public enum AlertGenerator {
             if !provider.tiers.isEmpty {
                 tiersToCheck = provider.tiers.compactMap { t in
                     guard t.quota > 0 else { return nil }
+                    if provider.provider == ProviderKind.claude.rawValue,
+                       claudeNonAlertingTiers.contains(t.name) {
+                        return nil
+                    }
                     return (t.name, t.quota, t.remaining, t.reset_time)
                 }
             } else if let q = provider.quota, q > 0, let r = provider.remaining {

@@ -258,6 +258,38 @@ final class AlertGeneratorTests: XCTestCase {
         XCTAssertTrue((alerts[0]["id"] as? String)?.contains("5h Window") == true)
     }
 
+    // P3 — Designs and Daily Routines on Claude must NOT generate quota
+    // alerts even when 99% used. The brief explicitly excludes them this
+    // round. Weekly at 99% in the same provider still alerts (Critical),
+    // proving the suppression is tier-name scoped, not a global mute.
+    func testClaudeDesignsAndDailyRoutinesDoNotGenerateQuotaAlerts() {
+        let designs = TierDTO(name: "Designs", quota: 100, remaining: 1)            // 99% used
+        let routines = TierDTO(name: "Daily Routines", quota: 100, remaining: 1)    // 99% used
+        let weekly = TierDTO(name: "Weekly", quota: 100, remaining: 1)              // 99% used
+        let claude = makeProvider(provider: "Claude", tiers: [weekly, designs, routines])
+        let alerts = AlertGenerator.evaluateQuotaAlerts(providers: [claude], thresholds: [80, 95])
+
+        let alertedNames = alerts.compactMap { $0["title"] as? String }
+        XCTAssertFalse(alertedNames.contains { $0.contains("Designs") },
+                       "Designs must not surface a quota alert on Claude")
+        XCTAssertFalse(alertedNames.contains { $0.contains("Daily Routines") },
+                       "Daily Routines must not surface a quota alert on Claude")
+        XCTAssertEqual(alerts.count, 1, "Only the Weekly tier should alert")
+        XCTAssertEqual(alerts[0]["severity"] as? String, "Critical")
+        XCTAssertTrue((alerts[0]["title"] as? String)?.contains("Weekly") == true)
+    }
+
+    // P3 — Suppression is provider-scoped: a non-Claude provider that
+    // happens to ship a tier literally named "Designs" must still alert.
+    func testNonClaudeDesignsTierStillAlerts() {
+        let designs = TierDTO(name: "Designs", quota: 100, remaining: 1) // 99% used
+        let other = makeProvider(provider: "Cursor", tiers: [designs])
+        let alerts = AlertGenerator.evaluateQuotaAlerts(providers: [other], thresholds: [80, 95])
+        XCTAssertEqual(alerts.count, 1)
+        XCTAssertTrue((alerts[0]["title"] as? String)?.contains("Designs") == true)
+        XCTAssertEqual(alerts[0]["severity"] as? String, "Critical")
+    }
+
     // MARK: - makeAlertRecord()
 
     func testMakeAlertRecordFromValidDict() {

@@ -32,8 +32,8 @@ android {
         applicationId = "com.clipulse.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 23
-        versionName = "1.11.1"
+        versionCode = 24
+        versionName = "1.12.0"
 
         buildConfigField("String", "SUPABASE_URL",
             "\"${localProps.getProperty("SUPABASE_URL", "https://gkjwsxotmwrgqsvfijzs.supabase.co")}\"")
@@ -195,4 +195,11 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     testImplementation("app.cash.turbine:turbine:1.2.0")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    // Android's `android.jar` ships `org.json` as throw-only stubs for unit
+    // tests; without a real impl, `optJSONArray`/`optJSONObject` etc. raise
+    // `RuntimeException: Method ... not mocked`. The Maven artifact below
+    // provides the real implementation on the test classpath so collectors
+    // that parse JSON (Claude, Codex, Gemini, …) are exercisable in plain
+    // JVM unit tests without pulling in Robolectric.
+    testImplementation("org.json:json:20240303")
 }

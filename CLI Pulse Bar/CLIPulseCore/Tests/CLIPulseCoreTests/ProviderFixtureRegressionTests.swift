@@ -80,6 +80,8 @@ final class ProviderFixtureRegressionTests: XCTestCase {
         XCTAssertTrue(result.usage.status_text.contains("$37.50"))
     }
 
+    // Legacy fixture: snapshots without the new launch-window fields keep
+    // exactly the historical three-row layout. Locks the additive contract.
     func testClaudeFixtureProducesThreeQuotaBars() {
         let snapshot = ClaudeSnapshot(
             sessionUsed: 3,
@@ -100,6 +102,41 @@ final class ProviderFixtureRegressionTests: XCTestCase {
         XCTAssertEqual(result.usage.remaining, 97)
         XCTAssertEqual(result.usage.reset_time, "2026-04-02T12:00:00Z")
         assertTierNames(result.usage, ["5h Window", "Weekly", "Sonnet only"])
+    }
+
+    // P3 launch fixture: when Designs and Daily Routines are both present,
+    // the Claude provider card surfaces five quota bars in the prescribed
+    // order. Same Sonnet/Opus coalesce as the legacy case.
+    func testClaudeFixtureProducesFiveQuotaBarsWithDesignsAndDailyRoutines() {
+        let snapshot = ClaudeSnapshot(
+            sessionUsed: 22,
+            weeklyUsed: 18,
+            opusUsed: nil,
+            sonnetUsed: 2,
+            designsUsed: 25,
+            dailyRoutinesUsed: 5,
+            sessionReset: "2026-05-05T08:00:00Z",
+            weeklyReset: "2026-05-05T12:00:01Z",
+            designsReset: "2026-05-05T12:00:01Z",
+            dailyRoutinesReset: nil,
+            rateLimitTier: "default_claude_max_20x",
+            accountEmail: "fixture@example.com",
+            sourceLabel: "fixture"
+        )
+
+        let result = ClaudeResultBuilder.build(from: snapshot)
+
+        assertDataKind(result, .quota)
+        XCTAssertEqual(result.usage.plan_type, "Max 20x")
+        assertTierNames(
+            result.usage,
+            ["5h Window", "Weekly", "Sonnet only", "Designs", "Daily Routines"]
+        )
+        let byName = Dictionary(uniqueKeysWithValues: result.usage.tiers.map { ($0.name, $0) })
+        XCTAssertEqual(byName["Designs"]?.remaining, 75)
+        XCTAssertEqual(byName["Designs"]?.reset_time, "2026-05-05T12:00:01Z")
+        XCTAssertEqual(byName["Daily Routines"]?.remaining, 95)
+        XCTAssertNil(byName["Daily Routines"]?.reset_time)
     }
 
     func testJetBrainsFixtureProducesCreditsAndTariff() throws {

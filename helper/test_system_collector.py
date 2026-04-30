@@ -119,6 +119,97 @@ class TestParseClaudeAPIResponse(unittest.TestCase):
         result = _parse_claude_api_response(data)
         self.assertEqual(len(result["tiers"]), 1, "Disabled extra_usage should not produce a tier")
 
+    def test_designs_and_daily_routines_from_api_response(self):
+        data = {
+            "five_hour": {"utilization": 22, "resets_at": "2026-05-05T08:00:00Z"},
+            "seven_day": {"utilization": 18, "resets_at": "2026-05-05T12:00:01Z"},
+            "seven_day_sonnet": {"utilization": 2, "resets_at": "2026-05-05T12:00:00Z"},
+            "iguana_necktie": {"utilization": 25.0, "resets_at": "2026-05-05T12:00:01Z"},
+            "seven_day_omelette": {"utilization": 5.0, "resets_at": None},
+        }
+        result = _parse_claude_api_response(data, "Max")
+        self.assertIsNotNone(result)
+
+        names = [t["name"] for t in result["tiers"]]
+        self.assertEqual(
+            names,
+            ["5h Window", "Weekly", "Sonnet (Weekly)", "Designs", "Daily Routines"],
+        )
+
+        by_name = {t["name"]: t for t in result["tiers"]}
+        self.assertEqual(by_name["Designs"]["remaining"], 75)
+        self.assertEqual(by_name["Designs"]["reset_time"], "2026-05-05T12:00:01Z")
+        self.assertEqual(by_name["Daily Routines"]["remaining"], 95)
+        self.assertIsNone(by_name["Daily Routines"]["reset_time"])
+
+    def test_designs_null_window_means_unused_bucket(self):
+        # Mirrors the real scrubbed API payload where the launch windows are
+        # present but null for accounts that haven't used the feature yet.
+        data = {
+            "five_hour": {"utilization": 0.0, "resets_at": None},
+            "seven_day": {"utilization": 18.0, "resets_at": "2026-05-05T12:00:01Z"},
+            "iguana_necktie": None,
+            "seven_day_omelette": {"utilization": 0.0, "resets_at": None},
+        }
+        result = _parse_claude_api_response(data)
+        self.assertIsNotNone(result)
+
+        by_name = {t["name"]: t for t in result["tiers"]}
+        self.assertIn("Designs", by_name)
+        self.assertEqual(by_name["Designs"]["quota"], 100)
+        self.assertEqual(by_name["Designs"]["remaining"], 100)
+        self.assertIsNone(by_name["Designs"]["reset_time"])
+
+    def test_daily_routines_zero_utilization_means_full_remaining(self):
+        data = {
+            "five_hour": {"utilization": 10, "resets_at": "2026-05-05T08:00:00Z"},
+            "seven_day_omelette": {"utilization": 0.0, "resets_at": None},
+        }
+        result = _parse_claude_api_response(data)
+        self.assertIsNotNone(result)
+
+        by_name = {t["name"]: t for t in result["tiers"]}
+        self.assertIn("Daily Routines", by_name)
+        self.assertEqual(by_name["Daily Routines"]["quota"], 100)
+        self.assertEqual(by_name["Daily Routines"]["remaining"], 100)
+        self.assertIsNone(by_name["Daily Routines"]["reset_time"])
+
+    def test_existing_opus_null_still_skipped(self):
+        # Regression guard: the new launch-window null semantics must NOT
+        # leak back to the original optional model windows. A null Opus
+        # window is still "feature absent for this account", not
+        # "enabled-but-unused".
+        data = {
+            "five_hour": {"utilization": 5, "resets_at": "2026-05-05T08:00:00Z"},
+            "seven_day_opus": None,
+        }
+        result = _parse_claude_api_response(data)
+        self.assertIsNotNone(result)
+        names = [t["name"] for t in result["tiers"]]
+        self.assertNotIn("Opus (Weekly)", names)
+
+    def test_designs_absent_key_skipped(self):
+        # Symmetry check: if the API hasn't started returning the new keys
+        # at all yet, we must not synthesize a phantom "Designs" row.
+        data = {"five_hour": {"utilization": 10, "resets_at": None}}
+        result = _parse_claude_api_response(data)
+        self.assertIsNotNone(result)
+        names = [t["name"] for t in result["tiers"]]
+        self.assertNotIn("Designs", names)
+        self.assertNotIn("Daily Routines", names)
+
+    def test_designs_malformed_utilization_falls_back_to_zero(self):
+        # Don't crash on a string utilization value — surface a Designs
+        # row with remaining=100 (treated as 0% used) for that one window.
+        data = {
+            "five_hour": {"utilization": 5, "resets_at": None},
+            "iguana_necktie": {"utilization": "garbage", "resets_at": None},
+        }
+        result = _parse_claude_api_response(data)
+        self.assertIsNotNone(result)
+        by_name = {t["name"]: t for t in result["tiers"]}
+        self.assertEqual(by_name["Designs"]["remaining"], 100)
+
 
 class TestParseClaudeUsageOutput(unittest.TestCase):
     def test_standard_cli_output(self):

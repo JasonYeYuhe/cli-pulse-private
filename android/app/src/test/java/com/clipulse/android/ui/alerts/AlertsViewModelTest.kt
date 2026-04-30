@@ -8,6 +8,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.test.runTest
@@ -39,7 +40,11 @@ class AlertsViewModelTest {
 
     @Test
     fun `initial state is loading`() = runTest {
-        coEvery { supabase.alerts() } returns testAlerts
+        // Suspend the only suspending call inside `init { refresh() }` so
+        // the test can observe the transient `isLoading = true` state.
+        // Without this hang, UnconfinedTestDispatcher runs `refresh()`
+        // synchronously and flips the flag to `false` before the assertion.
+        coEvery { supabase.alerts() } coAnswers { awaitCancellation() }
         val vm = AlertsViewModel(supabase, repository)
         assertTrue(vm.state.value.isLoading)
         vm.viewModelScope.cancel()

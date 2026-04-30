@@ -2,6 +2,7 @@ package com.clipulse.android.ui.overview
 
 import com.clipulse.android.MainDispatcherRule
 import com.clipulse.android.data.model.AlertSummaryDTO
+import com.clipulse.android.data.model.DailyUsage
 import com.clipulse.android.data.model.DashboardSummary
 import com.clipulse.android.data.remote.ApiError
 import com.clipulse.android.data.repository.DashboardRepository
@@ -10,6 +11,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +29,11 @@ class OverviewViewModelTest {
 
     private val repository = mockk<DashboardRepository>(relaxed = true)
     private val dashboardFlow = MutableStateFlow<DashboardSummary?>(null)
+    // Real flow so `OverviewViewModel.refresh()` can call
+    // `CostForecastEngine.forecast(repository.dailyUsage.value)` without
+    // hitting a relaxed-mock default that isn't a real `List<DailyUsage>`
+    // and throws `ClassCastException` during cast.
+    private val dailyUsageFlow = MutableStateFlow<List<DailyUsage>>(emptyList())
 
     private val testDashboard = DashboardSummary(
         totalUsageToday = 150,
@@ -41,15 +48,18 @@ class OverviewViewModelTest {
     @Before
     fun setUp() {
         every { repository.dashboard } returns dashboardFlow
+        every { repository.dailyUsage } returns dailyUsageFlow
+        coEvery { repository.refreshDailyUsage(any()) } returns Unit
     }
 
     @Test
     fun `initial state is loading`() = runTest {
-        coEvery { repository.refreshDashboard() } coAnswers {
-            dashboardFlow.value = testDashboard
-        }
+        // Suspend the first suspending call inside `init { refresh() }` so
+        // the test can observe the transient `isLoading = true` state.
+        // Without this hang, UnconfinedTestDispatcher runs `refresh()`
+        // synchronously and flips the flag to `false` before the assertion.
+        coEvery { repository.refreshDashboard() } coAnswers { awaitCancellation() }
         val vm = OverviewViewModel(repository)
-        // Before advancing, state should be loading
         assertTrue(vm.state.value.isLoading)
         vm.viewModelScope.cancel()
     }
