@@ -1,20 +1,26 @@
 #!/usr/bin/env python3
 """
-CLI Pulse v1.11.0 — ASC metadata + submit.
+CLI Pulse v1.11.1 — iOS-only crash hotfix submit.
 
-Adapted from submit_v1_10_8.py. Same idempotent ASC client — handles the
-"version exists / WAITING_FOR_REVIEW / re-bind build" state machine.
+iter21 hotfix: v1.11.0 build 44 went LIVE on iOS App Store, then real-
+device crashes started flowing into Sentry (issue 7450581409 —
+EXC_BREAKPOINT in CostForecastEngine.forecast on the LAST DAY of any
+month). Today is Apr 30 → every iOS user opening the app crashes on
+every refresh cycle. Apple's pre-release train for "1.11.0" is closed
+once a build is READY_FOR_SALE ("Invalid Pre-Release Train" 90186 at
+upload), so the only path to deliver the crash fix to existing iOS
+users is a NEW versionString v1.11.1.
 
-v1.11.0 ships the iter1–iter20 series:
-  - iter8: APNs push pre-auth + URL scheme registration
-  - iter9: Google OAuth state fix, iOS sync gate drop, provider banner
-  - iter10–iter19: pre-release polish (delete account inline, login
-    escape, footer, mode picker, local mode, welcome mode-choice)
-  - iter20: Remote Approvals follow-ups + decide idempotency
+This script: cancels any pending iOS submissions, creates iOS
+appStoreVersion 1.11.1 (or reuses), binds build 46, patches whatsNew
+with the iter21 hotfix note, submits for review. Expedited review
+must be requested separately via the ASC web UI (no public API).
 
-Backend migrate_v0.34 already applied separately. No edge function redeploy.
+macOS hotfix went via submit_v1_11_0.py MAC_OS (still on v1.11.0
+because macOS never reached READY_FOR_SALE on v1.11.0/44 — train
+still open).
 
-Safe to re-run: every step is idempotent against whatever state ASC is in.
+Safe to re-run.
 """
 import jwt
 import time
@@ -30,14 +36,23 @@ API_KEY_PATH = os.path.expanduser(
 APP_ID = "6761163709"
 BASE = "https://api.appstoreconnect.apple.com/v1"
 
-TARGET_VERSION = "1.11.0"
-TARGET_BUILD = "45"  # iter21 hotfix: build 44 had EXC_BREAKPOINT crash in
-                     # CostForecastEngine on the last day of any month.
-                     # Build 45 supersedes build 44 (which is still in
-                     # WAITING_FOR_REVIEW and will be cancelled by the
-                     # script's cancel_pending_reviews step).
+TARGET_VERSION = "1.11.1"
+TARGET_BUILD = "46"  # iter21 iOS hotfix: build 44 (1.11.0) is live with
+                     # EXC_BREAKPOINT crash in CostForecastEngine on the
+                     # last day of any month. Build 46 (1.11.1) carries
+                     # the fix in CostForecastEngine.swift line 77 (guard
+                     # projection loop on `remainingDays > 0`).
 
-WHATS_NEW_EN = """v1.11.0 — major sign-in, onboarding, and reliability polish:
+WHATS_NEW_EN = """v1.11.1 — crash hotfix:
+
+Fixed a fatal crash that fired every refresh cycle on the last day of any month (Apr 30, May 31, etc.). The cost-forecast engine constructed an invalid date range when there were no future days left to project. Thanks to everyone who reported it.
+
+This release contains only the crash fix — all v1.11.0 functionality is preserved (Google OAuth fix, login UX, delete account improvements, local mode, etc.)."""
+
+# Suppress the v1.11.0 release notes block that was in this file's
+# parent template — the iOS hotfix only needs the short crash-fix
+# note above.
+_LEGACY_WHATS_NEW_PLACEHOLDER = """v1.11.0 — major sign-in, onboarding, and reliability polish:
 
 Sign-in & accounts:
 - Google / GitHub sign-in: fixed "OAuth state parameter is invalid" error that blocked sign-in on real device.
