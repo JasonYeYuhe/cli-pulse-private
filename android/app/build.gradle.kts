@@ -7,6 +7,7 @@ plugins {
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
     alias(libs.plugins.google.services)
+    alias(libs.plugins.sentry)
 }
 
 val localProps = Properties().apply {
@@ -78,6 +79,42 @@ android {
         unitTests.all {
             it.jvmArgs("-Xmx1g")
         }
+    }
+}
+
+// Sentry Gradle plugin — auto-uploads ProGuard/R8 mapping files for release
+// builds and writes a debug-meta resource so the SDK matches events to the
+// right release. Without this, R8-minified release crashes show as
+// `a.b.c.d(:42)` in Sentry instead of real class/method names.
+//
+// Auth token is read from the SENTRY_AUTH_TOKEN env var. Source it from
+// ~/Library/Application Support/CLI-Pulse-Secrets/sentry-cli-auth-token-2026-04-29.txt
+// before running `./gradlew assembleRelease`. If the env var is unset the
+// plugin skips the upload (release artifact still builds).
+sentry {
+    org.set("jason-yeyuhe")
+    projectName.set("android")
+
+    // Gate the upload on whether SENTRY_AUTH_TOKEN is present at configure
+    // time. False ⇒ the upload task is wired but immediately skipped, so
+    // building offline / on a fresh checkout never fails.
+    val hasSentryToken = !System.getenv("SENTRY_AUTH_TOKEN").isNullOrEmpty()
+    autoUploadProguardMapping.set(hasSentryToken)
+    includeProguardMapping.set(true)
+
+    // Don't ship source code — only mapping. Stack traces with original
+    // class/method names are sufficient and we keep source local.
+    includeSourceContext.set(false)
+
+    // Skip telemetry pings to Sentry's plugin-usage endpoint.
+    telemetry.set(false)
+
+    // Don't auto-instrument okhttp/sqlite/etc — the SDK is already configured
+    // explicitly in SentryInit.kt with privacy-conservative defaults
+    // (sendDefaultPii=false, tracesSampleRate=0). Avoid any side effects from
+    // build-time bytecode injection that could change runtime behavior.
+    tracingInstrumentation {
+        enabled.set(false)
     }
 }
 

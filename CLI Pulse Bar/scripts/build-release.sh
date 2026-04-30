@@ -135,6 +135,35 @@ fi
 
 echo "  DMG created: $DMG_FINAL"
 
+# Upload dSYMs to Sentry so DMG-distributed crashes are symbolicated.
+# `xcodebuild build` with the Release config produces a .dSYM next to the
+# .app in $APP_BUILD_DIR (DEBUG_INFORMATION_FORMAT = dwarf-with-dsym in
+# project.pbxproj). Same auth-token convention as scripts/build-appstore.sh.
+SENTRY_AUTH_TOKEN_FILE="$HOME/Library/Application Support/CLI-Pulse-Secrets/sentry-cli-auth-token-2026-04-29.txt"
+if command -v sentry-cli >/dev/null 2>&1 \
+   && { [[ -n "${SENTRY_AUTH_TOKEN:-}" ]] || [[ -f "$SENTRY_AUTH_TOKEN_FILE" ]]; }; then
+    if [[ -z "${SENTRY_AUTH_TOKEN:-}" ]]; then
+        export SENTRY_AUTH_TOKEN=$(grep -E '^SENTRY_AUTH_TOKEN=' "$SENTRY_AUTH_TOKEN_FILE" | head -1 | cut -d= -f2-)
+    fi
+    BUILD_NUM=$(printf "%s\n" "$SHOW_SETTINGS" | awk -F' = ' '/CURRENT_PROJECT_VERSION = / {print $2; exit}')
+    BUILD_NUM="${BUILD_NUM:-0}"
+    echo "  ↗ Uploading dSYMs to Sentry (project=apple-macos)..."
+    sentry-cli debug-files upload \
+        --org jason-yeyuhe \
+        --project apple-macos \
+        --include-sources \
+        "$APP_BUILD_DIR" 2>&1 | sed 's/^/    /' || \
+        echo "    (dSYM upload failed — DMG release continues)"
+    sentry-cli releases --org jason-yeyuhe --project apple-macos \
+        new "cli-pulse@${VERSION}+${BUILD_NUM}" 2>&1 | sed 's/^/    /' || true
+    sentry-cli releases --org jason-yeyuhe --project apple-macos \
+        finalize "cli-pulse@${VERSION}+${BUILD_NUM}" 2>&1 | sed 's/^/    /' || true
+else
+    echo "  ⚠ sentry-cli or auth token missing — skipping dSYM upload."
+    echo "    Install: brew install getsentry/tools/sentry-cli"
+    echo "    Token at: $SENTRY_AUTH_TOKEN_FILE"
+fi
+
 # Notarize (optional)
 if [[ "$NOTARIZE" == true ]]; then
     echo "[6/6] Notarizing..."

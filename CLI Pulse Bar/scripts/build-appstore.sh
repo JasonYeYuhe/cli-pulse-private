@@ -31,6 +31,85 @@ if [[ "${2:-}" == "--upload" ]] || [[ "${1:-}" == "--upload" ]]; then
 fi
 
 VERSION=$(defaults read "$PROJECT_DIR/CLI Pulse Bar/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "0.1.0")
+BUILD_NUM=$(defaults read "$PROJECT_DIR/CLI Pulse Bar/Info.plist" CFBundleVersion 2>/dev/null || echo "0")
+
+# --- Sentry dSYM upload config ---
+# Auth token is stored outside the repo in the standard CLI Pulse secrets dir
+# (chmod 600). The org token has scope `org:ci` (Source Map Upload, Release
+# Creation, Code Mappings) — sufficient for `debug-files upload` and
+# `releases finalize`, insufficient for anything destructive. Generate at
+# https://jason-yeyuhe.sentry.io/settings/auth-tokens/ if it's missing.
+#
+# iOS+Watch share Sentry project `apple-ios` (distinguished by platform_family
+# tag at the SDK level). macOS uses `apple-macos`. Android uses `android`
+# (handled by the Sentry Gradle plugin, not this script).
+SENTRY_ORG="jason-yeyuhe"
+SENTRY_AUTH_TOKEN_FILE="$HOME/Library/Application Support/CLI-Pulse-Secrets/sentry-cli-auth-token-2026-04-29.txt"
+
+load_sentry_auth_token() {
+    if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
+        return 0
+    fi
+    if [[ ! -f "$SENTRY_AUTH_TOKEN_FILE" ]]; then
+        return 1
+    fi
+    # File format: one line `SENTRY_AUTH_TOKEN=sntrys_...` plus prose around it.
+    local extracted
+    extracted=$(grep -E '^SENTRY_AUTH_TOKEN=' "$SENTRY_AUTH_TOKEN_FILE" | head -1 | cut -d= -f2-)
+    if [[ -z "$extracted" ]]; then
+        return 1
+    fi
+    export SENTRY_AUTH_TOKEN="$extracted"
+}
+
+# Upload dSYMs from a finished xcarchive to the matching Sentry project.
+# Args: $1 = path to .xcarchive, $2 = sentry project slug.
+upload_dsyms_to_sentry() {
+    local ARCHIVE_PATH="$1"
+    local SENTRY_PROJECT="$2"
+
+    if ! command -v sentry-cli >/dev/null 2>&1; then
+        echo "  ⚠ sentry-cli not installed — skipping dSYM upload."
+        echo "    Install: brew install getsentry/tools/sentry-cli"
+        return 0
+    fi
+    if ! load_sentry_auth_token; then
+        echo "  ⚠ SENTRY_AUTH_TOKEN not available — skipping dSYM upload."
+        echo "    Expected at: $SENTRY_AUTH_TOKEN_FILE"
+        return 0
+    fi
+
+    local DSYMS_DIR="$ARCHIVE_PATH/dSYMs"
+    if [[ ! -d "$DSYMS_DIR" ]]; then
+        echo "  ⚠ No dSYMs/ directory in archive — skipping dSYM upload."
+        return 0
+    fi
+
+    echo "  ↗ Uploading dSYMs to Sentry (org=$SENTRY_ORG project=$SENTRY_PROJECT)..."
+    if sentry-cli debug-files upload \
+            --org "$SENTRY_ORG" \
+            --project "$SENTRY_PROJECT" \
+            --include-sources \
+            "$DSYMS_DIR" 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ dSYMs uploaded"
+    else
+        echo "  ⚠ dSYM upload failed — see above. Build itself is unaffected."
+    fi
+
+    # Mark this version+build as a finalized release so Sentry can attribute
+    # "first seen in 1.11.x" properly. Idempotent: re-running for the same
+    # version is a no-op once finalized.
+    local RELEASE="cli-pulse@${VERSION}+${BUILD_NUM}"
+    echo "  ↗ Finalizing Sentry release $RELEASE for project $SENTRY_PROJECT..."
+    sentry-cli releases \
+        --org "$SENTRY_ORG" \
+        --project "$SENTRY_PROJECT" \
+        new "$RELEASE" 2>&1 | sed 's/^/    /' || true
+    sentry-cli releases \
+        --org "$SENTRY_ORG" \
+        --project "$SENTRY_PROJECT" \
+        finalize "$RELEASE" 2>&1 | sed 's/^/    /' || true
+}
 
 echo "================================================"
 echo "  CLI Pulse - App Store Build v${VERSION}"
@@ -91,6 +170,8 @@ EOF
 
     echo "  ✓ Export: $EXPORT"
 
+    upload_dsyms_to_sentry "$ARCHIVE" "apple-macos"
+
     if [[ "$UPLOAD" == true ]]; then
         echo "[3/3] Uploading macOS to App Store Connect..."
         upload_to_appstore "$ARCHIVE" "$EXPORT" "macos"
@@ -150,6 +231,8 @@ EOF
 
     echo "  ✓ Export: $EXPORT"
 
+    upload_dsyms_to_sentry "$ARCHIVE" "apple-ios"
+
     if [[ "$UPLOAD" == true ]]; then
         echo "[3/3] Uploading iOS to App Store Connect..."
         upload_to_appstore "$ARCHIVE" "$EXPORT" "ios"
@@ -208,6 +291,10 @@ EOF
         -quiet 2>&1 || true
 
     echo "  ✓ Export: $EXPORT"
+
+    # watchOS reuses the apple-ios Sentry project (per CLI Pulse memory:
+    # iOS+Watch share DSN, distinguished by platform_family tag).
+    upload_dsyms_to_sentry "$ARCHIVE" "apple-ios"
 
     if [[ "$UPLOAD" == true ]]; then
         echo "[3/3] Uploading watchOS to App Store Connect..."
