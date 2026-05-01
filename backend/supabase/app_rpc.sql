@@ -120,31 +120,61 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
--- get_user_tier: returns the user's subscription tier (supports admin overrides)
+-- get_user_tier: returns the user's subscription tier
+--
+-- v0.35 (2026-05-01): rank-safe precedence so an `pro` promo
+-- redemption never downgrades an `team` admin grant on
+-- profiles.tier. See migrate_v0.35_promo_redemptions.sql for the
+-- canonical definition — keep this body in sync.
+--
+-- Precedence:
+--   1. active paid subscription with tier != 'free' wins outright
+--   2. otherwise return the highest of:
+--        - active promo (granted_until > now())
+--        - profiles.tier  (legacy admin override)
+--        - 'free'
+--      under rank: team > pro > free
 create or replace function public.get_user_tier()
 returns jsonb as $$
 declare
   v_user_id uuid := auth.uid();
+  v_paid_tier text;
+  v_promo_tier text;
+  v_profile_tier text;
   v_tier text;
 begin
   if v_user_id is null then
     raise exception 'Not authenticated';
   end if;
 
-  -- Check paid subscriptions first, then admin override via profiles.tier
-  -- Exclude auto-created 'free' subscriptions so admin overrides work
-  select coalesce(
-    (select s.tier from public.subscriptions s
-     where s.user_id = v_user_id and s.status = 'active'
-       and s.tier != 'free'
-       and (s.current_period_end is null or s.current_period_end > now())),
-    p.tier,
-    'free'
-  ) into v_tier
-  from public.profiles p
-  where p.id = v_user_id;
+  select s.tier into v_paid_tier
+  from public.subscriptions s
+  where s.user_id = v_user_id
+    and s.status = 'active'
+    and s.tier != 'free'
+    and (s.current_period_end is null or s.current_period_end > now())
+  limit 1;
 
-  return jsonb_build_object('tier', coalesce(v_tier, 'free'));
+  if v_paid_tier is not null then
+    return jsonb_build_object('tier', v_paid_tier);
+  end if;
+
+  select tier_granted into v_promo_tier
+  from public.promo_redemptions
+  where user_id = v_user_id and granted_until > now()
+  order by granted_until desc
+  limit 1;
+
+  select p.tier into v_profile_tier
+  from public.profiles p where p.id = v_user_id;
+
+  v_tier := case
+    when v_promo_tier = 'team' or v_profile_tier = 'team' then 'team'
+    when v_promo_tier = 'pro'  or v_profile_tier = 'pro'  then 'pro'
+    else 'free'
+  end;
+
+  return jsonb_build_object('tier', v_tier);
 end;
 $$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 

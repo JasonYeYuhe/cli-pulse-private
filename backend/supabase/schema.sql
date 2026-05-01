@@ -402,6 +402,30 @@ create policy "Users own metrics"
 create index idx_daily_usage_metrics_user_date
   on public.daily_usage_metrics(user_id, metric_date desc);
 
+-- ── Promo Redemptions (v0.35: XHS pricing-poll campaign) ──
+-- Service-role-only table that grants temporary Pro/Team tier
+-- to users who completed a promo flow (XHS / Twitter / manual).
+-- `get_user_tier()` consults this table at rank-safe precedence
+-- so an active promo can lift a free user up but never downgrade
+-- an admin-granted team. See migrate_v0.35_promo_redemptions.sql
+-- and `grant_promo(...)` for the operator-facing API.
+create table public.promo_redemptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  email text not null,
+  source text not null check (source in ('xhs', 'twitter', 'manual')),
+  campaign text,
+  tier_granted text not null default 'pro' check (tier_granted in ('pro', 'team')),
+  granted_at timestamptz not null default now(),
+  granted_until timestamptz not null,
+  notes text,
+  constraint promo_redemptions_duration_positive check (granted_until > granted_at)
+);
+alter table public.promo_redemptions enable row level security;
+-- No RLS policies — only service_role bypasses RLS to read/write.
+create index idx_promo_redemptions_user_active
+  on public.promo_redemptions(user_id, granted_until desc);
+
 -- RPC: upsert_daily_usage
 -- Batch upsert daily usage metrics from macOS scanner.
 create or replace function public.upsert_daily_usage(metrics jsonb)

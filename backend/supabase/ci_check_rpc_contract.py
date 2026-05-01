@@ -104,6 +104,11 @@ INTERNAL_RPCS = {
     # v0.32 push notification: trigger + cron worker, never client-called.
     "remote_request_after_insert_push",
     "process_app_push_jobs",
+    # v0.35 promo redemptions: service-role-only admin function. Operator
+    # (Jason) calls it manually from the Supabase SQL Editor when an XHS
+    # DM comes in. No client (Apple/helper/Android) ever invokes it; the
+    # tier change reaches clients via `get_user_tier()` on next refresh.
+    "grant_promo",
 }
 
 # Trigger / handler functions live in `schema.sql` and never need a client
