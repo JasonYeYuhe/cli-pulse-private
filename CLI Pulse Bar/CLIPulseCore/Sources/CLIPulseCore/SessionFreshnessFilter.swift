@@ -97,12 +97,21 @@ public enum SessionFreshnessFilter {
         now: Date
     ) -> CloudSessionResolution {
         let cloudFresh = filterCurrent(cloudSessions, now: now)
+        // `CostUsageScanner` itself is `#if os(macOS)`; `ActiveSessionCandidate`
+        // lives outside the gate so the signature stays cross-platform.
+        // On non-macOS (iOS / watchOS / Widgets), the JSONL synthesizer
+        // doesn't exist and the local-fresh list is always empty — the
+        // cloud route still works exactly as before iter23.
+        #if os(macOS)
         let localSynthRaw = CostUsageScanner.synthesizeSessions(
             candidates: candidates,
             now: now,
             deviceName: deviceName
         )
         let localFresh = filterCurrent(localSynthRaw, now: now)
+        #else
+        let localFresh: [SessionRecord] = []
+        #endif
         let merged = mergeCloudAndLocalSessions(
             cloudFresh: cloudFresh,
             localFresh: localFresh
