@@ -100,7 +100,7 @@ struct DangerZoneSection: View {
             Button {
                 NSApplication.shared.terminate(nil)
             } label: {
-                Label("Quit CLI Pulse Bar", systemImage: "power")
+                Label(L10n.menuBar.quitFull, systemImage: "power")
                     .font(.system(size: 11))
             }
             .buttonStyle(.plain)

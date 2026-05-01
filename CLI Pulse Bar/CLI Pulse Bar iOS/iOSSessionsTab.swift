@@ -267,7 +267,7 @@ struct iOSSessionRow: View {
                     metricItem(label: L10n.detail.errors, value: "\(session.error_count)", color: .red)
                 }
                 Spacer()
-                Text(RelativeTime.format(session.started_at))
+                Text(RelativeTime.format(session.last_active_at))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }

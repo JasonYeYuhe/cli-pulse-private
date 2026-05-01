@@ -16,11 +16,11 @@ public struct FolderAccessView: View {
             HStack {
                 Image(systemName: "folder.badge.gearshape")
                     .foregroundStyle(.secondary)
-                Text("CLI Tool Access")
+                Text(L10n.folderAccess.title)
                     .font(.system(size: 13, weight: .semibold))
             }
 
-            Text("Grant read access to CLI tool credential directories so CLI Pulse can track your usage.")
+            Text(L10n.folderAccess.intro)
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -45,7 +45,7 @@ public struct FolderAccessView: View {
                     Spacer()
 
                     if item.hasAccess {
-                        Text("Granted")
+                        Text(L10n.folderAccess.granted)
                             .font(.caption)
                             .foregroundStyle(.green)
                     } else if item.directory.alwaysShow && !item.isInstalled {
@@ -53,11 +53,11 @@ public struct FolderAccessView: View {
                         // (e.g. ~/.config/claude/projects when the user doesn't
                         // use CLAUDE_CONFIG_DIR). Grant would fail; show a
                         // subtle "Not installed" instead of a dead button.
-                        Text("Not installed")
+                        Text(L10n.folderAccess.notInstalled)
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     } else {
-                        Button("Grant") {
+                        Button(L10n.folderAccess.grant) {
                             let success = BookmarkManager.shared.requestAccessViaPanel(
                                 directory: item.directory
                             )
@@ -77,7 +77,7 @@ public struct FolderAccessView: View {
                 } label: {
                     HStack {
                         Image(systemName: "folder.badge.plus")
-                        Text("Grant All at Once")
+                        Text(L10n.folderAccess.grantAll)
                     }
                 }
                 .buttonStyle(.bordered)
@@ -93,9 +93,9 @@ public struct FolderAccessView: View {
             Divider()
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Rescan token cache")
+                    Text(L10n.folderAccess.rescanTitle)
                         .font(.system(size: 12, weight: .medium))
-                    Text("Rebuild from scratch if totals look wrong")
+                    Text(L10n.folderAccess.rescanDetail)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
@@ -112,7 +112,7 @@ public struct FolderAccessView: View {
                     } else {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.clockwise")
-                            Text("Force Rescan")
+                            Text(L10n.folderAccess.forceRescan)
                         }
                     }
                 }
@@ -131,8 +131,8 @@ public struct FolderAccessView: View {
     private func grantAll() {
         // Open panel at home directory — grants access to all subdirectories
         let panel = NSOpenPanel()
-        panel.message = "Select your home folder to grant CLI Pulse access to all CLI tool credentials"
-        panel.prompt = "Grant Access"
+        panel.message = L10n.folderAccess.panelMessage
+        panel.prompt = L10n.folderAccess.panelPrompt
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false

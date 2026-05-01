@@ -171,4 +171,64 @@
     <string name="alert_action_resolve">解決</string>
     <string name="alert_action_snooze">スヌーズ</string>
     <string name="alert_action_snooze_duration_1h">1時間</string>
+
+    <!-- Screen titles + card labels (i18n sweep) -->
+    <string name="screen_providers">プロバイダー</string>
+    <string name="screen_sessions">セッション</string>
+    <string name="screen_devices">デバイス</string>
+    <string name="screen_alerts">アラート</string>
+    <string name="error_unknown">不明なエラー</string>
+    <string name="card_today">本日</string>
+    <string name="card_week">今週</string>
+    <string name="card_cost">コスト</string>
+    <string name="card_status">ステータス</string>
+    <string name="card_overall_quota">全体クォータ</string>
+    <string name="card_quota_tiers">クォータティア</string>
+    <string name="card_usage">使用量</string>
+    <string name="card_this_week">今週</string>
+    <string name="card_pct_left">%1$d%% 残り</string>
+    <string name="card_used_of">%2$s 中 %1$s 使用</string>
+    <string name="card_remaining">%1$s 残り</string>
+    <string name="card_plan">プラン: %1$s</string>
+    <string name="card_resets">リセット: %1$s</string>
+    <string name="card_helper_version">ヘルパー v%1$s</string>
+    <string name="card_last_seen">最終確認: %1$s</string>
+    <string name="card_cpu_pct">CPU: %1$d%%</string>
+    <string name="card_memory_pct">メモリ: %1$d%%</string>
+    <string name="card_usage_value">使用量: %1$s</string>
+    <string name="card_cost_value">コスト: %1$s</string>
+    <string name="card_requests_value">リクエスト: %1$d</string>
+    <string name="card_device_value">デバイス: %1$s</string>
+
+    <!-- PDF report (i18n sweep) -->
+    <string name="pdf_title">CLI Pulse 月次レポート</string>
+    <string name="pdf_generated">生成: %1$s</string>
+    <string name="pdf_summary">概要</string>
+    <string name="pdf_today_usage">本日の使用量</string>
+    <string name="pdf_active_sessions">アクティブセッション</string>
+    <string name="pdf_online_devices">オンラインデバイス</string>
+    <string name="pdf_unresolved_alerts">未解決のアラート</string>
+    <string name="pdf_cost_forecast">コスト予測</string>
+    <string name="pdf_progress">進捗</string>
+    <string name="pdf_progress_value">%1$d/%2$d 日</string>
+    <string name="pdf_provider_breakdown">プロバイダー別内訳</string>
+    <string name="pdf_top_sessions">コスト上位セッション</string>
+    <string name="pdf_daily_trend">日次コスト推移 (過去30日)</string>
+    <string name="pdf_footer">CLI Pulse v%1$s · %2$s</string>
+    <string name="pdf_na">該当なし</string>
+    <string name="pdf_h_provider">プロバイダー</string>
+    <string name="pdf_h_week_usage">週間使用量</string>
+    <string name="pdf_h_est_cost">推定コスト</string>
+    <string name="pdf_h_remaining">残量</string>
+    <string name="pdf_h_quota">クォータ</string>
+    <string name="pdf_h_project">プロジェクト</string>
+    <string name="pdf_h_cost">コスト</string>
+    <string name="pdf_h_usage">使用量</string>
+    <string name="pdf_h_status">ステータス</string>
+
+    <!-- PDF report leftovers (i18n director review) -->
+    <string name="pdf_today_est_cost">本日の推定コスト</string>
+    <string name="pdf_month_end_estimate">月末推定</string>
+    <string name="pdf_spent_so_far">これまでの支出</string>
+    <string name="pdf_confidence_range">信頼区間</string>
 </resources>

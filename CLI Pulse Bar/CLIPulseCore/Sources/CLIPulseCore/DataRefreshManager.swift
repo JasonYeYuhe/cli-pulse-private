@@ -335,11 +335,60 @@ internal final class DataRefreshManager {
                 _ = try? await api.evaluateBudgetAlerts()
             }
 
+            // iter22 + iter23: drop stale/artifact cloud rows and
+            // merge fresh local JSONL synthesized sessions so paired
+            // macOS users see Codex/Claude activity even on the
+            // cloud route. iter23.1 fix: pass the cost scan's RAW
+            // `activeSessionCandidates` — the previous draft used
+            // `scanResult?.activeSessionCandidates ?? []`, which is
+            // nil whenever `costScanData.entries.isEmpty` (e.g.
+            // a fresh Codex JSONL whose token data hasn't been
+            // parsed into the daily cache yet). That race
+            // silently swallowed every legitimate fresh candidate.
+            let now = Date()
+            #if os(macOS)
+            let resolution = SessionFreshnessFilter.resolveCloudSessions(
+                cloudSessions: sessionData,
+                candidates: costScanData.activeSessionCandidates,
+                deviceName: ProcessInfo.processInfo.hostName,
+                now: now
+            )
+            let mergedSessions = resolution.merged
+            refreshLogger.info("refreshCloud sessions: cloudRaw=\(resolution.cloudRaw) cloudFresh=\(resolution.cloudFresh) candidates=\(resolution.candidatesRaw) localSynth=\(resolution.localSynth) final=\(mergedSessions.count)")
+            #else
+            let mergedSessions = SessionFreshnessFilter.filterCurrent(sessionData, now: now)
+            #endif
+
+            // iter23: when the local synthesizer recovered sessions
+            // the cloud `dashboard.active_sessions` doesn't know
+            // about, bump the count so the Overview top-card
+            // doesn't disagree with the Sessions tab. Never bump
+            // DOWN — other devices may legitimately contribute
+            // sessions the local scanner can't see.
+            let adjustedDashboard: DashboardSummary = {
+                guard mergedSessions.count > dashboardData.active_sessions else { return dashboardData }
+                return DashboardSummary(
+                    total_usage_today: dashboardData.total_usage_today,
+                    total_estimated_cost_today: dashboardData.total_estimated_cost_today,
+                    cost_status: dashboardData.cost_status,
+                    total_requests_today: dashboardData.total_requests_today,
+                    active_sessions: mergedSessions.count,
+                    online_devices: dashboardData.online_devices,
+                    unresolved_alerts: dashboardData.unresolved_alerts,
+                    provider_breakdown: dashboardData.provider_breakdown,
+                    top_projects: dashboardData.top_projects,
+                    trend: dashboardData.trend,
+                    recent_activity: dashboardData.recent_activity,
+                    risk_signals: dashboardData.risk_signals,
+                    alert_summary: dashboardData.alert_summary
+                )
+            }()
+
             callbacks.applyPayload(
                 RefreshPayload(
-                    dashboard: dashboardData,
+                    dashboard: adjustedDashboard,
                     providers: costAdjustedProviders,
-                    sessions: sessionData,
+                    sessions: mergedSessions,
                     devices: deviceData,
                     alerts: augmentedAlerts,
                     locallySupplementedProviders: supplementedProviders,
@@ -422,14 +471,25 @@ internal final class DataRefreshManager {
         // an empty session list. Synthesize one session per fresh JSONL
         // candidate so the Sessions tab + dashboard "active session" count
         // reflect actual recent activity instead of always reading zero.
-        let synthesizedSessions = Self.resolveLocalSessions(
+        let resolvedSessions = Self.resolveLocalSessions(
             scannerSessions: scanResult.sessions,
             scanResult: costScanData,
             deviceName: ProcessInfo.processInfo.hostName,
             now: Date()
         )
+        // iter22: defensively run the same freshness/artifact filter
+        // even on locally-resolved sessions. resolveLocalSessions
+        // already enforces the 5-min window on synthesized output, but
+        // the live-scanner branch returns whatever LocalScanner saw,
+        // which CAN include process-path artifacts when running
+        // unsandboxed. Belt + suspenders.
+        let synthesizedSessions = SessionFreshnessFilter.filterCurrent(resolvedSessions, now: Date())
         let activeSessionCount = synthesizedSessions.count
         let totalRequestsToday = synthesizedSessions.reduce(0) { $0 + $1.requests }
+        // iter22: one-line telemetry that explains why the Sessions
+        // tab is empty or populated — printed every refresh tick so
+        // manual reproduction is debuggable without code changes.
+        refreshLogger.info("refreshLocal sessions: live=\(scanResult.sessions.count) candidates=\(costScanData.activeSessionCandidates.count) resolved=\(resolvedSessions.count) final=\(synthesizedSessions.count)")
 
         // iter17 (2026-04-29): the cloud sync tasks below need a valid
         // Supabase session — without one, every POST /rest/v1/... 401s

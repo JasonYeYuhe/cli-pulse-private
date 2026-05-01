@@ -86,20 +86,29 @@ public enum ExportService {
     // MARK: - PDF Report
 
     #if canImport(PDFKit) && !os(watchOS)
-    /// Export a monthly PDF report. Returns the temporary file URL.
+    /// Export a monthly PDF report. Returns the saved file URL.
+    ///
+    /// iter23: `destinationURL` lets a caller (e.g. the macOS
+    /// `OverviewTab` Export menu) hand the user-selected URL from
+    /// `NSSavePanel` straight through to the generator — the panel's
+    /// security-scoped URL is what makes Downloads writes work
+    /// inside the App Store sandbox. When `nil`, the generator
+    /// resolves a Downloads-or-temp default.
     public static func exportPDFReport(
         dashboard: DashboardSummary?,
         providers: [ProviderUsage],
         sessions: [SessionRecord],
         dailyUsage: [DailyUsage],
-        costForecast: CostForecast?
+        costForecast: CostForecast?,
+        destinationURL: URL? = nil
     ) -> URL? {
         PDFReportGenerator.generateReport(
             dashboard: dashboard,
             providers: providers,
             sessions: sessions,
             dailyUsage: dailyUsage,
-            costForecast: costForecast
+            costForecast: costForecast,
+            destinationURL: destinationURL
         )
     }
     #endif

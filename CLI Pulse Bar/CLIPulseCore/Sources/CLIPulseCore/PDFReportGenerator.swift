@@ -1,6 +1,7 @@
 #if canImport(PDFKit) && !os(watchOS)
 import Foundation
 import PDFKit
+import os
 #if canImport(AppKit)
 import AppKit
 private typealias PlatformColor = NSColor
@@ -11,12 +12,63 @@ private typealias PlatformColor = UIColor
 private typealias PlatformFont = UIFont
 #endif
 
+private let pdfLogger = Logger(subsystem: "com.clipulse", category: "PDFReportGenerator")
+
 /// Generates a monthly usage/cost report as a PDF document.
 public enum PDFReportGenerator {
 
+    /// Resolves the default user-visible save destination for an exported
+    /// PDF. iter22: previously dumped into `temporaryDirectory`, which
+    /// vanished from Finder/Downloads. macOS now prefers `~/Downloads`;
+    /// iOS keeps temp because Downloads isn't a thing there and the
+    /// share sheet handles user routing.
+    ///
+    /// `now` and `existing` are injected so tests can reproduce
+    /// collisions without touching the real filesystem.
+    public static func defaultDestination(
+        for date: Date,
+        existing: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }
+    ) -> (preferred: URL, fallback: URL) {
+        let baseName = "cli-pulse-report-\(dateString(date))"
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-\(baseName).pdf")
+        #if canImport(AppKit)
+        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: "\(realUserHome())/Downloads", isDirectory: true)
+        let candidate = uniqueDestination(in: downloads, baseName: baseName, ext: "pdf", existing: existing)
+        return (preferred: candidate, fallback: temp)
+        #else
+        return (preferred: temp, fallback: temp)
+        #endif
+    }
+
+    /// Pure helper for `defaultDestination` — picks
+    /// `<base>.pdf`, `<base>-2.pdf`, `<base>-3.pdf`, … until one
+    /// doesn't already exist (per the injected `existing`).
+    static func uniqueDestination(
+        in directory: URL,
+        baseName: String,
+        ext: String,
+        existing: (URL) -> Bool
+    ) -> URL {
+        var candidate = directory.appendingPathComponent("\(baseName).\(ext)")
+        var n = 2
+        while existing(candidate) {
+            candidate = directory.appendingPathComponent("\(baseName)-\(n).\(ext)")
+            n += 1
+        }
+        return candidate
+    }
+
     // MARK: - Public API
 
-    /// Generate a monthly PDF report and write to a temporary file.
+    /// Generate a monthly PDF report and write to disk.
+    ///
+    /// iter23: when `destinationURL` is provided (e.g. selected by
+    /// the user via `NSSavePanel`), write there directly — sandbox
+    /// grants write access transitively through the panel's
+    /// security-scoped URL. When `nil`, fall back to the
+    /// `defaultDestination(...)` resolver (Downloads → temp).
     /// Returns the file URL on success, nil on failure.
     public static func generateReport(
         dashboard: DashboardSummary?,
@@ -24,7 +76,8 @@ public enum PDFReportGenerator {
         sessions: [SessionRecord],
         dailyUsage: [DailyUsage],
         costForecast: CostForecast?,
-        generatedDate: Date = Date()
+        generatedDate: Date = Date(),
+        destinationURL: URL? = nil
     ) -> URL? {
         let pageWidth: CGFloat = 612  // US Letter
         let pageHeight: CGFloat = 792
@@ -59,12 +112,19 @@ public enum PDFReportGenerator {
         context.beginPage(mediaBox: &mediaBox)
 
         // Title
-        y = drawText("CLI Pulse Monthly Report", at: CGPoint(x: margin, y: y), fontSize: 22, bold: true, context: context)
+        y = drawText(L10n.pdf.title, at: CGPoint(x: margin, y: y), fontSize: 22, bold: true, context: context)
         y -= 4
 
+        // iter22: respect the in-app language override when one is
+        // active so dates render in the chosen locale; otherwise
+        // follow the system. The lproj name (e.g. "ja", "zh-Hans")
+        // maps cleanly onto a `Locale` identifier.
         let dateFormatter = DateFormatter()
         dateFormatter.dateStyle = .long
-        y = drawText("Generated: \(dateFormatter.string(from: generatedDate))", at: CGPoint(x: margin, y: y), fontSize: 10, color: .gray, context: context)
+        if let override = LocaleOverrideStore.shared.override {
+            dateFormatter.locale = Locale(identifier: override)
+        }
+        y = drawText(L10n.pdf.generated(dateFormatter.string(from: generatedDate)), at: CGPoint(x: margin, y: y), fontSize: 10, color: .gray, context: context)
         y -= 20
 
         // Divider
@@ -73,15 +133,15 @@ public enum PDFReportGenerator {
 
         // Summary section
         if let d = dashboard {
-            y = drawText("Summary", at: CGPoint(x: margin, y: y), fontSize: 16, bold: true, context: context)
+            y = drawText(L10n.pdf.summary, at: CGPoint(x: margin, y: y), fontSize: 16, bold: true, context: context)
             y -= 8
 
             let summaryItems: [(String, String)] = [
-                ("Today's Usage", formatTokens(d.total_usage_today)),
-                ("Today's Estimated Cost", String(format: "$%.2f", d.total_estimated_cost_today)),
-                ("Active Sessions", "\(d.active_sessions)"),
-                ("Online Devices", "\(d.online_devices)"),
-                ("Unresolved Alerts", "\(d.unresolved_alerts)"),
+                (L10n.pdf.todayUsage, formatTokens(d.total_usage_today)),
+                (L10n.pdf.todayEstimatedCost, String(format: "$%.2f", d.total_estimated_cost_today)),
+                (L10n.pdf.activeSessions, "\(d.active_sessions)"),
+                (L10n.pdf.onlineDevices, "\(d.online_devices)"),
+                (L10n.pdf.unresolvedAlerts, "\(d.unresolved_alerts)"),
             ]
 
             for (label, value) in summaryItems {
@@ -94,25 +154,25 @@ public enum PDFReportGenerator {
         if let forecast = costForecast, forecast.isReliable {
             y = drawDivider(at: y, x: margin, width: contentWidth, context: context)
             y -= 8
-            y = drawText("Cost Forecast", at: CGPoint(x: margin, y: y), fontSize: 16, bold: true, context: context)
+            y = drawText(L10n.pdf.costForecast, at: CGPoint(x: margin, y: y), fontSize: 16, bold: true, context: context)
             y -= 8
 
-            y = drawKeyValue("Month-End Estimate", value: String(format: "$%.2f", forecast.predictedMonthTotal), at: y, x: margin, width: contentWidth, fontSize: 11, context: context)
-            y = drawKeyValue("Spent So Far", value: String(format: "$%.2f", forecast.actualToDate), at: y, x: margin, width: contentWidth, fontSize: 11, context: context)
-            y = drawKeyValue("Confidence Range", value: String(format: "$%.2f — $%.2f", forecast.lowerBound, forecast.upperBound), at: y, x: margin, width: contentWidth, fontSize: 11, context: context)
-            y = drawKeyValue("Progress", value: "\(forecast.currentDayOfMonth)/\(forecast.daysInMonth) days", at: y, x: margin, width: contentWidth, fontSize: 11, context: context)
+            y = drawKeyValue(L10n.pdf.monthEndEstimate, value: String(format: "$%.2f", forecast.predictedMonthTotal), at: y, x: margin, width: contentWidth, fontSize: 11, context: context)
+            y = drawKeyValue(L10n.pdf.spentSoFar, value: String(format: "$%.2f", forecast.actualToDate), at: y, x: margin, width: contentWidth, fontSize: 11, context: context)
+            y = drawKeyValue(L10n.pdf.confidenceRange, value: String(format: "$%.2f — $%.2f", forecast.lowerBound, forecast.upperBound), at: y, x: margin, width: contentWidth, fontSize: 11, context: context)
+            y = drawKeyValue(L10n.pdf.progress, value: L10n.pdf.progressValue(forecast.currentDayOfMonth, forecast.daysInMonth), at: y, x: margin, width: contentWidth, fontSize: 11, context: context)
             y -= 12
         }
 
         // Provider breakdown
         y = drawDivider(at: y, x: margin, width: contentWidth, context: context)
         y -= 8
-        y = drawText("Provider Breakdown", at: CGPoint(x: margin, y: y), fontSize: 16, bold: true, context: context)
+        y = drawText(L10n.pdf.providerBreakdown, at: CGPoint(x: margin, y: y), fontSize: 16, bold: true, context: context)
         y -= 8
 
         // Table header
         let colWidths: [CGFloat] = [contentWidth * 0.3, contentWidth * 0.2, contentWidth * 0.2, contentWidth * 0.15, contentWidth * 0.15]
-        let headers = ["Provider", "Week Usage", "Est. Cost", "Remaining", "Quota"]
+        let headers = [L10n.pdf.hProvider, L10n.pdf.hWeekUsage, L10n.pdf.hEstCost, L10n.pdf.hRemaining, L10n.pdf.hQuota]
         y = drawTableRow(headers, at: y, x: margin, colWidths: colWidths, fontSize: 9, bold: true, context: context)
 
         y = drawDivider(at: y, x: margin, width: contentWidth, context: context, thin: true)
@@ -124,8 +184,8 @@ public enum PDFReportGenerator {
                 p.provider,
                 formatTokens(p.week_usage),
                 String(format: "$%.2f", p.estimated_cost_week),
-                p.remaining.map { formatTokens($0) } ?? "N/A",
-                p.quota.map { formatTokens($0) } ?? "N/A",
+                p.remaining.map { formatTokens($0) } ?? L10n.pdf.na,
+                p.quota.map { formatTokens($0) } ?? L10n.pdf.na,
             ]
             y = drawTableRow(row, at: y, x: margin, colWidths: colWidths, fontSize: 9, context: context)
         }
@@ -135,11 +195,11 @@ public enum PDFReportGenerator {
         checkSpace(40)
         y = drawDivider(at: y, x: margin, width: contentWidth, context: context)
         y -= 8
-        y = drawText("Top Sessions by Cost", at: CGPoint(x: margin, y: y), fontSize: 16, bold: true, context: context)
+        y = drawText(L10n.pdf.topSessions, at: CGPoint(x: margin, y: y), fontSize: 16, bold: true, context: context)
         y -= 8
 
         let sessionColWidths: [CGFloat] = [contentWidth * 0.25, contentWidth * 0.25, contentWidth * 0.15, contentWidth * 0.2, contentWidth * 0.15]
-        let sessionHeaders = ["Provider", "Project", "Cost", "Usage", "Status"]
+        let sessionHeaders = [L10n.pdf.hProvider, L10n.pdf.hProject, L10n.pdf.hCost, L10n.pdf.hUsage, L10n.pdf.hStatus]
         y = drawTableRow(sessionHeaders, at: y, x: margin, colWidths: sessionColWidths, fontSize: 9, bold: true, context: context)
         y = drawDivider(at: y, x: margin, width: contentWidth, context: context, thin: true)
 
@@ -162,7 +222,7 @@ public enum PDFReportGenerator {
             checkSpace(40)
             y = drawDivider(at: y, x: margin, width: contentWidth, context: context)
             y -= 8
-            y = drawText("Daily Cost Trend (Last 30 Days)", at: CGPoint(x: margin, y: y), fontSize: 16, bold: true, context: context)
+            y = drawText(L10n.pdf.dailyTrend, at: CGPoint(x: margin, y: y), fontSize: 16, bold: true, context: context)
             y -= 8
 
             let costByDate = dailyUsage.reduce(into: [String: Double]()) { result, entry in
@@ -194,18 +254,47 @@ public enum PDFReportGenerator {
         y -= 10
         y = drawDivider(at: y, x: margin, width: contentWidth, context: context)
         y -= 4
-        let _ = drawText("CLI Pulse v1.9 • \(dateFormatter.string(from: generatedDate))", at: CGPoint(x: margin, y: y), fontSize: 8, color: .gray, context: context)
+        // iter22: pull the version from the bundle so the footer
+        // doesn't rot when we ship new builds. Falls back to the
+        // current iter version (1.12.0) if Info.plist isn't present
+        // (e.g. running this generator outside an app bundle in
+        // tests / SPM contexts).
+        let appVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.12.0"
+        let _ = drawText(L10n.pdf.footer(appVersion, dateFormatter.string(from: generatedDate)), at: CGPoint(x: margin, y: y), fontSize: 8, color: .gray, context: context)
 
         context.endPage()
         context.closePDF()
 
-        // Write to temp file
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("cli-pulse-report-\(dateString(generatedDate)).pdf")
+        // iter23: prefer the caller-supplied destination
+        // (NSSavePanel-selected URL on macOS). Falls back to
+        // `defaultDestination` (Downloads → temp) when nil — used by
+        // tests, iOS share-sheet callers, and any path that can't
+        // present a save panel.
+        if let destinationURL {
+            do {
+                try (pdfData as Data).write(to: destinationURL)
+                return destinationURL
+            } catch {
+                pdfLogger.warning("PDF export to user-selected URL \(destinationURL.path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                return nil
+            }
+        }
+        // iter22 default: `~/Downloads/cli-pulse-report-YYYY-MM-DD.pdf`
+        // (or a `-2`, `-3`… suffix on collision). Fall back to temp
+        // if Downloads write fails.
+        let dest = defaultDestination(for: generatedDate)
         do {
-            try (pdfData as Data).write(to: url)
-            return url
+            try (pdfData as Data).write(to: dest.preferred)
+            return dest.preferred
         } catch {
-            return nil
+            pdfLogger.warning("PDF export to \(dest.preferred.path, privacy: .public) failed: \(error.localizedDescription, privacy: .public). Falling back to temp.")
+            do {
+                try (pdfData as Data).write(to: dest.fallback)
+                return dest.fallback
+            } catch {
+                pdfLogger.error("PDF export fallback also failed: \(error.localizedDescription, privacy: .public)")
+                return nil
+            }
         }
     }
 

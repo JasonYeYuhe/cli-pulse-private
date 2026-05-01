@@ -45,7 +45,7 @@ fun AlertsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Text("Alerts", style = MaterialTheme.typography.headlineMedium)
+                Text(stringResource(R.string.screen_alerts), style = MaterialTheme.typography.headlineMedium)
                 Spacer(Modifier.height(8.dp))
             }
 

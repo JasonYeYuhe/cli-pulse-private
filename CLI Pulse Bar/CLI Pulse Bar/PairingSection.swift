@@ -91,7 +91,7 @@ struct PairingSection: View {
 
             // Native helper: one-click setup
             VStack(alignment: .leading, spacing: 8) {
-                Text("The background helper syncs your usage data to the cloud so you can see it on iOS, Watch, and Android.")
+                Text(L10n.pairing.helperIntro)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
 
@@ -102,7 +102,7 @@ struct PairingSection: View {
                         if pairingInProgress { ProgressView().controlSize(.small) }
                         Image(systemName: "bolt.fill")
                             .font(.system(size: 10))
-                        Text("Set Up Background Helper")
+                        Text(L10n.pairing.setUpHelper)
                             .font(.system(size: 11, weight: .semibold))
                     }
                     .frame(maxWidth: .infinity)
@@ -148,14 +148,14 @@ struct PairingSection: View {
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
             } label: {
-                Text("Manual setup (Terminal)")
+                Text(L10n.pairing.manualSetup)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
 
             // Pairing code display
             HStack {
-                Text("Your code:")
+                Text(L10n.pairing.yourCode)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 Text(info.code)
@@ -226,6 +226,6 @@ struct PairingSection: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(PulseTheme.accent)
-        .help("Copy to clipboard")
+        .help(L10n.pairing.copy)
     }
 }

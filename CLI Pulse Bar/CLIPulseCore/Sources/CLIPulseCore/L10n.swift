@@ -7,6 +7,7 @@ import Foundation
 ///     Text(L10n.dashboard.updated(timeAgo))
 ///
 public enum L10n {
+    /// Fallback bundle when the runtime override is `nil` (system default).
     private static let bundle: Bundle = {
         #if SWIFT_PACKAGE
         return .module
@@ -15,8 +16,13 @@ public enum L10n {
         #endif
     }()
 
+    /// iter22: route through `LocaleOverrideStore` so the in-app
+    /// language switcher (footer button on macOS) can swap the
+    /// `.lproj` bundle at runtime. When `override == nil` the store
+    /// returns the same default bundle, preserving prior behavior.
     private static func tr(_ key: String, _ args: CVarArg...) -> String {
-        let format = NSLocalizedString(key, bundle: bundle, comment: "")
+        let activeBundle = LocaleOverrideStore.shared.bundle
+        let format = NSLocalizedString(key, bundle: activeBundle, comment: "")
         return args.isEmpty ? format : String(format: format, arguments: args)
     }
 
@@ -68,6 +74,17 @@ public enum L10n {
         public static var monitor: String { tr("dashboard.monitor") }
         public static var manage: String { tr("dashboard.manage") }
         public static var noUnresolvedAlerts: String { tr("dashboard.no_unresolved_alerts") }
+        public static var exportCostReport: String { tr("dashboard.export_cost_report") }
+        public static var exportSessions: String { tr("dashboard.export_sessions") }
+        public static var exportProviders: String { tr("dashboard.export_providers") }
+        public static var exportPdf: String { tr("dashboard.export_pdf") }
+        public static var export: String { tr("dashboard.export") }
+        public static var subscriptions: String { tr("dashboard.subscriptions") }
+        public static var subscriptionUtilization: String { tr("dashboard.subscription_utilization") }
+        public static var totalMonthly: String { tr("dashboard.total_monthly") }
+        public static var noEnabledWithData: String { tr("dashboard.no_enabled_with_data") }
+        public static var tapReviewClaude: String { tr("dashboard.tap_review_claude") }
+        public static func pendingApprovalCount(_ count: Int) -> String { tr("dashboard.pending_approval_count", count) }
     }
 
     // MARK: - Providers
@@ -85,6 +102,15 @@ public enum L10n {
         public static var thisWeek: String { tr("providers.this_week") }
         public static var quota: String { tr("providers.quota") }
         public static var status: String { tr("providers.status") }
+        public static var configureHint: String { tr("providers.configure_hint") }
+        public static func sourceLabel(_ source: String) -> String { tr("providers.source_label", source) }
+        public static var keySet: String { tr("providers.key_set") }
+        public static var limitedFree: String { tr("providers.limited_free") }
+        public static var disabledBadge: String { tr("providers.disabled_badge") }
+        public static var grantAccessTitle: String { tr("providers.grant_access_title") }
+        public static var grantAccessBody: String { tr("providers.grant_access_body") }
+        public static var openSettings: String { tr("providers.open_settings") }
+        public static var quotaDataUnavailable: String { tr("providers.quota_data_unavailable") }
     }
 
     // MARK: - Sessions
@@ -123,6 +149,7 @@ public enum L10n {
         public static var severityCritical: String { tr("alerts.severity_critical") }
         public static var severityWarning: String { tr("alerts.severity_warning") }
         public static func unresolvedCount(_ count: Int) -> String { tr("alerts.unresolved_count", count) }
+        public static var resolveAll: String { tr("alerts.resolve_all") }
     }
 
     // MARK: - Settings
@@ -184,6 +211,23 @@ public enum L10n {
         public static var appearanceDark: String { tr("settings.appearance_dark") }
         public static var email: String { tr("settings.email") }
         public static var name: String { tr("settings.name") }
+        public static var showCostSummary: String { tr("settings.show_cost_summary") }
+        public static var showCostSummaryHint: String { tr("settings.show_cost_summary_hint") }
+        public static var autoPollStatus: String { tr("settings.auto_poll_status") }
+        public static var quotaAlertThresholds: String { tr("settings.quota_alert_thresholds") }
+        public static var quotaAlertThresholdsHint: String { tr("settings.quota_alert_thresholds_hint") }
+        public static func warningPct(_ pct: Int) -> String { tr("settings.warning_pct", pct) }
+        public static func criticalPct(_ pct: Int) -> String { tr("settings.critical_pct", pct) }
+        public static func warningThresholdPct(_ pct: Int) -> String { tr("settings.warning_threshold_pct", pct) }
+        public static func criticalThresholdPct(_ pct: Int) -> String { tr("settings.critical_threshold_pct", pct) }
+        public static var resetThresholdsDefaults: String { tr("settings.reset_thresholds_defaults") }
+        public static var reset: String { tr("settings.reset") }
+        public static var privacy: String { tr("settings.privacy") }
+        public static var testWebhook: String { tr("settings.test_webhook") }
+        public static var remoteControl: String { tr("settings.remote_control") }
+        public static var remoteControlIPhoneHint: String { tr("settings.remote_control_iphone_hint") }
+        public static var pendingApprovals: String { tr("settings.pending_approvals") }
+        public static var privacyRedactedHint: String { tr("settings.privacy_redacted_hint") }
     }
 
     // MARK: - Auth
@@ -266,6 +310,11 @@ public enum L10n {
         public static var upgradePro: String { tr("subscription.upgrade_pro") }
         public static var switchPro: String { tr("subscription.switch_pro") }
         public static var switchTeam: String { tr("subscription.switch_team") }
+        public static var loadingPlans: String { tr("subscription.loading_plans") }
+        public static var unavailable: String { tr("subscription.unavailable") }
+        public static var retry: String { tr("subscription.retry") }
+        public static var viewAllPlans: String { tr("subscription.view_all_plans") }
+        public static var billing: String { tr("subscription.billing") }
     }
 
     // MARK: - About
@@ -288,6 +337,10 @@ public enum L10n {
         public static var noData: String { tr("widget.no_data") }
         public static var noProviderData: String { tr("widget.no_provider_data") }
         public static var used: String { tr("widget.used") }
+        public static var signInToView: String { tr("widget.sign_in_to_view") }
+        public static func alertsSummary(_ count: Int) -> String { tr("widget.alerts_summary", count) }
+        public static func percentLeft(_ name: String, _ pct: Int) -> String { tr("widget.percent_left", name, pct) }
+        public static var quotaFallback: String { tr("widget.quota_fallback") }
     }
 
     // MARK: - Time
@@ -367,6 +420,11 @@ public enum L10n {
         public static var percent: String { tr("display.percent") }
         public static var pace: String { tr("display.pace") }
         public static var mostUsed: String { tr("display.most_used") }
+        public static var mode: String { tr("display.mode") }
+        public static var mergeMenuBarIcons: String { tr("display.merge_menu_bar_icons") }
+        public static var mergeMenuBarHint: String { tr("display.merge_menu_bar_hint") }
+        public static var contentMode: String { tr("display.content_mode") }
+        public static var reorderHint: String { tr("display.reorder_hint") }
     }
 
     // MARK: - Status
@@ -382,6 +440,7 @@ public enum L10n {
         public static var operational: String { tr("status.operational") }
         public static var down: String { tr("status.down") }
         public static var disabled: String { tr("status.disabled") }
+        public static var ended: String { tr("status.ended") }
 
         /// Map a server status string to its localized display text.
         public static func localized(_ raw: String) -> String {
@@ -396,6 +455,7 @@ public enum L10n {
             case "Operational", "operational": return operational
             case "Down", "down": return down
             case "Disabled", "disabled": return disabled
+            case "Ended", "ended": return ended
             default: return raw
             }
         }
@@ -493,6 +553,9 @@ public enum L10n {
         public static var inviteMember: String { tr("team.invite_member") }
         public static var emailAddress: String { tr("team.email_address") }
         public static var sendInvite: String { tr("team.send_invite") }
+        public static func membersCount(_ count: Int) -> String { tr("team.members_count", count) }
+        public static func tokensCount(_ count: Int) -> String { tr("team.tokens_count", count) }
+        public static var errorLoading: String { tr("team.error_loading") }
     }
 
     // MARK: - Integrations
@@ -540,6 +603,256 @@ public enum L10n {
         public static var refresh: String { tr("common.refresh") }
         // iter10: dismiss button on simple notice/error alerts.
         public static var ok: String { tr("common.ok") }
+        public static var retry: String { tr("common.retry") }
+        public static var close: String { tr("common.close") }
+        public static var disconnect: String { tr("common.disconnect") }
+        public static var noProviderSelected: String { tr("common.no_provider_selected") }
+    }
+
+    // MARK: - Cost Section (iter22)
+
+    public enum cost {
+        public static var exact: String { tr("cost.exact") }
+        public static var estimated: String { tr("cost.estimated") }
+        public static func tokensSuffix(_ value: String) -> String { tr("cost.tokens_suffix", value) }
+        public static func tokensShortSuffix(_ value: String) -> String { tr("cost.tokens_short_suffix", value) }
+        public static var thirtyDayPrecise: String { tr("cost.thirty_day_precise") }
+        public static func tokensValue(_ value: String) -> String { tr("cost.tokens_value", value) }
+        public static func dayProgress(_ current: Int, _ total: Int) -> String { tr("cost.day_progress", current, total) }
+        public static var byModel: String { tr("cost.by_model") }
+    }
+
+    // MARK: - PDF Report (CLIPulseCore shared generator)
+
+    public enum pdf {
+        public static var title: String { tr("pdf.title") }
+        public static func generated(_ date: String) -> String { tr("pdf.generated", date) }
+        public static var summary: String { tr("pdf.summary") }
+        public static var todayUsage: String { tr("pdf.today_usage") }
+        public static var todayEstimatedCost: String { tr("pdf.today_estimated_cost") }
+        public static var activeSessions: String { tr("pdf.active_sessions") }
+        public static var onlineDevices: String { tr("pdf.online_devices") }
+        public static var unresolvedAlerts: String { tr("pdf.unresolved_alerts") }
+        public static var costForecast: String { tr("pdf.cost_forecast") }
+        public static var monthEndEstimate: String { tr("pdf.month_end_estimate") }
+        public static var spentSoFar: String { tr("pdf.spent_so_far") }
+        public static var confidenceRange: String { tr("pdf.confidence_range") }
+        public static var progress: String { tr("pdf.progress") }
+        public static func progressValue(_ current: Int, _ total: Int) -> String { tr("pdf.progress_value", current, total) }
+        public static var providerBreakdown: String { tr("pdf.provider_breakdown") }
+        public static var hProvider: String { tr("pdf.h_provider") }
+        public static var hWeekUsage: String { tr("pdf.h_week_usage") }
+        public static var hEstCost: String { tr("pdf.h_est_cost") }
+        public static var hRemaining: String { tr("pdf.h_remaining") }
+        public static var hQuota: String { tr("pdf.h_quota") }
+        public static var na: String { tr("pdf.na") }
+        public static var topSessions: String { tr("pdf.top_sessions") }
+        public static var hProject: String { tr("pdf.h_project") }
+        public static var hCost: String { tr("pdf.h_cost") }
+        public static var hUsage: String { tr("pdf.h_usage") }
+        public static var hStatus: String { tr("pdf.h_status") }
+        public static var dailyTrend: String { tr("pdf.daily_trend") }
+        public static func footer(_ version: String, _ date: String) -> String { tr("pdf.footer", version, date) }
+    }
+
+    // MARK: - Folder Access (CLIPulseCore FolderAccessView)
+
+    public enum folderAccess {
+        public static var title: String { tr("folder_access.title") }
+        public static var intro: String { tr("folder_access.intro") }
+        public static var granted: String { tr("folder_access.granted") }
+        public static var notInstalled: String { tr("folder_access.not_installed") }
+        public static var grant: String { tr("folder_access.grant") }
+        public static var grantAll: String { tr("folder_access.grant_all") }
+        public static var rescanTitle: String { tr("folder_access.rescan_title") }
+        public static var rescanDetail: String { tr("folder_access.rescan_detail") }
+        public static var forceRescan: String { tr("folder_access.force_rescan") }
+        public static var panelMessage: String { tr("folder_access.panel_message") }
+        public static var panelPrompt: String { tr("folder_access.panel_prompt") }
+    }
+
+    // MARK: - Provider Configuration
+
+    public enum providerConfig {
+        public static var dataSource: String { tr("provider_config.data_source") }
+        public static var accountLabel: String { tr("provider_config.account_label") }
+        public static var accountPlaceholder: String { tr("provider_config.account_placeholder") }
+        public static var apiKey: String { tr("provider_config.api_key") }
+        public static var showKey: String { tr("provider_config.show_key") }
+        public static var hideKey: String { tr("provider_config.hide_key") }
+        public static var keychainNotice: String { tr("provider_config.keychain_notice") }
+        public static var cookieSource: String { tr("provider_config.cookie_source") }
+        public static var manualCookieHeader: String { tr("provider_config.manual_cookie_header") }
+        public static var capabilities: String { tr("provider_config.capabilities") }
+        public static var capQuota: String { tr("provider_config.cap_quota") }
+        public static var capExactCost: String { tr("provider_config.cap_exact_cost") }
+        public static var capCredits: String { tr("provider_config.cap_credits") }
+        public static var capStatusPoll: String { tr("provider_config.cap_status_poll") }
+        public static var requiresHelperSync: String { tr("provider_config.requires_helper_sync") }
+        public static var googleOAuth: String { tr("provider_config.google_oauth") }
+        public static var disconnect: String { tr("provider_config.disconnect") }
+        public static var connectGemini: String { tr("provider_config.connect_gemini") }
+        public static var geminiUsesGoogle: String { tr("provider_config.gemini_uses_google") }
+        public static var claudeCode: String { tr("provider_config.claude_code") }
+        public static var connectClaudeCode: String { tr("provider_config.connect_claude_code") }
+        public static var claudeKeychainHint: String { tr("provider_config.claude_keychain_hint") }
+        public static var claudeReadFailed: String { tr("provider_config.claude_read_failed") }
+        public static var testConnection: String { tr("provider_config.test_connection") }
+        public static var testing: String { tr("provider_config.testing") }
+    }
+
+    // MARK: - Onboarding Wizard
+
+    public enum onboardingWizard {
+        public static var welcomeTitle: String { tr("onboarding_wizard.welcome_title") }
+        public static var welcomeSubtitle: String { tr("onboarding_wizard.welcome_subtitle") }
+        public static var getStarted: String { tr("onboarding_wizard.get_started") }
+        public static var whatDoes: String { tr("onboarding_wizard.what_does") }
+        public static var `continue`: String { tr("onboarding_wizard.continue") }
+        public static var back: String { tr("onboarding_wizard.back") }
+        public static var privacyTitle: String { tr("onboarding_wizard.privacy_title") }
+        public static var privacyBody: String { tr("onboarding_wizard.privacy_body") }
+        public static var signInTitle: String { tr("onboarding_wizard.sign_in_title") }
+        public static var signInSubtitle: String { tr("onboarding_wizard.sign_in_subtitle") }
+        public static var skip: String { tr("onboarding_wizard.skip") }
+        public static func codeSentTo(_ email: String) -> String { tr("onboarding_wizard.code_sent_to", email) }
+        public static var verify: String { tr("onboarding_wizard.verify") }
+        public static var backToEmail: String { tr("onboarding_wizard.back_to_email") }
+        public static var allSetTitle: String { tr("onboarding_wizard.all_set_title") }
+        public static var allSetBody: String { tr("onboarding_wizard.all_set_body") }
+        public static var helperHint: String { tr("onboarding_wizard.helper_hint") }
+        public static var done: String { tr("onboarding_wizard.done") }
+        public static var close: String { tr("onboarding_wizard.close") }
+        public static var privacyKeysTitle: String { tr("onboarding_wizard.privacy_keys_title") }
+        public static var privacyKeysDetail: String { tr("onboarding_wizard.privacy_keys_detail") }
+        public static var privacyLogsTitle: String { tr("onboarding_wizard.privacy_logs_title") }
+        public static var privacyLogsDetail: String { tr("onboarding_wizard.privacy_logs_detail") }
+        public static var privacyMetricsTitle: String { tr("onboarding_wizard.privacy_metrics_title") }
+        public static var privacyMetricsDetail: String { tr("onboarding_wizard.privacy_metrics_detail") }
+    }
+
+    // MARK: - Advanced Settings
+
+    public enum advanced {
+        public static var launchAtLogin: String { tr("advanced.launch_at_login") }
+        public static var backgroundSync: String { tr("advanced.background_sync") }
+        public static var backgroundSyncHint: String { tr("advanced.background_sync_hint") }
+        public static var fullDetails: String { tr("advanced.full_details") }
+        public static var hideEmails: String { tr("advanced.hide_emails") }
+        public static var trackGit: String { tr("advanced.track_git") }
+        public static var trackGitHint: String { tr("advanced.track_git_hint") }
+        public static var gitConsentTitle: String { tr("advanced.git_consent_title") }
+        public static var enable: String { tr("advanced.enable") }
+        public static var gitConsentBody: String { tr("advanced.git_consent_body") }
+        public static var remoteControl: String { tr("advanced.remote_control") }
+        public static var remoteControlHint: String { tr("advanced.remote_control_hint") }
+        public static var remoteConsentTitle: String { tr("advanced.remote_consent_title") }
+        public static var token: String { tr("advanced.token") }
+        public static var providersLoaded: String { tr("advanced.providers_loaded") }
+        public static var lastRefresh: String { tr("advanced.last_refresh") }
+        public static var never: String { tr("advanced.never") }
+        public static var syncJustNow: String { tr("advanced.sync_just_now") }
+        public static func syncMinutesAgo(_ minutes: Int) -> String { tr("advanced.sync_minutes_ago", minutes) }
+        public static var helperRunning: String { tr("advanced.helper_running") }
+        public static var helperNotRunning: String { tr("advanced.helper_not_running") }
+        public static var privacyKeysTitle: String { tr("advanced.privacy_keys_title") }
+        public static var privacyKeysDetail: String { tr("advanced.privacy_keys_detail") }
+        public static var privacyLogsTitle: String { tr("advanced.privacy_logs_title") }
+        public static var privacyLogsDetail: String { tr("advanced.privacy_logs_detail") }
+        public static var privacyMetricsTitle: String { tr("advanced.privacy_metrics_title") }
+        public static var privacyMetricsDetail: String { tr("advanced.privacy_metrics_detail") }
+        public static var privacyEmailTitle: String { tr("advanced.privacy_email_title") }
+        public static var privacyEmailDetail: String { tr("advanced.privacy_email_detail") }
+    }
+
+    // MARK: - Remote Approvals
+
+    public enum remoteApprovals {
+        public static var title: String { tr("remote_approvals.title") }
+        public static var disabledHint: String { tr("remote_approvals.disabled_hint") }
+        public static var refresh: String { tr("remote_approvals.refresh") }
+        public static var close: String { tr("remote_approvals.close") }
+        public static var offTitle: String { tr("remote_approvals.off_title") }
+        public static var offBodyMac: String { tr("remote_approvals.off_body_mac") }
+        public static var offBodyIos: String { tr("remote_approvals.off_body_ios") }
+        public static var openSettings: String { tr("remote_approvals.open_settings") }
+        public static var noPending: String { tr("remote_approvals.no_pending") }
+        public static var updatedPrefix: String { tr("remote_approvals.updated_prefix") }
+        public static var perRequestNoteMac: String { tr("remote_approvals.per_request_note_mac") }
+        public static var perRequestNoteIos: String { tr("remote_approvals.per_request_note_ios") }
+        public static var deny: String { tr("remote_approvals.deny") }
+        public static var approve: String { tr("remote_approvals.approve") }
+        public static var highRiskWarning: String { tr("remote_approvals.high_risk_warning") }
+        public static func pendingCount(_ count: Int) -> String { tr("remote_approvals.pending_count", count) }
+        public static var unknownTool: String { tr("remote_approvals.unknown_tool") }
+        public static var noSummary: String { tr("remote_approvals.no_summary") }
+        public static func expires(_ value: String) -> String { tr("remote_approvals.expires", value) }
+        public static var entryLabelNone: String { tr("remote_approvals.entry_label_none") }
+        public static func entryLabelWithCount(_ count: Int) -> String { tr("remote_approvals.entry_label_with_count", count) }
+        public static var entryHelpNone: String { tr("remote_approvals.entry_help_none") }
+        public static func entryHelpWithCount(_ count: Int) -> String { tr("remote_approvals.entry_help_with_count", count) }
+    }
+
+    // MARK: - Language Switcher (iter22)
+
+    public enum language {
+        public static var title: String { tr("language.title") }
+        public static var systemDefault: String { tr("language.system_default") }
+    }
+
+    // MARK: - Yield Score
+
+    public enum yield {
+        public static var title: String { tr("yield.title") }
+        public static var helpEstimated: String { tr("yield.help_estimated") }
+        public static var emptyBody: String { tr("yield.empty_body") }
+        public static var emptyEnableHint: String { tr("yield.empty_enable_hint") }
+        public static var viewDetail: String { tr("yield.view_detail") }
+        public static var detailTitle: String { tr("yield.detail_title") }
+        public static var detailBody: String { tr("yield.detail_body") }
+        public static var noCommits: String { tr("yield.no_commits") }
+        public static var estimatedBadge: String { tr("yield.estimated_badge") }
+        public static var rangePicker: String { tr("yield.range_picker") }
+        public static var emptyNoAttribution: String { tr("yield.empty_no_attribution") }
+        public static func detailSubtitle(_ rangeLabel: String) -> String { tr("yield.detail_subtitle", rangeLabel) }
+        public static func commitsCount(_ count: Int) -> String { tr("yield.commits_count", count) }
+        public static func commitsCountDecimal(_ count: Double) -> String { tr("yield.commits_count_decimal", count) }
+        public static func ambiguousCount(_ count: Int) -> String { tr("yield.ambiguous_count", count) }
+    }
+
+    // MARK: - Menu Bar
+
+    public enum menuBar {
+        public static func tierMigration(kept: Int, disabled: Int) -> String {
+            tr("menu_bar.tier_migration", kept, disabled)
+        }
+        public static var edit: String { tr("menu_bar.edit") }
+        public static func appVersion(_ version: String) -> String { tr("menu_bar.app_version", version) }
+        public static var quit: String { tr("menu_bar.quit") }
+        public static var quitFull: String { tr("menu_bar.quit_full") }
+    }
+
+    // MARK: - Pairing
+
+    public enum pairing {
+        public static var helperIntro: String { tr("pairing.helper_intro") }
+        public static var setUpHelper: String { tr("pairing.set_up_helper") }
+        public static var manualSetup: String { tr("pairing.manual_setup") }
+        public static var yourCode: String { tr("pairing.your_code") }
+        public static var copy: String { tr("pairing.copy") }
+    }
+
+    // MARK: - Watch
+
+    public enum watch {
+        public static var couldntLoadData: String { tr("watch.couldnt_load_data") }
+        public static var couldntLoadProviders: String { tr("watch.couldnt_load_providers") }
+        public static var retry: String { tr("watch.retry") }
+        public static var pullToRefresh: String { tr("watch.pull_to_refresh") }
+        public static func unreadCount(_ count: Int) -> String { tr("watch.unread_count", count) }
+        public static var snooze15: String { tr("watch.snooze_15") }
+        public static var snooze30: String { tr("watch.snooze_30") }
+        public static var snooze60: String { tr("watch.snooze_60") }
     }
 
     /// v1.10 P3-2: accessibility labels for icon-only controls and

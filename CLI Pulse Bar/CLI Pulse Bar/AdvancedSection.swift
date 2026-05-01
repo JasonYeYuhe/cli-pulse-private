@@ -23,7 +23,7 @@ struct AdvancedSection: View {
             SectionHeader(title: "Startup", icon: "power")
 
             Toggle(isOn: $launchAtLogin) {
-                Text("Launch at login")
+                Text(L10n.advanced.launchAtLogin)
                     .font(.system(size: 11))
             }
             .toggleStyle(.switch)
@@ -38,9 +38,9 @@ struct AdvancedSection: View {
 
             Toggle(isOn: $helperEnabled) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Enable background sync")
+                    Text(L10n.advanced.backgroundSync)
                         .font(.system(size: 11))
-                    Text("Syncs usage data to cloud for iOS/Watch/Android")
+                    Text(L10n.advanced.backgroundSyncHint)
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                 }
@@ -58,7 +58,7 @@ struct AdvancedSection: View {
                         .frame(width: 6, height: 6)
                     if let lastSync = status.lastSync {
                         let ago = Int(Date().timeIntervalSince(lastSync))
-                        Text(ago < 60 ? "Synced just now" : "Synced \(ago / 60)m ago")
+                        Text(ago < 60 ? L10n.advanced.syncJustNow : L10n.advanced.syncMinutesAgo(ago / 60))
                             .font(.system(size: 9))
                             .foregroundStyle(.secondary)
                     } else if let error = status.error {
@@ -66,7 +66,7 @@ struct AdvancedSection: View {
                             .font(.system(size: 9))
                             .foregroundStyle(.red)
                     } else {
-                        Text(status.state == .running ? "Running" : "Not running")
+                        Text(status.state == .running ? L10n.advanced.helperRunning : L10n.advanced.helperNotRunning)
                             .font(.system(size: 9))
                             .foregroundStyle(.secondary)
                     }
@@ -79,35 +79,35 @@ struct AdvancedSection: View {
 
             Divider()
 
-            SectionHeader(title: "Privacy", icon: "lock.shield")
+            SectionHeader(title: L10n.settings.privacy, icon: "lock.shield")
 
             VStack(alignment: .leading, spacing: 6) {
                 privacyRow(
                     icon: "lock.fill",
                     color: .green,
-                    title: "Provider API keys & cookies",
-                    detail: "Stored only in macOS Keychain · never uploaded"
+                    title: L10n.advanced.privacyKeysTitle,
+                    detail: L10n.advanced.privacyKeysDetail
                 )
                 privacyRow(
                     icon: "internaldrive.fill",
                     color: .green,
-                    title: "Session logs (~/.codex/sessions, ~/.claude/projects)",
-                    detail: "Scanned on-device via the folders you grant above"
+                    title: L10n.advanced.privacyLogsTitle,
+                    detail: L10n.advanced.privacyLogsDetail
                 )
                 privacyRow(
                     icon: "icloud.and.arrow.up.fill",
                     color: .blue,
-                    title: "Usage metrics (token counts, cost, model names)",
-                    detail: "Synced to your CLI Pulse account for iPhone / Watch"
+                    title: L10n.advanced.privacyMetricsTitle,
+                    detail: L10n.advanced.privacyMetricsDetail
                 )
                 privacyRow(
                     icon: "person.crop.circle.fill",
                     color: .blue,
-                    title: "Your login email",
-                    detail: "Sent to our auth backend so you can sign in"
+                    title: L10n.advanced.privacyEmailTitle,
+                    detail: L10n.advanced.privacyEmailDetail
                 )
                 HStack(spacing: 4) {
-                    Text("Full details:")
+                    Text(L10n.advanced.fullDetails)
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                     Link("Privacy Policy", destination: URL(string: "https://jasonyeyuhe.github.io/cli-pulse/privacy.html")!)
@@ -123,7 +123,7 @@ struct AdvancedSection: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(L10n.settings.hidePersonalInfo)
                         .font(.system(size: 11))
-                    Text("Hide email addresses in the UI")
+                    Text(L10n.advanced.hideEmails)
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                 }
@@ -143,23 +143,23 @@ struct AdvancedSection: View {
                 }
             )) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Track git activity (Yield Score)")
+                    Text(L10n.advanced.trackGit)
                         .font(.system(size: 11))
-                    Text("Hashed commit metadata only — no message, diff, or path uploaded")
+                    Text(L10n.advanced.trackGitHint)
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                 }
             }
             .toggleStyle(.switch)
             .controlSize(.small)
-            .alert("Enable git activity tracking?", isPresented: $showGitTrackingConsent) {
-                Button("Cancel", role: .cancel) {}
-                Button("Enable") {
+            .alert(L10n.advanced.gitConsentTitle, isPresented: $showGitTrackingConsent) {
+                Button(L10n.common.cancel, role: .cancel) {}
+                Button(L10n.advanced.enable) {
                     state.gitTrackingEnabled = true
                     state.pushGitTrackingSettingToServer()
                 }
             } message: {
-                Text("CLI Pulse will scan git logs in projects where AI sessions are active. Only the commit hash, an HMAC of the project path, the commit timestamp, and a merge-commit flag leave your device. Commit messages, diffs, file paths, and author identity are never uploaded.")
+                Text(L10n.advanced.gitConsentBody)
             }
 
             // v0.27 Remote Control opt-in. Default OFF. Server-side gate is
@@ -186,14 +186,14 @@ struct AdvancedSection: View {
             )) {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 4) {
-                        Text("Remote Control (Phase 1: Claude approvals)")
+                        Text(L10n.advanced.remoteControl)
                             .font(.system(size: 11))
                         if state.remoteControlSaving {
                             ProgressView()
                                 .controlSize(.mini)
                         }
                     }
-                    Text("Approve Claude tool calls from your iPhone or Mac · default off")
+                    Text(L10n.advanced.remoteControlHint)
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                 }
@@ -204,9 +204,9 @@ struct AdvancedSection: View {
             // double-tap (or any other re-entrant call) can't race a stale
             // request past the latest intent.
             .disabled(state.remoteControlSaving)
-            .alert("Enable Remote Control?", isPresented: $showRemoteControlConsent) {
-                Button("Cancel", role: .cancel) {}
-                Button("Enable") {
+            .alert(L10n.advanced.remoteConsentTitle, isPresented: $showRemoteControlConsent) {
+                Button(L10n.common.cancel, role: .cancel) {}
+                Button(L10n.advanced.enable) {
                     // Single atomic entry point — handles optimistic set,
                     // PATCH, and revert-on-failure. UI never desyncs from
                     // the server-side gate.
@@ -232,7 +232,7 @@ struct AdvancedSection: View {
             SectionHeader(title: "Debug", icon: "ladybug")
 
             HStack {
-                Text("Token")
+                Text(L10n.advanced.token)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -242,7 +242,7 @@ struct AdvancedSection: View {
             }
 
             HStack {
-                Text("Providers loaded")
+                Text(L10n.advanced.providersLoaded)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -252,7 +252,7 @@ struct AdvancedSection: View {
             }
 
             HStack {
-                Text("Last refresh")
+                Text(L10n.advanced.lastRefresh)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -261,7 +261,7 @@ struct AdvancedSection: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                 } else {
-                    Text("Never")
+                    Text(L10n.advanced.never)
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                 }

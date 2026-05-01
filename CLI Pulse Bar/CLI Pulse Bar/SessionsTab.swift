@@ -55,7 +55,7 @@ struct SessionRow: View {
                 Spacer()
 
                 StatusBadge(
-                    text: session.status,
+                    text: L10n.status.localized(session.status),
                     color: PulseTheme.statusColor(session.status)
                 )
             }
@@ -72,16 +72,16 @@ struct SessionRow: View {
 
             // Metrics
             HStack(spacing: 16) {
-                metricItem(label: "Usage", value: CostFormatter.formatUsage(session.total_usage))
+                metricItem(label: L10n.detail.usage, value: CostFormatter.formatUsage(session.total_usage))
                 if showCost {
-                    metricItem(label: "Cost", value: CostFormatter.format(session.estimated_cost), color: .green)
+                    metricItem(label: L10n.detail.cost, value: CostFormatter.format(session.estimated_cost), color: .green)
                 }
-                metricItem(label: "Requests", value: "\(session.requests)")
+                metricItem(label: L10n.detail.requests, value: "\(session.requests)")
                 if session.error_count > 0 {
-                    metricItem(label: "Errors", value: "\(session.error_count)", color: .red)
+                    metricItem(label: L10n.detail.errors, value: "\(session.error_count)", color: .red)
                 }
                 Spacer()
-                Text(RelativeTime.format(session.started_at))
+                Text(RelativeTime.format(session.last_active_at))
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
             }

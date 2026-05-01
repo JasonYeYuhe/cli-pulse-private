@@ -288,6 +288,7 @@
 "status.operational" = "正常运行";
 "status.down" = "已停止";
 "status.disabled" = "已禁用";
+"status.ended" = "已结束";
 
 /* ── 徽章 ── */
 "badge.free" = "免费";
@@ -412,3 +413,290 @@
 "account.delete_failed_title" = "未能删除账户";
 "account.delete_failed_generic" = "未能删除你的账户，账户仍然有效。请检查网络后重试，或先登出再重新登录以刷新登录状态。";
 "account.delete_session_expired" = "登录状态在删除账户之前已过期。你的账户仍然有效——请重新登录后，从「设置」里再次点击「删除账户」。";
+
+/* ── 仪表盘补充 (i18n sweep) ── */
+"dashboard.export_cost_report" = "导出成本报告";
+"dashboard.export_sessions" = "导出会话";
+"dashboard.export_providers" = "导出服务商";
+"dashboard.export_pdf" = "导出 PDF 报告";
+"dashboard.export" = "导出";
+"dashboard.subscriptions" = "订阅";
+"dashboard.subscription_utilization" = "订阅使用率";
+"dashboard.total_monthly" = "月度合计";
+"dashboard.no_enabled_with_data" = "没有已启用且包含数据的服务商";
+"dashboard.tap_review_claude" = "点按可查看 Mac 上正在运行的 Claude 工具调用";
+
+/* ── 设置补充 (i18n sweep) ── */
+"settings.show_cost_summary" = "显示成本摘要";
+"settings.show_cost_summary_hint" = "显示今日及 30 天预估支出";
+"settings.auto_poll_status" = "自动轮询服务商状态页";
+"settings.quota_alert_thresholds" = "配额告警阈值";
+"settings.quota_alert_thresholds_hint" = "当服务商配额超过这些百分比时触发告警。";
+"settings.warning_pct" = "警告：%d%%";
+"settings.critical_pct" = "严重：%d%%";
+"settings.warning_threshold_pct" = "警告阈值：%d%%";
+"settings.critical_threshold_pct" = "严重阈值：%d%%";
+"settings.reset_thresholds_defaults" = "恢复默认阈值";
+"settings.reset" = "重置";
+"settings.privacy" = "隐私";
+"settings.test_webhook" = "测试 Webhook";
+"settings.remote_control" = "远程控制";
+"settings.remote_control_iphone_hint" = "通过此 iPhone 审批 Claude 的工具调用";
+"settings.pending_approvals" = "待审批";
+"settings.privacy_redacted_hint" = "CLI Pulse 仅上传每个请求的脱敏摘要——绝不上传 API 密钥、Cookie 或完整的对话内容。";
+
+/* ── 显示补充 (i18n sweep) ── */
+"display.mode" = "显示模式";
+"display.merge_menu_bar_icons" = "合并菜单栏图标";
+"display.merge_menu_bar_hint" = "单图标 + 服务商切换器";
+"display.content_mode" = "内容模式";
+"display.reorder_hint" = "选择要在「概览」标签页显示的服务商，拖动可重新排序。";
+
+/* ── 订阅补充 (i18n sweep) ── */
+"subscription.loading_plans" = "正在加载方案…";
+"subscription.unavailable" = "当前无法获取订阅方案。";
+"subscription.retry" = "重试";
+"subscription.view_all_plans" = "查看全部方案与详情";
+
+/* ── 服务商补充 (i18n sweep) ── */
+"providers.configure_hint" = "为每个服务商配置数据来源、凭据和显示方式。";
+"providers.source_label" = "来源：%@";
+"providers.key_set" = "已设置密钥";
+"providers.limited_free" = "免费方案受限";
+"providers.disabled_badge" = "已禁用";
+"providers.grant_access_title" = "授予访问以查看 token 数与成本";
+"providers.grant_access_body" = "CLI Pulse 需要读取 ~/.codex/sessions/ 与 ~/.claude/projects/";
+"providers.open_settings" = "打开「设置」";
+
+/* ── 服务商配置 ── */
+"provider_config.data_source" = "数据来源";
+"provider_config.account_label" = "账号标签";
+"provider_config.account_placeholder" = "例如：team-A、dev-box";
+"provider_config.api_key" = "API 密钥";
+"provider_config.show_key" = "显示密钥";
+"provider_config.hide_key" = "隐藏密钥";
+"provider_config.keychain_notice" = "仅保存在 Mac 钥匙串中，绝不会上传。";
+"provider_config.cookie_source" = "Cookie 来源";
+"provider_config.manual_cookie_header" = "手动 Cookie 头";
+"provider_config.capabilities" = "能力";
+"provider_config.cap_quota" = "配额";
+"provider_config.cap_exact_cost" = "精确成本";
+"provider_config.cap_credits" = "积分";
+"provider_config.cap_status_poll" = "状态轮询";
+"provider_config.requires_helper_sync" = "配额／套餐数据需要后台 helper 同步。";
+"provider_config.google_oauth" = "Google OAuth";
+"provider_config.disconnect" = "断开连接";
+"provider_config.connect_gemini" = "连接 Gemini";
+"provider_config.gemini_uses_google" = "使用你的 Google 账号，无需 API 密钥。";
+"provider_config.claude_code" = "Claude Code";
+"provider_config.connect_claude_code" = "连接 Claude Code";
+"provider_config.claude_keychain_hint" = "读取你已有的 Claude Code 登录信息。macOS 会请求一次授权——请点「始终允许」。";
+"provider_config.claude_read_failed" = "无法读取 Claude Code 凭据。如果你拒绝了授权，请重试，或先安装／启动 Claude Code。";
+"provider_config.test_connection" = "测试连接";
+"provider_config.testing" = "测试中…";
+
+/* ── 引导向导 ── */
+"onboarding_wizard.welcome_title" = "欢迎使用 CLI Pulse";
+"onboarding_wizard.welcome_subtitle" = "在一处监控 AI 编程工具的\n使用量、成本与配额。";
+"onboarding_wizard.get_started" = "开始使用";
+"onboarding_wizard.what_does" = "CLI Pulse 能做什么";
+"onboarding_wizard.continue" = "继续";
+"onboarding_wizard.back" = "返回";
+"onboarding_wizard.privacy_title" = "数据由你掌控";
+"onboarding_wizard.privacy_body" = "下面清楚说明哪些数据留在 Mac 上，哪些会同步到你的账户。";
+"onboarding_wizard.sign_in_title" = "登录";
+"onboarding_wizard.sign_in_subtitle" = "登录以同步数据——首次验证时会创建你的账户。";
+"onboarding_wizard.skip" = "暂时跳过";
+"onboarding_wizard.code_sent_to" = "验证码已发送至 %@";
+"onboarding_wizard.verify" = "验证";
+"onboarding_wizard.back_to_email" = "返回邮箱";
+"onboarding_wizard.all_set_title" = "全部就绪";
+"onboarding_wizard.all_set_body" = "Mac 应用运行时数据会自动同步。在任何其他设备上用同一账号登录，使用数据就会出现——无需配对或额外设置。";
+"onboarding_wizard.helper_hint" = "需要为无界面服务器或 Claude 远程审批使用可选 helper？引导完成后请打开「设置 → Helper」。";
+"onboarding_wizard.done" = "完成";
+"onboarding_wizard.close" = "关闭引导";
+
+/* ── 高级 ── */
+"advanced.launch_at_login" = "登录时自动启动";
+"advanced.background_sync" = "启用后台同步";
+"advanced.background_sync_hint" = "将使用数据同步到云端，供 iOS／Watch／Android 使用";
+"advanced.full_details" = "详细信息：";
+"advanced.hide_emails" = "在界面中隐藏邮箱地址";
+"advanced.track_git" = "追踪 git 活动（Yield Score）";
+"advanced.track_git_hint" = "仅哈希后的提交元数据——不上传消息、diff 或路径";
+"advanced.git_consent_title" = "启用 git 活动追踪？";
+"advanced.enable" = "启用";
+"advanced.git_consent_body" = "CLI Pulse 会扫描有 AI 会话活动的项目的 git 日志。仅会上传提交哈希、项目路径的 HMAC、提交时间戳以及合并提交标记。提交消息、diff、文件路径和作者身份永远不会上传。";
+"advanced.remote_control" = "远程控制（阶段 1：Claude 审批）";
+"advanced.remote_control_hint" = "通过 iPhone 或 Mac 审批 Claude 工具调用 · 默认关闭";
+"advanced.remote_consent_title" = "启用远程控制？";
+"advanced.token" = "令牌";
+"advanced.providers_loaded" = "已加载服务商";
+"advanced.last_refresh" = "上次刷新";
+"advanced.never" = "从未";
+
+/* ── 远程审批 ── */
+"remote_approvals.title" = "远程审批";
+"remote_approvals.disabled_hint" = "已禁用 · 设置 → 隐私";
+"remote_approvals.refresh" = "刷新";
+"remote_approvals.close" = "关闭";
+"remote_approvals.off_title" = "远程控制已关闭";
+"remote_approvals.off_body_mac" = "在「设置 → 隐私」中开启远程控制，即可通过 iPhone 或 Mac 审批 Claude 的工具调用。CLI Pulse 仅上传脱敏摘要，绝不会上传对话内容或 API 密钥。";
+"remote_approvals.off_body_ios" = "在「设置 → 隐私」中开启远程控制，即可审批 Mac 上运行的 Claude 工具调用。CLI Pulse 仅上传脱敏摘要，绝不会上传对话内容或 API 密钥。";
+"remote_approvals.open_settings" = "打开「设置」";
+"remote_approvals.no_pending" = "暂无待审批请求";
+"remote_approvals.updated_prefix" = "更新于 ";
+"remote_approvals.per_request_note_mac" = "此处的「批准」仅对当前请求生效——不会添加 Claude Code 的「始终允许」规则。下次 Claude 需要相同工具时还会再次请求。要设置长期规则，请使用 Claude Code 自带的「Always Allow」。";
+"remote_approvals.per_request_note_ios" = "「批准」仅对当前请求生效——不会创建 Claude Code 的「始终允许」规则。下次 Claude 需要相同工具时仍会在此再次请求。要设置长期规则，请在 Mac 上使用 Claude Code 自带的「Always Allow」。批准后会在 Mac 上执行该工具调用。";
+"remote_approvals.deny" = "拒绝";
+"remote_approvals.approve" = "批准";
+"remote_approvals.high_risk_warning" = "高风险——请在 Mac 上本地审批。";
+
+/* ── Yield Score ── */
+"yield.title" = "Yield Score";
+"yield.help_estimated" = "当无法获取精确的 API 价格时，成本根据 token 使用量估算。";
+"yield.empty_body" = "追踪每次提交的 AI 成本以查看你的 Yield Score。";
+"yield.empty_enable_hint" = "在「设置 → 隐私 → 追踪 git 活动」中启用。";
+"yield.view_detail" = "查看详情";
+"yield.detail_title" = "Yield Score 详情";
+"yield.detail_body" = "当无法获取精确的 API 价格时，成本根据 token 使用量估算。合并提交不计入归因。";
+
+/* ── 菜单栏 ── */
+"menu_bar.tier_migration" = "已保留你最常用的 %d 个服务商以适配免费方案。已禁用 %d 个——可在「设置 → 服务商」中编辑。";
+"menu_bar.edit" = "编辑";
+"menu_bar.app_version" = "CLI Pulse v%@";
+"menu_bar.quit" = "退出 CLI Pulse";
+
+/* ── 配对 ── */
+"pairing.helper_intro" = "后台 helper 会将使用数据同步到云端，方便你在 iOS、Watch、Android 上查看。";
+"pairing.set_up_helper" = "设置后台 Helper";
+"pairing.manual_setup" = "手动设置（终端）";
+"pairing.your_code" = "你的代码：";
+"pairing.copy" = "复制到剪贴板";
+
+/* ── Watch ── */
+"watch.couldnt_load_data" = "未能加载数据";
+"watch.couldnt_load_providers" = "未能加载服务商";
+"watch.retry" = "重试";
+"watch.pull_to_refresh" = "下拉刷新";
+
+/* ── 小组件补充 ── */
+"widget.sign_in_to_view" = "登录以查看使用情况";
+
+/* ── 通用补充 ── */
+"common.retry" = "重试";
+"common.close" = "关闭";
+"common.disconnect" = "断开连接";
+
+/* ── 语言切换 (iter22) ── */
+"language.title" = "语言";
+"language.system_default" = "系统默认";
+
+/* ── 远程审批 i18n leftovers ── */
+"remote_approvals.pending_count" = "%d 项待审批";
+"remote_approvals.entry_label_none" = "打开远程审批（无待审批）";
+"remote_approvals.entry_label_with_count" = "打开远程审批（%d 项待审批）";
+"remote_approvals.entry_help_none" = "打开远程审批——当前无待审批请求";
+"remote_approvals.entry_help_with_count" = "%d 项远程审批待处理";
+"remote_approvals.unknown_tool" = "未知工具";
+"remote_approvals.no_summary" = "（无摘要）";
+"remote_approvals.expires" = "%@ 过期";
+
+/* ── 其他 i18n 收尾 ── */
+"alerts.resolve_all" = "全部解决";
+"yield.no_commits" = "无提交";
+"yield.estimated_badge" = "· 估算";
+"yield.range_picker" = "范围";
+"yield.empty_no_attribution" = "此期间没有归因到任何提交。请在已追踪的仓库中写些代码。";
+"yield.detail_subtitle" = "%@ · 按每次提交成本排序（越低越好）";
+"yield.commits_count" = "%d 次提交";
+"yield.commits_count_decimal" = "%.1f 次提交";
+"yield.ambiguous_count" = "%d 项歧义";
+"menu_bar.quit_full" = "退出 CLI Pulse Bar";
+
+/* ── iter22 广义清扫 ── */
+"common.no_provider_selected" = "未选择服务商";
+"cost.exact" = "精确";
+"cost.estimated" = "估算";
+"cost.tokens_suffix" = "· %@ tokens";
+"cost.tokens_short_suffix" = "· %@";
+"cost.thirty_day_precise" = "30 天";
+"cost.tokens_value" = "%@ tokens";
+"cost.day_progress" = "%d/%d 天";
+"cost.by_model" = "按模型";
+"watch.unread_count" = "%d 条未读";
+"watch.snooze_15" = "15 分钟";
+"watch.snooze_30" = "30 分钟";
+"watch.snooze_60" = "1 小时";
+"widget.alerts_summary" = "%d 条告警 • CLI Pulse";
+"widget.percent_left" = "%@ 剩余 %d%%";
+"widget.quota_fallback" = "配额";
+"dashboard.pending_approval_count" = "%d 项待审批";
+"team.members_count" = "%d 位成员";
+"team.tokens_count" = "%d tokens";
+"team.error_loading" = "无法加载团队，请稍后重试。";
+"providers.quota_data_unavailable" = "配额数据不可用";
+"advanced.sync_just_now" = "刚刚同步";
+"advanced.sync_minutes_ago" = "%d 分钟前同步";
+"advanced.helper_running" = "运行中";
+"advanced.helper_not_running" = "未运行";
+"advanced.privacy_keys_title" = "服务商 API 密钥与 Cookie";
+"advanced.privacy_keys_detail" = "仅保存在 macOS 钥匙串 · 永不上传";
+"advanced.privacy_logs_title" = "会话日志 (~/.codex/sessions、~/.claude/projects)";
+"advanced.privacy_logs_detail" = "通过你授权的文件夹在本机扫描";
+"advanced.privacy_metrics_title" = "使用指标（token 数、成本、模型名）";
+"advanced.privacy_metrics_detail" = "同步到你的 CLI Pulse 账户，供 iPhone / Watch 使用";
+"advanced.privacy_email_title" = "登录邮箱";
+"advanced.privacy_email_detail" = "发送至认证后端用于登录";
+"onboarding_wizard.privacy_keys_title" = "API 密钥仅留在本机";
+"onboarding_wizard.privacy_keys_detail" = "服务商 API 密钥和会话 Cookie（OpenAI、Anthropic、Google 等）仅保存在 macOS 钥匙串中，用于直接调用对应服务，绝不会上传给我们。";
+"onboarding_wizard.privacy_logs_title" = "会话日志在本机扫描";
+"onboarding_wizard.privacy_logs_detail" = "CLI Pulse 在本机读取 ~/.codex/sessions/ 与 ~/.claude/projects/ 计算 token 数。文件内容绝不会离开你的设备。";
+"onboarding_wizard.privacy_metrics_title" = "使用指标会同步到你的账户";
+"onboarding_wizard.privacy_metrics_detail" = "Token 数、成本预估、模型名和日期会发送到你的 CLI Pulse 账户，让 iPhone 与 Apple Watch 看到相同的历史。";
+
+/* ── Apple 共享 PDF 报告 ── */
+"pdf.title" = "CLI Pulse 月度报告";
+"pdf.generated" = "生成时间：%@";
+"pdf.summary" = "概要";
+"pdf.today_usage" = "今日使用量";
+"pdf.today_estimated_cost" = "今日预估成本";
+"pdf.active_sessions" = "活跃会话";
+"pdf.online_devices" = "在线设备";
+"pdf.unresolved_alerts" = "未解决告警";
+"pdf.cost_forecast" = "成本预测";
+"pdf.month_end_estimate" = "月末预估";
+"pdf.spent_so_far" = "已花费";
+"pdf.confidence_range" = "置信区间";
+"pdf.progress" = "进度";
+"pdf.progress_value" = "%d/%d 天";
+"pdf.provider_breakdown" = "服务商明细";
+"pdf.h_provider" = "服务商";
+"pdf.h_week_usage" = "本周使用量";
+"pdf.h_est_cost" = "预估成本";
+"pdf.h_remaining" = "剩余";
+"pdf.h_quota" = "配额";
+"pdf.na" = "无";
+"pdf.top_sessions" = "成本最高会话";
+"pdf.h_project" = "项目";
+"pdf.h_cost" = "成本";
+"pdf.h_usage" = "使用量";
+"pdf.h_status" = "状态";
+"pdf.daily_trend" = "每日成本趋势（过去 30 天）";
+"pdf.footer" = "CLI Pulse v%@ • %@";
+
+/* ── 文件夹访问 ── */
+"folder_access.title" = "CLI 工具访问";
+"folder_access.intro" = "授予对 CLI 工具凭据目录的读取权限，使 CLI Pulse 能够追踪你的使用情况。";
+"folder_access.granted" = "已授权";
+"folder_access.not_installed" = "未安装";
+"folder_access.grant" = "授权";
+"folder_access.grant_all" = "一次性全部授权";
+"folder_access.rescan_title" = "重新扫描 token 缓存";
+"folder_access.rescan_detail" = "如果总数看起来不对，从头开始重建";
+"folder_access.force_rescan" = "强制重扫";
+"folder_access.panel_message" = "选择你的主目录，以授予 CLI Pulse 访问所有 CLI 工具凭据的权限";
+"folder_access.panel_prompt" = "授予访问";
+
+/* ── 订阅计费切换 ── */
+"subscription.billing" = "计费";

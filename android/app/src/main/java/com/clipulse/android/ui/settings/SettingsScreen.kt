@@ -449,7 +449,7 @@ private fun EditableSettingRow(label: String, currentValue: Int, onUpdate: (Int)
                 editing = false
                 textValue.toIntOrNull()?.let { onUpdate(it) }
             }) {
-                Icon(Icons.Filled.Check, contentDescription = "Save")
+                Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.save))
             }
         } else {
             TextButton(onClick = { editing = true }) {

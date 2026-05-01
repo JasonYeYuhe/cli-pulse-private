@@ -118,7 +118,7 @@ struct TeamView: View {
             teams = try await appState.api.myTeams()
             error = nil
         } catch {
-            self.error = "Unable to load teams. Please try again later."
+            self.error = L10n.team.errorLoading
         }
         isLoading = false
     }
@@ -227,8 +227,8 @@ private struct TeamDetailView: View {
 
             if let usage {
                 HStack(spacing: 16) {
-                    Label("\(usage.member_count) members", systemImage: "person.2")
-                    Label("\(usage.total_usage) tokens", systemImage: "chart.bar")
+                    Label(L10n.team.membersCount(usage.member_count), systemImage: "person.2")
+                    Label(L10n.team.tokensCount(usage.total_usage), systemImage: "chart.bar")
                     Label(String(format: "$%.2f", usage.total_cost), systemImage: "dollarsign.circle")
                 }
                 .font(.caption)

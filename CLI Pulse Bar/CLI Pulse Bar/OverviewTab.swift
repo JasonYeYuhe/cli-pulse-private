@@ -1,5 +1,8 @@
 import SwiftUI
 import CLIPulseCore
+#if canImport(AppKit)
+import AppKit
+#endif
 
 struct OverviewTab: View {
     @EnvironmentObject var state: AppState
@@ -132,7 +135,7 @@ struct OverviewTab: View {
                     #endif
                 }
             } label: {
-                Label("Export Cost Report", systemImage: "doc.text")
+                Label(L10n.dashboard.exportCostReport, systemImage: "doc.text")
             }
             Button {
                 if let url = ExportService.exportSessionsCSV(sessions: state.sessions) {
@@ -141,7 +144,7 @@ struct OverviewTab: View {
                     #endif
                 }
             } label: {
-                Label("Export Sessions", systemImage: "list.bullet")
+                Label(L10n.dashboard.exportSessions, systemImage: "list.bullet")
             }
             Button {
                 if let url = ExportService.exportProviderSummaryCSV(providers: providerState.providers) {
@@ -150,34 +153,65 @@ struct OverviewTab: View {
                     #endif
                 }
             } label: {
-                Label("Export Providers", systemImage: "chart.bar")
+                Label(L10n.dashboard.exportProviders, systemImage: "chart.bar")
             }
 
             Divider()
 
             #if canImport(PDFKit) && !os(watchOS)
             Button {
-                if let url = ExportService.exportPDFReport(
-                    dashboard: state.dashboard,
-                    providers: providerState.providers,
-                    sessions: state.sessions,
-                    dailyUsage: state.dailyUsage,
-                    costForecast: state.costForecast
-                ) {
-                    #if os(macOS)
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                    #endif
-                }
+                exportPDFReportWithSavePanel()
             } label: {
-                Label("Export PDF Report", systemImage: "doc.richtext")
+                Label(L10n.dashboard.exportPdf, systemImage: "doc.richtext")
             }
             #endif
         } label: {
             Image(systemName: "square.and.arrow.up")
                 .font(.system(size: 10))
         }
-        .accessibilityLabel("Export")
+        .accessibilityLabel(L10n.dashboard.export)
         .menuStyle(.borderlessButton)
+    }
+
+    /// iter23: present `NSSavePanel` defaulting to
+    /// `~/Downloads/cli-pulse-report-YYYY-MM-DD.pdf`. The panel's
+    /// security-scoped URL grants the App Store sandbox enough
+    /// access to write directly to the chosen Downloads location;
+    /// without it the iter22 fallback silently lands in
+    /// `~/Library/Containers/.../Data/tmp` which the user can't see
+    /// in Finder. `NSSavePanel` natively handles overwrite
+    /// confirmation, so we don't need our own collision logic in
+    /// the user-driven path.
+    private func exportPDFReportWithSavePanel() {
+        #if canImport(AppKit)
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        let dateString: String = {
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd"
+            return f.string(from: Date())
+        }()
+        panel.nameFieldStringValue = "cli-pulse-report-\(dateString).pdf"
+        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        panel.directoryURL = downloads
+        panel.canCreateDirectories = true
+        panel.title = L10n.dashboard.exportPdf
+
+        // .modal blocks until the user picks. Cancel → return early
+        // so we don't fall through to a silent temp write.
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        if let saved = ExportService.exportPDFReport(
+            dashboard: state.dashboard,
+            providers: providerState.providers,
+            sessions: state.sessions,
+            dailyUsage: state.dailyUsage,
+            costForecast: state.costForecast,
+            destinationURL: url
+        ) {
+            NSWorkspace.shared.activateFileViewerSelecting([saved])
+        }
+        #endif
     }
 
     private var refreshButton: some View {
@@ -247,7 +281,7 @@ struct OverviewTab: View {
             HStack {
                 SectionHeader(title: L10n.dashboard.costSummary, icon: "dollarsign.circle")
                 Spacer()
-                Text(providerState.costSummary.isPrecise ? "Exact" : "Estimated")
+                Text(providerState.costSummary.isPrecise ? L10n.cost.exact : L10n.cost.estimated)
                     .font(.system(size: 8, weight: .medium))
                     .foregroundStyle(providerState.costSummary.isPrecise ? .green : .orange)
                     .padding(.horizontal, 5)
@@ -266,14 +300,14 @@ struct OverviewTab: View {
                             .font(.system(size: 16, weight: .bold, design: .rounded))
                             .foregroundStyle(.green)
                         if providerState.costSummary.todayTokens > 0 {
-                            Text("· \(TokenFormatter.format(providerState.costSummary.todayTokens)) tokens")
+                            Text(L10n.cost.tokensSuffix(TokenFormatter.format(providerState.costSummary.todayTokens)))
                                 .font(.system(size: 9))
                                 .foregroundStyle(.tertiary)
                         }
                     }
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(providerState.costSummary.isPrecise ? "30 Day" : L10n.dashboard.thirtyDayEst)
+                    Text(providerState.costSummary.isPrecise ? L10n.cost.thirtyDayPrecise : L10n.dashboard.thirtyDayEst)
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -281,7 +315,7 @@ struct OverviewTab: View {
                             .font(.system(size: 16, weight: .bold, design: .rounded))
                             .foregroundStyle(.green)
                         if providerState.costSummary.thirtyDayTokens > 0 {
-                            Text("· \(TokenFormatter.format(providerState.costSummary.thirtyDayTokens)) tokens")
+                            Text(L10n.cost.tokensSuffix(TokenFormatter.format(providerState.costSummary.thirtyDayTokens)))
                                 .font(.system(size: 9))
                                 .foregroundStyle(.tertiary)
                         }
@@ -328,7 +362,7 @@ struct OverviewTab: View {
                     Image(systemName: "creditcard")
                         .font(.system(size: 9))
                         .foregroundStyle(.secondary)
-                    Text("Subscriptions")
+                    Text(L10n.dashboard.subscriptions)
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -357,7 +391,7 @@ struct OverviewTab: View {
                         Image(systemName: "chart.bar")
                             .font(.system(size: 9))
                             .foregroundStyle(.secondary)
-                        Text("Subscription Utilization")
+                        Text(L10n.dashboard.subscriptionUtilization)
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.secondary)
                         Spacer()
@@ -404,7 +438,7 @@ struct OverviewTab: View {
                 Divider().padding(.vertical, 2)
 
                 HStack {
-                    Text("Total Monthly")
+                    Text(L10n.dashboard.totalMonthly)
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -416,7 +450,7 @@ struct OverviewTab: View {
 
             // Model-level cost breakdown with bar chart
             if !providerState.costSummary.costByModel.isEmpty {
-                DisclosureGroup("By Model") {
+                DisclosureGroup(L10n.cost.byModel) {
                     let sorted = providerState.costSummary.costByModel.sorted { $0.cost > $1.cost }
                     let maxCost = sorted.first?.cost ?? 1
                     ForEach(sorted.prefix(10)) { item in
@@ -427,7 +461,7 @@ struct OverviewTab: View {
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                                 Spacer()
-                                Text("\(TokenFormatter.format(item.totalTokens)) tokens")
+                                Text(L10n.cost.tokensValue(TokenFormatter.format(item.totalTokens)))
                                     .font(.system(size: 8))
                                     .foregroundStyle(.tertiary)
                                 Text(CostFormatter.format(item.cost))
@@ -524,7 +558,7 @@ struct OverviewTab: View {
             }
             .frame(height: 4)
 
-            Text("\(forecast.currentDayOfMonth)/\(forecast.daysInMonth) days")
+            Text(L10n.cost.dayProgress(forecast.currentDayOfMonth, forecast.daysInMonth))
                 .font(.system(size: 8))
                 .foregroundStyle(.quaternary)
         }
@@ -555,7 +589,7 @@ struct OverviewTab: View {
             }
 
             if enabledProviders.isEmpty {
-                Text("No enabled providers with data")
+                Text(L10n.dashboard.noEnabledWithData)
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }

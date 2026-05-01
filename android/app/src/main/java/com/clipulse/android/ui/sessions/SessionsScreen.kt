@@ -45,7 +45,7 @@ fun SessionsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Text("Sessions", style = MaterialTheme.typography.headlineMedium)
+                Text(stringResource(R.string.screen_sessions), style = MaterialTheme.typography.headlineMedium)
                 Spacer(Modifier.height(8.dp))
             }
 
@@ -105,13 +105,13 @@ fun SessionCard(session: SessionRecord) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text("Usage: ${formatUsage(session.totalUsage)}", style = MaterialTheme.typography.bodySmall)
-                Text("Cost: ${formatCost(session.estimatedCost)}", style = MaterialTheme.typography.bodySmall)
-                Text("Req: ${session.requests}", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.card_usage_value, formatUsage(session.totalUsage)), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.card_cost_value, formatCost(session.estimatedCost)), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.card_requests_value, session.requests), style = MaterialTheme.typography.bodySmall)
             }
             if (session.deviceName.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
-                Text("Device: ${session.deviceName}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.card_device_value, session.deviceName), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

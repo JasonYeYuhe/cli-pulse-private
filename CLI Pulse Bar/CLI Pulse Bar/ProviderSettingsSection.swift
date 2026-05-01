@@ -19,7 +19,7 @@ struct ProviderSettingsSection: View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeader(title: "Provider Configuration", icon: "cpu")
 
-            Text("Configure data source, credentials, and display for each provider.")
+            Text(L10n.providers.configureHint)
                 .font(.system(size: 9))
                 .foregroundStyle(.tertiary)
 
@@ -44,11 +44,11 @@ struct ProviderSettingsSection: View {
                     .font(.system(size: 10, weight: .medium))
                     .lineLimit(1)
                 HStack(spacing: 4) {
-                    Text("Source: \(config.sourceMode.rawValue)")
+                    Text(L10n.providers.sourceLabel(config.sourceMode.rawValue))
                         .font(.system(size: 8))
                         .foregroundStyle(.quaternary)
                     if config.hasCredentials {
-                        Text("Key set")
+                        Text(L10n.providers.keySet)
                             .font(.system(size: 7, weight: .medium))
                             .foregroundStyle(.green)
                             .padding(.horizontal, 3)
@@ -57,7 +57,7 @@ struct ProviderSettingsSection: View {
                             .clipShape(Capsule())
                     }
                     if isLockedByTier {
-                        Text("Limited by free plan")
+                        Text(L10n.providers.limitedFree)
                             .font(.system(size: 7, weight: .medium))
                             .foregroundStyle(.orange)
                             .padding(.horizontal, 3)

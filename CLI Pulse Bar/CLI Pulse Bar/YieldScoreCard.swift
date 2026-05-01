@@ -35,14 +35,14 @@ struct YieldScoreCard: View {
         HStack(alignment: .center) {
             Image(systemName: "chart.bar.doc.horizontal")
                 .foregroundStyle(.purple)
-            Text("Yield Score")
+            Text(L10n.yield.title)
                 .font(.system(size: 13, weight: .semibold))
-            Text("· Estimated")
+            Text(L10n.yield.estimatedBadge)
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
-                .help("Cost is estimated from token usage when an exact API price isn't available.")
+                .help(L10n.yield.helpEstimated)
             Spacer()
-            Picker("Range", selection: $state.yieldScoreRange) {
+            Picker(L10n.yield.rangePicker, selection: $state.yieldScoreRange) {
                 ForEach(YieldScoreRange.allCases) { range in
                     Text(range.label).tag(range)
                 }
@@ -59,10 +59,10 @@ struct YieldScoreCard: View {
 
     private var disabledView: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Track AI cost per commit to see your yield score.")
+            Text(L10n.yield.emptyBody)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-            Text("Enable in Settings → Privacy → Track git activity.")
+            Text(L10n.yield.emptyEnableHint)
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
         }
@@ -70,7 +70,7 @@ struct YieldScoreCard: View {
     }
 
     private var emptyView: some View {
-        Text("0 commits attributed in this window. Try writing some code in a tracked repo.")
+        Text(L10n.yield.emptyNoAttribution)
             .font(.system(size: 12))
             .foregroundStyle(.secondary)
             .padding(.vertical, 4)
@@ -88,7 +88,7 @@ struct YieldScoreCard: View {
         NavigationLink(destination: YieldScoreDetailView()) {
             HStack {
                 Spacer()
-                Text("View detail")
+                Text(L10n.yield.viewDetail)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.purple)
                 Image(systemName: "chevron.right")
@@ -138,11 +138,11 @@ struct YieldScoreCard: View {
         let cost = String(format: "$%.2f", s.totalCost)
         let commits: String
         if s.weightedCommits > 0 && abs(s.weightedCommits - Double(s.rawCommits)) < 0.01 {
-            commits = "\(s.rawCommits) commits"
+            commits = L10n.yield.commitsCount(s.rawCommits)
         } else if s.weightedCommits > 0 {
-            commits = String(format: "%.1f commits", s.weightedCommits)
+            commits = L10n.yield.commitsCountDecimal(s.weightedCommits)
         } else {
-            commits = "0 commits"
+            commits = L10n.yield.commitsCount(0)
         }
         return "\(cost) → \(commits)"
     }
@@ -179,9 +179,9 @@ struct YieldScoreDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Yield Score Detail")
+                Text(L10n.yield.detailTitle)
                     .font(.title2.bold())
-                Text("\(state.yieldScoreRange.label) · ranked by cost per commit (lower is better)")
+                Text(L10n.yield.detailSubtitle(state.yieldScoreRange.label))
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -189,7 +189,7 @@ struct YieldScoreDetailView: View {
                     summaryCard(summary)
                 }
 
-                Text("Cost is estimated from token usage when an exact API price isn't available. Merge commits are excluded from attribution.")
+                Text(L10n.yield.detailBody)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .padding(.top, 12)
@@ -209,16 +209,16 @@ struct YieldScoreDetailView: View {
                         .font(.system(.body, design: .monospaced))
                         .foregroundStyle(.purple)
                 } else {
-                    Text("no commits")
+                    Text(L10n.yield.noCommits)
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }
             }
             HStack(spacing: 16) {
                 Label(String(format: "$%.2f", s.totalCost), systemImage: "dollarsign.circle")
-                Label("\(s.rawCommits) commits", systemImage: "checkmark.circle")
+                Label(L10n.yield.commitsCount(s.rawCommits), systemImage: "checkmark.circle")
                 if s.ambiguousCommits > 0 {
-                    Label("\(s.ambiguousCommits) ambiguous", systemImage: "questionmark.circle")
+                    Label(L10n.yield.ambiguousCount(s.ambiguousCommits), systemImage: "questionmark.circle")
                         .foregroundStyle(.orange)
                 }
             }

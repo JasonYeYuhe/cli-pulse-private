@@ -51,7 +51,7 @@ struct WatchAlertsView: View {
                         Text(L10n.alerts.open)
                         Spacer()
                         if unreadCount > 0 {
-                            Text("\(unreadCount) unread")
+                            Text(L10n.watch.unreadCount(unreadCount))
                                 .font(.caption2.weight(.bold))
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 6)
@@ -239,13 +239,13 @@ struct WatchAlertDetailView: View {
 
                     NavigationLink {
                         List {
-                            Button("15 minutes") {
+                            Button(L10n.watch.snooze15) {
                                 Task { await state.snoozeAlert(alert, minutes: 15) }
                             }
-                            Button("30 minutes") {
+                            Button(L10n.watch.snooze30) {
                                 Task { await state.snoozeAlert(alert, minutes: 30) }
                             }
-                            Button("1 hour") {
+                            Button(L10n.watch.snooze60) {
                                 Task { await state.snoozeAlert(alert, minutes: 60) }
                             }
                         }

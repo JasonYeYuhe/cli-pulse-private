@@ -77,7 +77,7 @@ public struct SubscriptionView: View {
     // MARK: - Billing Toggle
 
     private var billingToggle: some View {
-        Picker("Billing", selection: $isYearly) {
+        Picker(L10n.subscription.billing, selection: $isYearly) {
             Text(L10n.subscription.monthly).tag(false)
             Text(L10n.subscription.yearlySave).tag(true)
         }

@@ -92,9 +92,9 @@ struct GeneralSection: View {
 
             Toggle(isOn: $state.showCost) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Show cost summary")
+                    Text(L10n.settings.showCostSummary)
                         .font(.system(size: 11))
-                    Text("Display today + 30 day spend estimates")
+                    Text(L10n.settings.showCostSummaryHint)
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                 }
@@ -106,7 +106,7 @@ struct GeneralSection: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(L10n.settings.checkProviderStatus)
                         .font(.system(size: 11))
-                    Text("Auto-poll provider status pages")
+                    Text(L10n.settings.autoPollStatus)
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                 }
@@ -214,9 +214,9 @@ struct GeneralSection: View {
 
     private var alertThresholdRow: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Quota alert thresholds")
+            Text(L10n.settings.quotaAlertThresholds)
                 .font(.system(size: 11, weight: .medium))
-            Text("Fire a warning when a provider quota crosses these percentages.")
+            Text(L10n.settings.quotaAlertThresholdsHint)
                 .font(.system(size: 9))
                 .foregroundStyle(.tertiary)
 
@@ -230,7 +230,7 @@ struct GeneralSection: View {
                         AlertThresholdsStore.save(alertThresholds)
                     }
                 ), in: AlertThresholds.warningRange, step: 5) {
-                    Text("Warning: \(alertThresholds.warning)%")
+                    Text(L10n.settings.warningPct(alertThresholds.warning))
                         .font(.system(size: 10))
                         .monospacedDigit()
                 }
@@ -245,14 +245,14 @@ struct GeneralSection: View {
                         AlertThresholdsStore.save(alertThresholds)
                     }
                 ), in: (alertThresholds.warning + 1)...AlertThresholds.criticalUpperBound, step: 5) {
-                    Text("Critical: \(alertThresholds.critical)%")
+                    Text(L10n.settings.criticalPct(alertThresholds.critical))
                         .font(.system(size: 10))
                         .monospacedDigit()
                 }
                 .controlSize(.small)
 
                 if alertThresholds != .defaults {
-                    Button("Reset") {
+                    Button(L10n.settings.reset) {
                         alertThresholds = .defaults
                         AlertThresholdsStore.save(.defaults)
                     }

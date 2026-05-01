@@ -288,6 +288,7 @@
 "status.operational" = "Operational";
 "status.down" = "Down";
 "status.disabled" = "Disabled";
+"status.ended" = "Ended";
 
 /* ── Badges ── */
 "badge.free" = "FREE";
@@ -412,3 +413,288 @@
 "account.delete_failed_title" = "Couldn't Delete Account";
 "account.delete_failed_generic" = "We couldn't delete your account. Your account is still active. Please check your connection and try again, or sign out and sign back in to refresh your session.";
 "account.delete_session_expired" = "Your session expired before we could delete your account. Your account is still active — please sign in again, then try Delete Account from Settings.";
+
+/* ── Provider Configuration Editor ── */
+"provider_config.data_source" = "Data source";
+"provider_config.account_label" = "Account label";
+"provider_config.account_placeholder" = "e.g. team-A, dev-box";
+"provider_config.api_key" = "API key";
+"provider_config.show_key" = "Show key";
+"provider_config.hide_key" = "Hide key";
+"provider_config.keychain_notice" = "Stored only in your Mac Keychain. Never uploaded.";
+"provider_config.cookie_source" = "Cookie source";
+"provider_config.manual_cookie_header" = "Manual cookie header";
+"provider_config.capabilities" = "Capabilities";
+"provider_config.cap_quota" = "Quota";
+"provider_config.cap_exact_cost" = "Exact cost";
+"provider_config.cap_credits" = "Credits";
+"provider_config.cap_status_poll" = "Status poll";
+"provider_config.requires_helper_sync" = "Quota/tier data requires backend helper sync.";
+"provider_config.google_oauth" = "Google OAuth";
+"provider_config.disconnect" = "Disconnect";
+"provider_config.connect_gemini" = "Connect Gemini";
+"provider_config.gemini_uses_google" = "Uses your Google account. No API key needed.";
+"provider_config.claude_code" = "Claude Code";
+"provider_config.connect_claude_code" = "Connect Claude Code";
+"provider_config.claude_keychain_hint" = "Reads your existing Claude Code login. macOS will ask once for permission — tap Always Allow.";
+"provider_config.claude_read_failed" = "Couldn't read Claude Code credentials. If you denied the prompt, try again or install/open Claude Code first.";
+"provider_config.test_connection" = "Test connection";
+"provider_config.testing" = "Testing…";
+
+/* ── Onboarding Wizard (macOS first-launch flow; distinct from `onboarding.*` which is iOS sync setup) ── */
+"onboarding_wizard.welcome_title" = "Welcome to CLI Pulse";
+"onboarding_wizard.welcome_subtitle" = "Monitor your AI coding tool usage,\ncosts, and quotas in one place.";
+"onboarding_wizard.get_started" = "Get Started";
+"onboarding_wizard.what_does" = "What CLI Pulse does";
+"onboarding_wizard.continue" = "Continue";
+"onboarding_wizard.back" = "Back";
+"onboarding_wizard.privacy_title" = "Your data, your control";
+"onboarding_wizard.privacy_body" = "Here's exactly what stays on your Mac and what syncs to your account.";
+"onboarding_wizard.sign_in_title" = "Sign In";
+"onboarding_wizard.sign_in_subtitle" = "Sign in to sync your data — we'll create your account on first verify.";
+"onboarding_wizard.skip" = "Skip for now";
+"onboarding_wizard.code_sent_to" = "Code sent to %@";
+"onboarding_wizard.verify" = "Verify";
+"onboarding_wizard.back_to_email" = "Back to email";
+"onboarding_wizard.all_set_title" = "You're All Set";
+"onboarding_wizard.all_set_body" = "Sync runs automatically while the Mac app is running. Sign in to any other device with the same account and your usage data appears there too — no pairing or setup needed.";
+"onboarding_wizard.helper_hint" = "Looking for the optional helper for headless servers or Claude Remote Approvals? Open Settings → Helper after onboarding.";
+"onboarding_wizard.done" = "Done";
+"onboarding_wizard.close" = "Close onboarding";
+
+/* ── Advanced section ── */
+"advanced.launch_at_login" = "Launch at login";
+"advanced.background_sync" = "Enable background sync";
+"advanced.background_sync_hint" = "Syncs usage data to cloud for iOS/Watch/Android";
+"advanced.full_details" = "Full details:";
+"advanced.hide_emails" = "Hide email addresses in the UI";
+"advanced.track_git" = "Track git activity (Yield Score)";
+"advanced.track_git_hint" = "Hashed commit metadata only — no message, diff, or path uploaded";
+"advanced.git_consent_title" = "Enable git activity tracking?";
+"advanced.enable" = "Enable";
+"advanced.git_consent_body" = "CLI Pulse will scan git logs in projects where AI sessions are active. Only the commit hash, an HMAC of the project path, the commit timestamp, and a merge-commit flag leave your device. Commit messages, diffs, file paths, and author identity are never uploaded.";
+"advanced.remote_control" = "Remote Control (Phase 1: Claude approvals)";
+"advanced.remote_control_hint" = "Approve Claude tool calls from your iPhone or Mac · default off";
+"advanced.remote_consent_title" = "Enable Remote Control?";
+"advanced.token" = "Token";
+"advanced.providers_loaded" = "Providers loaded";
+"advanced.last_refresh" = "Last refresh";
+"advanced.never" = "Never";
+
+/* ── Remote Approvals (macOS sheet + iOS view) ── */
+"remote_approvals.title" = "Remote Approvals";
+"remote_approvals.disabled_hint" = "Disabled · Settings → Privacy";
+"remote_approvals.refresh" = "Refresh";
+"remote_approvals.close" = "Close";
+"remote_approvals.off_title" = "Remote Control is off";
+"remote_approvals.off_body_mac" = "Turn on Remote Control in Settings → Privacy to approve Claude tool calls from your iPhone or Mac. CLI Pulse only uploads a redacted summary, never your transcripts or API keys.";
+"remote_approvals.off_body_ios" = "Turn on Remote Control in Settings → Privacy to approve Claude tool calls running on your Mac. CLI Pulse only uploads a redacted summary, never your transcripts or API keys.";
+"remote_approvals.open_settings" = "Open Settings";
+"remote_approvals.no_pending" = "No pending approvals";
+"remote_approvals.updated_prefix" = "Updated ";
+"remote_approvals.per_request_note_mac" = "Approve here is per-request only — it does NOT add a Claude Code Always-Allow rule. The next time Claude needs the same tool, you'll see another request. Use Claude Code's own Always Allow for persistent rules.";
+"remote_approvals.per_request_note_ios" = "Approve is per-request only — it does NOT create a Claude Code Always-Allow rule. The next time Claude needs the same tool you'll see another request here. To set persistent rules, use Claude Code's own \"Always Allow\" UI on the Mac. Approving executes the tool call on your Mac.";
+"remote_approvals.deny" = "Deny";
+"remote_approvals.approve" = "Approve";
+"remote_approvals.high_risk_warning" = "High risk — approve locally on the Mac instead.";
+
+/* ── Yield Score Card ── */
+"yield.title" = "Yield Score";
+"yield.help_estimated" = "Cost is estimated from token usage when an exact API price isn't available.";
+"yield.empty_body" = "Track AI cost per commit to see your yield score.";
+"yield.empty_enable_hint" = "Enable in Settings → Privacy → Track git activity.";
+"yield.view_detail" = "View detail";
+"yield.detail_title" = "Yield Score Detail";
+"yield.detail_body" = "Cost is estimated from token usage when an exact API price isn't available. Merge commits are excluded from attribution.";
+
+/* ── Overview / dashboard additions ── */
+"dashboard.export_cost_report" = "Export Cost Report";
+"dashboard.export_sessions" = "Export Sessions";
+"dashboard.export_providers" = "Export Providers";
+"dashboard.export_pdf" = "Export PDF Report";
+"dashboard.export" = "Export";
+"dashboard.subscriptions" = "Subscriptions";
+"dashboard.subscription_utilization" = "Subscription Utilization";
+"dashboard.total_monthly" = "Total Monthly";
+"dashboard.no_enabled_with_data" = "No enabled providers with data";
+"dashboard.tap_review_claude" = "Tap to review Claude tool calls running on your Mac";
+
+/* ── Settings additions ── */
+"settings.show_cost_summary" = "Show cost summary";
+"settings.show_cost_summary_hint" = "Display today + 30 day spend estimates";
+"settings.auto_poll_status" = "Auto-poll provider status pages";
+"settings.quota_alert_thresholds" = "Quota alert thresholds";
+"settings.quota_alert_thresholds_hint" = "Fire a warning when a provider quota crosses these percentages.";
+"settings.warning_pct" = "Warning: %d%%";
+"settings.critical_pct" = "Critical: %d%%";
+"settings.warning_threshold_pct" = "Warning threshold: %d%%";
+"settings.critical_threshold_pct" = "Critical threshold: %d%%";
+"settings.reset_thresholds_defaults" = "Reset thresholds to defaults";
+"settings.reset" = "Reset";
+"settings.privacy" = "Privacy";
+"settings.test_webhook" = "Test Webhook";
+"settings.remote_control" = "Remote Control";
+"settings.remote_control_iphone_hint" = "Approve Claude tool calls from this iPhone";
+"settings.pending_approvals" = "Pending Approvals";
+"settings.privacy_redacted_hint" = "CLI Pulse uploads only a redacted summary of each request — never API keys, cookies, or full transcripts.";
+
+/* ── Display Mode additions ── */
+"display.mode" = "Display mode";
+"display.merge_menu_bar_icons" = "Merge menu bar icons";
+"display.merge_menu_bar_hint" = "Single icon with provider switcher";
+"display.content_mode" = "Content mode";
+"display.reorder_hint" = "Select which providers to show in the Overview tab. Drag to reorder.";
+
+/* ── Subscription additions ── */
+"subscription.loading_plans" = "Loading plans…";
+"subscription.unavailable" = "Subscription plans are not available at this time.";
+"subscription.retry" = "Retry";
+"subscription.view_all_plans" = "View all plans & details";
+
+/* ── Provider settings + Providers tab additions ── */
+"providers.configure_hint" = "Configure data source, credentials, and display for each provider.";
+"providers.source_label" = "Source: %@";
+"providers.key_set" = "Key set";
+"providers.limited_free" = "Limited by free plan";
+"providers.disabled_badge" = "DISABLED";
+"providers.grant_access_title" = "Grant access to see token counts and cost";
+"providers.grant_access_body" = "CLI Pulse needs read access to ~/.codex/sessions/ and ~/.claude/projects/";
+"providers.open_settings" = "Open Settings";
+
+/* ── Menu bar additions ── */
+"menu_bar.tier_migration" = "Kept your %d most-used providers to fit the free plan. Disabled %d — edit in Settings → Providers.";
+"menu_bar.edit" = "Edit";
+"menu_bar.app_version" = "CLI Pulse v%@";
+"menu_bar.quit" = "Quit CLI Pulse";
+
+/* ── Pairing / Helper ── */
+"pairing.helper_intro" = "The background helper syncs your usage data to the cloud so you can see it on iOS, Watch, and Android.";
+"pairing.set_up_helper" = "Set Up Background Helper";
+"pairing.manual_setup" = "Manual setup (Terminal)";
+"pairing.your_code" = "Your code:";
+"pairing.copy" = "Copy to clipboard";
+
+/* ── Watch + Widget additions ── */
+"watch.couldnt_load_data" = "Couldn't load data";
+"watch.couldnt_load_providers" = "Couldn't load providers";
+"watch.retry" = "Retry";
+"watch.pull_to_refresh" = "Pull to refresh";
+"widget.sign_in_to_view" = "Sign in to view usage";
+
+/* ── Common additions ── */
+"common.retry" = "Retry";
+"common.close" = "Close";
+"common.disconnect" = "Disconnect";
+
+/* ── Language switcher (iter22) ── */
+"language.title" = "Language";
+"language.system_default" = "System Default";
+
+/* ── Remote Approvals i18n leftovers (director review) ── */
+"remote_approvals.pending_count" = "%d pending";
+"remote_approvals.entry_label_none" = "Open Remote Approvals (none pending)";
+"remote_approvals.entry_label_with_count" = "Open Remote Approvals (%d pending)";
+"remote_approvals.entry_help_none" = "Open Remote Approvals — currently no pending requests";
+"remote_approvals.entry_help_with_count" = "%d pending Remote Approvals";
+"remote_approvals.unknown_tool" = "Unknown tool";
+"remote_approvals.no_summary" = "(no summary)";
+"remote_approvals.expires" = "expires %@";
+
+/* ── Other director-review leftovers ── */
+"alerts.resolve_all" = "Resolve All";
+"yield.no_commits" = "no commits";
+"yield.estimated_badge" = "· Estimated";
+"yield.range_picker" = "Range";
+"yield.empty_no_attribution" = "0 commits attributed in this window. Try writing some code in a tracked repo.";
+"yield.detail_subtitle" = "%@ · ranked by cost per commit (lower is better)";
+"yield.commits_count" = "%d commits";
+"yield.commits_count_decimal" = "%.1f commits";
+"yield.ambiguous_count" = "%d ambiguous";
+"menu_bar.quit_full" = "Quit CLI Pulse Bar";
+
+/* ── iter22 broader sweep ── */
+"common.no_provider_selected" = "No provider selected";
+"cost.exact" = "Exact";
+"cost.estimated" = "Estimated";
+"cost.tokens_suffix" = "· %@ tokens";
+"cost.tokens_short_suffix" = "· %@";
+"cost.thirty_day_precise" = "30 Day";
+"cost.tokens_value" = "%@ tokens";
+"cost.day_progress" = "%d/%d days";
+"cost.by_model" = "By Model";
+"watch.unread_count" = "%d unread";
+"watch.snooze_15" = "15 minutes";
+"watch.snooze_30" = "30 minutes";
+"watch.snooze_60" = "1 hour";
+"widget.alerts_summary" = "%d alerts • CLI Pulse";
+"widget.percent_left" = "%@ %d%% left";
+"widget.quota_fallback" = "Quota";
+"dashboard.pending_approval_count" = "%d pending approvals";
+"team.members_count" = "%d members";
+"team.tokens_count" = "%d tokens";
+"team.error_loading" = "Unable to load teams. Please try again later.";
+"providers.quota_data_unavailable" = "Quota data unavailable";
+"advanced.sync_just_now" = "Synced just now";
+"advanced.sync_minutes_ago" = "Synced %dm ago";
+"advanced.helper_running" = "Running";
+"advanced.helper_not_running" = "Not running";
+"advanced.privacy_keys_title" = "Provider API keys & cookies";
+"advanced.privacy_keys_detail" = "Stored only in macOS Keychain · never uploaded";
+"advanced.privacy_logs_title" = "Session logs (~/.codex/sessions, ~/.claude/projects)";
+"advanced.privacy_logs_detail" = "Scanned on-device via the folders you grant above";
+"advanced.privacy_metrics_title" = "Usage metrics (token counts, cost, model names)";
+"advanced.privacy_metrics_detail" = "Synced to your CLI Pulse account for iPhone / Watch";
+"advanced.privacy_email_title" = "Your login email";
+"advanced.privacy_email_detail" = "Sent to our auth backend so you can sign in";
+"onboarding_wizard.privacy_keys_title" = "API keys stay on this Mac";
+"onboarding_wizard.privacy_keys_detail" = "Provider API keys and session cookies (OpenAI, Anthropic, Google, etc.) live only in your macOS Keychain. They're used to call those providers directly — never uploaded to us.";
+"onboarding_wizard.privacy_logs_title" = "Session logs scanned on-device";
+"onboarding_wizard.privacy_logs_detail" = "CLI Pulse reads ~/.codex/sessions/ and ~/.claude/projects/ locally to compute token counts. File contents never leave your device.";
+"onboarding_wizard.privacy_metrics_title" = "Usage metrics sync with your account";
+"onboarding_wizard.privacy_metrics_detail" = "Token counts, cost estimates, model names, and dates are sent to your CLI Pulse account so iPhone and Apple Watch can show the same history.";
+
+/* ── Apple shared PDF report (CLIPulseCore) ── */
+"pdf.title" = "CLI Pulse Monthly Report";
+"pdf.generated" = "Generated: %@";
+"pdf.summary" = "Summary";
+"pdf.today_usage" = "Today's Usage";
+"pdf.today_estimated_cost" = "Today's Estimated Cost";
+"pdf.active_sessions" = "Active Sessions";
+"pdf.online_devices" = "Online Devices";
+"pdf.unresolved_alerts" = "Unresolved Alerts";
+"pdf.cost_forecast" = "Cost Forecast";
+"pdf.month_end_estimate" = "Month-End Estimate";
+"pdf.spent_so_far" = "Spent So Far";
+"pdf.confidence_range" = "Confidence Range";
+"pdf.progress" = "Progress";
+"pdf.progress_value" = "%d/%d days";
+"pdf.provider_breakdown" = "Provider Breakdown";
+"pdf.h_provider" = "Provider";
+"pdf.h_week_usage" = "Week Usage";
+"pdf.h_est_cost" = "Est. Cost";
+"pdf.h_remaining" = "Remaining";
+"pdf.h_quota" = "Quota";
+"pdf.na" = "N/A";
+"pdf.top_sessions" = "Top Sessions by Cost";
+"pdf.h_project" = "Project";
+"pdf.h_cost" = "Cost";
+"pdf.h_usage" = "Usage";
+"pdf.h_status" = "Status";
+"pdf.daily_trend" = "Daily Cost Trend (Last 30 Days)";
+"pdf.footer" = "CLI Pulse v%@ • %@";
+
+/* ── Folder access (CLIPulseCore FolderAccessView) ── */
+"folder_access.title" = "CLI Tool Access";
+"folder_access.intro" = "Grant read access to CLI tool credential directories so CLI Pulse can track your usage.";
+"folder_access.granted" = "Granted";
+"folder_access.not_installed" = "Not installed";
+"folder_access.grant" = "Grant";
+"folder_access.grant_all" = "Grant All at Once";
+"folder_access.rescan_title" = "Rescan token cache";
+"folder_access.rescan_detail" = "Rebuild from scratch if totals look wrong";
+"folder_access.force_rescan" = "Force Rescan";
+"folder_access.panel_message" = "Select your home folder to grant CLI Pulse access to all CLI tool credentials";
+"folder_access.panel_prompt" = "Grant Access";
+
+/* ── Subscription billing picker ── */
+"subscription.billing" = "Billing";

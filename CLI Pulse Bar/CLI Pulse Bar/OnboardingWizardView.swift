@@ -87,8 +87,8 @@ struct OnboardingWizardView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Close onboarding")
-            .accessibilityLabel("Close onboarding")
+            .help(L10n.onboardingWizard.close)
+            .accessibilityLabel(L10n.onboardingWizard.close)
             .padding(.top, 6)
             .padding(.trailing, 8)
         }
@@ -119,10 +119,10 @@ struct OnboardingWizardView: View {
                 .font(.system(size: 40))
                 .foregroundStyle(PulseTheme.accent)
 
-            Text("Welcome to CLI Pulse")
+            Text(L10n.onboardingWizard.welcomeTitle)
                 .font(.title2.weight(.semibold))
 
-            Text("Monitor your AI coding tool usage,\ncosts, and quotas in one place.")
+            Text(L10n.onboardingWizard.welcomeSubtitle)
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -132,7 +132,7 @@ struct OnboardingWizardView: View {
             Button {
                 step = 1
             } label: {
-                Text("Get Started")
+                Text(L10n.onboardingWizard.getStarted)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
@@ -148,7 +148,7 @@ struct OnboardingWizardView: View {
 
     private var featuresStep: some View {
         VStack(spacing: 12) {
-            Text("What CLI Pulse does")
+            Text(L10n.onboardingWizard.whatDoes)
                 .font(.headline)
                 .padding(.top, 12)
 
@@ -169,13 +169,13 @@ struct OnboardingWizardView: View {
             Spacer()
 
             HStack(spacing: 12) {
-                Button("Back") { step = 0 }
+                Button(L10n.onboardingWizard.back) { step = 0 }
                     .buttonStyle(.bordered)
 
                 Button {
                     step = 2
                 } label: {
-                    Text("Continue")
+                    Text(L10n.onboardingWizard.continue)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -190,11 +190,11 @@ struct OnboardingWizardView: View {
 
     private var privacyStep: some View {
         VStack(spacing: 12) {
-            Text("Your data, your control")
+            Text(L10n.onboardingWizard.privacyTitle)
                 .font(.headline)
                 .padding(.top, 12)
 
-            Text("Here's exactly what stays on your Mac and what syncs to your account.")
+            Text(L10n.onboardingWizard.privacyBody)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -205,20 +205,20 @@ struct OnboardingWizardView: View {
                     onboardingPrivacyCard(
                         icon: "lock.fill",
                         color: .green,
-                        title: "API keys stay on this Mac",
-                        detail: "Provider API keys and session cookies (OpenAI, Anthropic, Google, etc.) live only in your macOS Keychain. They're used to call those providers directly — never uploaded to us."
+                        title: L10n.onboardingWizard.privacyKeysTitle,
+                        detail: L10n.onboardingWizard.privacyKeysDetail
                     )
                     onboardingPrivacyCard(
                         icon: "internaldrive.fill",
                         color: .green,
-                        title: "Session logs scanned on-device",
-                        detail: "CLI Pulse reads ~/.codex/sessions/ and ~/.claude/projects/ locally to compute token counts. File contents never leave your device."
+                        title: L10n.onboardingWizard.privacyLogsTitle,
+                        detail: L10n.onboardingWizard.privacyLogsDetail
                     )
                     onboardingPrivacyCard(
                         icon: "icloud.and.arrow.up.fill",
                         color: .blue,
-                        title: "Usage metrics sync with your account",
-                        detail: "Token counts, cost estimates, model names, and dates are sent to your CLI Pulse account so iPhone and Apple Watch can show the same history."
+                        title: L10n.onboardingWizard.privacyMetricsTitle,
+                        detail: L10n.onboardingWizard.privacyMetricsDetail
                     )
                 }
                 .padding(.horizontal, 16)
@@ -227,13 +227,13 @@ struct OnboardingWizardView: View {
             Spacer()
 
             HStack(spacing: 12) {
-                Button("Back") { step = 1 }
+                Button(L10n.onboardingWizard.back) { step = 1 }
                     .buttonStyle(.bordered)
 
                 Button {
                     step = 3
                 } label: {
-                    Text("Continue")
+                    Text(L10n.onboardingWizard.continue)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -269,7 +269,7 @@ struct OnboardingWizardView: View {
 
     private var signInStep: some View {
         VStack(spacing: 12) {
-            Text("Sign In")
+            Text(L10n.onboardingWizard.signInTitle)
                 .font(.headline)
                 .padding(.top, 12)
 
@@ -278,7 +278,7 @@ struct OnboardingWizardView: View {
             // `sendOTP` runs with `create_user: true`, so the first
             // OTP-verify auto-creates the account. Tell the user that
             // honestly instead of pretending there are two paths.
-            Text("Sign in to sync your data — we'll create your account on first verify.")
+            Text(L10n.onboardingWizard.signInSubtitle)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -324,11 +324,11 @@ struct OnboardingWizardView: View {
             // mode (`refreshLocal`) handles unauthenticated collectors,
             // so this is a graceful exit, not a broken state.
             HStack(spacing: 12) {
-                Button("Back") { step = 2 }
+                Button(L10n.onboardingWizard.back) { step = 2 }
                     .buttonStyle(.bordered)
                     .disabled(state.isLoading)
 
-                Button("Skip for now") {
+                Button(L10n.onboardingWizard.skip) {
                     onboardingCompleted = true
                 }
                 .buttonStyle(.bordered)
@@ -408,7 +408,7 @@ struct OnboardingWizardView: View {
 
     private var otpVerifyForm: some View {
         VStack(spacing: 8) {
-            Text("Code sent to \(state.otpEmail)")
+            Text(L10n.onboardingWizard.codeSentTo(state.otpEmail))
                 .font(.caption)
                 .foregroundStyle(.green)
 
@@ -419,14 +419,14 @@ struct OnboardingWizardView: View {
             Button {
                 Task { await state.verifyOTP(code: otpCode) }
             } label: {
-                Text("Verify")
+                Text(L10n.onboardingWizard.verify)
                     .frame(width: 200)
             }
             .buttonStyle(.borderedProminent)
             .tint(PulseTheme.accent)
             .disabled(otpCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-            Button("Back to email") {
+            Button(L10n.onboardingWizard.backToEmail) {
                 otpCode = ""
                 password = ""
                 state.resetOTP()
@@ -463,7 +463,7 @@ struct OnboardingWizardView: View {
 
     private var pairStep: some View {
         VStack(spacing: 12) {
-            Text("You're All Set")
+            Text(L10n.onboardingWizard.allSetTitle)
                 .font(.headline)
                 .padding(.top, 12)
 
@@ -471,7 +471,7 @@ struct OnboardingWizardView: View {
                 .font(.system(size: 30))
                 .foregroundStyle(.green)
 
-            Text("Sync runs automatically while the Mac app is running. Sign in to any other device with the same account and your usage data appears there too — no pairing or setup needed.")
+            Text(L10n.onboardingWizard.allSetBody)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -480,7 +480,7 @@ struct OnboardingWizardView: View {
             // Optional-helper hint as a low-key footnote. Don't bury it
             // (some users genuinely want headless / Remote-Approvals
             // setups) but don't lead with it either.
-            Text("Looking for the optional helper for headless servers or Claude Remote Approvals? Open Settings → Helper after onboarding.")
+            Text(L10n.onboardingWizard.helperHint)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
@@ -492,7 +492,7 @@ struct OnboardingWizardView: View {
             Button {
                 onboardingCompleted = true
             } label: {
-                Text("Done")
+                Text(L10n.onboardingWizard.done)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)

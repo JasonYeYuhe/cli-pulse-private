@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let scanLogger = Logger(subsystem: "com.clipulse", category: "CostUsageScanner")
 
 // MARK: - Scan Result (available on all platforms for model compatibility)
 
@@ -838,6 +841,12 @@ public enum CostUsageScanner {
                 files.append(fileURL)
             }
         }
+        // iter22: surface scan visibility per refresh tick. Helps the
+        // user diagnose "Sessions tab is empty while Codex is open"
+        // without stepping through a debugger. Also logs whether the
+        // scan was skipped via cache-cooldown so a cold-start that
+        // returns 0 candidates can be distinguished from a noop.
+        scanLogger.info("scanCodexProvider: roots=\(roots.count) files_in_range=\(files.count) refreshing=\(shouldRefresh) range=\(range.scanSinceKey)..\(range.scanUntilKey)")
         let filePathsInScan = Set(files.map(\.path))
 
         if shouldRefresh {
@@ -1120,21 +1129,37 @@ public enum CostUsageScanner {
         let cutoff = now.addingTimeInterval(-activeSessionFreshnessWindow)
         var seen: Set<String> = []
         var candidates: [CostUsageScanResult.ActiveSessionCandidate] = []
-        for root in codexSessionsRoots(options: options) {
-            for url in listCodexSessionFiles(root: root, scanSinceKey: range.scanSinceKey, scanUntilKey: range.scanUntilKey) {
+        let roots = codexSessionsRoots(options: options)
+        var totalFilesSeen = 0
+        var freshFilesSeen = 0
+        for root in roots {
+            let files = listCodexSessionFiles(root: root, scanSinceKey: range.scanSinceKey, scanUntilKey: range.scanUntilKey)
+            totalFilesSeen += files.count
+            for url in files {
                 let path = url.path
                 guard !seen.contains(path) else { continue }
                 seen.insert(path)
                 guard let mtime = fileModificationDate(at: path), mtime >= cutoff else { continue }
+                freshFilesSeen += 1
                 let usage = cache.files[path]
                 let totals = sumCodexTotals(usage: usage)
                 let cost = computeCodexCost(usage: usage)
-                let sessionId = usage?.sessionId
+                // iter22: read session_meta directly so the candidate
+                // gets a real project label even when the cache has
+                // already populated `sessionId` from a prior tick.
+                // The cache deliberately doesn't store `cwd` (would
+                // require a schema bump), so we always do this small
+                // read when the file is fresh — bounded I/O because
+                // only candidates within 5 minutes hit this path.
+                let metaFromFile = readCodexSessionMeta(fileURL: url)
+                let sessionId = usage?.sessionId ?? metaFromFile?.sessionId
+                let projectName = projectLabelFromCodexMeta(metaFromFile?.cwd) ?? "Codex"
+                let projectRoot = metaFromFile?.cwd
                 candidates.append(.init(
                     provider: "Codex",
                     filePath: path,
-                    projectName: "Codex",
-                    projectRoot: nil,
+                    projectName: projectName,
+                    projectRoot: projectRoot,
                     sessionId: sessionId,
                     lastModified: mtime,
                     totalTokens: totals.input + totals.output,
@@ -1143,7 +1168,49 @@ public enum CostUsageScanner {
                 ))
             }
         }
+        scanLogger.info("buildCodexCandidates: roots=\(roots.count) jsonl_files=\(totalFilesSeen) fresh=\(freshFilesSeen) candidates=\(candidates.count)")
         return candidates
+    }
+
+    /// iter22: best-effort `(sessionId, cwd)` extraction from the
+    /// session_meta line a Codex CLI rollout JSONL emits as its first
+    /// line. Reads at most 32KB so a corrupted or huge file can't
+    /// stall the scanner. Returns `nil` fields when the parse fails;
+    /// callers must tolerate that.
+    static func readCodexSessionMeta(fileURL: URL) -> (sessionId: String?, cwd: String?)? {
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 32 * 1024) else { return nil }
+        // Split on newline (0x0A); examine each line up to a small cap so
+        // we don't burn CPU re-parsing huge JSONL bodies for one field.
+        var inspected = 0
+        for lineData in data.split(separator: 0x0A, maxSplits: 32, omittingEmptySubsequences: true) {
+            inspected += 1
+            guard inspected <= 8 else { break }
+            guard let json = try? JSONSerialization.jsonObject(with: Data(lineData)) as? [String: Any] else { continue }
+            guard (json["type"] as? String) == "session_meta" else { continue }
+            let payload = json["payload"] as? [String: Any]
+            let sid = (payload?["id"] as? String)
+                ?? (payload?["session_id"] as? String)
+                ?? (payload?["sessionId"] as? String)
+                ?? (json["session_id"] as? String)
+            let cwd = (payload?["cwd"] as? String) ?? (json["cwd"] as? String)
+            return (sid, cwd)
+        }
+        return nil
+    }
+
+    /// iter22: convert a `cwd` like `/Users/jason/cli-pulse` into a
+    /// short project label `cli-pulse`. Returns nil when input is nil
+    /// or empty so callers can use the previous "Codex" placeholder.
+    static func projectLabelFromCodexMeta(_ cwd: String?) -> String? {
+        guard let cwd, !cwd.isEmpty else { return nil }
+        let trimmed = cwd.hasSuffix("/") ? String(cwd.dropLast()) : cwd
+        let last = (trimmed as NSString).lastPathComponent
+        if last.isEmpty || last == "/" { return nil }
+        // `~` and home roots aren't useful project labels.
+        if last == "Users" || last == "home" { return nil }
+        return last
     }
 
     /// Walk Claude JSONL files under each `~/.claude/projects/...` (or

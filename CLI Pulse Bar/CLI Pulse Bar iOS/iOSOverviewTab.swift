@@ -51,10 +51,10 @@ struct iOSOverviewTab: View {
                                     .padding(8)
                                     .background(Circle().fill(PulseTheme.accent))
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("\(bannerCount) pending approval\(bannerCount == 1 ? "" : "s")")
+                                    Text(L10n.dashboard.pendingApprovalCount(bannerCount))
                                         .font(.subheadline.weight(.semibold))
                                         .foregroundStyle(.primary)
-                                    Text("Tap to review Claude tool calls running on your Mac")
+                                    Text(L10n.dashboard.tapReviewClaude)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -117,13 +117,13 @@ struct iOSOverviewTab: View {
                         if let url = ExportService.exportCostReportCSV(
                             dashboard: state.dashboard, providers: providerState.providers, sessions: state.sessions
                         ) {
-                            ShareLink(item: url) { Label("Export Cost Report", systemImage: "doc.text") }
+                            ShareLink(item: url) { Label(L10n.dashboard.exportCostReport, systemImage: "doc.text") }
                         }
                         if let url = ExportService.exportSessionsCSV(sessions: state.sessions) {
-                            ShareLink(item: url) { Label("Export Sessions", systemImage: "list.bullet") }
+                            ShareLink(item: url) { Label(L10n.dashboard.exportSessions, systemImage: "list.bullet") }
                         }
                         if let url = ExportService.exportProviderSummaryCSV(providers: providerState.providers) {
-                            ShareLink(item: url) { Label("Export Providers", systemImage: "chart.bar") }
+                            ShareLink(item: url) { Label(L10n.dashboard.exportProviders, systemImage: "chart.bar") }
                         }
                     } label: {
                         Image(systemName: "square.and.arrow.up")
@@ -168,7 +168,7 @@ struct iOSOverviewTab: View {
                 Text(L10n.dashboard.costSummary)
                     .font(.subheadline.weight(.semibold))
                 Spacer()
-                Text(providerState.costSummary.isPrecise ? "Exact" : "Estimated")
+                Text(providerState.costSummary.isPrecise ? L10n.cost.exact : L10n.cost.estimated)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(providerState.costSummary.isPrecise ? .green : .orange)
                     .padding(.horizontal, 6)
@@ -187,14 +187,14 @@ struct iOSOverviewTab: View {
                             .font(.title3.weight(.bold).monospacedDigit())
                             .foregroundStyle(.green)
                         if providerState.costSummary.todayTokens > 0 {
-                            Text("· \(TokenFormatter.format(providerState.costSummary.todayTokens))")
+                            Text(L10n.cost.tokensShortSuffix(TokenFormatter.format(providerState.costSummary.todayTokens)))
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
                         }
                     }
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(providerState.costSummary.isPrecise ? "30 Day" : L10n.dashboard.thirtyDayEst)
+                    Text(providerState.costSummary.isPrecise ? L10n.cost.thirtyDayPrecise : L10n.dashboard.thirtyDayEst)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                     HStack(alignment: .firstTextBaseline, spacing: 3) {
@@ -202,7 +202,7 @@ struct iOSOverviewTab: View {
                             .font(.title3.weight(.bold).monospacedDigit())
                             .foregroundStyle(.green)
                         if providerState.costSummary.thirtyDayTokens > 0 {
-                            Text("· \(TokenFormatter.format(providerState.costSummary.thirtyDayTokens))")
+                            Text(L10n.cost.tokensShortSuffix(TokenFormatter.format(providerState.costSummary.thirtyDayTokens)))
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
                         }
@@ -249,7 +249,7 @@ struct iOSOverviewTab: View {
                     Image(systemName: "creditcard")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                    Text("Subscriptions")
+                    Text(L10n.dashboard.subscriptions)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -278,7 +278,7 @@ struct iOSOverviewTab: View {
                     Image(systemName: "chart.bar")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                    Text("Subscription Utilization")
+                    Text(L10n.dashboard.subscriptionUtilization)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -326,7 +326,7 @@ struct iOSOverviewTab: View {
             if !providerState.costSummary.subscriptionByProvider.isEmpty {
                 Divider()
                 HStack {
-                    Text("Total Monthly")
+                    Text(L10n.dashboard.totalMonthly)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -399,7 +399,7 @@ struct iOSOverviewTab: View {
             }
 
             if enabledProviders.isEmpty {
-                Text("No enabled providers with data")
+                Text(L10n.dashboard.noEnabledWithData)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }

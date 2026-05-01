@@ -171,4 +171,64 @@
     <string name="account_link">Link</string>
     <string name="account_linked_status">Linked</string>
     <string name="account_not_linked_status">Not linked</string>
+
+    <!-- Screen titles + card labels (i18n sweep) -->
+    <string name="screen_providers">Providers</string>
+    <string name="screen_sessions">Sessions</string>
+    <string name="screen_devices">Devices</string>
+    <string name="screen_alerts">Alerts</string>
+    <string name="error_unknown">Unknown error</string>
+    <string name="card_today">Today</string>
+    <string name="card_week">Week</string>
+    <string name="card_cost">Cost</string>
+    <string name="card_status">Status</string>
+    <string name="card_overall_quota">Overall Quota</string>
+    <string name="card_quota_tiers">Quota Tiers</string>
+    <string name="card_usage">Usage</string>
+    <string name="card_this_week">This Week</string>
+    <string name="card_pct_left">%1$d%% left</string>
+    <string name="card_used_of">%1$s used of %2$s</string>
+    <string name="card_remaining">%1$s remaining</string>
+    <string name="card_plan">Plan: %1$s</string>
+    <string name="card_resets">Resets: %1$s</string>
+    <string name="card_helper_version">Helper v%1$s</string>
+    <string name="card_last_seen">Last seen: %1$s</string>
+    <string name="card_cpu_pct">CPU: %1$d%%</string>
+    <string name="card_memory_pct">Memory: %1$d%%</string>
+    <string name="card_usage_value">Usage: %1$s</string>
+    <string name="card_cost_value">Cost: %1$s</string>
+    <string name="card_requests_value">Req: %1$d</string>
+    <string name="card_device_value">Device: %1$s</string>
+
+    <!-- PDF report (i18n sweep) -->
+    <string name="pdf_title">CLI Pulse Monthly Report</string>
+    <string name="pdf_generated">Generated: %1$s</string>
+    <string name="pdf_summary">Summary</string>
+    <string name="pdf_today_usage">Today\'s Usage</string>
+    <string name="pdf_active_sessions">Active Sessions</string>
+    <string name="pdf_online_devices">Online Devices</string>
+    <string name="pdf_unresolved_alerts">Unresolved Alerts</string>
+    <string name="pdf_cost_forecast">Cost Forecast</string>
+    <string name="pdf_progress">Progress</string>
+    <string name="pdf_progress_value">%1$d/%2$d days</string>
+    <string name="pdf_provider_breakdown">Provider Breakdown</string>
+    <string name="pdf_top_sessions">Top Sessions by Cost</string>
+    <string name="pdf_daily_trend">Daily Cost Trend (Last 30 Days)</string>
+    <string name="pdf_footer">CLI Pulse v%1$s · %2$s</string>
+    <string name="pdf_na">N/A</string>
+    <string name="pdf_h_provider">Provider</string>
+    <string name="pdf_h_week_usage">Week Usage</string>
+    <string name="pdf_h_est_cost">Est. Cost</string>
+    <string name="pdf_h_remaining">Remaining</string>
+    <string name="pdf_h_quota">Quota</string>
+    <string name="pdf_h_project">Project</string>
+    <string name="pdf_h_cost">Cost</string>
+    <string name="pdf_h_usage">Usage</string>
+    <string name="pdf_h_status">Status</string>
+
+    <!-- PDF report leftovers (i18n director review) -->
+    <string name="pdf_today_est_cost">Today\'s Estimated Cost</string>
+    <string name="pdf_month_end_estimate">Month-End Estimate</string>
+    <string name="pdf_spent_so_far">Spent So Far</string>
+    <string name="pdf_confidence_range">Confidence Range</string>
 </resources>

@@ -55,7 +55,7 @@ struct iOSAlertsTab: View {
                                     await state.resolveAlerts(toResolve)
                                 }
                             } label: {
-                                Text("Resolve All")
+                                Text(L10n.alerts.resolveAll)
                                     .font(.system(size: 11, weight: .semibold))
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 5)

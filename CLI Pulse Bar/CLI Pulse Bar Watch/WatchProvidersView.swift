@@ -16,7 +16,7 @@ struct WatchProvidersView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.title3)
                         .foregroundStyle(.orange)
-                    Text("Couldn't load providers")
+                    Text(L10n.watch.couldntLoadProviders)
                         .font(.caption.weight(.semibold))
                     Text(err)
                         .font(.caption2)
@@ -26,7 +26,7 @@ struct WatchProvidersView: View {
                     Button {
                         Task { await state.refreshAll() }
                     } label: {
-                        Label("Retry", systemImage: "arrow.clockwise")
+                        Label(L10n.watch.retry, systemImage: "arrow.clockwise")
                             .font(.caption)
                     }
                     .buttonStyle(.bordered)

@@ -65,7 +65,7 @@ struct ProviderConfigEditor: View {
 
             // Source mode
             HStack {
-                Text("Data source")
+                Text(L10n.providerConfig.dataSource)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -81,7 +81,7 @@ struct ProviderConfigEditor: View {
 
             // Account label
             VStack(alignment: .leading, spacing: 3) {
-                Text("Account label")
+                Text(L10n.providerConfig.accountLabel)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 #if os(macOS)
@@ -89,7 +89,7 @@ struct ProviderConfigEditor: View {
                     .frame(minHeight: 22)
                     .padding(.vertical, 1)
                 #else
-                TextField("e.g. team-A, dev-box", text: $accountLabel)
+                TextField(L10n.providerConfig.accountPlaceholder, text: $accountLabel)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 10))
                     .textContentType(.none)
@@ -99,7 +99,7 @@ struct ProviderConfigEditor: View {
             // API key (only if provider supports api/oauth)
             if descriptor.supportedSources.contains(.api) || descriptor.supportedSources.contains(.oauth) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("API key")
+                    Text(L10n.providerConfig.apiKey)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                     #if os(macOS)
@@ -119,7 +119,7 @@ struct ProviderConfigEditor: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .help(showAPIKey ? "Hide key" : "Show key")
+                        .help(showAPIKey ? L10n.providerConfig.hideKey : L10n.providerConfig.showKey)
                     }
                     .padding(.vertical, 1)
                     #else
@@ -135,7 +135,7 @@ struct ProviderConfigEditor: View {
                         Image(systemName: "lock.fill")
                             .font(.system(size: 8))
                             .foregroundStyle(.green.opacity(0.8))
-                        Text("Stored only in your Mac Keychain. Never uploaded.")
+                        Text(L10n.providerConfig.keychainNotice)
                             .font(.system(size: 9))
                             .foregroundStyle(.secondary)
                     }
@@ -145,7 +145,7 @@ struct ProviderConfigEditor: View {
             // Cookie source (only if provider supports web)
             if descriptor.supportedSources.contains(.web) {
                 HStack {
-                    Text("Cookie source")
+                    Text(L10n.providerConfig.cookieSource)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -164,7 +164,7 @@ struct ProviderConfigEditor: View {
 
                 if cookieSource == .manual {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Manual cookie header")
+                        Text(L10n.providerConfig.manualCookieHeader)
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                         #if os(macOS)
@@ -181,7 +181,7 @@ struct ProviderConfigEditor: View {
                             Image(systemName: "lock.fill")
                                 .font(.system(size: 8))
                                 .foregroundStyle(.green.opacity(0.8))
-                            Text("Stored only in your Mac Keychain. Never uploaded.")
+                            Text(L10n.providerConfig.keychainNotice)
                                 .font(.system(size: 9))
                                 .foregroundStyle(.secondary)
                         }
@@ -207,17 +207,17 @@ struct ProviderConfigEditor: View {
 
             // Capabilities summary
             VStack(alignment: .leading, spacing: 3) {
-                Text("Capabilities")
+                Text(L10n.providerConfig.capabilities)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
                 HStack(spacing: 6) {
-                    capBadge("Quota", active: descriptor.supportsQuota)
-                    capBadge("Exact cost", active: descriptor.supportsExactCost)
-                    capBadge("Credits", active: descriptor.supportsCredits)
-                    capBadge("Status poll", active: descriptor.supportsStatusPolling)
+                    capBadge(L10n.providerConfig.capQuota, active: descriptor.supportsQuota)
+                    capBadge(L10n.providerConfig.capExactCost, active: descriptor.supportsExactCost)
+                    capBadge(L10n.providerConfig.capCredits, active: descriptor.supportsCredits)
+                    capBadge(L10n.providerConfig.capStatusPoll, active: descriptor.supportsStatusPolling)
                 }
                 if descriptor.requiresHelperBackend {
-                    Text("Quota/tier data requires backend helper sync.")
+                    Text(L10n.providerConfig.requiresHelperSync)
                         .font(.system(size: 8))
                         .foregroundStyle(.orange)
                 }
@@ -227,11 +227,11 @@ struct ProviderConfigEditor: View {
 
             // Actions
             HStack {
-                Button("Cancel") { dismiss() }
+                Button(L10n.common.cancel) { dismiss() }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Save") {
+                Button(L10n.common.save) {
                     save()
                     dismiss()
                 }
@@ -283,7 +283,7 @@ struct ProviderConfigEditor: View {
     @ViewBuilder
     private var geminiOAuthSection: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text("Google OAuth")
+            Text(L10n.providerConfig.googleOAuth)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
 
@@ -292,11 +292,11 @@ struct ProviderConfigEditor: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                         .font(.system(size: 12))
-                    Text("Connected")
+                    Text(L10n.settings.connected)
                         .font(.system(size: 10))
                         .foregroundStyle(.green)
                     Spacer()
-                    Button("Disconnect") {
+                    Button(L10n.providerConfig.disconnect) {
                         GeminiOAuthManager.shared.clearTokens()
                         isGeminiConnected = false
                     }
@@ -330,7 +330,7 @@ struct ProviderConfigEditor: View {
                         } else {
                             Image(systemName: "link")
                         }
-                        Text("Connect Gemini")
+                        Text(L10n.providerConfig.connectGemini)
                     }
                     .font(.system(size: 10, weight: .medium))
                 }
@@ -344,7 +344,7 @@ struct ProviderConfigEditor: View {
                         .font(.system(size: 8))
                         .foregroundStyle(.red)
                 } else {
-                    Text("Uses your Google account. No API key needed.")
+                    Text(L10n.providerConfig.geminiUsesGoogle)
                         .font(.system(size: 8))
                         .foregroundStyle(.quaternary)
                 }
@@ -355,7 +355,7 @@ struct ProviderConfigEditor: View {
     #if os(macOS)
     private var claudeConnectSection: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text("Claude Code")
+            Text(L10n.providerConfig.claudeCode)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
 
@@ -365,7 +365,7 @@ struct ProviderConfigEditor: View {
                         .foregroundStyle(.green)
                         .font(.system(size: 12))
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Connected")
+                        Text(L10n.settings.connected)
                             .font(.system(size: 10))
                             .foregroundStyle(.green)
                         if let email = claudeConnectedEmail {
@@ -376,7 +376,7 @@ struct ProviderConfigEditor: View {
                         }
                     }
                     Spacer()
-                    Button("Disconnect") {
+                    Button(L10n.providerConfig.disconnect) {
                         ClaudeCredentials.clearCachedKeychainCredentials()
                         isClaudeConnected = false
                         claudeConnectedEmail = nil
@@ -407,7 +407,7 @@ struct ProviderConfigEditor: View {
                                 claudeConnectedEmail = nil  // email not in credentials; will populate on next fetch
                                 claudeConnectError = nil
                             } else {
-                                claudeConnectError = "Couldn't read Claude Code credentials. If you denied the prompt, try again or install/open Claude Code first."
+                                claudeConnectError = L10n.providerConfig.claudeReadFailed
                             }
                         }
                     }
@@ -418,7 +418,7 @@ struct ProviderConfigEditor: View {
                         } else {
                             Image(systemName: "key.fill")
                         }
-                        Text("Connect Claude Code")
+                        Text(L10n.providerConfig.connectClaudeCode)
                     }
                     .font(.system(size: 10, weight: .medium))
                 }
@@ -432,7 +432,7 @@ struct ProviderConfigEditor: View {
                         .font(.system(size: 8))
                         .foregroundStyle(.red)
                 } else {
-                    Text("Reads your existing Claude Code login. macOS will ask once for permission — tap Always Allow.")
+                    Text(L10n.providerConfig.claudeKeychainHint)
                         .font(.system(size: 8))
                         .foregroundStyle(.quaternary)
                 }
@@ -473,7 +473,7 @@ struct ProviderConfigEditor: View {
                         Image(systemName: "bolt.fill")
                             .font(.system(size: 9))
                     }
-                    Text("Test connection")
+                    Text(L10n.providerConfig.testConnection)
                         .font(.system(size: 10, weight: .medium))
                 }
             }
@@ -485,7 +485,7 @@ struct ProviderConfigEditor: View {
             case .idle:
                 EmptyView()
             case .testing:
-                Text("Testing…")
+                Text(L10n.providerConfig.testing)
                     .font(.system(size: 9))
                     .foregroundStyle(.secondary)
             case .success(let msg):

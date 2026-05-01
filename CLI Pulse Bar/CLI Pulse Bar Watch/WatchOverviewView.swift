@@ -160,7 +160,7 @@ struct WatchOverviewView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.title3)
                         .foregroundStyle(.orange)
-                    Text("Couldn't load data")
+                    Text(L10n.watch.couldntLoadData)
                         .font(.caption.weight(.semibold))
                     Text(err)
                         .font(.caption2)
@@ -170,7 +170,7 @@ struct WatchOverviewView: View {
                     Button {
                         Task { await state.refreshAll() }
                     } label: {
-                        Label("Retry", systemImage: "arrow.clockwise")
+                        Label(L10n.watch.retry, systemImage: "arrow.clockwise")
                             .font(.caption)
                     }
                     .buttonStyle(.bordered)
@@ -183,7 +183,7 @@ struct WatchOverviewView: View {
                     Image(systemName: "arrow.clockwise")
                         .font(.title3)
                         .foregroundStyle(.secondary)
-                    Text("Pull to refresh")
+                    Text(L10n.watch.pullToRefresh)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

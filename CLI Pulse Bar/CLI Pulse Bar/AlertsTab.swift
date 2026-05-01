@@ -57,7 +57,7 @@ struct AlertsTab: View {
                                 await state.resolveAlerts(toResolve)
                             }
                         } label: {
-                            Text("Resolve All")
+                            Text(L10n.alerts.resolveAll)
                                 .font(.system(size: 9, weight: .semibold))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)

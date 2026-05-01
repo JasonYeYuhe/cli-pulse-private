@@ -9,8 +9,10 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.clipulse.android.R
 import com.clipulse.android.data.model.ProviderUsage
 import com.clipulse.android.ui.components.*
 import com.clipulse.android.ui.theme.providerColor
@@ -52,7 +54,7 @@ fun ProviderDetailScreen(
                 title = { Text(provider.provider) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
@@ -72,17 +74,17 @@ fun ProviderDetailScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        Text("Status", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.card_status), style = MaterialTheme.typography.titleMedium)
                         StatusBadge(provider.statusText, color)
                     }
                     if (provider.planType != null) {
                         Spacer(Modifier.height(8.dp))
-                        Text("Plan: ${provider.planType}", style = MaterialTheme.typography.bodyMedium)
+                        Text(stringResource(R.string.card_plan, provider.planType!!), style = MaterialTheme.typography.bodyMedium)
                     }
                     if (provider.resetTime != null) {
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "Resets: ${provider.resetTime}",
+                            stringResource(R.string.card_resets, provider.resetTime!!),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -96,18 +98,18 @@ fun ProviderDetailScreen(
             if (provider.quota != null && provider.quota > 0) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Overall Quota", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.card_overall_quota), style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(12.dp))
                         val remainPct = (provider.remaining ?: 0).toDouble() / provider.quota
                         UsageBar(
                             remainingPercent = remainPct,
-                            label = "${formatUsage(provider.quota - (provider.remaining ?: 0))} used of ${formatUsage(provider.quota)}",
-                            trailingText = "${(remainPct * 100).toInt()}% left",
+                            label = stringResource(R.string.card_used_of, formatUsage(provider.quota - (provider.remaining ?: 0)), formatUsage(provider.quota)),
+                            trailingText = stringResource(R.string.card_pct_left, (remainPct * 100).toInt()),
                         )
                         if (provider.remaining != null) {
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                "${formatUsage(provider.remaining)} remaining",
+                                stringResource(R.string.card_remaining, formatUsage(provider.remaining!!)),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -121,15 +123,16 @@ fun ProviderDetailScreen(
             if (provider.tiers.isNotEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Quota Tiers", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.card_quota_tiers), style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(12.dp))
                         provider.tiers.forEach { tier ->
                             val remainPct = if (tier.quota > 0) {
                                 tier.remaining.toDouble() / tier.quota
                             } else 0.0
                             val resetLabel = formatResetTime(tier.resetTime)
+                            val pctLeft = stringResource(R.string.card_pct_left, (remainPct * 100).toInt())
                             val trailing = buildString {
-                                append("${(remainPct * 100).toInt()}% left")
+                                append(pctLeft)
                                 if (resetLabel != null) append(" · $resetLabel")
                             }
                             UsageBar(
@@ -147,21 +150,21 @@ fun ProviderDetailScreen(
             // Usage stats
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Usage", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.card_usage), style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(12.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         MetricCard(
-                            title = "Today",
+                            title = stringResource(R.string.card_today),
                             value = formatUsage(provider.todayUsage),
                             subtitle = formatCost(provider.estimatedCostToday),
                             modifier = Modifier.weight(1f),
                         )
                         Spacer(Modifier.width(12.dp))
                         MetricCard(
-                            title = "This Week",
+                            title = stringResource(R.string.card_this_week),
                             value = formatUsage(provider.weekUsage),
                             subtitle = formatCost(provider.estimatedCostWeek),
                             modifier = Modifier.weight(1f),

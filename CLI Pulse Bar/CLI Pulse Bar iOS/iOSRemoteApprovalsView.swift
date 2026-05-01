@@ -26,7 +26,7 @@ struct iOSRemoteApprovalsView: View {
                 approvalsList
             }
         }
-        .navigationTitle("Remote Approvals")
+        .navigationTitle(L10n.remoteApprovals.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if state.remoteControlEnabled {
@@ -36,7 +36,7 @@ struct iOSRemoteApprovalsView: View {
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
-                    .accessibilityLabel("Refresh")
+                    .accessibilityLabel(L10n.remoteApprovals.refresh)
                 }
             }
         }
@@ -72,9 +72,9 @@ struct iOSRemoteApprovalsView: View {
             Image(systemName: "lock.shield")
                 .font(.system(size: 44))
                 .foregroundStyle(.tertiary)
-            Text("Remote Control is off")
+            Text(L10n.remoteApprovals.offTitle)
                 .font(.headline)
-            Text("Turn on Remote Control in Settings → Privacy to approve Claude tool calls running on your Mac. CLI Pulse only uploads a redacted summary, never your transcripts or API keys.")
+            Text(L10n.remoteApprovals.offBodyIos)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -82,7 +82,7 @@ struct iOSRemoteApprovalsView: View {
             Button {
                 state.selectedTab = .settings
             } label: {
-                Text("Open Settings")
+                Text(L10n.remoteApprovals.openSettings)
                     .font(.body.weight(.semibold))
                     .padding(.horizontal, 18)
                     .padding(.vertical, 8)
@@ -99,11 +99,14 @@ struct iOSRemoteApprovalsView: View {
             Image(systemName: "checkmark.shield")
                 .font(.system(size: 38))
                 .foregroundStyle(.tertiary)
-            Text("No pending approvals")
+            Text(L10n.remoteApprovals.noPending)
                 .font(.body)
                 .foregroundStyle(.secondary)
             if let last = state.remoteApprovalsLastRefresh {
-                Text("Updated \(last, style: .relative) ago")
+                HStack(spacing: 0) {
+                    Text(L10n.remoteApprovals.updatedPrefix)
+                    Text(last, style: .relative)
+                }
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -126,7 +129,7 @@ struct iOSRemoteApprovalsView: View {
                     approvalRow(request)
                 }
             } footer: {
-                Text("Approve is per-request only — it does NOT create a Claude Code Always-Allow rule. The next time Claude needs the same tool you'll see another request here. To set persistent rules, use Claude Code's own \"Always Allow\" UI on the Mac. Approving executes the tool call on your Mac.")
+                Text(L10n.remoteApprovals.perRequestNoteIos)
                     .font(.footnote)
                     .foregroundStyle(.tertiary)
             }
@@ -144,7 +147,7 @@ struct iOSRemoteApprovalsView: View {
                 Image(systemName: providerIcon(request.provider))
                     .font(.body)
                     .foregroundStyle(.secondary)
-                Text(request.tool_name.isEmpty ? "Unknown tool" : request.tool_name)
+                Text(request.tool_name.isEmpty ? L10n.remoteApprovals.unknownTool : request.tool_name)
                     .font(.body.weight(.semibold))
                 Spacer()
                 riskBadge(risk)
@@ -165,7 +168,7 @@ struct iOSRemoteApprovalsView: View {
                 }
             }
 
-            Text(request.summary.isEmpty ? "(no summary)" : request.summary)
+            Text(request.summary.isEmpty ? L10n.remoteApprovals.noSummary : request.summary)
                 .font(.callout.monospaced())
                 .foregroundStyle(.primary)
                 .textSelection(.enabled)
@@ -174,14 +177,14 @@ struct iOSRemoteApprovalsView: View {
                 Image(systemName: "timer")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                Text("expires \(expiresLabel(request.expires_at))")
+                Text(L10n.remoteApprovals.expires(expiresLabel(request.expires_at)))
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                 Spacer()
             }
 
             if isHighRisk {
-                Text("High risk — approve locally on the Mac instead.")
+                Text(L10n.remoteApprovals.highRiskWarning)
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
@@ -196,7 +199,7 @@ struct iOSRemoteApprovalsView: View {
                         )
                     }
                 } label: {
-                    Text("Deny").font(.body.weight(.semibold))
+                    Text(L10n.remoteApprovals.deny).font(.body.weight(.semibold))
                         .frame(minWidth: 70)
                 }
                 .buttonStyle(.bordered)
@@ -209,7 +212,7 @@ struct iOSRemoteApprovalsView: View {
                         )
                     }
                 } label: {
-                    Text("Approve").font(.body.weight(.semibold))
+                    Text(L10n.remoteApprovals.approve).font(.body.weight(.semibold))
                         .frame(minWidth: 80)
                 }
                 .buttonStyle(.borderedProminent)

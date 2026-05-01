@@ -70,18 +70,18 @@ struct SubscriptionSection: View {
                     if subscriptionManager.isLoading {
                         HStack {
                             ProgressView().controlSize(.small)
-                            Text("Loading plans...")
+                            Text(L10n.subscription.loadingPlans)
                                 .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("Subscription plans are not available at this time.")
+                        Text(L10n.subscription.unavailable)
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                         Button {
                             Task { await subscriptionManager.loadProducts() }
                         } label: {
-                            Text("Retry")
+                            Text(L10n.subscription.retry)
                                 .font(.system(size: 10))
                         }
                         .buttonStyle(.plain)
@@ -100,7 +100,7 @@ struct SubscriptionSection: View {
                 Button {
                     openWindow(id: "subscription")
                 } label: {
-                    Text("View all plans & details")
+                    Text(L10n.subscription.viewAllPlans)
                         .font(.system(size: 10))
                 }
                 .buttonStyle(.plain)

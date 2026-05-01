@@ -40,7 +40,7 @@ fun DevicesScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Text("Devices", style = MaterialTheme.typography.headlineMedium)
+                Text(stringResource(R.string.screen_devices), style = MaterialTheme.typography.headlineMedium)
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "${state.devices.size} registered",
@@ -58,7 +58,7 @@ fun DevicesScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            state.error ?: "Unknown error",
+                            state.error ?: stringResource(R.string.error_unknown),
                             modifier = Modifier.padding(16.dp),
                             color = MaterialTheme.colorScheme.onErrorContainer,
                         )
@@ -138,13 +138,13 @@ private fun DeviceCard(device: com.clipulse.android.data.model.DeviceRecord) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(
-                        "Helper v${device.helperVersion}",
+                        stringResource(R.string.card_helper_version, device.helperVersion),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     device.lastSyncAt?.let {
                         Text(
-                            "Last seen: ${it.take(16).replace("T", " ")}",
+                            stringResource(R.string.card_last_seen, it.take(16).replace("T", " ")),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -161,13 +161,13 @@ private fun DeviceCard(device: com.clipulse.android.data.model.DeviceRecord) {
                 ) {
                     device.cpuUsage?.let {
                         Text(
-                            "CPU: $it%",
+                            stringResource(R.string.card_cpu_pct, it),
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }
                     device.memoryUsage?.let {
                         Text(
-                            "Memory: $it%",
+                            stringResource(R.string.card_memory_pct, it),
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }

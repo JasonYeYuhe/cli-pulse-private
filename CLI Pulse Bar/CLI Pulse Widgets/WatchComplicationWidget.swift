@@ -107,7 +107,7 @@ struct WatchComplicationView: View {
             }
 
             if providers.isEmpty {
-                Text("Sign in to view usage")
+                Text(L10n.widget.signInToView)
                     .font(.caption2)
             } else {
                 ForEach(providers) { p in
@@ -141,7 +141,7 @@ struct WatchComplicationView: View {
             .font(.system(size: 14, weight: .bold, design: .rounded))
             .widgetLabel {
                 Gauge(value: remaining) {
-                    Text(topProvider?.name ?? "Quota")
+                    Text(topProvider?.name ?? L10n.widget.quotaFallback)
                 }
                 .gaugeStyle(.accessoryLinear)
             }
@@ -152,11 +152,11 @@ struct WatchComplicationView: View {
     private var inlineView: some View {
         let alerts = entry.data.unresolvedAlerts
         if alerts > 0 {
-            return Text("\(alerts) alert\(alerts == 1 ? "" : "s") • CLI Pulse")
+            return Text(L10n.widget.alertsSummary(alerts))
         }
         let topProvider = entry.data.providers.first
         let remaining = topProvider.map { Int(max(0, 1.0 - $0.usagePercent) * 100) } ?? 100
-        let name = topProvider?.name ?? "Quota"
-        return Text("\(name) \(remaining)% left")
+        let name = topProvider?.name ?? L10n.widget.quotaFallback
+        return Text(L10n.widget.percentLeft(name, remaining))
     }
 }

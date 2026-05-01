@@ -13,7 +13,7 @@ struct DisplaySection: View {
             SectionHeader(title: "Menu Bar", icon: "menubar.rectangle")
 
             HStack {
-                Text("Display mode")
+                Text(L10n.display.mode)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -36,9 +36,9 @@ struct DisplaySection: View {
 
             Toggle(isOn: $state.mergeMenuBarIcons) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Merge menu bar icons")
+                    Text(L10n.display.mergeMenuBarIcons)
                         .font(.system(size: 11))
-                    Text("Single icon with provider switcher")
+                    Text(L10n.display.mergeMenuBarHint)
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                 }
@@ -51,7 +51,7 @@ struct DisplaySection: View {
             SectionHeader(title: "Menu Content", icon: "list.bullet")
 
             HStack {
-                Text("Content mode")
+                Text(L10n.display.contentMode)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -83,7 +83,7 @@ struct DisplaySection: View {
 
             SectionHeader(title: "Overview Providers", icon: "square.grid.2x2")
 
-            Text("Select which providers to show in the Overview tab. Drag to reorder.")
+            Text(L10n.display.reorderHint)
                 .font(.system(size: 9))
                 .foregroundStyle(.tertiary)
 

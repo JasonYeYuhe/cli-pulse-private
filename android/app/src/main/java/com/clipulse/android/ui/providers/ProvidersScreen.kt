@@ -44,7 +44,7 @@ fun ProvidersScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Text("Providers", style = MaterialTheme.typography.headlineMedium)
+                Text(stringResource(R.string.screen_providers), style = MaterialTheme.typography.headlineMedium)
                 Spacer(Modifier.height(8.dp))
             }
 
@@ -121,8 +121,8 @@ fun ProviderCard(provider: ProviderUsage, onClick: () -> Unit = {}) {
                 val remainingPct = (provider.remaining ?: 0).toDouble() / provider.quota
                 UsageBar(
                     remainingPercent = remainingPct,
-                    label = "Usage: ${formatUsage(provider.quota - (provider.remaining ?: 0))} / ${formatUsage(provider.quota)}",
-                    trailingText = "${(remainingPct * 100).toInt()}% left",
+                    label = stringResource(R.string.card_used_of, formatUsage(provider.quota - (provider.remaining ?: 0)), formatUsage(provider.quota)),
+                    trailingText = stringResource(R.string.card_pct_left, (remainingPct * 100).toInt()),
                 )
                 Spacer(Modifier.height(12.dp))
             }
@@ -133,15 +133,15 @@ fun ProviderCard(provider: ProviderUsage, onClick: () -> Unit = {}) {
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Column {
-                    Text("Today", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.card_today), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(formatUsage(provider.todayUsage), style = MaterialTheme.typography.bodyLarge)
                 }
                 Column {
-                    Text("Week", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.card_week), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(formatUsage(provider.weekUsage), style = MaterialTheme.typography.bodyLarge)
                 }
                 Column {
-                    Text("Cost", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.card_cost), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(formatCost(provider.estimatedCostWeek), style = MaterialTheme.typography.bodyLarge)
                 }
             }
@@ -167,8 +167,9 @@ private fun TierRow(tier: TierDTO) {
     } else 0.0
 
     val resetLabel = formatResetTime(tier.resetTime)
+    val pctLeft = stringResource(R.string.card_pct_left, (remainingPct * 100).toInt())
     val trailing = buildString {
-        append("${(remainingPct * 100).toInt()}% left")
+        append(pctLeft)
         if (resetLabel != null) append(" · $resetLabel")
     }
 

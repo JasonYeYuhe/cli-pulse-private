@@ -56,14 +56,14 @@ struct RemoteApprovalsSheet: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 1) {
-                Text("Remote Approvals")
+                Text(L10n.remoteApprovals.title)
                     .font(.system(size: 13, weight: .semibold))
                 if state.remoteControlEnabled {
-                    Text("\(state.remotePendingApprovals.count) pending")
+                    Text(L10n.remoteApprovals.pendingCount(state.remotePendingApprovals.count))
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("Disabled · Settings → Privacy")
+                    Text(L10n.remoteApprovals.disabledHint)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
@@ -78,7 +78,7 @@ struct RemoteApprovalsSheet: View {
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Refresh")
+                .accessibilityLabel(L10n.remoteApprovals.refresh)
             }
             Button {
                 dismiss()
@@ -88,7 +88,7 @@ struct RemoteApprovalsSheet: View {
                     .foregroundStyle(.tertiary)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Close")
+            .accessibilityLabel(L10n.remoteApprovals.close)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -103,9 +103,9 @@ struct RemoteApprovalsSheet: View {
                 .font(.system(size: 32))
                 .foregroundStyle(.tertiary)
                 .padding(.top, 32)
-            Text("Remote Control is off")
+            Text(L10n.remoteApprovals.offTitle)
                 .font(.system(size: 13, weight: .medium))
-            Text("Turn on Remote Control in Settings → Privacy to approve Claude tool calls from your iPhone or Mac. CLI Pulse only uploads a redacted summary, never your transcripts or API keys.")
+            Text(L10n.remoteApprovals.offBodyMac)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -114,7 +114,7 @@ struct RemoteApprovalsSheet: View {
                 state.selectedTab = .settings
                 dismiss()
             } label: {
-                Text("Open Settings")
+                Text(L10n.remoteApprovals.openSettings)
                     .font(.system(size: 11, weight: .medium))
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)
@@ -132,13 +132,20 @@ struct RemoteApprovalsSheet: View {
             Image(systemName: "checkmark.shield")
                 .font(.system(size: 28))
                 .foregroundStyle(.tertiary)
-            Text("No pending approvals")
+            Text(L10n.remoteApprovals.noPending)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
             if let last = state.remoteApprovalsLastRefresh {
-                Text("Updated \(last, style: .relative) ago")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.tertiary)
+                // iter22: prefix-only key + SwiftUI's already-localized
+                // `.relative` date. Earlier draft used a single
+                // `"%@ ..."` format which broke word order in zh-Hans
+                // when the placeholder was empty.
+                HStack(spacing: 0) {
+                    Text(L10n.remoteApprovals.updatedPrefix)
+                    Text(last, style: .relative)
+                }
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
             }
             Spacer()
         }
@@ -165,7 +172,7 @@ struct RemoteApprovalsSheet: View {
             }
             Divider()
             // Approve-once vs Always-Allow disclaimer. Same wording as iOS.
-            Text("Approve here is per-request only — it does NOT add a Claude Code Always-Allow rule. The next time Claude needs the same tool, you'll see another request. Use Claude Code's own Always Allow for persistent rules.")
+            Text(L10n.remoteApprovals.perRequestNoteMac)
                 .font(.system(size: 9))
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal, 12)
@@ -184,7 +191,7 @@ struct RemoteApprovalsSheet: View {
                 Image(systemName: providerIcon(request.provider))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                Text(request.tool_name.isEmpty ? "Unknown tool" : request.tool_name)
+                Text(request.tool_name.isEmpty ? L10n.remoteApprovals.unknownTool : request.tool_name)
                     .font(.system(size: 11, weight: .medium))
                 if let deviceName = request.device_name, !deviceName.isEmpty {
                     Text("·")
@@ -199,19 +206,19 @@ struct RemoteApprovalsSheet: View {
                 riskBadge(risk)
             }
 
-            Text(request.summary.isEmpty ? "(no summary)" : request.summary)
+            Text(request.summary.isEmpty ? L10n.remoteApprovals.noSummary : request.summary)
                 .font(.system(size: 11, design: .monospaced))
                 .lineLimit(3)
                 .foregroundStyle(.primary)
 
             HStack(spacing: 6) {
-                Text("expires \(expiresLabel(request.expires_at))")
+                Text(L10n.remoteApprovals.expires(expiresLabel(request.expires_at)))
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                 Spacer()
 
                 if isHighRisk {
-                    Text("high risk — approve locally")
+                    Text(L10n.remoteApprovals.highRiskWarning)
                         .font(.system(size: 9))
                         .foregroundStyle(.orange)
                 }
@@ -224,7 +231,7 @@ struct RemoteApprovalsSheet: View {
                         )
                     }
                 } label: {
-                    Text("Deny")
+                    Text(L10n.remoteApprovals.deny)
                         .font(.system(size: 11, weight: .medium))
                 }
                 .buttonStyle(.bordered)
@@ -238,7 +245,7 @@ struct RemoteApprovalsSheet: View {
                         )
                     }
                 } label: {
-                    Text("Approve")
+                    Text(L10n.remoteApprovals.approve)
                         .font(.system(size: 11, weight: .medium))
                 }
                 .buttonStyle(.borderedProminent)

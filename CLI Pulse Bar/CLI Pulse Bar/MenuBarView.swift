@@ -8,6 +8,10 @@ struct MenuBarView: View {
     @EnvironmentObject var providerState: ProviderState
     @AppStorage("cli_pulse_menubar_height") private var storedHeight: Double = 580
     @State private var showRemoteApprovals = false
+    /// iter22: observed so SwiftUI re-evaluates the body (and every
+    /// `Text(L10n.*)` inside it) whenever the user picks a new
+    /// language from the footer picker.
+    @ObservedObject private var localeOverride = LocaleOverrideStore.shared
 
     /// Adaptive max height: 85% of the screen where the status item lives, capped at 900pt.
     private static var maxMenuBarHeight: CGFloat {
@@ -183,14 +187,14 @@ struct MenuBarView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark.shield")
                         .font(.system(size: 9))
-                    Text("Kept your \(state.subscriptionManager.maxProviders) most-used providers to fit the free plan. Disabled \(state.providerLimitMigrationCount) — edit in Settings → Providers.")
+                    Text(L10n.menuBar.tierMigration(kept: state.subscriptionManager.maxProviders, disabled: state.providerLimitMigrationCount))
                         .font(.system(size: 9))
                         .lineLimit(3)
                     Spacer()
                     Button {
                         state.selectedTab = .settings
                     } label: {
-                        Text("Edit")
+                        Text(L10n.menuBar.edit)
                             .font(.system(size: 9, weight: .semibold))
                     }
                     .buttonStyle(.plain)
@@ -321,7 +325,7 @@ struct MenuBarView: View {
         HStack(spacing: 6) {
             Spacer()
 
-            Text("CLI Pulse v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0")")
+            Text(L10n.menuBar.appVersion(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"))
                 .font(.system(size: 8))
                 .foregroundStyle(.quaternary)
 
@@ -335,8 +339,8 @@ struct MenuBarView: View {
                     .foregroundStyle(.tertiary)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Quit CLI Pulse")
-            .help("Quit CLI Pulse")
+            .accessibilityLabel(L10n.menuBar.quit)
+            .help(L10n.menuBar.quit)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
@@ -357,7 +361,7 @@ struct MenuBarView: View {
 
             Spacer()
 
-            Text("CLI Pulse v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0")")
+            Text(L10n.menuBar.appVersion(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"))
                 .font(.system(size: 8))
                 .foregroundStyle(.quaternary)
 
@@ -396,12 +400,16 @@ struct MenuBarView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(approvalsEntry.badgeCount == nil
-                    ? "Open Remote Approvals (none pending)"
-                    : "Open Remote Approvals (\(approvalsEntry.badgeCount!) pending)")
+                    ? L10n.remoteApprovals.entryLabelNone
+                    : L10n.remoteApprovals.entryLabelWithCount(approvalsEntry.badgeCount!))
                 .help(approvalsEntry.badgeCount == nil
-                    ? "Open Remote Approvals — currently no pending requests"
-                    : "\(approvalsEntry.badgeCount!) pending Remote Approval\(approvalsEntry.badgeCount! == 1 ? "" : "s")")
+                    ? L10n.remoteApprovals.entryHelpNone
+                    : L10n.remoteApprovals.entryHelpWithCount(approvalsEntry.badgeCount!))
             }
+
+            // iter22: in-app language switcher placed immediately
+            // left of the refresh button per director request.
+            languagePicker
 
             Button {
                 state.requestRefresh()
@@ -460,6 +468,37 @@ struct MenuBarView: View {
                     NSCursor.pop()
                 }
             }
+    }
+
+    /// iter22: globe icon button → menu with English / 简体中文 /
+    /// 日本語 / System Default. Tapping persists the choice via
+    /// `LocaleOverrideStore.shared.set(...)` and forces a re-render
+    /// because `localeOverride` is `@ObservedObject` on this view.
+    private var languagePicker: some View {
+        Menu {
+            Button(action: { LocaleOverrideStore.shared.set("en") }) {
+                Label("English", systemImage: localeOverride.override == "en" ? "checkmark" : "")
+            }
+            Button(action: { LocaleOverrideStore.shared.set("zh-Hans") }) {
+                Label("简体中文", systemImage: localeOverride.override == "zh-Hans" ? "checkmark" : "")
+            }
+            Button(action: { LocaleOverrideStore.shared.set("ja") }) {
+                Label("日本語", systemImage: localeOverride.override == "ja" ? "checkmark" : "")
+            }
+            Divider()
+            Button(action: { LocaleOverrideStore.shared.set(nil) }) {
+                Label(L10n.language.systemDefault, systemImage: localeOverride.override == nil ? "checkmark" : "")
+            }
+        } label: {
+            Image(systemName: "globe")
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel(L10n.language.title)
+        .help(L10n.language.title)
     }
 
     private var providerSwitcher: some View {

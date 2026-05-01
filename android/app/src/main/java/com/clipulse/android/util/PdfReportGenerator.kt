@@ -2,9 +2,11 @@ package com.clipulse.android.util
 
 import android.content.Context
 import android.graphics.Canvas
+import com.clipulse.android.R
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
+import com.clipulse.android.BuildConfig
 import com.clipulse.android.data.model.CostForecast
 import com.clipulse.android.data.model.DailyUsage
 import com.clipulse.android.data.model.DashboardSummary
@@ -71,16 +73,16 @@ object PdfReportGenerator {
         val dateDisplayFormat = SimpleDateFormat("MMMM d, yyyy", Locale.US)
 
         // Title
-        canvas.drawText("CLI Pulse Monthly Report", MARGIN, y + 22f, titlePaint)
+        canvas.drawText(context.getString(R.string.pdf_title), MARGIN, y + 22f, titlePaint)
         y += 30f
-        canvas.drawText("Generated: ${dateDisplayFormat.format(Date())}", MARGIN, y + 10f, labelPaint)
+        canvas.drawText(context.getString(R.string.pdf_generated, dateDisplayFormat.format(Date())), MARGIN, y + 10f, labelPaint)
         y += 20f
         divider()
         y += 8f
 
         // Summary
         if (dashboard != null) {
-            canvas.drawText("Summary", MARGIN, y + 16f, headingPaint)
+            canvas.drawText(context.getString(R.string.pdf_summary), MARGIN, y + 16f, headingPaint)
             y += 24f
 
             fun kv(label: String, value: String) {
@@ -89,11 +91,11 @@ object PdfReportGenerator {
                 y += 16f
             }
 
-            kv("Today's Usage", formatTokens(dashboard.totalUsageToday))
-            kv("Today's Estimated Cost", "$${String.format("%.2f", dashboard.totalEstimatedCostToday)}")
-            kv("Active Sessions", "${dashboard.activeSessions}")
-            kv("Online Devices", "${dashboard.onlineDevices}")
-            kv("Unresolved Alerts", "${dashboard.unresolvedAlerts}")
+            kv(context.getString(R.string.pdf_today_usage), formatTokens(dashboard.totalUsageToday))
+            kv(context.getString(R.string.pdf_today_est_cost), "$${String.format("%.2f", dashboard.totalEstimatedCostToday)}")
+            kv(context.getString(R.string.pdf_active_sessions), "${dashboard.activeSessions}")
+            kv(context.getString(R.string.pdf_online_devices), "${dashboard.onlineDevices}")
+            kv(context.getString(R.string.pdf_unresolved_alerts), "${dashboard.unresolvedAlerts}")
             y += 8f
         }
 
@@ -101,7 +103,7 @@ object PdfReportGenerator {
         if (costForecast != null && costForecast.isReliable) {
             divider()
             y += 4f
-            canvas.drawText("Cost Forecast", MARGIN, y + 16f, headingPaint)
+            canvas.drawText(context.getString(R.string.pdf_cost_forecast), MARGIN, y + 16f, headingPaint)
             y += 24f
 
             fun kv(label: String, value: String) {
@@ -110,22 +112,22 @@ object PdfReportGenerator {
                 y += 16f
             }
 
-            kv("Month-End Estimate", "$${String.format("%.2f", costForecast.predictedMonthTotal)}")
-            kv("Spent So Far", "$${String.format("%.2f", costForecast.actualToDate)}")
-            kv("Confidence Range", "$${String.format("%.2f", costForecast.lowerBound)} — $${String.format("%.2f", costForecast.upperBound)}")
-            kv("Progress", "${costForecast.currentDayOfMonth}/${costForecast.daysInMonth} days")
+            kv(context.getString(R.string.pdf_month_end_estimate), "$${String.format("%.2f", costForecast.predictedMonthTotal)}")
+            kv(context.getString(R.string.pdf_spent_so_far), "$${String.format("%.2f", costForecast.actualToDate)}")
+            kv(context.getString(R.string.pdf_confidence_range), "$${String.format("%.2f", costForecast.lowerBound)} — $${String.format("%.2f", costForecast.upperBound)}")
+            kv(context.getString(R.string.pdf_progress), context.getString(R.string.pdf_progress_value, costForecast.currentDayOfMonth, costForecast.daysInMonth))
             y += 8f
         }
 
         // Provider breakdown
         divider()
         y += 4f
-        canvas.drawText("Provider Breakdown", MARGIN, y + 16f, headingPaint)
+        canvas.drawText(context.getString(R.string.pdf_provider_breakdown), MARGIN, y + 16f, headingPaint)
         y += 24f
 
         // Table header
         val provCols = floatArrayOf(0f, 0.3f, 0.5f, 0.7f, 0.85f)
-        val provHeaders = arrayOf("Provider", "Week Usage", "Est. Cost", "Remaining", "Quota")
+        val provHeaders = arrayOf(context.getString(R.string.pdf_h_provider), context.getString(R.string.pdf_h_week_usage), context.getString(R.string.pdf_h_est_cost), context.getString(R.string.pdf_h_remaining), context.getString(R.string.pdf_h_quota))
         for (i in provHeaders.indices) {
             canvas.drawText(provHeaders[i], MARGIN + CONTENT_WIDTH * provCols[i], y + 9f, smallBoldPaint)
         }
@@ -139,8 +141,8 @@ object PdfReportGenerator {
                 p.provider.take(20),
                 formatTokens(p.weekUsage),
                 "$${String.format("%.2f", p.estimatedCostWeek)}",
-                p.remaining?.let { formatTokens(it) } ?: "N/A",
-                p.quota?.let { formatTokens(it) } ?: "N/A",
+                p.remaining?.let { formatTokens(it) } ?: context.getString(R.string.pdf_na),
+                p.quota?.let { formatTokens(it) } ?: context.getString(R.string.pdf_na),
             )
             for (i in row.indices) {
                 canvas.drawText(row[i], MARGIN + CONTENT_WIDTH * provCols[i], y + 9f, smallPaint)
@@ -153,11 +155,11 @@ object PdfReportGenerator {
         checkSpace(40f)
         divider()
         y += 4f
-        canvas.drawText("Top Sessions by Cost", MARGIN, y + 16f, headingPaint)
+        canvas.drawText(context.getString(R.string.pdf_top_sessions), MARGIN, y + 16f, headingPaint)
         y += 24f
 
         val sessCols = floatArrayOf(0f, 0.25f, 0.5f, 0.65f, 0.85f)
-        val sessHeaders = arrayOf("Provider", "Project", "Cost", "Usage", "Status")
+        val sessHeaders = arrayOf(context.getString(R.string.pdf_h_provider), context.getString(R.string.pdf_h_project), context.getString(R.string.pdf_h_cost), context.getString(R.string.pdf_h_usage), context.getString(R.string.pdf_h_status))
         for (i in sessHeaders.indices) {
             canvas.drawText(sessHeaders[i], MARGIN + CONTENT_WIDTH * sessCols[i], y + 9f, smallBoldPaint)
         }
@@ -186,7 +188,7 @@ object PdfReportGenerator {
             checkSpace(40f)
             divider()
             y += 4f
-            canvas.drawText("Daily Cost Trend (Last 30 Days)", MARGIN, y + 16f, headingPaint)
+            canvas.drawText(context.getString(R.string.pdf_daily_trend), MARGIN, y + 16f, headingPaint)
             y += 24f
 
             val costByDate = dailyUsage.groupBy { it.date }.mapValues { (_, items) -> items.sumOf { it.cost } }
@@ -209,7 +211,7 @@ object PdfReportGenerator {
         checkSpace(30f)
         y += 10f
         divider()
-        canvas.drawText("CLI Pulse v1.9 • ${dateDisplayFormat.format(Date())}", MARGIN, y + 8f, labelPaint)
+        canvas.drawText(context.getString(R.string.pdf_footer, BuildConfig.VERSION_NAME, dateDisplayFormat.format(Date())), MARGIN, y + 8f, labelPaint)
 
         doc.finishPage(page)
 

@@ -145,7 +145,7 @@ private struct ProviderConfigWindowContent: View {
             if let kind = providerState.editingProviderKind {
                 ProviderConfigEditor(kind: kind, state: state)
             } else {
-                Text("No provider selected")
+                Text(L10n.common.noProviderSelected)
                     .foregroundStyle(.secondary)
             }
         }

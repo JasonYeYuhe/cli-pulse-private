@@ -74,15 +74,15 @@ struct ProvidersTab: View {
                 .foregroundStyle(.orange)
                 .font(.system(size: 14))
             VStack(alignment: .leading, spacing: 2) {
-                Text("Grant access to see token counts and cost")
+                Text(L10n.providers.grantAccessTitle)
                     .font(.system(size: 11, weight: .semibold))
-                Text("CLI Pulse needs read access to ~/.codex/sessions/ and ~/.claude/projects/")
+                Text(L10n.providers.grantAccessBody)
                     .font(.system(size: 9))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
             Spacer()
-            Button("Open Settings") {
+            Button(L10n.providers.openSettings) {
                 state.selectedTab = .settings
             }
             .buttonStyle(.bordered)
@@ -238,7 +238,7 @@ struct EnhancedProviderCard: View {
                         Text(provider.provider)
                             .font(.system(size: 12, weight: .bold))
                         if !config.isEnabled {
-                            Text("DISABLED")
+                            Text(L10n.providers.disabledBadge)
                                 .font(.system(size: 7, weight: .bold))
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 4)
@@ -290,7 +290,7 @@ struct EnhancedProviderCard: View {
                     if let plan = detail.planType {
                         StatusBadge(text: plan, color: plan == "Paid" ? .green : .orange)
                     }
-                    Text("Source: \(detail.sourceType.rawValue)")
+                    Text(L10n.providers.sourceLabel(detail.sourceType.rawValue))
                         .font(.system(size: 8))
                         .foregroundStyle(.quaternary)
                     Spacer()
@@ -360,7 +360,7 @@ struct EnhancedProviderCard: View {
                            !s.lowercased().contains("try `/usage`") {
                             return s
                         }
-                        return "Quota data unavailable"
+                        return L10n.providers.quotaDataUnavailable
                     }()
                     HStack(spacing: 6) {
                         Image(systemName: "exclamationmark.triangle.fill")

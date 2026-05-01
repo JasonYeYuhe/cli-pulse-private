@@ -288,6 +288,7 @@
 "status.operational" = "正常";
 "status.down" = "停止";
 "status.disabled" = "無効";
+"status.ended" = "終了";
 
 /* ── バッジ ── */
 "badge.free" = "無料";
@@ -412,3 +413,290 @@
 "account.delete_failed_title" = "アカウントを削除できませんでした";
 "account.delete_failed_generic" = "アカウントを削除できませんでした。アカウントはまだ有効です。ネットワーク接続を確認して再試行するか、一度サインアウトしてからサインインし直してセッションを更新してください。";
 "account.delete_session_expired" = "アカウントを削除する前にセッションが期限切れになりました。アカウントはまだ有効です。再度サインインしてから、設定の「アカウントを削除」をもう一度お試しください。";
+
+/* ── ダッシュボード追加 (i18n sweep) ── */
+"dashboard.export_cost_report" = "コストレポートを書き出す";
+"dashboard.export_sessions" = "セッションを書き出す";
+"dashboard.export_providers" = "プロバイダーを書き出す";
+"dashboard.export_pdf" = "PDFレポートを書き出す";
+"dashboard.export" = "書き出す";
+"dashboard.subscriptions" = "サブスクリプション";
+"dashboard.subscription_utilization" = "サブスクリプション使用率";
+"dashboard.total_monthly" = "月額合計";
+"dashboard.no_enabled_with_data" = "データを持つ有効なプロバイダーがありません";
+"dashboard.tap_review_claude" = "Mac で実行中の Claude ツール呼び出しを確認するにはタップ";
+
+/* ── 設定追加 (i18n sweep) ── */
+"settings.show_cost_summary" = "コスト概要を表示";
+"settings.show_cost_summary_hint" = "本日と30日の推定支出を表示";
+"settings.auto_poll_status" = "プロバイダーステータスページを自動取得";
+"settings.quota_alert_thresholds" = "クォータアラートしきい値";
+"settings.quota_alert_thresholds_hint" = "プロバイダーのクォータがこのパーセンテージを超えたときに警告を発します。";
+"settings.warning_pct" = "警告: %d%%";
+"settings.critical_pct" = "重大: %d%%";
+"settings.warning_threshold_pct" = "警告しきい値: %d%%";
+"settings.critical_threshold_pct" = "重大しきい値: %d%%";
+"settings.reset_thresholds_defaults" = "しきい値を既定値にリセット";
+"settings.reset" = "リセット";
+"settings.privacy" = "プライバシー";
+"settings.test_webhook" = "Webhookをテスト";
+"settings.remote_control" = "リモートコントロール";
+"settings.remote_control_iphone_hint" = "この iPhone から Claude のツール呼び出しを承認";
+"settings.pending_approvals" = "保留中の承認";
+"settings.privacy_redacted_hint" = "CLI Pulse は各リクエストの編集済み概要のみをアップロードします — API キー、Cookie、完全なトランスクリプトは送信しません。";
+
+/* ── 表示追加 (i18n sweep) ── */
+"display.mode" = "表示モード";
+"display.merge_menu_bar_icons" = "メニューバーアイコンを統合";
+"display.merge_menu_bar_hint" = "プロバイダー切替付きの単一アイコン";
+"display.content_mode" = "コンテンツモード";
+"display.reorder_hint" = "概要タブに表示するプロバイダーを選択。ドラッグで並び替え。";
+
+/* ── サブスクリプション追加 (i18n sweep) ── */
+"subscription.loading_plans" = "プランを読み込み中…";
+"subscription.unavailable" = "現在サブスクリプションプランは利用できません。";
+"subscription.retry" = "再試行";
+"subscription.view_all_plans" = "すべてのプランと詳細を見る";
+
+/* ── プロバイダー追加 (i18n sweep) ── */
+"providers.configure_hint" = "各プロバイダーのデータソース、認証情報、表示を設定します。";
+"providers.source_label" = "ソース: %@";
+"providers.key_set" = "キー設定済み";
+"providers.limited_free" = "無料プランで制限中";
+"providers.disabled_badge" = "無効";
+"providers.grant_access_title" = "トークン数とコストを表示するためにアクセスを許可";
+"providers.grant_access_body" = "CLI Pulse は ~/.codex/sessions/ と ~/.claude/projects/ への読み取りアクセスが必要です";
+"providers.open_settings" = "設定を開く";
+
+/* ── プロバイダー設定 ── */
+"provider_config.data_source" = "データソース";
+"provider_config.account_label" = "アカウントラベル";
+"provider_config.account_placeholder" = "例: team-A、dev-box";
+"provider_config.api_key" = "APIキー";
+"provider_config.show_key" = "キーを表示";
+"provider_config.hide_key" = "キーを非表示";
+"provider_config.keychain_notice" = "Mac のキーチェーンにのみ保存されます。アップロードされません。";
+"provider_config.cookie_source" = "Cookieソース";
+"provider_config.manual_cookie_header" = "手動 Cookie ヘッダー";
+"provider_config.capabilities" = "機能";
+"provider_config.cap_quota" = "クォータ";
+"provider_config.cap_exact_cost" = "正確なコスト";
+"provider_config.cap_credits" = "クレジット";
+"provider_config.cap_status_poll" = "ステータス取得";
+"provider_config.requires_helper_sync" = "クォータ・ティアデータにはバックエンドヘルパー同期が必要です。";
+"provider_config.google_oauth" = "Google OAuth";
+"provider_config.disconnect" = "接続解除";
+"provider_config.connect_gemini" = "Gemini に接続";
+"provider_config.gemini_uses_google" = "Google アカウントを使用します。APIキーは不要です。";
+"provider_config.claude_code" = "Claude Code";
+"provider_config.connect_claude_code" = "Claude Code に接続";
+"provider_config.claude_keychain_hint" = "既存の Claude Code ログインを読み取ります。macOS が一度許可を求めます — 「常に許可」をタップしてください。";
+"provider_config.claude_read_failed" = "Claude Code の認証情報を読み取れませんでした。プロンプトを拒否した場合は再試行するか、まず Claude Code をインストール／起動してください。";
+"provider_config.test_connection" = "接続をテスト";
+"provider_config.testing" = "テスト中…";
+
+/* ── オンボーディングウィザード ── */
+"onboarding_wizard.welcome_title" = "CLI Pulse へようこそ";
+"onboarding_wizard.welcome_subtitle" = "AI コーディングツールの使用量、\nコスト、クォータを一カ所で監視。";
+"onboarding_wizard.get_started" = "はじめる";
+"onboarding_wizard.what_does" = "CLI Pulse でできること";
+"onboarding_wizard.continue" = "続ける";
+"onboarding_wizard.back" = "戻る";
+"onboarding_wizard.privacy_title" = "あなたのデータ、あなたの管理";
+"onboarding_wizard.privacy_body" = "Mac に残るデータと、アカウントに同期されるデータを正確に説明します。";
+"onboarding_wizard.sign_in_title" = "サインイン";
+"onboarding_wizard.sign_in_subtitle" = "サインインしてデータを同期 — 初回認証時にアカウントが作成されます。";
+"onboarding_wizard.skip" = "今はスキップ";
+"onboarding_wizard.code_sent_to" = "%@ にコードを送信しました";
+"onboarding_wizard.verify" = "認証";
+"onboarding_wizard.back_to_email" = "メール入力に戻る";
+"onboarding_wizard.all_set_title" = "準備完了";
+"onboarding_wizard.all_set_body" = "Mac アプリの実行中は同期が自動で行われます。同じアカウントで他のデバイスにサインインすれば、ペアリングや設定なしで使用状況がそこにも表示されます。";
+"onboarding_wizard.helper_hint" = "ヘッドレスサーバーや Claude Remote Approvals 用のオプションヘルパーをお探しですか？オンボーディング後、設定 → ヘルパーを開いてください。";
+"onboarding_wizard.done" = "完了";
+"onboarding_wizard.close" = "オンボーディングを閉じる";
+
+/* ── 詳細設定 ── */
+"advanced.launch_at_login" = "ログイン時に起動";
+"advanced.background_sync" = "バックグラウンド同期を有効化";
+"advanced.background_sync_hint" = "iOS／Watch／Android 用にクラウドへ使用状況を同期";
+"advanced.full_details" = "詳細:";
+"advanced.hide_emails" = "UI でメールアドレスを非表示";
+"advanced.track_git" = "Git アクティビティを追跡 (Yield Score)";
+"advanced.track_git_hint" = "コミットメタデータのハッシュのみ — メッセージ、差分、パスはアップロードされません";
+"advanced.git_consent_title" = "Git アクティビティ追跡を有効にしますか？";
+"advanced.enable" = "有効化";
+"advanced.git_consent_body" = "CLI Pulse は AI セッションが活動中のプロジェクトの git ログをスキャンします。デバイスから送信されるのはコミットハッシュ、プロジェクトパスの HMAC、コミットのタイムスタンプ、マージコミットフラグのみです。コミットメッセージ、差分、ファイルパス、作成者情報はアップロードされません。";
+"advanced.remote_control" = "リモートコントロール (フェーズ1: Claude 承認)";
+"advanced.remote_control_hint" = "iPhone や Mac から Claude ツール呼び出しを承認 ・ 既定はオフ";
+"advanced.remote_consent_title" = "リモートコントロールを有効にしますか？";
+"advanced.token" = "トークン";
+"advanced.providers_loaded" = "プロバイダー読み込み済み";
+"advanced.last_refresh" = "最終更新";
+"advanced.never" = "なし";
+
+/* ── リモート承認 ── */
+"remote_approvals.title" = "リモート承認";
+"remote_approvals.disabled_hint" = "無効 ・ 設定 → プライバシー";
+"remote_approvals.refresh" = "更新";
+"remote_approvals.close" = "閉じる";
+"remote_approvals.off_title" = "リモートコントロールはオフです";
+"remote_approvals.off_body_mac" = "iPhone や Mac から Claude のツール呼び出しを承認するには、設定 → プライバシーでリモートコントロールをオンにしてください。CLI Pulse は編集済み概要のみをアップロードし、トランスクリプトや API キーは送信しません。";
+"remote_approvals.off_body_ios" = "Mac で実行中の Claude ツール呼び出しを承認するには、設定 → プライバシーでリモートコントロールをオンにしてください。CLI Pulse は編集済み概要のみをアップロードし、トランスクリプトや API キーは送信しません。";
+"remote_approvals.open_settings" = "設定を開く";
+"remote_approvals.no_pending" = "保留中の承認はありません";
+"remote_approvals.updated_prefix" = "更新: ";
+"remote_approvals.per_request_note_mac" = "ここでの承認はリクエスト単位のみで、Claude Code の「常に許可」ルールは追加されません。同じツールを次回 Claude が必要とすると再度リクエストが届きます。永続的なルールには Claude Code 自体の「常に許可」を使ってください。";
+"remote_approvals.per_request_note_ios" = "承認はリクエスト単位のみで、Claude Code の「常に許可」ルールは作成されません。同じツールを次回 Claude が必要とすると、ここに再度リクエストが届きます。永続的なルールを設定するには、Mac 上の Claude Code 自体の「常に許可」UI を使ってください。承認すると、Mac でツール呼び出しが実行されます。";
+"remote_approvals.deny" = "拒否";
+"remote_approvals.approve" = "承認";
+"remote_approvals.high_risk_warning" = "高リスク — 代わりに Mac でローカル承認してください。";
+
+/* ── Yield Score ── */
+"yield.title" = "Yield Score";
+"yield.help_estimated" = "正確な API 価格が利用できない場合、コストはトークン使用量から推定されます。";
+"yield.empty_body" = "コミットあたりの AI コストを追跡して Yield Score を表示します。";
+"yield.empty_enable_hint" = "設定 → プライバシー → Git アクティビティを追跡 で有効化。";
+"yield.view_detail" = "詳細を表示";
+"yield.detail_title" = "Yield Score 詳細";
+"yield.detail_body" = "正確な API 価格が利用できない場合、コストはトークン使用量から推定されます。マージコミットは集計から除外されます。";
+
+/* ── メニューバー ── */
+"menu_bar.tier_migration" = "無料プランに収まるよう、最も使用頻度の高い %d 個のプロバイダーを残しました。%d 個を無効化 — 設定 → プロバイダー で編集してください。";
+"menu_bar.edit" = "編集";
+"menu_bar.app_version" = "CLI Pulse v%@";
+"menu_bar.quit" = "CLI Pulse を終了";
+
+/* ── ペアリング ── */
+"pairing.helper_intro" = "バックグラウンドヘルパーは使用状況をクラウドに同期し、iOS、Watch、Android で確認できるようにします。";
+"pairing.set_up_helper" = "バックグラウンドヘルパーをセットアップ";
+"pairing.manual_setup" = "手動セットアップ (ターミナル)";
+"pairing.your_code" = "コード:";
+"pairing.copy" = "クリップボードにコピー";
+
+/* ── Watch ── */
+"watch.couldnt_load_data" = "データを読み込めませんでした";
+"watch.couldnt_load_providers" = "プロバイダーを読み込めませんでした";
+"watch.retry" = "再試行";
+"watch.pull_to_refresh" = "下にスワイプで更新";
+
+/* ── ウィジェット追加 ── */
+"widget.sign_in_to_view" = "使用状況を表示するにはサインイン";
+
+/* ── 共通追加 ── */
+"common.retry" = "再試行";
+"common.close" = "閉じる";
+"common.disconnect" = "接続解除";
+
+/* ── 言語切替 (iter22) ── */
+"language.title" = "言語";
+"language.system_default" = "システム既定";
+
+/* ── リモート承認 i18n leftovers ── */
+"remote_approvals.pending_count" = "%d 件保留中";
+"remote_approvals.entry_label_none" = "リモート承認を開く (保留中なし)";
+"remote_approvals.entry_label_with_count" = "リモート承認を開く (%d 件保留中)";
+"remote_approvals.entry_help_none" = "リモート承認を開く — 現在、保留中のリクエストはありません";
+"remote_approvals.entry_help_with_count" = "リモート承認 %d 件保留中";
+"remote_approvals.unknown_tool" = "不明なツール";
+"remote_approvals.no_summary" = "(概要なし)";
+"remote_approvals.expires" = "%@ に期限切れ";
+
+/* ── その他 i18n leftovers ── */
+"alerts.resolve_all" = "すべて解決";
+"yield.no_commits" = "コミットなし";
+"yield.estimated_badge" = "· 推定";
+"yield.range_picker" = "範囲";
+"yield.empty_no_attribution" = "この期間にコミットが帰属していません。追跡対象のリポジトリでコードを書いてみてください。";
+"yield.detail_subtitle" = "%@ · コミット単価で並び替え (低いほど良い)";
+"yield.commits_count" = "%d コミット";
+"yield.commits_count_decimal" = "%.1f コミット";
+"yield.ambiguous_count" = "%d 件曖昧";
+"menu_bar.quit_full" = "CLI Pulse Bar を終了";
+
+/* ── iter22 bro範囲スイープ ── */
+"common.no_provider_selected" = "プロバイダーが選択されていません";
+"cost.exact" = "正確";
+"cost.estimated" = "推定";
+"cost.tokens_suffix" = "· %@ トークン";
+"cost.tokens_short_suffix" = "· %@";
+"cost.thirty_day_precise" = "30日";
+"cost.tokens_value" = "%@ トークン";
+"cost.day_progress" = "%d/%d 日";
+"cost.by_model" = "モデル別";
+"watch.unread_count" = "%d 件未読";
+"watch.snooze_15" = "15分";
+"watch.snooze_30" = "30分";
+"watch.snooze_60" = "1時間";
+"widget.alerts_summary" = "アラート %d 件 • CLI Pulse";
+"widget.percent_left" = "%@ 残り %d%%";
+"widget.quota_fallback" = "クォータ";
+"dashboard.pending_approval_count" = "保留中の承認 %d 件";
+"team.members_count" = "%d メンバー";
+"team.tokens_count" = "%d トークン";
+"team.error_loading" = "チームを読み込めませんでした。後ほど再試行してください。";
+"providers.quota_data_unavailable" = "クォータデータを取得できません";
+"advanced.sync_just_now" = "たった今同期";
+"advanced.sync_minutes_ago" = "%d 分前に同期";
+"advanced.helper_running" = "実行中";
+"advanced.helper_not_running" = "停止中";
+"advanced.privacy_keys_title" = "プロバイダー API キーと Cookie";
+"advanced.privacy_keys_detail" = "macOS のキーチェーンにのみ保存 · アップロードされません";
+"advanced.privacy_logs_title" = "セッションログ (~/.codex/sessions、~/.claude/projects)";
+"advanced.privacy_logs_detail" = "上記で許可したフォルダからデバイス内でスキャン";
+"advanced.privacy_metrics_title" = "使用量メトリクス (トークン数、コスト、モデル名)";
+"advanced.privacy_metrics_detail" = "iPhone / Watch 用に CLI Pulse アカウントへ同期";
+"advanced.privacy_email_title" = "ログイン用メールアドレス";
+"advanced.privacy_email_detail" = "サインイン用に認証バックエンドへ送信";
+"onboarding_wizard.privacy_keys_title" = "API キーはこの Mac に留まります";
+"onboarding_wizard.privacy_keys_detail" = "プロバイダー API キーとセッション Cookie (OpenAI、Anthropic、Google など) は macOS のキーチェーンにのみ保存されます。これらの提供元への直接通信に使われ、当社にアップロードされることはありません。";
+"onboarding_wizard.privacy_logs_title" = "セッションログはデバイス内でスキャン";
+"onboarding_wizard.privacy_logs_detail" = "CLI Pulse は ~/.codex/sessions/ と ~/.claude/projects/ をローカルで読み取ってトークン数を計算します。ファイル内容がデバイスから出ることはありません。";
+"onboarding_wizard.privacy_metrics_title" = "使用量メトリクスはアカウントと同期";
+"onboarding_wizard.privacy_metrics_detail" = "トークン数、コスト推定、モデル名、日付が CLI Pulse アカウントに送信され、iPhone と Apple Watch で同じ履歴を表示できます。";
+
+/* ── Apple 共有 PDF レポート ── */
+"pdf.title" = "CLI Pulse 月次レポート";
+"pdf.generated" = "生成: %@";
+"pdf.summary" = "概要";
+"pdf.today_usage" = "本日の使用量";
+"pdf.today_estimated_cost" = "本日の推定コスト";
+"pdf.active_sessions" = "アクティブセッション";
+"pdf.online_devices" = "オンラインデバイス";
+"pdf.unresolved_alerts" = "未解決のアラート";
+"pdf.cost_forecast" = "コスト予測";
+"pdf.month_end_estimate" = "月末推定";
+"pdf.spent_so_far" = "これまでの支出";
+"pdf.confidence_range" = "信頼区間";
+"pdf.progress" = "進捗";
+"pdf.progress_value" = "%d/%d 日";
+"pdf.provider_breakdown" = "プロバイダー別内訳";
+"pdf.h_provider" = "プロバイダー";
+"pdf.h_week_usage" = "週間使用量";
+"pdf.h_est_cost" = "推定コスト";
+"pdf.h_remaining" = "残量";
+"pdf.h_quota" = "クォータ";
+"pdf.na" = "該当なし";
+"pdf.top_sessions" = "コスト上位セッション";
+"pdf.h_project" = "プロジェクト";
+"pdf.h_cost" = "コスト";
+"pdf.h_usage" = "使用量";
+"pdf.h_status" = "ステータス";
+"pdf.daily_trend" = "日次コスト推移 (過去30日)";
+"pdf.footer" = "CLI Pulse v%@ • %@";
+
+/* ── フォルダーアクセス ── */
+"folder_access.title" = "CLI ツールアクセス";
+"folder_access.intro" = "CLI ツールの認証情報ディレクトリへの読み取りアクセスを許可すると、CLI Pulse が使用状況を追跡できます。";
+"folder_access.granted" = "許可済み";
+"folder_access.not_installed" = "未インストール";
+"folder_access.grant" = "許可";
+"folder_access.grant_all" = "一括許可";
+"folder_access.rescan_title" = "トークンキャッシュを再スキャン";
+"folder_access.rescan_detail" = "合計値が正しくない場合に最初から再構築";
+"folder_access.force_rescan" = "強制再スキャン";
+"folder_access.panel_message" = "ホームフォルダーを選択して、CLI Pulse にすべての CLI ツール認証情報へのアクセスを許可します";
+"folder_access.panel_prompt" = "アクセスを許可";
+
+/* ── サブスクリプション請求切替 ── */
+"subscription.billing" = "請求";

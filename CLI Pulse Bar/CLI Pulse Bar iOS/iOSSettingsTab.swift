@@ -237,7 +237,7 @@ struct iOSSettingsTab: View {
                                 AlertThresholdsStore.save(alertThresholds)
                             }
                         ), in: AlertThresholds.warningRange, step: 5) {
-                            Text("Warning threshold: \(alertThresholds.warning)%")
+                            Text(L10n.settings.warningThresholdPct(alertThresholds.warning))
                                 .monospacedDigit()
                         }
                         Stepper(value: Binding(
@@ -249,11 +249,11 @@ struct iOSSettingsTab: View {
                                 AlertThresholdsStore.save(alertThresholds)
                             }
                         ), in: (alertThresholds.warning + 1)...AlertThresholds.criticalUpperBound, step: 5) {
-                            Text("Critical threshold: \(alertThresholds.critical)%")
+                            Text(L10n.settings.criticalThresholdPct(alertThresholds.critical))
                                 .monospacedDigit()
                         }
                         if alertThresholds != .defaults {
-                            Button("Reset thresholds to defaults") {
+                            Button(L10n.settings.resetThresholdsDefaults) {
                                 alertThresholds = .defaults
                                 AlertThresholdsStore.save(.defaults)
                             }
@@ -261,14 +261,14 @@ struct iOSSettingsTab: View {
                     }
 
                     // Integrations (Webhook)
-                    Section("Integrations") {
-                        Toggle("Webhook Notifications", isOn: Binding(
+                    Section(L10n.integrations.title) {
+                        Toggle(L10n.integrations.webhookNotifications, isOn: Binding(
                             get: { state.webhookEnabled },
                             set: { state.webhookEnabled = $0; state.pushSettingsToServer() }
                         ))
 
                         if state.webhookEnabled {
-                            TextField("Webhook URL (Discord / Slack)", text: Binding(
+                            TextField(L10n.integrations.webhookURLPlaceholder, text: Binding(
                                 get: { state.webhookURL },
                                 set: { state.webhookURL = $0 }
                             ))
@@ -284,7 +284,7 @@ struct iOSSettingsTab: View {
                             } label: {
                                 HStack {
                                     Image(systemName: "paperplane")
-                                    Text("Test Webhook")
+                                    Text(L10n.integrations.testWebhook)
                                 }
                             }
                             .disabled(state.webhookURL.isEmpty)
@@ -312,13 +312,13 @@ struct iOSSettingsTab: View {
                         )) {
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack(spacing: 6) {
-                                    Text("Remote Control")
+                                    Text(L10n.settings.remoteControl)
                                     if state.remoteControlSaving {
                                         ProgressView()
                                             .controlSize(.small)
                                     }
                                 }
-                                Text("Approve Claude tool calls from this iPhone")
+                                Text(L10n.settings.remoteControlIPhoneHint)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -343,7 +343,7 @@ struct iOSSettingsTab: View {
                             } label: {
                                 HStack {
                                     Image(systemName: "checkmark.shield")
-                                    Text("Pending Approvals")
+                                    Text(L10n.settings.pendingApprovals)
                                     Spacer()
                                     if let count = pendingEntry.badgeCount {
                                         Text("\(count)")
@@ -357,14 +357,14 @@ struct iOSSettingsTab: View {
                             }
                         }
                     } header: {
-                        Text("Privacy")
+                        Text(L10n.settings.privacy)
                     } footer: {
-                        Text("CLI Pulse uploads only a redacted summary of each request — never API keys, cookies, or full transcripts.")
+                        Text(L10n.settings.privacyRedactedHint)
                             .font(.caption)
                     }
-                    .alert("Enable Remote Control?", isPresented: $showRemoteControlConsent) {
+                    .alert(L10n.advanced.remoteConsentTitle, isPresented: $showRemoteControlConsent) {
                         Button(L10n.common.cancel, role: .cancel) {}
-                        Button("Enable") {
+                        Button(L10n.advanced.enable) {
                             // Atomic entry point — see DataRefreshManager.
                             state.setRemoteControlEnabled(true)
                         }
@@ -399,7 +399,7 @@ struct iOSSettingsTab: View {
                     }
 
                     // Teams
-                    Section("Teams") {
+                    Section(L10n.team.title) {
                         TeamView()
                             .environmentObject(state)
                     }
