@@ -3,6 +3,25 @@
 This workspace contains the current `CLI Pulse Bar` app plus a small amount of
 legacy material kept for reference.
 
+## Platforms
+
+CLI Pulse ships as one product across desktop, mobile, and wearable
+platforms, with a shared Supabase backend so usage history follows you
+between devices:
+
+| Platform                        | Source                                                                      | Distribution        |
+| ------------------------------- | --------------------------------------------------------------------------- | ------------------- |
+| macOS · iOS · iPadOS · watchOS  | this repo (`CLI Pulse Bar/`)                                                | App Store           |
+| Android                         | this repo (`android/`)                                                      | Google Play         |
+| **Windows · Linux**             | **[JasonYeYuhe/cli-pulse-desktop](https://github.com/JasonYeYuhe/cli-pulse-desktop)** (separate repo, Rust + Tauri 2) | GitHub Releases     |
+
+The Windows / Linux build lives in its own repository because it shares no
+client code with the Apple/Android apps (Rust + Tauri vs Swift/Kotlin) and has
+a different CI matrix and release channel. Both desktop clients (macOS Swift
+and Windows/Linux Rust) implement the same on-device JSONL scanner with
+bit-exact parity, and every client authenticates against the same Supabase
+project.
+
 ## 🔒 Privacy
 
 - **Provider API keys & session cookies** (OpenAI, Anthropic, Google,
