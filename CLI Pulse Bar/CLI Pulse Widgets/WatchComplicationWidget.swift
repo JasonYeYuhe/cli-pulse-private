@@ -1,5 +1,6 @@
 import WidgetKit
 import SwiftUI
+import CLIPulseCore
 
 // MARK: - watchOS Complication Widget
 

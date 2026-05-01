@@ -30,7 +30,7 @@ DEVELOPER_ID_APPLICATION="${DEVELOPER_ID_APPLICATION:-}"
 NOTARYTOOL_KEYCHAIN_PROFILE="${NOTARYTOOL_KEYCHAIN_PROFILE:-cli-pulse-notary}"
 
 if [[ -z "$DEVELOPER_ID_APPLICATION" ]]; then
-    DEVELOPER_ID_APPLICATION=$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\\(Developer ID Application:.*\\)"/\\1/p' | head -n 1)
+    DEVELOPER_ID_APPLICATION=$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -n 1)
 fi
 
 USE_DEVELOPER_ID=false
