@@ -2,8 +2,12 @@
 -- CLI Pulse — Helper RPC Functions
 -- Called by the helper daemon via device-scoped helper tokens.
 --
--- register_helper: security definer — requires auth.uid() to match
---   the pairing code owner; called by the authenticated user.
+-- register_helper: security definer. Authentication is via the
+--   pairing code: the function looks up pairing_codes.user_id and
+--   creates a device row under that user_id. Does NOT require or
+--   check auth.uid() — callers use the anon key. (For an
+--   auth.uid()-based desktop sign-in path, see register_desktop_helper,
+--   planned for v0.3.0.)
 -- helper_heartbeat / helper_sync: security definer — helpers call
 --   via anon key, so RLS would block them.  Internal auth is done
 --   by validating (device_id, helper_secret) inside the function.

@@ -167,9 +167,11 @@ extension WatchSessionManager: WCSessionDelegate {
 
             guard let token, !token.isEmpty else { return }
 
-            // Persist for independent token lifecycle
-            UserDefaults.standard.set(token, forKey: "cli_pulse_watch_auth_token")
-            if let refresh { UserDefaults.standard.set(refresh, forKey: "cli_pulse_watch_refresh_token") }
+            // Token persistence is handled by WatchAppState writing to
+            // Keychain in applyWatchAuth(). Pre-v0.2.14 also wrote here
+            // to UserDefaults; removed because UserDefaults on watchOS
+            // is unencrypted at rest. WatchAppState.migrateLegacyUserDefaultsTokens
+            // cleans up any stranded entries on launch.
 
             DispatchQueue.main.async {
                 self.pendingAuthToken = token

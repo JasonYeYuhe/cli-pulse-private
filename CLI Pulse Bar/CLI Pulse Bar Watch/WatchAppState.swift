@@ -41,6 +41,12 @@ public final class WatchAppState: ObservableObject {
     private var refreshTimer: Timer?
 
     init() {
+        // v0.2.14 — one-shot migration off UserDefaults for any auth tokens
+        // the leaky pre-v0.2.14 build wrote there. Must run before
+        // restoreSession() so a Keychain-only build doesn't lose an
+        // already-bridged session that lives only in UserDefaults.
+        Self.migrateLegacyUserDefaultsTokens()
+
         self.api = APIClient()
         self.authManager = AuthManager(api: api, persistTokens: { access, refresh in
             if !access.isEmpty {
@@ -306,5 +312,43 @@ public final class WatchAppState: ObservableObject {
             lastError = nil
             serverOnline = true
         }
+    }
+
+    // MARK: - v0.2.14 Legacy Token Migration
+
+    /// Pre-v0.2.14 builds wrote auth tokens to UserDefaults in addition to
+    /// Keychain. UserDefaults on watchOS is not encrypted at rest, so it is
+    /// a real exfiltration surface. This one-shot migration runs at every
+    /// launch (idempotent — no-op when UserDefaults is clean), adopts any
+    /// stranded UserDefaults values into Keychain only when Keychain is
+    /// empty for that key, and clears the UserDefaults entries either way.
+    /// Slated for removal in v0.3.x once the install base has rolled over.
+    static func migrateLegacyUserDefaultsTokens() {
+        let legacyAccessKey = "cli_pulse_watch_auth_token"
+        let legacyRefreshKey = "cli_pulse_watch_refresh_token"
+
+        let legacyAccess = UserDefaults.standard.string(forKey: legacyAccessKey)
+        let legacyRefresh = UserDefaults.standard.string(forKey: legacyRefreshKey)
+
+        guard legacyAccess != nil || legacyRefresh != nil else {
+            return
+        }
+
+        // Adopt only if Keychain is empty — Keychain is canonical and we
+        // never overwrite a fresh value with a stale UserDefaults copy.
+        if let access = legacyAccess, !access.isEmpty,
+           (KeychainHelper.load(key: "cli_pulse_token") ?? "").isEmpty {
+            KeychainHelper.save(key: "cli_pulse_token", value: access)
+        }
+        if let refresh = legacyRefresh, !refresh.isEmpty,
+           (KeychainHelper.load(key: "cli_pulse_refresh_token") ?? "").isEmpty {
+            KeychainHelper.save(key: "cli_pulse_refresh_token", value: refresh)
+        }
+
+        // Clear the UserDefaults copies regardless. If a Keychain write
+        // somehow failed, the user re-authenticates through the iPhone —
+        // same UX as a routine token expiry — and we never leak again.
+        UserDefaults.standard.removeObject(forKey: legacyAccessKey)
+        UserDefaults.standard.removeObject(forKey: legacyRefreshKey)
     }
 }
