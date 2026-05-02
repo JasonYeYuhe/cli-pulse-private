@@ -293,6 +293,16 @@ public final class AppState: ObservableObject {
     @Published public var remoteApprovalsLastRefresh: Date?
     @Published public var remoteApprovalsError: String?
 
+    // MARK: - Remote Sessions (Sessions Input iter 1)
+    /// Managed Claude sessions the helper has spawned (or is about to
+    /// spawn). Pulled from `remote_app_list_sessions`. Refreshed only
+    /// while the Sessions UI is on screen AND `remoteControlEnabled`
+    /// — same gating discipline as `remotePendingApprovals`. Cleared
+    /// when Remote Control toggles off and on logout.
+    @Published public var remoteSessions: [RemoteSession] = []
+    @Published public var remoteSessionsLastRefresh: Date?
+    @Published public var remoteSessionsError: String?
+
     /// Aggregated per-provider summaries over the currently-selected range.
     /// Re-derived on every access; cheap because rows is small (≤ providers × days).
     public var yieldScoreSummaries: [YieldScoreSummary] {

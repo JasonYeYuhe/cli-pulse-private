@@ -5,14 +5,26 @@ struct iOSSessionsTab: View {
     @EnvironmentObject var state: AppState
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var selectedSession: SessionRecord?
+    @State private var selectedManagedSession: RemoteSession?
 
     private var isIPad: Bool { horizontalSizeClass == .regular }
 
     var body: some View {
-        if isIPad {
-            iPadSessionsView
-        } else {
-            iPhoneSessionsView
+        Group {
+            if isIPad { iPadSessionsView } else { iPhoneSessionsView }
+        }
+        .task {
+            // Active polling while the Sessions UI is on screen, gated
+            // to ON. Mirrors the macOS SessionsTab + RemoteApprovalsView
+            // discipline — when off, idle long so the loop honors a flip.
+            while !Task.isCancelled {
+                await state.refreshRemoteSessions()
+                if !state.remoteControlEnabled {
+                    try? await Task.sleep(nanoseconds: 10_000_000_000)
+                } else {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                }
+            }
         }
     }
 
@@ -23,7 +35,9 @@ struct iOSSessionsTab: View {
             sessionList
                 .navigationTitle(L10n.tab.sessions)
         } detail: {
-            if let session = selectedSession {
+            if let managed = selectedManagedSession {
+                ManagedSessionDetailView(session: managed)
+            } else if let session = selectedSession {
                 SessionDetailView(session: session, showCost: state.showCost)
             } else {
                 ContentUnavailableView {
@@ -35,36 +49,28 @@ struct iOSSessionsTab: View {
         }
         .refreshable {
             await state.refreshAll()
+            await state.refreshRemoteSessions()
         }
     }
 
-    // MARK: - iPhone: List
+    // MARK: - iPhone
 
     private var iPhoneSessionsView: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 10) {
-                    if state.sessions.isEmpty {
-                        ContentUnavailableView {
-                            Label(L10n.sessions.noSessions, systemImage: "terminal")
-                        } description: {
-                            Text(L10n.sessions.emptyHint)
-                        }
-                        .padding(.vertical, 40)
-                    } else {
-                        ForEach(state.sessions) { session in
-                            NavigationLink(value: session) {
-                                iOSSessionRow(session: session, showCost: state.showCost)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
+                VStack(spacing: 12) {
+                    managedSection
+                    Divider().padding(.vertical, 4)
+                    analyticsSection
                 }
                 .padding()
             }
             .navigationTitle(L10n.tab.sessions)
             .navigationDestination(for: SessionRecord.self) { session in
                 SessionDetailView(session: session, showCost: state.showCost)
+            }
+            .navigationDestination(for: RemoteSession.self) { session in
+                ManagedSessionDetailView(session: session)
             }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -76,39 +82,215 @@ struct iOSSessionsTab: View {
             }
             .refreshable {
                 await state.refreshAll()
+                await state.refreshRemoteSessions()
             }
         }
     }
 
-    private var sessionList: some View {
-        List(state.sessions, selection: $selectedSession) { session in
-            HStack(spacing: 10) {
-                Image(systemName: session.providerKind?.iconName ?? "terminal")
-                    .foregroundStyle(PulseTheme.providerColor(session.provider))
-                    .frame(width: 24)
+    // MARK: - Managed sessions
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(session.name)
-                        .font(.subheadline.weight(.medium))
-                        .lineLimit(1)
-                    HStack(spacing: 6) {
-                        Text(session.provider)
-                            .font(.caption2)
-                        Text(session.project)
-                            .font(.caption2)
+    @ViewBuilder
+    private var managedSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Managed Claude sessions")
+                    .font(.headline)
+                Spacer()
+                if state.remoteControlEnabled {
+                    Button {
+                        Task { await openManagedClaudeSession() }
+                    } label: {
+                        Label("New", systemImage: "plus.circle.fill")
                     }
-                    .foregroundStyle(.secondary)
+                    .disabled(targetDeviceForStart == nil)
+                }
+            }
+
+            if !state.remoteControlEnabled {
+                hint(icon: "lock.shield",
+                     text: "Remote Control is off. Turn it on in Settings → Privacy.")
+            } else if state.remoteSessions.isEmpty {
+                hint(icon: "terminal.fill",
+                     text: targetDeviceForStart == nil
+                           ? "No paired Mac with the helper installed."
+                           : "Tap New to spawn a Claude session.")
+            } else {
+                ForEach(state.remoteSessions) { session in
+                    NavigationLink(value: session) {
+                        managedRow(session)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            if let err = state.remoteSessionsError {
+                Text(err).font(.caption).foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private func managedRow(_ session: RemoteSession) -> some View {
+        let pending = state.remotePendingApprovals.first { $0.session_id == session.id }
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "brain.head.profile")
+                    .foregroundStyle(PulseTheme.providerColor("Claude"))
+                Text(session.client_label ?? "Claude session")
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Spacer()
+                Text(session.status)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(statusColor(session.status))
+            }
+            HStack(spacing: 6) {
+                if let device = session.device_name, !device.isEmpty {
+                    Image(systemName: "desktopcomputer")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text(device).font(.caption).foregroundStyle(.secondary)
+                }
+                if pending != nil {
+                    Text("· pending approval")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.orange)
                 }
                 Spacer()
-                StatusBadge(
-                    text: L10n.status.localized(session.status),
-                    color: PulseTheme.statusColor(session.status)
-                )
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
-            .padding(.vertical, 2)
-            .tag(session)
+        }
+        .padding(12)
+        .background(PulseTheme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(PulseTheme.providerColor("Claude").opacity(0.2), lineWidth: 1)
+        )
+    }
+
+    // MARK: - Analytics sessions
+
+    @ViewBuilder
+    private var analyticsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(L10n.tab.sessions)
+                .font(.headline)
+            if state.sessions.isEmpty {
+                ContentUnavailableView {
+                    Label(L10n.sessions.noSessions, systemImage: "terminal")
+                } description: {
+                    Text(L10n.sessions.emptyHint)
+                }
+                .padding(.vertical, 20)
+            } else {
+                ForEach(state.sessions) { session in
+                    NavigationLink(value: session) {
+                        iOSSessionRow(session: session, showCost: state.showCost)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Text("Analytics sessions are read-only — they reflect locally detected CLI activity.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    // MARK: - iPad list (combined)
+
+    private var sessionList: some View {
+        List {
+            if state.remoteControlEnabled || !state.remoteSessions.isEmpty {
+                Section("Managed Claude sessions") {
+                    if state.remoteSessions.isEmpty {
+                        Text(targetDeviceForStart == nil
+                             ? "No paired Mac with the helper installed."
+                             : "Tap the + toolbar button to spawn one.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(state.remoteSessions) { session in
+                            HStack(spacing: 10) {
+                                Image(systemName: "brain.head.profile")
+                                    .foregroundStyle(PulseTheme.providerColor("Claude"))
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(session.client_label ?? "Claude session")
+                                        .font(.subheadline.weight(.medium))
+                                        .lineLimit(1)
+                                    Text(session.status)
+                                        .font(.caption2)
+                                        .foregroundStyle(statusColor(session.status))
+                                }
+                                Spacer()
+                                if state.remotePendingApprovals.contains(where: { $0.session_id == session.id }) {
+                                    Image(systemName: "exclamationmark.bubble.fill")
+                                        .foregroundStyle(.orange)
+                                }
+                            }
+                            .padding(.vertical, 2)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                selectedSession = nil
+                                selectedManagedSession = session
+                            }
+                            .listRowBackground(
+                                selectedManagedSession?.id == session.id
+                                    ? Color.accentColor.opacity(0.12)
+                                    : Color.clear
+                            )
+                        }
+                    }
+                }
+            }
+            Section(L10n.tab.sessions) {
+                ForEach(state.sessions) { session in
+                    HStack(spacing: 10) {
+                        Image(systemName: session.providerKind?.iconName ?? "terminal")
+                            .foregroundStyle(PulseTheme.providerColor(session.provider))
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(session.name)
+                                .font(.subheadline.weight(.medium))
+                                .lineLimit(1)
+                            HStack(spacing: 6) {
+                                Text(session.provider).font(.caption2)
+                                Text(session.project).font(.caption2)
+                            }
+                            .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        StatusBadge(
+                            text: L10n.status.localized(session.status),
+                            color: PulseTheme.statusColor(session.status)
+                        )
+                    }
+                    .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        selectedManagedSession = nil
+                        selectedSession = session
+                    }
+                    .listRowBackground(
+                        selectedSession?.id == session.id
+                            ? Color.accentColor.opacity(0.12)
+                            : Color.clear
+                    )
+                }
+            }
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                if state.remoteControlEnabled {
+                    Button {
+                        Task { await openManagedClaudeSession() }
+                    } label: {
+                        Label("New", systemImage: "plus.circle.fill")
+                    }
+                    .disabled(targetDeviceForStart == nil)
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 let running = state.sessions.filter { $0.status.caseInsensitiveCompare("running") == .orderedSame }.count
                 if running > 0 {
@@ -117,9 +299,243 @@ struct iOSSessionsTab: View {
             }
         }
     }
+
+    // MARK: - Helpers
+
+    private var targetDeviceForStart: DeviceRecord? {
+        state.devices
+            .filter { $0.type.caseInsensitiveCompare("Mac") == .orderedSame }
+            .filter { !$0.helper_version.isEmpty }
+            .sorted { lhs, rhs in
+                let lt = lhs.last_sync_at ?? ""
+                let rt = rhs.last_sync_at ?? ""
+                return lt > rt
+            }
+            .first
+    }
+
+    private func openManagedClaudeSession() async {
+        guard let device = targetDeviceForStart else { return }
+        let id = await state.requestRemoteClaudeSessionStart(
+            deviceId: device.id,
+            cwdBasename: "",
+            cwdHmac: nil,
+            clientLabel: device.name
+        )
+        if let id, let session = state.remoteSessions.first(where: { $0.id == id }) {
+            selectedManagedSession = session
+        }
+    }
+
+    private func hint(icon: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon)
+                .foregroundStyle(.secondary)
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+        .padding(12)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func statusColor(_ status: String) -> Color {
+        switch status {
+        case "running": return .green
+        case "pending": return .yellow
+        case "stopped": return .secondary
+        case "errored": return .red
+        default: return .secondary
+        }
+    }
 }
 
-// MARK: - Session Detail View (iPad)
+// MARK: - Managed session detail (iOS)
+
+struct ManagedSessionDetailView: View {
+    @EnvironmentObject var state: AppState
+    let session: RemoteSession
+
+    @State private var promptText: String = ""
+    @State private var sending: Bool = false
+
+    private var pending: RemotePermissionRequest? {
+        state.remotePendingApprovals.first { $0.session_id == session.id }
+    }
+
+    private var isHighRisk: Bool {
+        guard let pending else { return false }
+        return RemotePermissionRisk(rawValue: pending.risk) == .high
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                header
+                if let pending {
+                    pendingApprovalCard(pending)
+                }
+                Divider()
+                Text("Send a prompt")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $promptText)
+                    .font(.body.monospaced())
+                    .frame(minHeight: 80, maxHeight: 200)
+                    .padding(8)
+                    .background(PulseTheme.cardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                    )
+                HStack {
+                    Button(role: .destructive) {
+                        Task { await state.stopRemoteSession(sessionId: session.id) }
+                    } label: {
+                        Label("Stop session", systemImage: "stop.circle")
+                    }
+                    .buttonStyle(.bordered)
+
+                    Spacer()
+
+                    Button {
+                        Task { await sendPrompt() }
+                    } label: {
+                        if sending {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Label("Send", systemImage: "paperplane.fill")
+                                .font(.body.weight(.semibold))
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(sending || promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                if let err = state.remoteSessionsError {
+                    Text(err)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+
+                Text("Free-text input is sent verbatim to the spawned Claude. Claude's own permission prompt fires when it tries to run any tool — those approvals appear above when this session is selected.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding()
+        }
+        .navigationTitle(session.client_label ?? "Claude session")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "brain.head.profile")
+                .font(.title2)
+                .foregroundStyle(PulseTheme.providerColor("Claude"))
+                .frame(width: 44, height: 44)
+                .background(PulseTheme.providerColor("Claude").opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(session.client_label ?? "Claude session")
+                    .font(.title3.weight(.bold))
+                HStack(spacing: 8) {
+                    Text(session.status)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(statusColor)
+                    if let device = session.device_name, !device.isEmpty {
+                        Text("·").foregroundStyle(.tertiary)
+                        Label(device, systemImage: "desktopcomputer")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Spacer()
+        }
+    }
+
+    private func pendingApprovalCard(_ pending: RemotePermissionRequest) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.bubble.fill")
+                    .foregroundStyle(.orange)
+                Text("Pending Claude permission")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                if isHighRisk {
+                    Text("high risk")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.orange.opacity(0.15))
+                        .foregroundStyle(.orange)
+                        .clipShape(Capsule())
+                }
+            }
+            Text(pending.tool_name.isEmpty ? "Tool" : pending.tool_name)
+                .font(.caption.weight(.semibold))
+            Text(pending.summary.isEmpty ? "(no summary)" : pending.summary)
+                .font(.callout.monospaced())
+                .foregroundStyle(.primary)
+            HStack(spacing: 10) {
+                Button {
+                    Task {
+                        await state.decideRemoteApproval(
+                            requestId: pending.id, decision: .deny
+                        )
+                    }
+                } label: {
+                    Text("Deny").frame(minWidth: 70)
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    Task {
+                        await state.decideRemoteApproval(
+                            requestId: pending.id, decision: .approve
+                        )
+                    }
+                } label: {
+                    Label("Approve pending", systemImage: "checkmark.circle.fill")
+                        .frame(minWidth: 140)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isHighRisk)
+            }
+            if isHighRisk {
+                Text("High-risk requests must be approved on the Mac directly.")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+        }
+        .padding(12)
+        .background(Color.orange.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var statusColor: Color {
+        switch session.status {
+        case "running": return .green
+        case "pending": return .yellow
+        case "stopped": return .secondary
+        case "errored": return .red
+        default: return .secondary
+        }
+    }
+
+    private func sendPrompt() async {
+        sending = true
+        defer { sending = false }
+        let ok = await state.sendRemoteSessionPrompt(sessionId: session.id, text: promptText)
+        if ok { promptText = "" }
+    }
+}
+
+// MARK: - Session Detail View (existing analytics view, unchanged)
 
 struct SessionDetailView: View {
     let session: SessionRecord
@@ -222,7 +638,7 @@ struct SessionDetailView: View {
     }
 }
 
-// MARK: - Session Row (iPhone)
+// MARK: - Session Row (iPhone, unchanged)
 
 struct iOSSessionRow: View {
     let session: SessionRecord

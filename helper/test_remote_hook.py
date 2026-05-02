@@ -404,6 +404,79 @@ def test_claude_redacts_jwt_token():
     assert "«REDACTED»" in flat_values
 
 
+def test_resolve_managed_session_prefers_env_var_when_valid_uuid(monkeypatch):
+    # iter 1 of Sessions Input: helper-spawned managed Claude sessions
+    # set CLI_PULSE_REMOTE_SESSION_ID on the child env so the hook can
+    # bind permission requests to the managed session id (visible in the
+    # iOS / Mac Sessions UI) instead of Claude's internal hook session_id.
+    env_id = "12345678-1234-1234-1234-123456789abc"
+    raw_id = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+    monkeypatch.setenv(remote_hook.REMOTE_SESSION_ID_ENV, env_id)
+    resolved = remote_hook._resolve_managed_session_id(raw_id)
+    assert resolved == str(__import__("uuid").UUID(env_id))
+
+
+def test_resolve_managed_session_falls_back_when_env_var_invalid(monkeypatch):
+    # A malformed env var must not corrupt the binding — fall through to
+    # the hook's own session_id rather than dropping the request.
+    raw_id = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+    monkeypatch.setenv(remote_hook.REMOTE_SESSION_ID_ENV, "not-a-uuid")
+    resolved = remote_hook._resolve_managed_session_id(raw_id)
+    assert resolved == str(__import__("uuid").UUID(raw_id))
+
+
+def test_resolve_managed_session_uses_raw_when_env_unset(monkeypatch):
+    raw_id = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+    monkeypatch.delenv(remote_hook.REMOTE_SESSION_ID_ENV, raising=False)
+    resolved = remote_hook._resolve_managed_session_id(raw_id)
+    assert resolved == str(__import__("uuid").UUID(raw_id))
+
+
+def test_resolve_managed_session_returns_none_when_both_invalid(monkeypatch):
+    monkeypatch.setenv(remote_hook.REMOTE_SESSION_ID_ENV, "")
+    resolved = remote_hook._resolve_managed_session_id("")
+    assert resolved is None
+
+
+def test_run_hook_uses_env_session_id_in_create_request(monkeypatch):
+    # Integration check: when CLI_PULSE_REMOTE_SESSION_ID is set, the
+    # hook must pass that uuid as p_session_id to the create request,
+    # not the raw session_id from Claude's input. This is what actually
+    # binds an inline approve to the selected managed session.
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    env_id = "abcdef01-2345-6789-abcd-ef0123456789"
+    monkeypatch.setenv(remote_hook.REMOTE_SESSION_ID_ENV, env_id)
+    captured: dict[str, object] = {}
+
+    def fake_rpc(name, params):
+        if name == "remote_helper_create_permission_request":
+            captured.update(params)
+            return {"request_id": params["p_request_id"], "status": "pending"}
+        if name == "remote_helper_poll_permission_decision":
+            return {"status": "approved", "decision": "approve", "scope": "once"}
+        return {}
+
+    payload = {
+        "tool_name": "Read",
+        "tool_input": {"file_path": "/etc/hosts"},
+        "session_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+        "cwd": "/Users/dev/x",
+    }
+    rc = remote_hook.run_hook(
+        "claude",
+        config=remote_hook.HookConfig(timeout_s=1.0, poll_interval_s=0.01),
+        stdin_payload=payload,
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        user_secret_loader=lambda: "x",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    assert captured.get("p_session_id") == str(__import__("uuid").UUID(env_id)), (
+        f"expected p_session_id={env_id}, got {captured.get('p_session_id')!r}"
+    )
+
+
 def test_claude_redaction_does_not_corrupt_ordinary_short_commands():
     # Belt-and-braces: regression-guard against an over-eager redactor
     # eating ordinary short / non-secret commands. We've previously

@@ -1032,6 +1032,11 @@ public actor APIClient {
 
     /// Send a control command (prompt / stop / interrupt) to a managed session.
     /// Returns the new command id.
+    ///
+    /// Does NOT accept `.start` — that lifecycle command goes through
+    /// `remoteRequestSessionStart(...)` so it can atomically create the
+    /// `remote_sessions` row alongside the queued command. The server
+    /// `remote_app_send_command` RPC enforces this restriction too.
     public func remoteSendCommand(
         sessionId: String,
         kind: RemoteCommandKind,
@@ -1048,6 +1053,55 @@ public actor APIClient {
             params: Params(p_session_id: sessionId, p_kind: kind.rawValue, p_payload: payload)
         )
         return result.command_id
+    }
+
+    /// List the caller's active remote sessions (pending or running),
+    /// joined with `devices.name` so the UI can label which Mac each
+    /// session belongs to. Returns `[]` when Remote Control is disabled
+    /// or when the user has no managed sessions.
+    public func remoteListSessions() async throws -> [RemoteSession] {
+        let result: [RemoteSession] = try await rpc("remote_app_list_sessions")
+        return result
+    }
+
+    /// Request that the helper paired with `deviceId` spawn a new managed
+    /// Claude session. Atomically creates the `remote_sessions` row and
+    /// enqueues the `start` command for the helper poll loop.
+    /// Returns the new session id (so the caller can immediately select
+    /// the row in the UI before the next list refresh).
+    ///
+    /// `cwdBasename` / `cwdHmac` are advisory metadata only — the helper
+    /// does NOT try to resolve a basename to a full filesystem path
+    /// (Phase 1 privacy posture: no full paths leave the device).
+    /// iter 1 only accepts provider == 'claude'.
+    public func remoteRequestSessionStart(
+        deviceId: String,
+        cwdBasename: String = "",
+        cwdHmac: String? = nil,
+        clientLabel: String? = nil
+    ) async throws -> (sessionId: String, commandId: String) {
+        struct Params: Encodable {
+            let p_device_id: String
+            let p_provider: String
+            let p_cwd_basename: String
+            let p_cwd_hmac: String?
+            let p_client_label: String?
+        }
+        struct Result: Decodable {
+            let session_id: String
+            let command_id: String
+        }
+        let result: Result = try await rpc(
+            "remote_app_request_session_start",
+            params: Params(
+                p_device_id: deviceId,
+                p_provider: "claude",
+                p_cwd_basename: cwdBasename,
+                p_cwd_hmac: cwdHmac,
+                p_client_label: clientLabel
+            )
+        )
+        return (result.session_id, result.command_id)
     }
 
     // MARK: - OAuth (Google / GitHub via Supabase)

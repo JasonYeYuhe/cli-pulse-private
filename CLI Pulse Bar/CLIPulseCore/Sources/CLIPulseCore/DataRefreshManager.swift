@@ -1959,6 +1959,14 @@ extension AppState {
                     // failure must not destroy that state.
                     remotePendingApprovals = []
                     remoteApprovalsLastRefresh = nil
+                    // Sessions Input iter 1: same posture — drop cached
+                    // managed sessions on disable. Server returns [] from
+                    // `remote_app_list_sessions` while the gate is off
+                    // anyway, but the optimistic clear avoids a one-frame
+                    // flicker until the next refresh.
+                    remoteSessions = []
+                    remoteSessionsLastRefresh = nil
+                    remoteSessionsError = nil
                 }
             } catch {
                 // PATCH failed — revert to keep the UI honest about server
@@ -2050,6 +2058,111 @@ extension AppState {
                 remotePendingApprovals.sort { $0.created_at > $1.created_at }
             }
             remoteApprovalsError = "Decision failed: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Remote Sessions (Sessions Input iter 1)
+
+    /// Refresh `remoteSessions` from the server. No-op (and clears the
+    /// local cache) when Remote Control is disabled, mirroring the
+    /// `refreshRemoteApprovals` discipline. Callers should drive this
+    /// only while the Sessions UI is on screen — refreshAll does NOT
+    /// invoke it because there's no Sessions UI in the menu-bar
+    /// approvals popover.
+    public func refreshRemoteSessions() async {
+        guard remoteControlEnabled else {
+            remoteSessions = []
+            remoteSessionsLastRefresh = Date()
+            return
+        }
+        do {
+            let pulled = try await api.remoteListSessions()
+            // Re-check the gate AFTER the await: if the user toggled
+            // Remote Control off mid-flight, drop the response. Same
+            // pattern as `refreshRemoteApprovals` (Gemini review P2 #8).
+            guard remoteControlEnabled else {
+                remoteSessions = []
+                remoteSessionsLastRefresh = Date()
+                return
+            }
+            remoteSessions = pulled.filter { $0.isManaged }
+            remoteSessionsLastRefresh = Date()
+            remoteSessionsError = nil
+        } catch {
+            guard remoteControlEnabled else { return }
+            remoteSessionsError = error.localizedDescription
+        }
+    }
+
+    /// Request that the helper paired with `deviceId` spawn a new managed
+    /// Claude session. Returns the freshly-created session row's id (so
+    /// the UI can immediately select it) or nil on failure. Refreshes
+    /// the sessions list on success so the row appears.
+    @discardableResult
+    public func requestRemoteClaudeSessionStart(
+        deviceId: String,
+        cwdBasename: String = "",
+        cwdHmac: String? = nil,
+        clientLabel: String? = nil
+    ) async -> String? {
+        guard remoteControlEnabled else {
+            remoteSessionsError = "Remote Control is disabled"
+            return nil
+        }
+        do {
+            let result = try await api.remoteRequestSessionStart(
+                deviceId: deviceId,
+                cwdBasename: cwdBasename,
+                cwdHmac: cwdHmac,
+                clientLabel: clientLabel
+            )
+            await refreshRemoteSessions()
+            return result.sessionId
+        } catch {
+            remoteSessionsError = "Couldn't start session: \(error.localizedDescription)"
+            return nil
+        }
+    }
+
+    /// Send the user's typed prompt to a managed session. Strips trailing
+    /// whitespace; the helper appends a newline before writing to the
+    /// child's stdin. Caller is responsible for clearing the input field
+    /// on success.
+    @discardableResult
+    public func sendRemoteSessionPrompt(
+        sessionId: String,
+        text: String
+    ) async -> Bool {
+        guard remoteControlEnabled else { return false }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        do {
+            _ = try await api.remoteSendCommand(
+                sessionId: sessionId,
+                kind: .prompt,
+                payload: trimmed
+            )
+            return true
+        } catch {
+            remoteSessionsError = "Send failed: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Stop a managed session. Helper sends SIGTERM to the child PTY's
+    /// process group and posts a `status='stopped'` event when the child
+    /// exits. The session row stays in the table until retention prunes
+    /// it (terminal `status` filter in `remote_app_list_sessions` keeps
+    /// it out of the active list immediately).
+    public func stopRemoteSession(sessionId: String) async {
+        guard remoteControlEnabled else { return }
+        do {
+            _ = try await api.remoteSendCommand(
+                sessionId: sessionId, kind: .stop, payload: ""
+            )
+            await refreshRemoteSessions()
+        } catch {
+            remoteSessionsError = "Stop failed: \(error.localizedDescription)"
         }
     }
 

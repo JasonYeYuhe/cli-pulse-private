@@ -650,6 +650,13 @@ extension AppState {
         remotePendingApprovals = []
         remoteApprovalsLastRefresh = nil
         remoteApprovalsError = nil
+        // Sessions Input iter 1: drop any cached managed-session list so
+        // the next user (or post-relogin) doesn't briefly see the prior
+        // session's rows. The server-side gate also returns [] for
+        // unauthenticated callers but the optimistic clear is cheap.
+        remoteSessions = []
+        remoteSessionsLastRefresh = nil
+        remoteSessionsError = nil
         registeredPushToken = nil
         pendingPushTokenRegistration = nil
     }
