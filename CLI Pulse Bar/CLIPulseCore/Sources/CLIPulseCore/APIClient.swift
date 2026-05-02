@@ -1507,7 +1507,18 @@ public actor APIClient {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
-        let body: [String: Any] = ["metrics": metrics]
+        // v0.3.1: send our paired device_id so the row lands under
+        // (user_id, device_id, ...) and doesn't race-clobber rows from
+        // a Win/Linux Tauri client running on the same account.
+        // HelperConfig.deviceId is populated whenever the user has gone
+        // through register_helper. If somehow nil (rare — pre-pair
+        // transient), omit the param and the server falls back to the
+        // sentinel UUID, which keeps legacy single-device users
+        // working as before.
+        var body: [String: Any] = ["metrics": metrics]
+        if let deviceId = HelperConfig.load()?.deviceId, !deviceId.isEmpty {
+            body["p_device_id"] = deviceId
+        }
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         do {
