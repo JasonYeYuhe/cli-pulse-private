@@ -203,11 +203,16 @@ class RemoteAgentManager:
                 session_id=params.session_id, argv=argv, env=env, cwd=cwd,
             )
         except TransportError as exc:
+            # Detail goes to the local helper log only — the SQL gate in
+            # `remote_helper_post_event` only transitions
+            # `remote_sessions.status` when `p_payload` is exactly
+            # `'errored'` or `'stopped'`, so we MUST NOT prefix or suffix
+            # the status string. See `_post_status`.
             logger.warning(
                 "spawn_session(%s): transport.start raised: %s",
                 params.session_id, exc,
             )
-            self._post_status(params.session_id, "errored", str(exc)[:200])
+            self._post_status(params.session_id, "errored")
             return False
 
         self._sessions[params.session_id] = _ManagedSession(
@@ -257,7 +262,7 @@ class RemoteAgentManager:
             self.transport.terminate(sess.handle)
         finally:
             self.transport.close(sess.handle)
-        self._post_status(session_id, "stopped", "")
+        self._post_status(session_id, "stopped")
 
     def interrupt_session(self, session_id: str) -> None:
         """Send SIGINT-equivalent to the foreground process group."""
@@ -476,12 +481,18 @@ class RemoteAgentManager:
             code = self.transport.wait(sess.handle, timeout=0)
             self.transport.close(sess.handle)
             if code == 0:
-                self._post_status(session_id, "stopped", "")
+                self._post_status(session_id, "stopped")
             else:
-                self._post_status(
-                    session_id, "errored",
-                    f"exit_code={code}" if code is not None else "child gone",
+                # Status payload MUST be exactly `'errored'` for the SQL
+                # gate to update `remote_sessions.status`. The exit code
+                # itself goes to the local log only — exposing it via
+                # event payload is iter-2 work behind the same redaction
+                # posture as transcript uploads.
+                logger.info(
+                    "session %s exited with code=%s",
+                    session_id, code if code is not None else "<gone>",
                 )
+                self._post_status(session_id, "errored")
             self._sessions.pop(session_id, None)
             exited += 1
         return exited
@@ -507,14 +518,29 @@ class RemoteAgentManager:
         env["CLI_PULSE_REMOTE_SESSION_ID"] = params.session_id
         return env
 
-    def _post_status(self, session_id: str, status: str, detail: str) -> None:
-        """Best-effort lifecycle status event — drives the app's
-        `RemoteSession.status` transitions. Does NOT upload transcript.
+    def _post_status(self, session_id: str, status: str) -> None:
+        """Post a lifecycle status event so the SQL gate transitions
+        `remote_sessions.status`.
 
-        Rather than tracking last_status_posted bookkeeping, just push
-        the row; the SQL `remote_helper_post_event` is idempotent on
-        seq, and we don't currently re-send.
+        **Payload MUST be exactly `'stopped'` or `'errored'`.** The gate
+        in `remote_helper_post_event` only updates the row's status
+        column on `p_kind='status'` AND `p_payload IN ('stopped',
+        'errored')`. An earlier draft prefixed an `f"{status}: {detail}"`
+        string, which silently kept errored sessions stuck on
+        `pending`/`running` server-side. Any extra context belongs in
+        the local helper log (see call sites) or — once the iter-2
+        tail-streaming UI lands and we're ready to redact — in a
+        separate `kind='info'` event.
         """
+        if status not in ("stopped", "errored"):
+            # Defensive: refuse to send anything that wouldn't trip the
+            # SQL gate. Surfacing the typo as a noisy log is much
+            # better than a silently stuck row.
+            logger.warning(
+                "post_status(%s) refused unknown status %r",
+                session_id, status,
+            )
+            return
         try:
             self.rpc_caller(
                 "remote_helper_post_event",
@@ -524,7 +550,7 @@ class RemoteAgentManager:
                     "p_session_id": session_id,
                     "p_seq": int(time.monotonic() * 1000) & 0x7FFFFFFF,
                     "p_kind": "status",
-                    "p_payload": status if not detail else f"{status}: {detail[:200]}",
+                    "p_payload": status,
                 },
             )
         except Exception as exc:

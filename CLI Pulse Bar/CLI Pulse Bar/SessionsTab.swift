@@ -18,12 +18,23 @@ struct SessionsTab: View {
             .padding(12)
         }
         .task {
-            // Active polling while the Sessions tab is on screen. Mirrors
-            // the discipline used by RemoteApprovalsSheet — only when
-            // Remote Control is on, idle slowly when off so the loop
-            // honors a flip without stalling.
+            // Active polling while the Sessions tab is on screen. Refresh
+            // BOTH `remoteSessions` and `remotePendingApprovals` so the
+            // inline-approve button's matching pending request appears
+            // within the 10s Claude hook window without the user having
+            // to open the separate approvals sheet.
+            //
+            // Mirrors the RemoteApprovalsSheet posture: 3s tick when
+            // Remote Control is on, 10s when off. The disabled-state
+            // calls are still issued, but `refreshRemoteSessions` /
+            // `refreshRemoteApprovals` each guard on `remoteControlEnabled`
+            // internally — so when RC is off, neither hits the network
+            // and both clear their local caches as a side effect, which
+            // is the desired no-network posture.
             while !Task.isCancelled {
-                await state.refreshRemoteSessions()
+                async let _sessions: () = state.refreshRemoteSessions()
+                async let _approvals: () = state.refreshRemoteApprovals()
+                _ = await (_sessions, _approvals)
                 if !state.remoteControlEnabled {
                     try? await Task.sleep(nanoseconds: 10_000_000_000)
                 } else {
@@ -147,13 +158,21 @@ struct SessionsTab: View {
                 .onSubmit {
                     Task { await sendPrompt(for: session) }
                 }
+                // No `.keyboardShortcut(.return, modifiers: [])` here on
+                // purpose. SwiftUI on macOS routes a plain Return to BOTH
+                // the focused TextField (firing `.onSubmit`) AND any
+                // button that claims `.return` as its default-action
+                // shortcut, which double-sends the prompt. Enter is
+                // already handled exclusively by the TextField above.
+                // The button stays clickable for users who tab away
+                // from the field. ⌘↩ on the Approve button keeps its
+                // distinct command-modifier shortcut.
                 Button("Send") {
                     Task { await sendPrompt(for: session) }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .disabled(promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .keyboardShortcut(.return, modifiers: [])
                 Button(canApprove ? "Approve pending" : (pending != nil ? "Approve (high-risk)" : "Approve")) {
                     Task { await approveMatchingPending(for: session) }
                 }

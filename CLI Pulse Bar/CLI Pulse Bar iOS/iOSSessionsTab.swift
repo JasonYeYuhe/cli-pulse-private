@@ -15,10 +15,20 @@ struct iOSSessionsTab: View {
         }
         .task {
             // Active polling while the Sessions UI is on screen, gated
-            // to ON. Mirrors the macOS SessionsTab + RemoteApprovalsView
-            // discipline — when off, idle long so the loop honors a flip.
+            // to ON. Refresh BOTH `remoteSessions` and
+            // `remotePendingApprovals` so the inline-approve affordance
+            // in the row + detail view picks up matching pending
+            // requests within Claude's 10s hook window — without making
+            // the user open the separate approvals screen.
+            //
+            // `refreshRemoteApprovals` / `refreshRemoteSessions` each
+            // guard on `remoteControlEnabled` internally, so when RC is
+            // off, neither hits the network and both clear local caches
+            // (the desired no-network posture).
             while !Task.isCancelled {
-                await state.refreshRemoteSessions()
+                async let _sessions: () = state.refreshRemoteSessions()
+                async let _approvals: () = state.refreshRemoteApprovals()
+                _ = await (_sessions, _approvals)
                 if !state.remoteControlEnabled {
                     try? await Task.sleep(nanoseconds: 10_000_000_000)
                 } else {
@@ -430,6 +440,28 @@ struct ManagedSessionDetailView: View {
         }
         .navigationTitle(session.client_label ?? "Claude session")
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            // Detail view owns its own refresh loop because SwiftUI may
+            // pause the parent `iOSSessionsTab` task while a destination
+            // view is shown via `NavigationLink`. Without this, a
+            // pending Claude permission request can take up to the
+            // 10s hook timeout to surface in the inline approve card —
+            // by which time Claude has already fallen back to local.
+            //
+            // Same gating discipline as the parent: when Remote Control
+            // is off the inner refresh helpers no-op, so this loop only
+            // hits the network when actively useful.
+            while !Task.isCancelled {
+                async let _sessions: () = state.refreshRemoteSessions()
+                async let _approvals: () = state.refreshRemoteApprovals()
+                _ = await (_sessions, _approvals)
+                if !state.remoteControlEnabled {
+                    try? await Task.sleep(nanoseconds: 10_000_000_000)
+                } else {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                }
+            }
+        }
     }
 
     private var header: some View {

@@ -410,3 +410,172 @@ def test_gate_off_pull_commands_is_swallowed():
     })
     counters = mgr.tick()  # must not raise
     assert counters["commands_processed"] == 0
+
+
+# ── Status event payload pinning (Codex review iter1 P1) ───────────
+
+
+class _SpawnFailingTransport(FakeTransport):
+    """Variant that always raises TransportError on start, to simulate
+    a missing `claude` binary or PATH lookup miss."""
+
+    def start(self, session_id, argv, env=None, cwd=None):
+        self.calls.append(("start", {"session_id": session_id, "argv": argv}))
+        raise TransportError(f"failed to spawn {argv[0]}: ENOENT")
+
+
+def test_spawn_failure_emits_exact_errored_payload():
+    """Codex review iter1 P1 #2: the SQL gate in `remote_helper_post_event`
+    only updates `remote_sessions.status` when `p_payload` is EXACTLY
+    `'errored'` or `'stopped'`. An earlier draft sent
+    `f"errored: {exc}"`, which silently kept failed sessions stuck on
+    pending/running. Pin the exact-string posture here."""
+    cmd_id = str(uuid.uuid4())
+    sid = str(uuid.uuid4())
+
+    rpc_log: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_rpc(name, params):
+        rpc_log.append((name, dict(params)))
+        if name == "remote_helper_pull_commands":
+            return [{
+                "id": cmd_id,
+                "session_id": sid,
+                "kind": "start",
+                "payload": _start_payload(),
+            }]
+        return {}
+
+    mgr = RemoteAgentManager(
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        transport=_SpawnFailingTransport(),
+    )
+    mgr.tick()
+
+    status_events = [
+        p for n, p in rpc_log
+        if n == "remote_helper_post_event" and p.get("p_kind") == "status"
+    ]
+    assert status_events, "no status event posted on spawn failure"
+    payloads = [p["p_payload"] for p in status_events]
+    assert payloads == ["errored"], (
+        f"spawn-failure status payload must be exactly 'errored'; got {payloads!r}"
+    )
+
+
+def test_observe_exits_with_nonzero_emits_exact_errored_payload():
+    """Same gate as above: a child exiting non-zero must transition the
+    session row to `status='errored'`, which only happens when the
+    posted event payload is the bare string `'errored'`."""
+    session_id = str(uuid.uuid4())
+    start_cmd_id = str(uuid.uuid4())
+
+    def pull_commands(_params):
+        return [{
+            "id": start_cmd_id,
+            "session_id": session_id,
+            "kind": "start",
+            "payload": _start_payload(),
+        }]
+
+    mgr, transport, log = _make_manager({
+        "remote_helper_pull_commands": pull_commands,
+    })
+    mgr.tick()  # spawn
+
+    # Child died with code=2 (e.g. claude --version mismatch).
+    transport.alive[session_id] = False
+    transport.exit_code[session_id] = 2
+
+    mgr.tick()  # observe exit
+
+    status_events = [
+        p for n, p in log
+        if n == "remote_helper_post_event" and p.get("p_kind") == "status"
+    ]
+    payloads = [p["p_payload"] for p in status_events]
+    assert payloads == ["errored"], (
+        f"non-zero-exit status payload must be exactly 'errored'; got {payloads!r}"
+    )
+
+
+def test_observe_exits_with_missing_code_emits_exact_errored_payload():
+    """Same gate when `transport.wait` returns None (child gone before
+    we could observe a code) — must still post bare `'errored'`."""
+    session_id = str(uuid.uuid4())
+    start_cmd_id = str(uuid.uuid4())
+
+    def pull_commands(_params):
+        return [{
+            "id": start_cmd_id,
+            "session_id": session_id,
+            "kind": "start",
+            "payload": _start_payload(),
+        }]
+
+    mgr, transport, log = _make_manager({
+        "remote_helper_pull_commands": pull_commands,
+    })
+    mgr.tick()
+
+    transport.alive[session_id] = False
+    transport.exit_code[session_id] = None  # "child gone" path
+
+    mgr.tick()
+
+    status_payloads = [
+        p["p_payload"] for n, p in log
+        if n == "remote_helper_post_event" and p.get("p_kind") == "status"
+    ]
+    assert status_payloads == ["errored"]
+
+
+def test_post_status_refuses_unknown_status():
+    """Defensive: `_post_status` rejects anything other than 'stopped' /
+    'errored' rather than letting a typo silently produce a
+    no-op event row that doesn't trip the SQL gate."""
+    rpc_log: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_rpc(name, params):
+        rpc_log.append((name, dict(params)))
+        return {}
+
+    mgr = RemoteAgentManager(
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        transport=FakeTransport(),
+    )
+    mgr._post_status("11111111-1111-1111-1111-111111111111", "running")
+
+    posted = [n for n, _ in rpc_log if n == "remote_helper_post_event"]
+    assert posted == [], (
+        "_post_status must NOT call the post_event RPC for unknown statuses"
+    )
+
+
+def test_stop_session_emits_exact_stopped_payload():
+    """Symmetric pinning for the success path."""
+    session_id = str(uuid.uuid4())
+    start_cmd_id = str(uuid.uuid4())
+
+    def pull_commands(_params):
+        return [{
+            "id": start_cmd_id,
+            "session_id": session_id,
+            "kind": "start",
+            "payload": _start_payload(),
+        }]
+
+    mgr, _transport, log = _make_manager({
+        "remote_helper_pull_commands": pull_commands,
+    })
+    mgr.tick()  # spawn
+
+    mgr.stop_session(session_id)
+
+    status_payloads = [
+        p["p_payload"] for n, p in log
+        if n == "remote_helper_post_event" and p.get("p_kind") == "status"
+    ]
+    assert status_payloads == ["stopped"]
