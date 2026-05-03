@@ -98,8 +98,16 @@ struct iOSSessionsTab: View {
                 }
             }
             .refreshable {
+                // Pull-to-refresh fans out to: dashboard payload,
+                // managed sessions, and pending approvals — same trio
+                // the iPad path and the `.task` loop drive, so a future
+                // maintainer doesn't have to wonder why one surface is
+                // missing. (`refreshAll` already schedules a
+                // `refreshRemoteApprovals` Task internally; the
+                // explicit call avoids the implicit dependency.)
                 await state.refreshAll()
                 await state.refreshRemoteSessions()
+                await state.refreshRemoteApprovals()
             }
         }
     }
@@ -383,6 +391,11 @@ struct ManagedSessionDetailView: View {
 
     @State private var promptText: String = ""
     @State private var sending: Bool = false
+    /// Flips true after the detail-view's own `.task` completes its
+    /// first `refreshRemoteSessions()` round-trip. Used to gate
+    /// `sessionEnded` so we don't briefly mark every freshly-navigated
+    /// session as "ended" before the first refresh lands.
+    @State private var hasRefreshedAtLeastOnce: Bool = false
 
     /// Latest server-side row for this session, falling back to the
     /// navigation-captured snapshot. Use this for every render-time
@@ -392,6 +405,45 @@ struct ManagedSessionDetailView: View {
     /// they're equal by construction (the fallback shares the same id).
     private var currentSession: RemoteSession {
         state.remoteSessions.first(where: { $0.id == session.id }) ?? session
+    }
+
+    /// True when we have authoritative evidence the session is no longer
+    /// in the active list. `remote_app_list_sessions()` filters to
+    /// `status IN ('pending', 'running')` — once the helper posts a
+    /// `'stopped'` / `'errored'` event the row falls out and the
+    /// snapshot we navigated in with becomes stale (would otherwise
+    /// keep showing `running` forever). UI uses this to switch into a
+    /// neutral read-only ended state and disable Send / Stop.
+    ///
+    /// Guards (so we don't false-positive):
+    ///   - **First refresh must complete.** Without
+    ///     `hasRefreshedAtLeastOnce`, a freshly-navigated detail view
+    ///     would flicker to "ended" between mount and the first
+    ///     refresh.
+    ///   - **Remote Control must be ON.** When the user disables RC,
+    ///     `refreshRemoteSessions` no-ops and clears
+    ///     `state.remoteSessions` (the desired no-network posture for
+    ///     the list view). The session might still be running on the
+    ///     helper; we just can't see it. Render the snapshot's last
+    ///     known status instead of falsely marking it ended.
+    ///
+    /// Transient network errors are already safe: `refreshRemoteSessions`'
+    /// catch arm only sets `remoteSessionsError` and leaves the prior
+    /// `remoteSessions` snapshot intact, so the id stays in the list
+    /// across one-off failures.
+    private var sessionEnded: Bool {
+        hasRefreshedAtLeastOnce
+            && state.remoteControlEnabled
+            && !state.remoteSessions.contains(where: { $0.id == session.id })
+    }
+
+    /// What the header status badge shows. The captured snapshot's
+    /// status was probably `running` at navigation time, so falling
+    /// back to it after the row leaves the active list would lie about
+    /// state. Override with the literal `"ended"` so the user
+    /// understands input is no longer accepted.
+    private var displayStatus: String {
+        sessionEnded ? "ended" : currentSession.status
     }
 
     private var pending: RemotePermissionRequest? {
@@ -407,7 +459,9 @@ struct ManagedSessionDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
-                if let pending {
+                if sessionEnded {
+                    endedNotice
+                } else if let pending {
                     pendingApprovalCard(pending)
                 }
                 Divider()
@@ -424,6 +478,8 @@ struct ManagedSessionDetailView: View {
                         RoundedRectangle(cornerRadius: 10)
                             .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
                     )
+                    .disabled(sessionEnded)
+                    .opacity(sessionEnded ? 0.5 : 1)
                 HStack {
                     Button(role: .destructive) {
                         Task { await state.stopRemoteSession(sessionId: currentSession.id) }
@@ -431,6 +487,7 @@ struct ManagedSessionDetailView: View {
                         Label("Stop session", systemImage: "stop.circle")
                     }
                     .buttonStyle(.bordered)
+                    .disabled(sessionEnded)
 
                     Spacer()
 
@@ -445,7 +502,11 @@ struct ManagedSessionDetailView: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(sending || promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(
+                        sending
+                            || sessionEnded
+                            || promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    )
                 }
 
                 if let err = state.remoteSessionsError {
@@ -477,6 +538,12 @@ struct ManagedSessionDetailView: View {
                 async let _sessions: () = state.refreshRemoteSessions()
                 async let _approvals: () = state.refreshRemoteApprovals()
                 _ = await (_sessions, _approvals)
+                // Mark the first refresh complete AFTER the await so
+                // `sessionEnded` doesn't briefly read true between
+                // mount and the first response.
+                if !hasRefreshedAtLeastOnce {
+                    hasRefreshedAtLeastOnce = true
+                }
                 if !state.remoteControlEnabled {
                     try? await Task.sleep(nanoseconds: 10_000_000_000)
                 } else {
@@ -484,6 +551,21 @@ struct ManagedSessionDetailView: View {
                 }
             }
         }
+    }
+
+    private var endedNotice: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "checkmark.circle")
+                .foregroundStyle(.secondary)
+            Text("Session ended — no longer active. Open a new managed session from the Sessions tab to keep working.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+        .padding(12)
+        .background(Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     private var header: some View {
@@ -498,7 +580,7 @@ struct ManagedSessionDetailView: View {
                 Text(currentSession.client_label ?? "Claude session")
                     .font(.title3.weight(.bold))
                 HStack(spacing: 8) {
-                    Text(currentSession.status)
+                    Text(displayStatus)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(statusColor)
                     if let device = currentSession.device_name, !device.isEmpty {
@@ -572,6 +654,12 @@ struct ManagedSessionDetailView: View {
     }
 
     private var statusColor: Color {
+        // When the session is no longer in the active list, the
+        // captured snapshot's literal status would be misleading
+        // (probably `running` from navigation time). Mirror the
+        // `displayStatus` override and render the ended pill in a
+        // neutral colour.
+        if sessionEnded { return .secondary }
         switch currentSession.status {
         case "running": return .green
         case "pending": return .yellow

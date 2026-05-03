@@ -222,9 +222,89 @@ detail view + a `.refreshable` consistency gap. Polish layered on top:
   already schedules a `refreshRemoteApprovals` Task internally, but
   the explicit call avoids the implicit dependency.
 
+  > Caveat caught by Codex on the next pass: the iPad `.refreshable`
+  > and iPhone `.refreshable` lived at different indentation depths
+  > in the View hierarchy, so the `replace_all: true` Edit only matched
+  > one. The follow-up commit (see "Final polish — terminal-state UX"
+  > below) fixed the iPhone body too.
+
 No backend schema change beyond the original placeholder migration.
 Helper tests all still pass. The separate `claude-oauth-nested-parse-fix`
 branch is untouched. No public-repo writes.
+
+## Final polish — terminal-state UX (commit on top of `e3ef028`)
+
+A third Codex review pass against `e3ef028` flagged two follow-ups:
+
+1. **Missed iPhone `.refreshable`** — the prior `replace_all: true` Edit
+   silently matched only the iPad block because the iPad and iPhone
+   bodies live at different indentation levels in the view hierarchy
+   (8 vs 12 spaces). iPhone's pull-to-refresh now mirrors iPad's
+   `refreshAll() + refreshRemoteSessions() + refreshRemoteApprovals()`
+   trio.
+
+2. **Terminal-state detail view** — `remote_app_list_sessions()` filters
+   to `status IN ('pending', 'running')` (deliberate: the active list
+   is "what you can drive right now"). Once the helper posts a
+   `'stopped'` / `'errored'` status event the row falls out of the
+   list, and the detail view's `currentSession` falls back to the
+   navigation-captured snapshot — which was probably `running` at
+   navigation time. The user would otherwise keep seeing `running`
+   forever on a session that's gone.
+
+   Fixed without touching SQL: the iOS detail view tracks a
+   `@State hasRefreshedAtLeastOnce` flag (set inside the `.task`
+   AFTER the first `refreshRemoteSessions()` await completes) and
+   exposes a computed `sessionEnded`:
+
+   ```
+   sessionEnded =
+       hasRefreshedAtLeastOnce
+       AND state.remoteControlEnabled
+       AND !state.remoteSessions.contains { $0.id == session.id }
+   ```
+
+   Two false-positive guards baked in deliberately:
+
+   - **`hasRefreshedAtLeastOnce`** prevents a freshly-navigated detail
+     view from briefly flickering to "ended" before the first refresh
+     response lands.
+   - **`state.remoteControlEnabled`** prevents marking the session as
+     ended when the user has just disabled Remote Control. RC-off
+     legitimately empties the active list (the `refreshRemoteSessions`
+     no-op path clears the cache); the session might still be running
+     on the helper, we just can't see it. In that case we keep
+     rendering the snapshot's last known status instead of
+     manufacturing an "ended" lie.
+
+   Transient `remoteListSessions` failures are already safe: the
+   `refreshRemoteSessions` catch arm only sets `remoteSessionsError`
+   and leaves the prior `remoteSessions` snapshot intact, so the id
+   stays in the list across one-off network errors.
+
+   When `sessionEnded` is true:
+   - Header status pill renders `"ended"` in `.secondary` colour
+     instead of the snapshot's stale `"running"`.
+   - A neutral `endedNotice` card replaces the pending-approval card
+     ("Session ended — no longer active. Open a new managed session
+     from the Sessions tab to keep working.").
+   - `TextEditor` is `.disabled(true)` and rendered at 50% opacity so
+     the user immediately sees the input is dead.
+   - Send + Stop buttons are `.disabled(true)`.
+   - Pending approvals are deliberately hidden (the helper has already
+     terminated the child; approving would be a no-op the user can't
+     undo).
+
+No backend schema change. No state on the iPad path was needed because
+it shares `ManagedSessionDetailView`. macOS `SessionsTab` has the
+analogous risk in its `commandBar(for:)`, but the Mac inline command
+bar already disappears when the user deselects the row, so the
+detail-view "stale snapshot" pattern doesn't apply there in iter 1
+(the command bar reads `state.remoteSessions` for the row directly via
+`state.remoteSessions.first { $0.id == session.id }` lookup against
+the live ForEach, which removes the row on terminal status). If a
+future macOS revision starts retaining a selected-session reference
+across refreshes the same fix should be ported.
 
 ### Deferred items (preserved from earlier passes)
 
