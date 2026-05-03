@@ -514,6 +514,135 @@ infer ownership).
 - **Codex / shell providers, multi-Mac picker, L10n, Watch /
   Android, public release, App Store** — all still out of scope.
 
+## Phase 2 review pass — P1 blockers fixed (commit on top of `3db73bb`)
+
+A Codex review of `3db73bb` found two P1 blockers and confirmed nothing
+else was a merge-blocker. Both fixed in the follow-up commit:
+
+### P1 #1 — Initial pagination returned the OLDEST rows
+
+`remote_app_list_session_events(p_after_id=0)` was returning the first
+`v_limit` rows ordered ascending. For any session with more than
+`v_limit` events, the user's "Show output" reveal showed the start of
+the run instead of the live tail — useless.
+
+Fix in the placeholder migration (still no `v_3.X` slot, still NOT
+applied to live): branch on `v_after`:
+
+- **`v_after <= 0` (initial tail)** — pull `latest v_limit` rows by
+  `id desc` in the inner subquery, then re-sort `id asc` in the outer
+  `jsonb_agg` so the UI scrolls naturally (oldest first → newest
+  last). The user opens "Show output" and sees the most recent
+  history.
+- **`v_after > 0` (incremental)** — keep the watermark shape: rows
+  with `id > v_after` ordered ascending, capped at `v_limit`. App
+  callers store the largest id locally and pass it on the next poll.
+
+App-side composition: the first call returns latest 200 (ids 301-500
+say), the next poll sends `after_id=500`, server returns the rows
+inserted since. No double-fetch, no gap, no stale prefix.
+
+App-side semantics docs (`refreshRemoteSessionEvents` in
+`DataRefreshManager`) already match this behaviour because the Swift
+side reads the `id` field and passes the `max` of stored ids as
+`afterId` — no Swift change needed for the fix.
+
+### P1 #2 — Redaction missed common credential output
+
+The iter-1 / iter-2 token-shape regexes catch credentials *by their
+on-the-wire shape* (sk-ant-…, AIza…, ghp_…, JWTs, long hex). They
+miss credentials that don't have a distinctive shape but ARE clearly
+sensitive because of their *key* or *header label*:
+
+- `Authorization: Basic <base64>` — Basic auth (the existing Bearer
+  pattern only catches Bearer)
+- `Cookie: …`, `Set-Cookie: …` — multi-token cookie strings
+- `accessToken: foo`, `refreshToken=bar`, `client_secret=baz`,
+  `password=hunter2` — value doesn't match any token-shape pattern
+  but the *key* names a secret
+- `MY_API_KEY=…`, `*_TOKEN=…`, `*_SECRET=…`, `*_PASSWORD=…` — env-style
+
+Fix: `helper/redaction.py` now runs **two passes** in order:
+
+1. **Line/key pass (`_LINE_KEY_PATTERNS`)** — recognised auth headers
+   are scrubbed end-to-end (multi-token values like
+   `Basic dXNl…` or `foo=bar; Path=/; HttpOnly` go entirely);
+   `key=value` / `key: value` / `--key=value` / JSON-quoted
+   `"key": "value"` shapes for sensitive keys (`accessToken`,
+   `refreshToken`, `idToken`, `sessionKey`, `clientSecret`, `apiKey`,
+   `secretKey`, `privateKey`, `helperSecret`, `password`, `passwd`,
+   plus snake_case and dash variants) redact ONLY the value with the
+   key preserved (so a reviewer auditing event rows can see WHICH
+   credential was scrubbed); ALL_CAPS env shapes (`*_TOKEN=`,
+   `*_KEY=`, `*_SECRET=`, `*_PASSWORD=`, `*_PASSWD=`) require an
+   underscore-separated prefix so plain output like `STATUS=ok`
+   doesn't false-positive.
+2. **Token-shape pass (`_PATTERNS`)** — unchanged from iter 1:
+   sk-ant / AIza / ghp / github_pat / AWS / Bearer / JWT three-segment
+   / long hex. Catches anything Pass 1 missed (a JWT pasted bare into
+   stdout has no key context but its shape is still distinctive).
+
+Pass 1 first means a JWT inside a recognised `accessToken=` is
+redacted via the key pass (preserving the key), and a bare JWT in the
+open is redacted via the shape pass.
+
+False-positive posture per Codex: **privacy wins over preserving
+exact terminal text**. A false positive means a credential-looking
+line shows `«REDACTED»` instead of useful output — vastly cheaper
+than leaking a real token.
+
+Existing 16+ Claude hook redaction tests pass unchanged: when the
+hook input is `curl -H 'Authorization: Bearer sk-ant-…'`, the new
+Authorization header pattern fires first (zaps the header value),
+and the old sk-ant pattern then sees `«REDACTED»` and is a no-op.
+Net: same single-redaction outcome, key visible in the event row.
+
+### Tests added
+
+A new `helper/test_redaction.py` with 47 focused unit tests covering:
+
+- HTTP headers: Authorization (Basic, Bearer), Proxy-Authorization,
+  Cookie, Set-Cookie, X-API-Key. Including log-prefixed shapes
+  (`  > Authorization: …`) and multi-line bodies where only the
+  Authorization line gets redacted.
+- Camel/snake/dash credential keys: every `accessToken`,
+  `refreshToken`, `idToken`, `sessionKey`, `clientSecret`, `apiKey`,
+  `secretKey`, `privateKey`, `helperSecret`, `password`, `passwd`
+  shape Codex listed, including JSON-quoted (`{"accessToken": "x"}`)
+  and CLI flag (`--access-token=x`).
+- ALL_CAPS env shapes — `MY_TOKEN=`, `ANTHROPIC_API_KEY=`,
+  `DATABASE_PASSWORD=`, plus a guard that `STATUS=ok` /
+  `ENV=production` / `PORT=3000` do NOT match.
+- Bare token shapes still fire (sk-ant, AWS, JWT) when there's no
+  key/header context.
+- 12-case false-positive parametrised guard (`ls -la`, `git status`,
+  `git log --oneline -5`, `python3 helper/cli_pulse_helper.py
+  inspect`, `cd /Users/dev/projects/cool-app && npm test`,
+  `Read /etc/hosts`, `user@host:/secrets/foo$ ls -la`,
+  `Done. 12 files, 0 errors.`, `STATUS=ok`, `ENV=production`,
+  `PORT=3000`).
+- Idempotence: `redact(redact(x)) == redact(x)`.
+- Marker-only input is a no-op (no rewriting cycle).
+
+### Validation snapshot
+
+| Check | Command | Result |
+|---|---|---|
+| pytest | `python3 -m pytest -q helper/test_redaction.py helper/test_remote_hook.py helper/test_remote_agent.py helper/test_system_collector.py` | **139 passed in 3.70s** (80 prior + 47 new + 12 paramterised passes) |
+| swift test | `swift test --package-path "CLI Pulse Bar/CLIPulseCore"` | **Test Suite 'All tests' passed** |
+| RPC contract | `python3 backend/supabase/ci_check_rpc_contract.py` | OK — RPC signature change is internal |
+| macOS build | `xcodebuild -scheme "CLI Pulse Bar" -destination 'platform=macOS' -derivedDataPath /tmp/cli-pulse-build/macos build` | **BUILD SUCCEEDED** |
+| iOS build | `xcodebuild -scheme "CLI Pulse iOS" -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/cli-pulse-build/ios build` | **BUILD SUCCEEDED** |
+
+### Constraints honoured
+
+- ✅ Placeholder migration `migrate_pending_remote_session_input.sql`
+  still has no `v_3.X` slot. Not applied to live Supabase.
+- ✅ `claude-oauth-nested-parse-fix` branch untouched.
+- ✅ No public-repo writes.
+- ✅ No new scope (Codex/shell providers, multi-Mac picker, L10n,
+  Watch / Android, public release, App Store) added.
+
 ## Open questions for review (iter-2 prompt input)
 
 1. **Migration slot timing.** The placeholder migration is committed but not yet replayed. The desktop track's v0.4.4 backlog needs to land first or Jason needs to assign a slot to this iter — confirm cadence.

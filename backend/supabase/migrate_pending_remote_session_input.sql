@@ -235,6 +235,51 @@ begin
   v_limit := least(greatest(coalesce(p_limit, 200), 1), 500);
   v_after := greatest(coalesce(p_after_id, 0), 0);
 
+  -- Two pagination modes:
+  --
+  --   * Initial tail (`p_after_id <= 0`) — return the LATEST v_limit
+  --     rows. The earlier shape ("rows with id > 0 ordered ascending")
+  --     returned the OLDEST v_limit, which was useless for any session
+  --     with more than v_limit existing rows: the user opened "Show
+  --     output" and saw the start of the run instead of the live tail.
+  --     We pull `order by id desc limit v_limit` in the inner query
+  --     and re-sort `order by id asc` in the jsonb_agg so the UI
+  --     scrolls naturally (oldest first → newest last).
+  --
+  --   * Incremental (`p_after_id > 0`) — return rows with `id >
+  --     v_after` ordered ascending. App callers use this after
+  --     storing the first page: they pass the largest id they have
+  --     locally as `p_after_id` and receive only newer rows. This is
+  --     watermark pagination by the bigserial `id` column; `seq` is
+  --     advisory only (no UNIQUE constraint, can collide across
+  --     helper restart) and MUST NOT be used as the watermark.
+  if v_after <= 0 then
+    return coalesce(
+      (
+        select jsonb_agg(
+          jsonb_build_object(
+            'id',         id,
+            'session_id', session_id,
+            'seq',        seq,
+            'kind',       kind,
+            'payload',    payload,
+            'created_at', created_at
+          )
+          order by id asc
+        )
+        from (
+          select id, session_id, seq, kind, payload, created_at
+          from public.remote_session_events
+          where session_id = p_session_id
+            and user_id = v_user_id
+          order by id desc
+          limit v_limit
+        ) sub
+      ),
+      '[]'::jsonb
+    );
+  end if;
+
   return coalesce(
     (
       select jsonb_agg(
