@@ -12,7 +12,6 @@ No network. No real Supabase. No real `claude` binary.
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 import uuid
@@ -25,7 +24,7 @@ HELPER_DIR = Path(__file__).resolve().parent
 if str(HELPER_DIR) not in sys.path:
     sys.path.insert(0, str(HELPER_DIR))
 
-from remote_agent import RemoteAgentManager, SessionStartParams  # noqa: E402
+from remote_agent import RemoteAgentManager  # noqa: E402
 from transports import SessionHandle, SessionTransport, TransportError  # noqa: E402
 
 

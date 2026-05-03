@@ -443,8 +443,11 @@ class RemoteAgentManager:
 
         # Payload was set by the app in `remote_app_request_session_start`
         # as a JSON object with provider + cwd_basename + cwd_hmac +
-        # client_label.
-        cwd_basename = ""
+        # client_label. We deliberately do NOT extract `cwd_basename`
+        # here — iter 1 doesn't resolve a basename to a full path
+        # (that's a privacy-posture call, see the spawn block below)
+        # so the field is metadata-only on the SQL side and unused
+        # in the manager.
         cwd_hmac: str | None = None
         client_label: str | None = None
         provider = "claude"
@@ -452,7 +455,6 @@ class RemoteAgentManager:
             obj = json.loads(payload) if payload else {}
             if isinstance(obj, dict):
                 provider = str(obj.get("provider") or "claude")
-                cwd_basename = str(obj.get("cwd_basename") or "")[:255]
                 cwd_hmac_v = obj.get("cwd_hmac")
                 cwd_hmac = str(cwd_hmac_v) if cwd_hmac_v else None
                 client_label_v = obj.get("client_label")

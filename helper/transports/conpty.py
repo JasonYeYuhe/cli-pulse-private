@@ -30,7 +30,7 @@ so a swap should be drop-in.
 """
 from __future__ import annotations
 
-from .base import SessionHandle, SessionTransport
+from .base import SessionTransport
 
 
 class ConPtyTransport(SessionTransport):
