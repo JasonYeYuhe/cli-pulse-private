@@ -190,7 +190,81 @@ end;
 $$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
 
--- ── 4. Permissions ─────────────────────────────────────────────
+-- ── 4. App-side: list a session's event tail ───────────────────
+-- iter-2 of Sessions Input adds live output streaming. The helper
+-- already writes `remote_session_events` rows (`kind='stdout' |
+-- 'stderr' | 'status' | 'info'`) via `remote_helper_post_event`; this
+-- RPC is the read side. Pagination is by the `bigserial id` column
+-- (server-authoritative monotonic insert order) NOT by `seq` — `seq`
+-- has no UNIQUE constraint and can collide across helper restarts.
+--
+-- Returns `[]` when Remote Control is disabled — same posture as
+-- `remote_app_list_sessions`. Session ownership is verified server-
+-- side (RLS on `remote_session_events` is select-only by user_id, so
+-- a SECURITY DEFINER RPC could in theory rely on that, but a redundant
+-- `EXISTS` check matches the explicit-ownership pattern used by
+-- `remote_app_send_command` and keeps the function self-contained).
+create or replace function public.remote_app_list_session_events(
+  p_session_id uuid,
+  p_after_id bigint default 0,
+  p_limit integer default 200
+) returns jsonb as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_limit integer;
+  v_after bigint;
+begin
+  if v_user_id is null then
+    raise exception 'Not authenticated';
+  end if;
+  if not public._remote_control_enabled_for_caller() then
+    return '[]'::jsonb;
+  end if;
+
+  -- Verify session ownership before listing. Falling through silently
+  -- on mismatch (rather than raising) keeps the failure shape
+  -- identical to "session has no events yet" so a probing caller
+  -- can't distinguish those cases.
+  if not exists (
+    select 1 from public.remote_sessions
+    where id = p_session_id and user_id = v_user_id
+  ) then
+    return '[]'::jsonb;
+  end if;
+
+  v_limit := least(greatest(coalesce(p_limit, 200), 1), 500);
+  v_after := greatest(coalesce(p_after_id, 0), 0);
+
+  return coalesce(
+    (
+      select jsonb_agg(
+        jsonb_build_object(
+          'id',         id,
+          'session_id', session_id,
+          'seq',        seq,
+          'kind',       kind,
+          'payload',    payload,
+          'created_at', created_at
+        )
+        order by id asc
+      )
+      from (
+        select id, session_id, seq, kind, payload, created_at
+        from public.remote_session_events
+        where session_id = p_session_id
+          and user_id = v_user_id
+          and id > v_after
+        order by id asc
+        limit v_limit
+      ) sub
+    ),
+    '[]'::jsonb
+  );
+end;
+$$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
+
+
+-- ── 5. Permissions ─────────────────────────────────────────────
 -- App users authenticate via JWT (`authenticated` role). Anon callers
 -- must NOT be able to enumerate sessions or queue start commands; the
 -- `auth.uid() is null` guard above already raises but a REVOKE on anon
@@ -200,6 +274,9 @@ grant execute on function public.remote_app_request_session_start(uuid, text, te
 
 revoke all on function public.remote_app_list_sessions() from public, anon;
 grant execute on function public.remote_app_list_sessions() to authenticated;
+
+revoke all on function public.remote_app_list_session_events(uuid, bigint, integer) from public, anon;
+grant execute on function public.remote_app_list_session_events(uuid, bigint, integer) to authenticated;
 
 
 -- ── Manual verification (run after applying):

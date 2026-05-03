@@ -50,17 +50,30 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from redaction import redact
 from transports import SessionHandle, SessionTransport, TransportError
 
 logger = logging.getLogger("cli_pulse.remote_agent")
 
 
 # Maximum number of bytes to stash in the per-session stdout buffer before
-# we discard the oldest. A managed session that produces a lot of output
-# while the daemon is briefly off (e.g. paused on the daemon's sleep)
-# would otherwise grow unbounded. iter 1 doesn't upload these; the cap
-# keeps memory pressure bounded.
+# we discard the oldest. Even with the iter-2 batched uploader landing
+# events ≤ 4 KB / row every ~0.5 s, this cap is the safety net for
+# transient upload failures (network blip, gate flip mid-cycle): the
+# batcher's payloads stay buffered locally until upload succeeds, but
+# we never let a single session balloon manager memory.
 _STDOUT_BUFFER_CAP_BYTES = 64 * 1024
+
+# Server-side row CHECK is `length(payload) <= 4096`. Keep the helper's
+# per-event cap a hair under so a UTF-8 boundary fix (see
+# `_safe_truncate_utf8`) can't push a payload over.
+_EVENT_PAYLOAD_CAP_CHARS = 4000
+
+# `kind='info'` carries lifecycle detail (spawn-failure reason, exit
+# code, "child gone" hint). We bound it harder than stdout because info
+# rows are inherently short — anything longer has likely sucked in a
+# stack trace we'd rather elide.
+_INFO_PAYLOAD_CAP_CHARS = 1024
 
 
 @dataclass
@@ -82,7 +95,22 @@ class _ManagedSession:
     params: SessionStartParams
     handle: SessionHandle
     spawned_at: float
+    # iter-2: hold the un-uploaded tail in memory while the batcher fills.
+    # On each tick we add freshly-read PTY bytes to the batcher and only
+    # drain into `stdout_buffer` if the upload itself failed (so the
+    # next tick can retry).
     stdout_buffer: bytearray = field(default_factory=bytearray)
+    stdout_batcher: "EventBatcher" = field(default_factory=lambda: EventBatcher())
+    # Per-session monotonic counter so `seq` is dense and ordered within
+    # a session lifetime. Resets to 0 on every new spawn. After a helper
+    # restart a fresh session can collide with stale rows for a deleted
+    # session that shared the same id — but the schema doesn't enforce
+    # uniqueness on `(session_id, seq)`, and the app pages by the
+    # bigserial `id` column (not `seq`), so collisions don't break
+    # ordering. The counter still gives the helper a deterministic seq
+    # within one session, which is what the index `idx_remote_session_events
+    # _session(session_id, seq)` is sized for.
+    event_seq: int = 0
     last_status_posted: str = "running"   # 'running' | 'stopped' | 'errored'
 
 
@@ -203,16 +231,21 @@ class RemoteAgentManager:
                 session_id=params.session_id, argv=argv, env=env, cwd=cwd,
             )
         except TransportError as exc:
-            # Detail goes to the local helper log only — the SQL gate in
-            # `remote_helper_post_event` only transitions
-            # `remote_sessions.status` when `p_payload` is exactly
-            # `'errored'` or `'stopped'`, so we MUST NOT prefix or suffix
-            # the status string. See `_post_status`.
+            # Status payload MUST be exactly `'errored'` for the SQL
+            # gate to transition `remote_sessions.status`. Spawn-failure
+            # detail (binary missing, PATH resolution miss, fork
+            # exhaustion) lands in a separate redacted `kind='info'`
+            # event so the app can surface "Failed to spawn: claude not
+            # found" without a status-string regression. See
+            # `_post_info` for the redaction posture.
             logger.warning(
                 "spawn_session(%s): transport.start raised: %s",
                 params.session_id, exc,
             )
             self._post_status(params.session_id, "errored")
+            self._post_info(
+                params.session_id, f"spawn failed: {exc}"
+            )
             return False
 
         self._sessions[params.session_id] = _ManagedSession(
@@ -255,14 +288,19 @@ class RemoteAgentManager:
 
     def stop_session(self, session_id: str) -> None:
         """Terminate the child and close transport resources."""
-        sess = self._sessions.pop(session_id, None)
+        sess = self._sessions.get(session_id)
         if sess is None:
             return
         try:
             self.transport.terminate(sess.handle)
         finally:
             self.transport.close(sess.handle)
+        # Post BEFORE removing the session entry so `_next_seq` still
+        # finds the per-session counter; otherwise the lifecycle event
+        # would land with seq=0 (the missing-session fallback) instead
+        # of the next dense value (Phase 2 P0).
         self._post_status(session_id, "stopped")
+        self._sessions.pop(session_id, None)
 
     def interrupt_session(self, session_id: str) -> None:
         """Send SIGINT-equivalent to the foreground process group."""
@@ -450,10 +488,24 @@ class RemoteAgentManager:
     # ── stdout drain + exit observation (iter 1: no upload) ────
 
     def _drain_running_sessions_stdout(self) -> int:
-        """Read pending stdout from each running session into the per-
-        session buffer. iter 1 does NOT upload these — the buffer is
-        purely so a future iter can flush via EventBatcher → post_event
-        without changing the manager surface.
+        """Read pending stdout from each running session, feed it into
+        the per-session `EventBatcher`, and post any payload the
+        batcher hands back as a `kind='stdout'` event (redacted, capped
+        at `_EVENT_PAYLOAD_CAP_CHARS`).
+
+        The PTY merges stdout/stderr by design (same slave fd in
+        `PosixPtyTransport.start`), so a single `kind='stdout'`
+        carries both. Splitting stderr is iter-3 work and would
+        require abandoning the merged PTY for some streams.
+
+        Failure mode: if the upload fails we drop the chunk on the
+        floor. We deliberately do NOT re-buffer un-redacted bytes
+        locally for retry — events are 7-day retention by design and
+        re-stashing into `stdout_buffer` would amplify a long upload
+        outage into unbounded memory growth.
+
+        Returns total bytes drained from PTYs this tick (for logging
+        / tests, not load shedding).
         """
         total = 0
         for session_id, sess in list(self._sessions.items()):
@@ -462,15 +514,25 @@ class RemoteAgentManager:
             except TransportError as exc:
                 logger.warning("read_stdout(%s) failed: %s", session_id, exc)
                 continue
-            if not chunk:
-                continue
-            sess.stdout_buffer.extend(chunk)
-            total += len(chunk)
-            # Bound the in-memory buffer so a runaway session can't
-            # cause OOM while the iter-1 drain-only mode is in effect.
-            if len(sess.stdout_buffer) > _STDOUT_BUFFER_CAP_BYTES:
-                drop = len(sess.stdout_buffer) - _STDOUT_BUFFER_CAP_BYTES
-                del sess.stdout_buffer[:drop]
+            if chunk:
+                # Decode tolerantly — a multi-byte UTF-8 character may
+                # straddle the 4 KB read boundary; `errors="replace"`
+                # picks the next chunk back up cleanly.
+                text = chunk.decode("utf-8", errors="replace")
+                total += len(chunk)
+                payload = sess.stdout_batcher.add(text)
+                if payload is not None:
+                    self._post_stdout_chunk(session_id, payload)
+
+            # Even when we didn't read anything this tick, an idle
+            # batcher may have stale bytes from the prior tick that
+            # are now past `max_idle_s`. Flush proactively so
+            # interactive output (a few words at a time) doesn't sit
+            # half a second behind the user's expectations.
+            if sess.stdout_batcher.due():
+                payload = sess.stdout_batcher.drain()
+                if payload is not None:
+                    self._post_stdout_chunk(session_id, payload)
         return total
 
     def _observe_exits(self) -> int:
@@ -478,24 +540,44 @@ class RemoteAgentManager:
         for session_id, sess in list(self._sessions.items()):
             if self.transport.is_alive(sess.handle):
                 continue
+            # Final stdout drain: the child may have written one last
+            # batch on its way out (e.g. an error message before exit).
+            # Force-flush whatever's still in the batcher BEFORE we
+            # post the exit info, so the event ordering reads
+            # naturally (last lines of output → exit code → status).
+            self._flush_session_batcher(session_id, sess)
+
             code = self.transport.wait(sess.handle, timeout=0)
             self.transport.close(sess.handle)
             if code == 0:
                 self._post_status(session_id, "stopped")
             else:
                 # Status payload MUST be exactly `'errored'` for the SQL
-                # gate to update `remote_sessions.status`. The exit code
-                # itself goes to the local log only — exposing it via
-                # event payload is iter-2 work behind the same redaction
-                # posture as transcript uploads.
+                # gate. Exit code lands in a redacted info event so the
+                # UI can render "exited code=2" without us hard-coding
+                # the format into the status payload.
+                code_label = (
+                    f"exit_code={code}" if code is not None else "child gone"
+                )
                 logger.info(
-                    "session %s exited with code=%s",
-                    session_id, code if code is not None else "<gone>",
+                    "session %s exited with %s", session_id, code_label,
                 )
                 self._post_status(session_id, "errored")
+                self._post_info(session_id, f"exited: {code_label}")
             self._sessions.pop(session_id, None)
             exited += 1
         return exited
+
+    def _flush_session_batcher(
+        self, session_id: str, sess: "_ManagedSession"
+    ) -> None:
+        """Force-drain a session's batcher and post the result. Used on
+        exit observation so the last few lines of output reach the app
+        before the lifecycle event lands.
+        """
+        chunk = sess.stdout_batcher.drain()
+        if chunk:
+            self._post_stdout_chunk(session_id, chunk)
 
     # ── helpers ──────────────────────────────────────────────
 
@@ -518,6 +600,54 @@ class RemoteAgentManager:
         env["CLI_PULSE_REMOTE_SESSION_ID"] = params.session_id
         return env
 
+    # ── event posting (iter 2: stdout + info + status) ─────────
+
+    def _next_seq(self, session_id: str) -> int:
+        """Per-session monotonic event seq. Falls back to `0` for
+        events posted outside a session's lifetime (e.g. a spawn
+        failure that never registered the session). The app pages by
+        the bigserial `id` column, not `seq`, so the fallback value
+        doesn't break ordering — `seq` here is purely a hint that
+        helps SQL `idx_remote_session_events_session(session_id, seq)`
+        scans on the helper-write side.
+        """
+        sess = self._sessions.get(session_id)
+        if sess is None:
+            return 0
+        sess.event_seq += 1
+        return sess.event_seq
+
+    def _post_event(
+        self, session_id: str, kind: str, payload: str
+    ) -> bool:
+        """Generic event poster. Returns True on success, False on RPC
+        failure. Caller is responsible for redaction so a leak can't
+        slip through by forgetting an inner wrap.
+
+        Failure is non-fatal: we log at DEBUG (the gate-off path is
+        the most common reason and we don't want to spam WARN every
+        cycle a user has Remote Control disabled) and return False so
+        the caller can decide whether to retain the data for retry.
+        """
+        try:
+            self.rpc_caller(
+                "remote_helper_post_event",
+                {
+                    "p_device_id": self.helper_config.device_id,
+                    "p_helper_secret": self.helper_config.helper_secret,
+                    "p_session_id": session_id,
+                    "p_seq": self._next_seq(session_id),
+                    "p_kind": kind,
+                    "p_payload": payload[:_EVENT_PAYLOAD_CAP_CHARS],
+                },
+            )
+            return True
+        except Exception as exc:
+            logger.debug(
+                "post_event(%s, %s) failed: %s", session_id, kind, exc
+            )
+            return False
+
     def _post_status(self, session_id: str, status: str) -> None:
         """Post a lifecycle status event so the SQL gate transitions
         `remote_sessions.status`.
@@ -527,10 +657,8 @@ class RemoteAgentManager:
         column on `p_kind='status'` AND `p_payload IN ('stopped',
         'errored')`. An earlier draft prefixed an `f"{status}: {detail}"`
         string, which silently kept errored sessions stuck on
-        `pending`/`running` server-side. Any extra context belongs in
-        the local helper log (see call sites) or — once the iter-2
-        tail-streaming UI lands and we're ready to redact — in a
-        separate `kind='info'` event.
+        `pending`/`running` server-side. Lifecycle context goes via
+        `_post_info` (separate `kind='info'` event with redaction).
         """
         if status not in ("stopped", "errored"):
             # Defensive: refuse to send anything that wouldn't trip the
@@ -541,17 +669,47 @@ class RemoteAgentManager:
                 session_id, status,
             )
             return
-        try:
-            self.rpc_caller(
-                "remote_helper_post_event",
-                {
-                    "p_device_id": self.helper_config.device_id,
-                    "p_helper_secret": self.helper_config.helper_secret,
-                    "p_session_id": session_id,
-                    "p_seq": int(time.monotonic() * 1000) & 0x7FFFFFFF,
-                    "p_kind": "status",
-                    "p_payload": status,
-                },
-            )
-        except Exception as exc:
-            logger.debug("post_status(%s, %s) failed: %s", session_id, status, exc)
+        self._post_event(session_id, "status", status)
+
+    def _post_info(self, session_id: str, detail: str) -> bool:
+        """Post a redacted, length-bounded `kind='info'` event with
+        lifecycle context (spawn-failure reason, exit code, "child
+        gone" hint, etc.) that complements but does NOT replace the
+        bare-string `kind='status'` event the SQL gate keys on.
+
+        Returns False (no-op) when `detail` is empty so callers can
+        unconditionally invoke without a guard. RPC failures are
+        non-fatal — the local process keeps running.
+        """
+        if not detail:
+            return False
+        redacted = redact(detail)
+        if not redacted:
+            return False
+        return self._post_event(
+            session_id, "info", redacted[:_INFO_PAYLOAD_CAP_CHARS]
+        )
+
+    def _post_stdout_chunk(self, session_id: str, text: str) -> bool:
+        """Redact + post a tail of merged stdout/stderr for a managed
+        session. PTY merges the streams (`stdout=stderr=slave_fd` in
+        `PosixPtyTransport.start`) so iter 2 emits `kind='stdout'` for
+        the combined stream — separating stderr would require a
+        non-PTY pipe and is iter-3 work.
+
+        Returns False on RPC failure or if `text` is empty after
+        redaction; caller can re-stash the original (un-redacted) bytes
+        on the per-session `stdout_buffer` if it wants to retry next
+        tick. iter 2 chooses NOT to retry on failure: events are
+        ephemeral by retention design (7-day cron prune) and re-stashing
+        un-redacted bytes risks DoS-amplifying a long upload outage
+        into unbounded memory growth.
+        """
+        if not text:
+            return False
+        redacted = redact(text)
+        if not redacted:
+            return False
+        return self._post_event(
+            session_id, "stdout", redacted[:_EVENT_PAYLOAD_CAP_CHARS]
+        )

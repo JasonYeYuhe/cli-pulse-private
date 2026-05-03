@@ -396,6 +396,13 @@ struct ManagedSessionDetailView: View {
     /// `sessionEnded` so we don't briefly mark every freshly-navigated
     /// session as "ended" before the first refresh lands.
     @State private var hasRefreshedAtLeastOnce: Bool = false
+    /// User-explicit "Show output" toggle (Phase 2 live tail). Default
+    /// OFF — uploading happens regardless of UI choice while RC is on,
+    /// but rendering the tail is the user's privacy-visible opt-in.
+    /// Reset implicitly on every navigation: SwiftUI rebuilds the
+    /// detail view when the user pops back to the list and re-enters
+    /// (each `RemoteSession` value taps into a fresh struct instance).
+    @State private var showOutput: Bool = false
 
     /// Latest server-side row for this session, falling back to the
     /// navigation-captured snapshot. Use this for every render-time
@@ -515,6 +522,13 @@ struct ManagedSessionDetailView: View {
                         .foregroundStyle(.orange)
                 }
 
+                Divider()
+
+                showOutputToggle
+                if showOutput {
+                    outputPanel
+                }
+
                 Text("Free-text input is sent verbatim to the spawned Claude. Claude's own permission prompt fires when it tries to run any tool — those approvals appear above when this session is selected.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -538,6 +552,16 @@ struct ManagedSessionDetailView: View {
                 async let _sessions: () = state.refreshRemoteSessions()
                 async let _approvals: () = state.refreshRemoteApprovals()
                 _ = await (_sessions, _approvals)
+                // iter-2 live tail: only fetch events when the user
+                // has explicitly toggled "Show output" on for this
+                // session. Privacy-visible opt-in — helper writes
+                // events while RC is on, but the app doesn't render
+                // them unless asked.
+                if showOutput {
+                    await state.refreshRemoteSessionEvents(
+                        sessionId: currentSession.id
+                    )
+                }
                 // Mark the first refresh complete AFTER the await so
                 // `sessionEnded` doesn't briefly read true between
                 // mount and the first response.
@@ -551,6 +575,105 @@ struct ManagedSessionDetailView: View {
                 }
             }
         }
+    }
+
+    private var showOutputToggle: some View {
+        HStack(spacing: 8) {
+            Image(systemName: showOutput ? "eye.slash" : "eye")
+                .foregroundStyle(.secondary)
+            Text(showOutput ? "Hide live output" : "Show live output")
+                .font(.subheadline.weight(.medium))
+            Spacer()
+            Toggle("", isOn: Binding(
+                get: { showOutput },
+                set: { newValue in
+                    // Collapsing — drop the cache so the next reveal
+                    // pulls fresh rather than from the previous run.
+                    if !newValue {
+                        state.clearRemoteSessionEventsCache(
+                            sessionId: currentSession.id
+                        )
+                    }
+                    showOutput = newValue
+                }
+            ))
+            .labelsHidden()
+        }
+    }
+
+    @ViewBuilder
+    private var outputPanel: some View {
+        let events = state.remoteSessionEvents[currentSession.id] ?? []
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Image(systemName: "terminal")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Text("Live output (last \(events.count))")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                Text("Secrets redacted before upload.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        if events.isEmpty {
+                            Text(
+                                state.remoteControlEnabled
+                                    ? "No output yet…"
+                                    : "Remote Control is off — output won't stream."
+                            )
+                            .font(.callout.monospaced())
+                            .foregroundStyle(.tertiary)
+                            .padding(8)
+                        } else {
+                            ForEach(events) { event in
+                                outputRow(event).id(event.id)
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 220)
+                .background(Color.secondary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .onChange(of: events.last?.id) { _, newId in
+                    if let newId {
+                        withAnimation(.linear(duration: 0.1)) {
+                            proxy.scrollTo(newId, anchor: .bottom)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func outputRow(_ event: RemoteSessionEvent) -> some View {
+        let kindColor: Color = {
+            switch event.kind {
+            case "stderr": return .orange
+            case "status": return event.payload == "errored" ? .red : .secondary
+            case "info":   return .blue
+            default:       return .primary
+            }
+        }()
+        HStack(alignment: .top, spacing: 6) {
+            Text(event.kind)
+                .font(.caption2.monospaced().weight(.medium))
+                .foregroundStyle(kindColor)
+                .frame(width: 44, alignment: .leading)
+            Text(event.payload)
+                .font(.callout.monospaced())
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
     }
 
     private var endedNotice: some View {

@@ -323,6 +323,197 @@ across refreshes the same fix should be ported.
 - **No public-repo writes** — entirely on private `origin`. No release
   tags, no website changes, no GitHub Releases artifact movement.
 
+## Phase 2 — live managed-session output tail (commit on top of `278f626`)
+
+iter 1 plumbed input (prompt / stop / interrupt / inline approve). Phase
+2 closes the loop with privacy-first output streaming so the user can
+actually watch what `claude` is doing on the helper-side PTY.
+
+### Wire format additions
+
+The placeholder migration `migrate_pending_remote_session_input.sql`
+gains one new app-side RPC. **No real `v0.3X` slot assigned. Not
+applied to live Supabase.**
+
+```sql
+remote_app_list_session_events(
+  p_session_id uuid,
+  p_after_id   bigint default 0,    -- pagination by bigserial id
+  p_limit      integer default 200  -- clamped server-side to [1, 500]
+) returns jsonb
+```
+
+Pagination is by the `bigserial id` column, NOT by `seq` — `seq` has
+no UNIQUE constraint and a per-session counter resets on helper
+restart, so it's an ordering hint at best. `id` is server-authoritative
+monotonic insert order, exactly what a "give me everything past
+watermark X" pull needs.
+
+Gated identically to the rest of Remote Control: returns `[]` when
+RC is off, returns `[]` when the session doesn't belong to the
+caller (silent rather than raising — keeps the failure shape
+indistinguishable from "no events yet" so a probing caller can't
+infer ownership).
+
+### Helper changes
+
+- **New `helper/redaction.py` module**: factored out of
+  `claude.py._REDACT_PATTERNS` so the iter-2 stdout uploader and the
+  iter-1 hook share one secret-pattern source of truth. Added module
+  docstring explicitly listing patterns (sk-ant / AIza / ghp /
+  github_pat / AWS / Bearer / JWT three-segment / long hex). The
+  marker is a constant `REDACTION_MARKER = "«REDACTED»"`. Pure,
+  dependency-free, importable from any helper-side context.
+  `claude.py` now `from redaction import redact as _redact` instead
+  of declaring locals — existing 16+ hook tests still pass unchanged.
+
+- **`RemoteAgentManager` event uploader**:
+  - Per-session `EventBatcher` (existing class, now actually used)
+    targeting ~3.5 KB chunks with a 0.5 s idle flush so interactive
+    output (a few words at a time) doesn't sit half a second behind
+    the user's expectations.
+  - Per-session monotonic `event_seq` counter on `_ManagedSession`.
+    Resets to 0 on every spawn. Phase-2 P0 — the iter-1 monotonic-ms
+    seq scheme risked int32 wrap on long-uptime hosts (`time.monotonic
+    () * 1000` exceeds 2^31 after ~24.8 days) and double-collisions
+    on high-frequency stdout. Per-session counter dodges both. Helper
+    restart can reset to 0 and theoretically collide with stale rows
+    for a deleted session that shared the same id, but the schema
+    has no UNIQUE on `(session_id, seq)` and the app pages by `id`,
+    so collisions are harmless.
+  - New `_post_event(session_id, kind, payload)` is the single
+    poster everything goes through; uses `_next_seq` for ordering;
+    swallows `Exception` at DEBUG level so the gate-off path doesn't
+    spam logs (the gate-off RPC failure is the most common reason).
+  - `_post_status` keeps its iter-1 contract — payload MUST be
+    exactly `'stopped'` or `'errored'`. Refuses anything else with
+    a WARN log so a typo can't silently produce a stuck session.
+  - `_post_info(session_id, detail)` redacts via `redact()` and
+    truncates to 1 KB before posting `kind='info'`. No-ops on empty
+    detail so callers can invoke unconditionally.
+  - `_post_stdout_chunk(session_id, text)` redacts and truncates to
+    4 KB (a hair under the SQL `length(payload) <= 4096` CHECK to
+    leave headroom). Does NOT re-buffer un-redacted bytes for retry
+    on upload failure — events are 7-day retention by design and
+    re-stashing into `stdout_buffer` would amplify a long upload
+    outage into unbounded memory growth.
+  - `_drain_running_sessions_stdout`:
+    - Decodes PTY bytes with `errors="replace"` so a multi-byte
+      UTF-8 character straddling the 4 KB read boundary doesn't
+      corrupt.
+    - Feeds into the per-session batcher.
+    - Flushes when the batcher returns a payload OR when it's been
+      idle past `max_idle_s`.
+    - Posts the flushed payload as a redacted `kind='stdout'` event.
+  - `_observe_exits` final-flushes the batcher so the last lines of
+    output reach the app BEFORE the lifecycle event lands.
+  - Spawn failure path now posts BOTH `status='errored'` AND a
+    redacted `kind='info'` carrying the failure reason (`spawn
+    failed: <redacted error>`).
+  - Non-zero-exit path now also posts a redacted `kind='info'`
+    carrying `exit_code=N` (or `child gone` when `wait()` returns
+    None).
+
+- **`stop_session` ordering fix**: the iter-1 implementation popped
+  the session entry before posting `_post_status`. With the new
+  per-session seq counter, that meant the `'stopped'` event landed
+  with seq=0 (the missing-session fallback) instead of the next
+  dense value. Reordered to post BEFORE the pop so the counter is
+  still alive at the call.
+
+- **PTY stdout/stderr merging is unchanged**: `PosixPtyTransport`
+  wires `stdout=stderr=slave_fd` so the kernel can't distinguish
+  the streams. iter 2 emits `kind='stdout'` for the merged stream;
+  splitting stderr would require abandoning the merged PTY for some
+  streams (and giving up TUI behaviour for `claude`). Iter-3 work.
+
+### Swift side
+
+- **`APIClient.remoteListSessionEvents(sessionId:afterId:limit:)`** —
+  wraps the new RPC, clamps server-side to `[1, 500]`, returns
+  `[RemoteSessionEvent]`.
+- **`AppState.remoteSessionEvents: [String: [RemoteSessionEvent]]`** —
+  per-session ring buffer keyed by `RemoteSession.id`. Capped at
+  `AppState.remoteSessionEventsCap = 200` rows, drops oldest on
+  overflow. Cleared on RC-toggle-off and on logout (matching the
+  iter-1 cache-clearing posture for sessions / approvals).
+- **`refreshRemoteSessionEvents(sessionId:)`** — pagination by
+  max-id (reads the largest event id we've already stored locally,
+  passes as `afterId`); re-checks the gate after the await; drops
+  the request silently on RC-flip; non-fatal on transient errors.
+- **`clearRemoteSessionEventsCache(sessionId:)`** — called by the
+  "Show output" toggle when the user collapses the panel, so the
+  next reveal pulls fresh rather than from the previous run's tail.
+
+### UI
+
+- **macOS `SessionsTab`**: command bar gains a "Show output" /
+  "Hide output" toggle. Default OFF. When ON, renders a compact
+  140-pt-tall scrollable monospace panel with kind-coloured rows
+  (`stdout` primary, `stderr` orange, `status='errored'` red,
+  `info` blue). Auto-scrolls to the newest event via `ScrollViewReader
+  + .onChange(of: events.last?.id)`. The `.task` polling loop only
+  fetches events when both `showOutput == true` AND a session is
+  selected. Switching selection resets `showOutput = false` so the
+  user has to opt in again for the new session.
+
+- **iOS `ManagedSessionDetailView`**: same toggle (rendered as a
+  Toggle next to a "Show live output" label) + a 220-pt scrollable
+  panel. Preserves the iter-1 ended-state behaviour from `278f626`:
+  Send/Stop stay disabled when `sessionEnded`, the ended notice
+  card still renders, the Show-output toggle still works (event
+  rows for terminal sessions remain readable until the 7-day
+  retention cron prunes them).
+
+- Both surfaces show a footer line "Secrets redacted before upload."
+  so the user can SEE the privacy posture without reading the docs.
+
+### Tests
+
+- **9 new helper tests** in `test_remote_agent.py`:
+  `test_stdout_drain_posts_redacted_event`,
+  `test_stdout_chunking_flushes_on_idle_when_no_new_reads`,
+  `test_stdout_post_failure_is_non_fatal`,
+  `test_stdout_post_does_not_collide_with_status_payload_exactness`,
+  `test_info_event_redacts_and_is_size_bounded`,
+  `test_info_event_skipped_when_detail_empty`,
+  `test_spawn_failure_emits_status_and_redacted_info_pair`,
+  `test_observe_exits_emits_info_with_exit_code`,
+  `test_per_session_event_seq_counter_starts_at_one`.
+
+- **5 new Swift tests** in `RemoteSessionEventTests.swift` (new
+  file): wire-shape decode for `stdout` / `status='errored'` /
+  `info` rows, `Identifiable` keys off `id`, full Codable
+  round-trip, bigint id (4.8B value past Int32) decodes into
+  Swift's 64-bit `Int`.
+
+### Privacy / security posture preserved
+
+- Default OFF — `_remote_control_enabled_for_caller()` gates the
+  new listing RPC.
+- Show-output is a per-detail user-explicit opt-in for *rendering*;
+  upload itself runs while RC is on regardless. Aligns with the
+  retention cron (7-day prune).
+- Every helper upload path (`stdout`, `info`) runs `redact()`
+  before the wire — secrets stay on-device.
+- Status payload remains exactly `'stopped'` / `'errored'`. Detail
+  goes via `kind='info'` so iter-1's SQL gate fix doesn't regress.
+- 4 KB stdout / 1 KB info row caps; 200-event ring buffer per
+  session app-side; 64 KB local stdout buffer (safety net only,
+  not actually used by the new uploader path).
+
+### Deferred items (preserved)
+
+- **Stderr / stdout split** — PTY merges them; iter-3 work would
+  need a non-PTY pipe.
+- **Real schema slot** — `migrate_pending_remote_session_input.sql`
+  still has no `v0.3X` slot. Live apply waits on Jason's
+  coordination with cli-pulse-desktop v0.4.4 + OpenRouter bigint
+  migration queue.
+- **No public-repo writes** — entirely on private `origin`.
+- **Codex / shell providers, multi-Mac picker, L10n, Watch /
+  Android, public release, App Store** — all still out of scope.
+
 ## Open questions for review (iter-2 prompt input)
 
 1. **Migration slot timing.** The placeholder migration is committed but not yet replayed. The desktop track's v0.4.4 backlog needs to land first or Jason needs to assign a slot to this iter — confirm cadence.

@@ -5,6 +5,11 @@ struct SessionsTab: View {
     @EnvironmentObject var state: AppState
     @State private var selectedManagedSessionId: String?
     @State private var promptText: String = ""
+    /// User-explicit "Show output" toggle. Default OFF — output upload
+    /// is happening regardless (helper writes events while RC is on),
+    /// but rendering the tail is a privacy-visible choice the user
+    /// has to make per detail view.
+    @State private var showOutput: Bool = false
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
@@ -24,23 +29,43 @@ struct SessionsTab: View {
             // within the 10s Claude hook window without the user having
             // to open the separate approvals sheet.
             //
-            // Mirrors the RemoteApprovalsSheet posture: 3s tick when
+            // Live event tail (`refreshRemoteSessionEvents`) only fires
+            // when the user has explicitly toggled "Show output" on for
+            // the currently-selected managed session. Keeping it
+            // conditional preserves the privacy-visible posture: even
+            // though the helper uploads events while RC is on, the
+            // app doesn't fetch + render them unless asked.
+            //
+            // Mirrors the RemoteApprovalsSheet cadence: 3s tick when
             // Remote Control is on, 10s when off. The disabled-state
             // calls are still issued, but `refreshRemoteSessions` /
-            // `refreshRemoteApprovals` each guard on `remoteControlEnabled`
-            // internally — so when RC is off, neither hits the network
-            // and both clear their local caches as a side effect, which
-            // is the desired no-network posture.
+            // `refreshRemoteApprovals` / `refreshRemoteSessionEvents`
+            // each guard on `remoteControlEnabled` internally — so
+            // when RC is off, none hit the network and all clear
+            // their local caches as a side effect, which is the
+            // desired no-network posture.
             while !Task.isCancelled {
                 async let _sessions: () = state.refreshRemoteSessions()
                 async let _approvals: () = state.refreshRemoteApprovals()
                 _ = await (_sessions, _approvals)
+                if showOutput, let sid = selectedManagedSessionId {
+                    await state.refreshRemoteSessionEvents(sessionId: sid)
+                }
                 if !state.remoteControlEnabled {
                     try? await Task.sleep(nanoseconds: 10_000_000_000)
                 } else {
                     try? await Task.sleep(nanoseconds: 3_000_000_000)
                 }
             }
+        }
+        .onChange(of: selectedManagedSessionId) { _ in
+            // Selection changed — reset the per-detail toggle so the
+            // user has to opt in again for the new session. Avoids
+            // surprise-rendering output for a session they didn't
+            // explicitly enable. (Single-arg `.onChange` form because
+            // the bar target deploys to macOS 13; the two-arg variant
+            // is macOS 14+.)
+            showOutput = false
         }
     }
 
@@ -187,6 +212,26 @@ struct SessionsTab: View {
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                 Spacer()
+                Button {
+                    if showOutput {
+                        // Collapsing — drop the cache so the next
+                        // reveal pulls fresh rather than from the
+                        // previous run's tail.
+                        state.clearRemoteSessionEventsCache(sessionId: session.id)
+                    }
+                    showOutput.toggle()
+                } label: {
+                    Label(
+                        showOutput ? "Hide output" : "Show output",
+                        systemImage: showOutput ? "eye.slash" : "eye"
+                    )
+                    .font(.system(size: 10))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .help(showOutput
+                      ? "Hide the live output tail. Helper keeps uploading events while Remote Control is on; this only controls what's shown here."
+                      : "Show the live output tail (stdout, status, info events). Default off — privacy-visible opt-in.")
                 Button(role: .destructive) {
                     Task {
                         await state.stopRemoteSession(sessionId: session.id)
@@ -201,6 +246,10 @@ struct SessionsTab: View {
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
             }
+
+            if showOutput {
+                outputPanel(for: session)
+            }
         }
         .padding(8)
         .background(Color.accentColor.opacity(0.08))
@@ -208,6 +257,87 @@ struct SessionsTab: View {
     }
 
     // MARK: - Helpers
+
+    // MARK: - Output panel
+
+    @ViewBuilder
+    private func outputPanel(for session: RemoteSession) -> some View {
+        let events = state.remoteSessionEvents[session.id] ?? []
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "terminal").font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                Text("Live output (last \(events.count))")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                Text("Secrets redacted before upload.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+            }
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        if events.isEmpty {
+                            Text(
+                                state.remoteControlEnabled
+                                    ? "No output yet…"
+                                    : "Remote Control is off — output won't stream."
+                            )
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .padding(6)
+                        } else {
+                            ForEach(events) { event in
+                                outputRow(event)
+                                    .id(event.id)
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 140)
+                .onChange(of: events.last?.id) { newId in
+                    // Auto-scroll to the newest event so streaming
+                    // output reads naturally without the user
+                    // having to chase the bottom. Single-arg form
+                    // because the bar target deploys to macOS 13.
+                    if let newId {
+                        withAnimation(.linear(duration: 0.1)) {
+                            proxy.scrollTo(newId, anchor: .bottom)
+                        }
+                    }
+                }
+            }
+            .background(Color.black.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+    }
+
+    @ViewBuilder
+    private func outputRow(_ event: RemoteSessionEvent) -> some View {
+        let kindColor: Color = {
+            switch event.kind {
+            case "stderr": return .orange
+            case "status": return event.payload == "errored" ? .red : .secondary
+            case "info":   return .blue
+            default:       return .primary // stdout
+            }
+        }()
+        HStack(alignment: .top, spacing: 6) {
+            Text(event.kind)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(kindColor)
+                .frame(width: 38, alignment: .leading)
+            Text(event.payload)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 1)
+    }
 
     private func sendPrompt(for session: RemoteSession) async {
         let text = promptText

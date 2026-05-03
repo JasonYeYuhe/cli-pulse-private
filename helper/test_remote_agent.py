@@ -579,3 +579,340 @@ def test_stop_session_emits_exact_stopped_payload():
         if n == "remote_helper_post_event" and p.get("p_kind") == "status"
     ]
     assert status_payloads == ["stopped"]
+
+
+# ── Phase 2 — live event tail (stdout / info / redaction) ───────
+
+
+def _start_a_session(mgr, session_id):
+    """Helper: queue a single 'start' command, tick once, leave the
+    session running. Used by the stdout / info tests below.
+    """
+    cmd_id = str(uuid.uuid4())
+    queue = [
+        [{"id": cmd_id, "session_id": session_id,
+          "kind": "start", "payload": _start_payload()}],
+        [],
+    ]
+    return queue
+
+
+def test_stdout_drain_posts_redacted_event():
+    """Helper writes redacted stdout chunks to remote_helper_post_event
+    when the per-session batcher flushes. Phase 2 P1 — without this,
+    the live tail stays empty in the UI even though the helper is
+    reading PTY bytes.
+    """
+    session_id = str(uuid.uuid4())
+    queue = _start_a_session(None, session_id)
+
+    rpc_log: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_rpc(name, params):
+        rpc_log.append((name, dict(params)))
+        if name == "remote_helper_pull_commands":
+            return queue.pop(0) if queue else []
+        return {}
+
+    transport = FakeTransport()
+    mgr = RemoteAgentManager(
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        transport=transport,
+    )
+    mgr.tick()  # spawn
+
+    # Simulate a chunky enough stdout read to trip the batcher's
+    # default flush_bytes=3500 cutoff.
+    big = "Bearer sk-ant-supersecrettokenAAAAAAAAAAAAAAAAAA " + ("x" * 4000)
+    transport.canned_stdout[session_id] = big.encode("utf-8")
+
+    mgr.tick()
+
+    stdout_events = [
+        p for n, p in rpc_log
+        if n == "remote_helper_post_event" and p.get("p_kind") == "stdout"
+    ]
+    assert stdout_events, "expected at least one stdout event posted"
+    payload = stdout_events[-1]["p_payload"]
+    # Secret was redacted before the wire.
+    assert "sk-ant-supersecrettokenAAAAAAAAAAAAAAAAAA" not in payload
+    assert "«REDACTED»" in payload
+    # Server-side row CHECK is `length(payload) <= 4096`; the helper's
+    # cap is intentionally a hair under to leave headroom for the SQL
+    # `left(p_payload, 4096)` truncation. Event payload must respect.
+    assert len(payload) <= 4096
+
+
+def test_stdout_chunking_flushes_on_idle_when_no_new_reads():
+    """Even with no fresh PTY bytes this tick, an idle batcher must
+    flush stale data once `max_idle_s` has elapsed so interactive
+    output (a few words at a time) doesn't sit half a second behind
+    the user's expectations.
+    """
+    session_id = str(uuid.uuid4())
+    queue = _start_a_session(None, session_id)
+    rpc_log: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_rpc(name, params):
+        rpc_log.append((name, dict(params)))
+        if name == "remote_helper_pull_commands":
+            return queue.pop(0) if queue else []
+        return {}
+
+    transport = FakeTransport()
+    mgr = RemoteAgentManager(
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        transport=transport,
+    )
+    mgr.tick()  # spawn
+
+    sess = mgr._sessions[session_id]
+    # Force the batcher into a "due" state by pre-filling a bit and
+    # rewinding `_first_at` past the threshold.
+    sess.stdout_batcher.add("hello world\n")
+    sess.stdout_batcher._first_at = (
+        time.monotonic() - sess.stdout_batcher.max_idle_s - 1
+    )
+
+    transport.canned_stdout[session_id] = b""  # no new bytes
+    mgr.tick()  # the idle-flush path should fire
+
+    stdout_events = [
+        p for n, p in rpc_log
+        if n == "remote_helper_post_event" and p.get("p_kind") == "stdout"
+    ]
+    assert any(
+        "hello world" in p["p_payload"] for p in stdout_events
+    ), "idle flush did not deliver buffered stdout"
+
+
+def test_stdout_post_failure_is_non_fatal():
+    """Phase 2 invariant: an upload failure must NOT crash the manager
+    or kill the session. The local Claude run keeps going; events are
+    ephemeral by retention design.
+    """
+    session_id = str(uuid.uuid4())
+    queue = _start_a_session(None, session_id)
+    rpc_log: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_rpc(name, params):
+        rpc_log.append((name, dict(params)))
+        if name == "remote_helper_pull_commands":
+            return queue.pop(0) if queue else []
+        if name == "remote_helper_post_event" and params.get("p_kind") == "stdout":
+            raise RuntimeError("simulated network blip")
+        return {}
+
+    transport = FakeTransport()
+    mgr = RemoteAgentManager(
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        transport=transport,
+    )
+    mgr.tick()
+    transport.canned_stdout[session_id] = ("a" * 4000).encode("utf-8")
+    # tick MUST NOT raise
+    mgr.tick()
+
+    # Session is still alive.
+    assert mgr._sessions[session_id] is not None
+    # Helper still attempted the upload (one record in the log).
+    attempted = [
+        n for n, p in rpc_log
+        if n == "remote_helper_post_event" and p.get("p_kind") == "stdout"
+    ]
+    assert attempted, "expected at least one stdout post attempt"
+
+
+def test_stdout_post_does_not_collide_with_status_payload_exactness():
+    """Regression guard: adding the stdout uploader must not regress the
+    `status='errored'` exact-payload posture pinned in iter1.
+    """
+    session_id = str(uuid.uuid4())
+    queue = _start_a_session(None, session_id)
+    rpc_log: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_rpc(name, params):
+        rpc_log.append((name, dict(params)))
+        if name == "remote_helper_pull_commands":
+            return queue.pop(0) if queue else []
+        return {}
+
+    transport = FakeTransport()
+    mgr = RemoteAgentManager(
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        transport=transport,
+    )
+    mgr.tick()
+    transport.canned_stdout[session_id] = (
+        "some output before exit\n" * 200
+    ).encode("utf-8")
+    transport.alive[session_id] = False
+    transport.exit_code[session_id] = 2
+    mgr.tick()
+
+    status_payloads = [
+        p["p_payload"] for n, p in rpc_log
+        if n == "remote_helper_post_event" and p.get("p_kind") == "status"
+    ]
+    assert "errored" in status_payloads
+    # No status payload may carry detail — that breaks the SQL gate.
+    assert all(p in ("stopped", "errored") for p in status_payloads)
+
+
+def test_info_event_redacts_and_is_size_bounded():
+    """Lifecycle detail (spawn-failure reason, exit code) lands on
+    `kind='info'` with redaction + a 1024-char cap. This complements
+    but does NOT replace the bare-string `kind='status'` event.
+    """
+    session_id = str(uuid.uuid4())
+    rpc_log: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_rpc(name, params):
+        rpc_log.append((name, dict(params)))
+        return {}
+
+    mgr = RemoteAgentManager(
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        transport=FakeTransport(),
+    )
+    # Synthesise a session entry so _post_info uses the per-session
+    # seq counter and not the seq=0 fallback.
+    mgr._sessions[session_id] = mgr._sessions.get(session_id) or None
+    very_long_token = "Bearer eyJabc.eyJdef.eyJghi-" + ("X" * 5000)
+    mgr._post_info(session_id, f"spawn failed: {very_long_token}")
+
+    info_events = [
+        p for n, p in rpc_log
+        if n == "remote_helper_post_event" and p.get("p_kind") == "info"
+    ]
+    assert len(info_events) == 1
+    payload = info_events[0]["p_payload"]
+    # Secret was redacted.
+    assert "Bearer eyJabc" not in payload
+    assert "«REDACTED»" in payload
+    # Capped at the info ceiling (1024 chars).
+    assert len(payload) <= 1024
+
+
+def test_info_event_skipped_when_detail_empty():
+    """`_post_info` must no-op on empty detail so callers can invoke it
+    unconditionally without a guard."""
+    rpc_log: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_rpc(name, params):
+        rpc_log.append((name, dict(params)))
+        return {}
+
+    mgr = RemoteAgentManager(
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        transport=FakeTransport(),
+    )
+    sid = str(uuid.uuid4())
+    assert mgr._post_info(sid, "") is False
+    assert [n for n, _ in rpc_log if n == "remote_helper_post_event"] == []
+
+
+def test_spawn_failure_emits_status_and_redacted_info_pair():
+    """Phase 2: a spawn failure should land BOTH a bare-string
+    `status='errored'` event (gate trips the SQL transition) AND a
+    redacted `kind='info'` carrying the failure detail (so the UI
+    can render 'Failed to spawn: claude not found' or similar).
+    """
+    cmd_id = str(uuid.uuid4())
+    sid = str(uuid.uuid4())
+    rpc_log: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_rpc(name, params):
+        rpc_log.append((name, dict(params)))
+        if name == "remote_helper_pull_commands":
+            return [{
+                "id": cmd_id, "session_id": sid,
+                "kind": "start", "payload": _start_payload(),
+            }]
+        return {}
+
+    mgr = RemoteAgentManager(
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        transport=_SpawnFailingTransport(),
+    )
+    mgr.tick()
+
+    posted = [
+        (p["p_kind"], p["p_payload"]) for n, p in rpc_log
+        if n == "remote_helper_post_event"
+    ]
+    statuses = [p for k, p in posted if k == "status"]
+    infos = [p for k, p in posted if k == "info"]
+    assert statuses == ["errored"]
+    assert len(infos) == 1
+    assert infos[0].startswith("spawn failed:")
+
+
+def test_observe_exits_emits_info_with_exit_code():
+    """The non-zero-exit path now also posts a redacted info event
+    carrying `exit_code=N` so the UI can show "exited code=2"."""
+    session_id = str(uuid.uuid4())
+    queue = _start_a_session(None, session_id)
+    rpc_log: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_rpc(name, params):
+        rpc_log.append((name, dict(params)))
+        if name == "remote_helper_pull_commands":
+            return queue.pop(0) if queue else []
+        return {}
+
+    transport = FakeTransport()
+    mgr = RemoteAgentManager(
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        transport=transport,
+    )
+    mgr.tick()
+    transport.alive[session_id] = False
+    transport.exit_code[session_id] = 7
+    mgr.tick()
+
+    info_events = [
+        p for n, p in rpc_log
+        if n == "remote_helper_post_event" and p.get("p_kind") == "info"
+    ]
+    assert any("exit_code=7" in p["p_payload"] for p in info_events)
+
+
+def test_per_session_event_seq_counter_starts_at_one():
+    """Per-session monotonic seq starts at 1 on the first event.
+    Phase 2 P0 — replaces the iter1 monotonic-ms scheme that risked
+    int32 wrap on long-uptime hosts."""
+    session_id = str(uuid.uuid4())
+    queue = _start_a_session(None, session_id)
+    rpc_log: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_rpc(name, params):
+        rpc_log.append((name, dict(params)))
+        if name == "remote_helper_pull_commands":
+            return queue.pop(0) if queue else []
+        return {}
+
+    transport = FakeTransport()
+    mgr = RemoteAgentManager(
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        transport=transport,
+    )
+    mgr.tick()  # spawn → no events posted yet
+    # Now post a stop manually.
+    mgr.stop_session(session_id)
+
+    seqs = [
+        p["p_seq"] for n, p in rpc_log
+        if n == "remote_helper_post_event"
+    ]
+    # The only event for this session lifetime is the 'stopped' status.
+    assert seqs == [1]

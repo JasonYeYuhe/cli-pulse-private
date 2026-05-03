@@ -1064,6 +1064,34 @@ public actor APIClient {
         return result
     }
 
+    /// List the event tail (`stdout` / `stderr` / `status` / `info`) for
+    /// a managed session. Pagination is by the bigserial `id` column
+    /// (server-authoritative monotonic insert order) — pass the largest
+    /// id you've seen as `afterId` to fetch only newer rows. Returns
+    /// `[]` when Remote Control is disabled, when the session doesn't
+    /// belong to the caller, or when there are no rows past `afterId`.
+    /// `limit` is clamped server-side to `[1, 500]`.
+    public func remoteListSessionEvents(
+        sessionId: String,
+        afterId: Int = 0,
+        limit: Int = 200
+    ) async throws -> [RemoteSessionEvent] {
+        struct Params: Encodable {
+            let p_session_id: String
+            let p_after_id: Int
+            let p_limit: Int
+        }
+        let result: [RemoteSessionEvent] = try await rpc(
+            "remote_app_list_session_events",
+            params: Params(
+                p_session_id: sessionId,
+                p_after_id: afterId,
+                p_limit: limit
+            )
+        )
+        return result
+    }
+
     /// Request that the helper paired with `deviceId` spawn a new managed
     /// Claude session. Atomically creates the `remote_sessions` row and
     /// enqueues the `start` command for the helper poll loop.
