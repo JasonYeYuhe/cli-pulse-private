@@ -21,6 +21,25 @@ struct RemoteApprovalsSheet: View {
     @EnvironmentObject var state: AppState
     @Environment(\.dismiss) private var dismiss
 
+    /// Explicit dismiss closure used when this view is rendered INLINE
+    /// inside the menubar popover (the default presentation today —
+    /// `.sheet(isPresented:)` inside a `MenuBarExtra(.window)` doesn't
+    /// capture clicks reliably, so the entire popover would dismiss
+    /// when the user tapped the refresh / X buttons or anywhere inside
+    /// the sheet). When non-nil, all dismiss paths route through this
+    /// closure so the parent can flip its `showRemoteApprovals` state
+    /// back without depending on `@Environment(\.dismiss)` (which
+    /// only fires for true sheets).
+    var onDismiss: (() -> Void)? = nil
+
+    private func performDismiss() {
+        if let onDismiss {
+            onDismiss()
+        } else {
+            dismiss()
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -33,7 +52,6 @@ struct RemoteApprovalsSheet: View {
                 approvalsList
             }
         }
-        .frame(width: 380, height: 460)
         .task {
             // Active polling while the sheet is on screen. SwiftUI cancels
             // the .task on dismiss, so we don't track lifecycle ourselves.
@@ -81,7 +99,7 @@ struct RemoteApprovalsSheet: View {
                 .accessibilityLabel(L10n.remoteApprovals.refresh)
             }
             Button {
-                dismiss()
+                performDismiss()
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 11))
@@ -112,7 +130,7 @@ struct RemoteApprovalsSheet: View {
                 .padding(.horizontal, 24)
             Button {
                 state.selectedTab = .settings
-                dismiss()
+                performDismiss()
             } label: {
                 Text(L10n.remoteApprovals.openSettings)
                     .font(.system(size: 11, weight: .medium))
