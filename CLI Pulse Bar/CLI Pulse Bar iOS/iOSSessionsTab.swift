@@ -228,6 +228,19 @@ struct iOSSessionsTab: View {
         List {
             if state.remoteControlEnabled || !state.remoteSessions.isEmpty {
                 Section("Managed Claude sessions") {
+                    // Error banner (when RC is on) — render regardless
+                    // of whether the list is empty. Without this, a
+                    // failed `remote_app_list_sessions` (e.g. 404 on
+                    // prod before placeholder migration is applied)
+                    // looks identical to the legitimate empty-state
+                    // hint and the user can't tell whether the polling
+                    // is succeeding.
+                    if state.remoteControlEnabled,
+                       let err = state.remoteSessionsError {
+                        Label(err, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
                     if state.remoteSessions.isEmpty {
                         Text(targetDeviceForStart == nil
                              ? "No paired Mac with the helper installed."

@@ -100,36 +100,64 @@ struct SessionsTab: View {
                 icon: "lock.shield",
                 text: "Remote Control is disabled. Turn it on in Settings → Privacy to drive a Claude session from this app."
             )
-        } else if state.remoteSessions.isEmpty {
-            inlineHint(
-                icon: "terminal.fill",
-                text: targetDeviceForStart == nil
-                      ? "No paired Mac with the helper installed. Install the helper to open a managed session."
-                      : "No managed sessions yet. Click \"Open managed Claude session\" to spawn one."
-            )
         } else {
-            VStack(spacing: 8) {
-                ForEach(state.remoteSessions) { session in
-                    ManagedSessionRow(
-                        session: session,
-                        isSelected: selectedManagedSessionId == session.id,
-                        pendingApproval: pendingApproval(for: session),
-                        onSelect: {
-                            selectedManagedSessionId = (selectedManagedSessionId == session.id)
-                                ? nil : session.id
+            // Error banner FIRST when RC is on — render regardless of
+            // whether `remoteSessions` is empty or populated.
+            //
+            // The earlier shape only rendered this banner inside the
+            // `else { ForEach... }` branch, so a failed
+            // `remote_app_list_sessions` (the prod-without-placeholder-
+            // migration case is the obvious one — 404; transient
+            // network blips are another) silently kept the user on the
+            // identical "No managed sessions yet" empty state. Lifting
+            // the banner out of the non-empty branch makes the
+            // failure visible without removing the empty hint when
+            // there genuinely are no sessions yet.
+            if let err = state.remoteSessionsError {
+                errorHint(err)
+            }
+            if state.remoteSessions.isEmpty {
+                inlineHint(
+                    icon: "terminal.fill",
+                    text: targetDeviceForStart == nil
+                          ? "No paired Mac with the helper installed. Install the helper to open a managed session."
+                          : "No managed sessions yet. Click \"Open managed Claude session\" to spawn one."
+                )
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(state.remoteSessions) { session in
+                        ManagedSessionRow(
+                            session: session,
+                            isSelected: selectedManagedSessionId == session.id,
+                            pendingApproval: pendingApproval(for: session),
+                            onSelect: {
+                                selectedManagedSessionId = (selectedManagedSessionId == session.id)
+                                    ? nil : session.id
+                            }
+                        )
+                        if selectedManagedSessionId == session.id {
+                            commandBar(for: session)
                         }
-                    )
-                    if selectedManagedSessionId == session.id {
-                        commandBar(for: session)
                     }
                 }
             }
-            if let err = state.remoteSessionsError {
-                Text(err)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.orange)
-            }
         }
+    }
+
+    private func errorHint(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.system(size: 10))
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+        .padding(8)
+        .background(Color.orange.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     // MARK: - Analytics sessions (existing read-only surface)
