@@ -6,9 +6,26 @@ import Security
 ///
 /// Endpoint: `GET https://api.anthropic.com/api/oauth/usage`
 /// Uses tokens from: env var, config apiKey, ~/.claude/.credentials.json, or Keychain.
+///
+/// Rate-limit backoff: after a 429 response, this strategy records a
+/// 15-minute cooldown keyed by SHA256 token fingerprint via
+/// `ClaudeOAuthBackoffState.shared`. During the cooldown window
+/// `fetch()` short-circuits with `ClaudeStrategyError.rateLimitBackoff`
+/// (which `shouldFallback == true`), so the resolver moves straight
+/// to the web fallback without making the network call. On the
+/// first successful response after the window clears, the entry is
+/// dropped immediately so subsequent observations reflect live state.
 public struct ClaudeOAuthStrategy: ClaudeSourceStrategy, Sendable {
     public let sourceLabel = "oauth"
     public let sourceType: SourceType = .oauth
+
+    /// Backoff state. Defaults to the process singleton; tests inject
+    /// a fresh actor with a controllable clock.
+    private let backoff: ClaudeOAuthBackoffState
+
+    public init(backoff: ClaudeOAuthBackoffState? = nil) {
+        self.backoff = backoff ?? ClaudeOAuthBackoffState.shared
+    }
 
     public func isAvailable(config: ProviderConfig) -> Bool {
         let (token, _) = ClaudeCredentials.resolveToken(config: config)
@@ -19,6 +36,16 @@ public struct ClaudeOAuthStrategy: ClaudeSourceStrategy, Sendable {
         let (token, tier) = ClaudeCredentials.resolveToken(config: config)
         guard !token.isEmpty else { throw ClaudeStrategyError.noToken }
 
+        // Pre-emptive backoff check. If we 429'd this token recently,
+        // skip the network round-trip entirely and let the resolver
+        // fall through to the web strategy. Avoids hammering Anthropic
+        // with calls we already know will fail and risk extending the
+        // cooldown window.
+        let fingerprint = ClaudeOAuthBackoffState.fingerprint(forToken: token)
+        if let remaining = await backoff.remainingBackoff(forFingerprint: fingerprint) {
+            throw ClaudeStrategyError.rateLimitBackoff(remaining: remaining)
+        }
+
         let usage: OAuthUsageResponse
         do {
             usage = try await fetchUsage(token: token)
@@ -28,6 +55,11 @@ public struct ClaudeOAuthStrategy: ClaudeSourceStrategy, Sendable {
             // Persist the tier we DID read from keychain before throwing so
             // the account-info cache keeps feeding the diagnostic copy
             // ("Signed in as X — Connect Claude Code"). Gemini 3.1 Pro review.
+            //
+            // Note: 401/403 do NOT trigger backoff. Auth failures aren't
+            // rate-limit failures — they call for a token refresh, not a
+            // cooldown. Recording them in the 429 backoff path would
+            // incorrectly suppress retries after the user re-authenticates.
             if let tier, !tier.isEmpty {
                 try? ClaudeHelperContract.writeAccountInfo(
                     ClaudeAccountInfo(accountEmail: nil, rateLimitTier: tier, weeklyReset: nil)
@@ -35,7 +67,21 @@ public struct ClaudeOAuthStrategy: ClaudeSourceStrategy, Sendable {
             }
             ClaudeCredentials.clearCachedKeychainCredentials()
             throw ClaudeStrategyError.httpError(status: status, provider: "Claude")
+        } catch ClaudeStrategyError.httpError(let status, _) where status == 429 {
+            // Genuine rate-limit response. Record the failure so the
+            // next refresh cycle skips OAuth pre-emptively. Re-throw
+            // so the resolver still logs "[oauth] failed: HTTP 429"
+            // for this cycle (the next cycle will log the distinct
+            // "rate-limit backoff active" line instead).
+            await backoff.recordFailure(forFingerprint: fingerprint)
+            throw ClaudeStrategyError.httpError(status: status, provider: "Claude")
         }
+
+        // Success path — clear any backoff entry for this fingerprint
+        // so a transient 429 that has just cleared doesn't keep
+        // suppressing OAuth until the natural 15-min expiry.
+        await backoff.reset(forFingerprint: fingerprint)
+
         return ClaudeSnapshot(
             sessionUsed: usage.fiveHour?.utilization,
             weeklyUsed: usage.sevenDay?.utilization,
