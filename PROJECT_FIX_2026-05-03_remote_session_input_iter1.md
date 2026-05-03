@@ -643,6 +643,94 @@ A new `helper/test_redaction.py` with 47 focused unit tests covering:
 - ✅ No new scope (Codex/shell providers, multi-Mac picker, L10n,
   Watch / Android, public release, App Store) added.
 
+## Phase 2 review pass 3 — quoted inline header redaction (commit on top of `eb326fc`)
+
+A third Codex pass on `eb326fc` confirmed SQL pagination and key=value
+redaction were good, but caught one remaining P1: header redaction
+missed quoted-inline shell forms because the `(?:^|\s)` boundary
+required line start or whitespace before the header name.
+
+Failing inputs:
+
+```
+curl -H "Authorization: Basic dXNlcjpzdXBlcnNlY3JldA==" https://x
+curl -H 'Cookie: session=abc; csrf=xyz' https://x
+http --header "X-API-Key: abc123" ...
+```
+
+The char before `Authorization` here is `"` or `'`, neither of which
+matches `\s`. Since Basic auth and cookies have no shape signature,
+Pass 2 doesn't catch them either — credentials silently leaked through
+both passes.
+
+### Fix
+
+Widen the boundary class on every header pattern from `(?:^|\s)` to
+`(?:^|[\s'"])`. Bound the value at `[^"'\r\n]+` (was `[^\r\n]+`) so
+the value matcher stops at the *closing* quote of the inline form
+rather than gobbling the URL that follows it.
+
+Single capture group spanning boundary + key + separator, so the
+uniform replacement `\1«REDACTED»` works for every pattern in the
+list (no special-cased per-pattern replacement string needed). The
+boundary char (quote or whitespace) is captured and re-emitted so
+the surrounding command shape is preserved:
+
+  `curl -H "Authorization: Basic xxx" https://x`
+    →
+  `curl -H "Authorization: «REDACTED»" https://x`
+
+Key label preserved (a reviewer auditing event rows knows what was
+scrubbed). Closing quote preserved (visual cue that the original
+shape was inline-quoted). URL preserved (still readable).
+
+Standalone log lines and log-prefixed shapes (`  > Authorization:
+…`) keep redacting correctly because the original `(?:^|\s)` arm of
+the alternation still matches.
+
+### Tests added
+
+7 focused cases in `helper/test_redaction.py`:
+
+- `test_redacts_inline_double_quoted_authorization_basic` —
+  `curl -H "Authorization: Basic …"`. Asserts secret gone, marker
+  present, URL preserved, closing `"` preserved.
+- `test_redacts_inline_single_quoted_authorization_basic` —
+  `curl -H 'Authorization: …'`.
+- `test_redacts_inline_double_quoted_cookie` —
+  `curl -H "Cookie: session=abc; csrf=xyz"`.
+- `test_redacts_inline_single_quoted_set_cookie` — multi-attribute
+  Set-Cookie (`sid=abc; Path=/; HttpOnly`).
+- `test_redacts_inline_quoted_x_api_key` — `http --header
+  "X-API-Key: …"`.
+- `test_redacts_inline_quoted_proxy_authorization`.
+- `test_inline_quoted_header_preserves_key_label` — pins the
+  key-preserving design so a future "redact whole line" refactor
+  doesn't accidentally strip the label.
+
+All previous standalone-form tests still pass — the boundary change
+is additive (the original `\s` / `^` arms are preserved in the
+alternation).
+
+### Validation
+
+| Check | Result |
+|---|---|
+| `pytest -q helper/test_redaction.py + test_remote_hook.py + test_remote_agent.py + test_system_collector.py` | **146 passed** (139 prior + 7 new) |
+| `swift test --package-path "CLI Pulse Bar/CLIPulseCore"` | **Test Suite 'All tests' passed** |
+| `python3 backend/supabase/ci_check_rpc_contract.py` | OK |
+
+(`xcodebuild` not re-run — this commit is helper-Python only and
+the Swift APIs / SQL contracts are unchanged. Pass-2 review can
+re-run if desired.)
+
+### Constraints honoured
+
+- ✅ No SQL change. Placeholder migration still has no `v0.3X` slot.
+- ✅ `claude-oauth-nested-parse-fix` branch untouched.
+- ✅ No public-repo writes. No new Phase-2 scope.
+- ✅ Branch not pushed.
+
 ## Open questions for review (iter-2 prompt input)
 
 1. **Migration slot timing.** The placeholder migration is committed but not yet replayed. The desktop track's v0.4.4 backlog needs to land first or Jason needs to assign a slot to this iter — confirm cadence.

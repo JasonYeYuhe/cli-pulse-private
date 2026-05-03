@@ -115,6 +115,76 @@ def test_header_redaction_is_per_line_in_multiline_input():
     assert REDACTION_MARKER in out
 
 
+def test_redacts_inline_double_quoted_authorization_basic():
+    # Codex P1: standalone-only header redaction missed
+    # `curl -H "Authorization: Basic xxx"` because the char before
+    # `Authorization` is `"`, not whitespace. Basic auth has no
+    # token-shape signature, so Pass 2 doesn't catch it either —
+    # the credential leaked. Boundary class now accepts ['"].
+    raw = 'curl -H "Authorization: Basic dXNlcjpzdXBlcnNlY3JldA==" https://x'
+    out = redact(raw)
+    assert "dXNlcjpzdXBlcnNlY3JldA==" not in out
+    assert REDACTION_MARKER in out
+    # URL after the closing quote stays intact — value class stops
+    # at the next quote, not at end of line.
+    assert "https://x" in out
+    # Closing quote of the original header is preserved.
+    assert '"' in out
+
+
+def test_redacts_inline_single_quoted_authorization_basic():
+    raw = "curl -H 'Authorization: Basic dXNlcjpQYXNz' https://x"
+    out = redact(raw)
+    assert "dXNlcjpQYXNz" not in out
+    assert REDACTION_MARKER in out
+    assert "https://x" in out
+
+
+def test_redacts_inline_double_quoted_cookie():
+    raw = 'curl -H "Cookie: session=abc; csrf=xyz" https://x'
+    out = redact(raw)
+    assert "session=abc" not in out
+    assert "csrf=xyz" not in out
+    assert REDACTION_MARKER in out
+    assert "https://x" in out
+
+
+def test_redacts_inline_single_quoted_set_cookie():
+    raw = "curl -H 'Set-Cookie: sid=abc; Path=/; HttpOnly' https://x"
+    out = redact(raw)
+    assert "sid=abc" not in out
+    assert "Path=/" not in out
+    assert "HttpOnly" not in out
+    assert REDACTION_MARKER in out
+    assert "https://x" in out
+
+
+def test_redacts_inline_quoted_x_api_key():
+    raw = 'http --header "X-API-Key: secret-api-key-value" https://api.example.com'
+    out = redact(raw)
+    assert "secret-api-key-value" not in out
+    assert REDACTION_MARKER in out
+    assert "https://api.example.com" in out
+
+
+def test_redacts_inline_quoted_proxy_authorization():
+    raw = "curl -H 'Proxy-Authorization: Basic anN1Y3Jl' https://upstream"
+    out = redact(raw)
+    assert "anN1Y3Jl" not in out
+    assert REDACTION_MARKER in out
+    assert "https://upstream" in out
+
+
+def test_inline_quoted_header_preserves_key_label():
+    # The key-preserving design: a reviewer reading event rows can
+    # tell what was scrubbed.
+    raw = 'curl -H "Authorization: Bearer leakytokenAAAAAAAAAAAAAAAAAA"'
+    out = redact(raw)
+    assert "Authorization" in out, (
+        f"key label was stripped: {out!r}"
+    )
+
+
 def test_unknown_header_label_is_not_redacted():
     # Defensive: only the headers we explicitly enumerated should
     # trip the line pass. A made-up `MyAuthorization` with no

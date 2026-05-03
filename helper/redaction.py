@@ -64,24 +64,59 @@ REDACTION_MARKER = "«REDACTED»"
 # shape was scrubbed.
 _LINE_KEY_PATTERNS: tuple[re.Pattern[str], ...] = (
     # ── HTTP-style headers (case-insensitive) ──────────────
-    # Match either at line start OR after preceding whitespace, so a
-    # log line like "  > Authorization: Bearer xxx" still matches.
-    # Replacement reaches end-of-line (multi-token values like
-    # "Basic dXNl…" or cookie sets are zapped wholesale).
+    #
+    # Boundary `(?:^|[\s'"])` accepts:
+    #   * line start                                     (^)
+    #   * preceding whitespace                           (\s)
+    #   * preceding single or double quote               ('")
+    #
+    # The quote alternates are what make `curl -H "Authorization:
+    # Basic xxx"` and `http --header 'Cookie: …'` redact correctly —
+    # without them the original `(?:^|\s)` pattern silently skipped
+    # the most common shell-quoted header shape and leaked Basic-auth
+    # credentials and cookies through Pass 2 (which has no shape
+    # signature for them).
+    #
+    # Value class `[^"'\r\n]+` stops at:
+    #   * the closing quote of an inline form              "..."
+    #   * end-of-line for standalone log lines             \r\n
+    # so `curl -H "Authorization: ..." https://x` becomes
+    # `curl -H "Authorization: «REDACTED»" https://x` — key + closing
+    # quote preserved, URL still readable, secret gone.
+    #
+    # ONE capture group so the uniform replacement `\1{MARKER}` works
+    # for every pattern in this list. The capture spans the boundary
+    # char (if any) PLUS the key+separator, so the replacement
+    # naturally re-emits the leading quote/whitespace.
     re.compile(
-        r"(?im)((?:^|\s)authorization\s*:\s*)[^\r\n]+"
+        r"""(?ix)
+        ((?:^|[\s'"]) authorization \s* : \s*)
+        [^"'\r\n]+
+        """
     ),
     re.compile(
-        r"(?im)((?:^|\s)proxy-authorization\s*:\s*)[^\r\n]+"
+        r"""(?ix)
+        ((?:^|[\s'"]) proxy-authorization \s* : \s*)
+        [^"'\r\n]+
+        """
     ),
     re.compile(
-        r"(?im)((?:^|\s)cookie\s*:\s*)[^\r\n]+"
+        r"""(?ix)
+        ((?:^|[\s'"]) cookie \s* : \s*)
+        [^"'\r\n]+
+        """
     ),
     re.compile(
-        r"(?im)((?:^|\s)set-cookie\s*:\s*)[^\r\n]+"
+        r"""(?ix)
+        ((?:^|[\s'"]) set-cookie \s* : \s*)
+        [^"'\r\n]+
+        """
     ),
     re.compile(
-        r"(?im)((?:^|\s)x-api-key\s*:\s*)[^\r\n]+"
+        r"""(?ix)
+        ((?:^|[\s'"]) x-api-key \s* : \s*)
+        [^"'\r\n]+
+        """
     ),
 
     # ── Camel/snake-case credential keys ───────────────────
