@@ -165,6 +165,84 @@ Same split + new `ManagedSessionDetailView` for the inputtable surface:
 > xcodebuild -project "CLI Pulse Bar/CLI Pulse Bar.xcodeproj" -scheme "CLI Pulse iOS" -destination 'generic/platform=iOS Simulator' build
 > ```
 
+## Codex review pass — fixes layered on top (commit `24659d6`)
+
+After the initial `40e6526` landed, Codex flagged two P1 blockers + one
+nit; all three are fixed on the same branch in commit `24659d6`:
+
+1. **Active approvals refresh in the Sessions UI** — the `.task` loops
+   on macOS `SessionsTab` and iOS `iOSSessionsTab` only polled
+   `refreshRemoteSessions`. Inline approve reads
+   `state.remotePendingApprovals`, so a pending Claude permission
+   request bound to the selected managed session could miss the 10s
+   hook window. Both loops now refresh sessions AND approvals
+   concurrently via `async let` on the same 3s/10s gated cadence.
+   `ManagedSessionDetailView` (iOS) gets its own `.task` because
+   SwiftUI may pause the parent task while a destination view is on
+   screen via `NavigationLink`.
+2. **Errored sessions stuck on pending/running** —
+   `RemoteAgentManager._post_status` had been concatenating a detail
+   string into the status payload (`f"errored: {detail}"`), so the SQL
+   gate in `remote_helper_post_event` (which only transitions
+   `remote_sessions.status` when `p_payload IN ('stopped','errored')`)
+   never fired. `_post_status` now takes only the bare status string
+   and refuses anything else; detail goes to the local helper log.
+   Five new tests in `helper/test_remote_agent.py` pin the exact
+   payload posture for spawn-failure / non-zero-exit / child-gone /
+   stop-success / unknown-status paths.
+3. **macOS Send button double-send** — Send button kept a
+   `.keyboardShortcut(.return, modifiers: [])` alongside
+   `TextField.onSubmit`, which on macOS routes Return to BOTH and
+   double-sent the prompt. Removed the explicit shortcut; Enter is now
+   exclusively the TextField's submit, and ⌘↩ on the Approve button
+   keeps its distinct command-modifier shortcut.
+
+## Final polish (commit on top of `24659d6`)
+
+A second Codex pass on `24659d6` flagged stale-render risk in the iOS
+detail view + a `.refreshable` consistency gap. Polish layered on top:
+
+- **iOS `ManagedSessionDetailView` reads `currentSession`** — the view
+  captured `session: RemoteSession` at navigation time and used it
+  directly for the navigation title, header label/status/device, and
+  `statusColor`. While the new detail-view `.task` refreshes
+  `state.remoteSessions`, the captured value never updated, so the UI
+  could keep showing `pending` after the helper had flipped the row to
+  `running`. Added a private computed `currentSession` that prefers
+  `state.remoteSessions.first(where: { $0.id == session.id })` and
+  falls back to the captured snapshot. Every render-time read
+  (navigation title, header fields, status color) now routes through
+  `currentSession`. Command calls (`stopRemoteSession`,
+  `sendRemoteSessionPrompt`) also use `currentSession.id` for symmetry
+  — the id is stable across the snapshot vs. live row by construction.
+- **iOS `.refreshable` handlers also call `refreshRemoteApprovals`** —
+  pull-to-refresh on iPad and iPhone now fans out to dashboard /
+  sessions / approvals side-by-side, matching the `.task` polling
+  shape so the contract is obvious. Belt-and-braces: `refreshAll`
+  already schedules a `refreshRemoteApprovals` Task internally, but
+  the explicit call avoids the implicit dependency.
+
+No backend schema change beyond the original placeholder migration.
+Helper tests all still pass. The separate `claude-oauth-nested-parse-fix`
+branch is untouched. No public-repo writes.
+
+### Deferred items (preserved from earlier passes)
+
+- **Stdout/stderr upload** — iter 1 buffers reads in-memory only; the
+  `EventBatcher` is wired but `remote_helper_post_event` is never
+  called for `kind='stdout' | 'stderr'`. iter 2 will plumb this
+  through the `claude.py._redact` patterns.
+- **`kind='info'` detail events** — spawn-failure detail, exit codes,
+  and "child gone" reasons currently go to the local helper log only.
+  iter 2 may post redacted `info` events so the UI can surface
+  "Failed to spawn: claude not found" without a status-string regression.
+- **Real schema slot** — the migration file remains at the placeholder
+  filename `migrate_pending_remote_session_input.sql`. A `v0.3X` slot
+  + live apply waits on Jason's coordination with the
+  cli-pulse-desktop v0.4.4 + OpenRouter bigint migration queue.
+- **No public-repo writes** — entirely on private `origin`. No release
+  tags, no website changes, no GitHub Releases artifact movement.
+
 ## Open questions for review (iter-2 prompt input)
 
 1. **Migration slot timing.** The placeholder migration is committed but not yet replayed. The desktop track's v0.4.4 backlog needs to land first or Jason needs to assign a slot to this iter — confirm cadence.

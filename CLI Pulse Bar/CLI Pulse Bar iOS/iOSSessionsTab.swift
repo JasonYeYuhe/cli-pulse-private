@@ -58,8 +58,15 @@ struct iOSSessionsTab: View {
             }
         }
         .refreshable {
+            // Pull-to-refresh fans out to: dashboard payload, managed
+            // sessions, and pending approvals. `refreshAll` already
+            // schedules a `refreshRemoteApprovals` Task internally, but
+            // calling it explicitly here keeps the trio side-by-side so
+            // the contract is obvious — and matches the `.task` polling
+            // shape on the same view.
             await state.refreshAll()
             await state.refreshRemoteSessions()
+            await state.refreshRemoteApprovals()
         }
     }
 
@@ -367,13 +374,28 @@ struct iOSSessionsTab: View {
 
 struct ManagedSessionDetailView: View {
     @EnvironmentObject var state: AppState
+    /// Snapshot taken at the moment of navigation. The view's polling
+    /// loop refreshes `state.remoteSessions` independently, so we render
+    /// from `currentSession` (below) — which falls back to this initial
+    /// snapshot when the row hasn't been refreshed yet (or has aged out
+    /// of the active list and is no longer in `state.remoteSessions`).
     let session: RemoteSession
 
     @State private var promptText: String = ""
     @State private var sending: Bool = false
 
+    /// Latest server-side row for this session, falling back to the
+    /// navigation-captured snapshot. Use this for every render-time
+    /// decision (status, device name, label) so the detail view doesn't
+    /// keep showing `pending` after the helper has flipped it to
+    /// `running` (or vice versa). Command calls can use either id —
+    /// they're equal by construction (the fallback shares the same id).
+    private var currentSession: RemoteSession {
+        state.remoteSessions.first(where: { $0.id == session.id }) ?? session
+    }
+
     private var pending: RemotePermissionRequest? {
-        state.remotePendingApprovals.first { $0.session_id == session.id }
+        state.remotePendingApprovals.first { $0.session_id == currentSession.id }
     }
 
     private var isHighRisk: Bool {
@@ -404,7 +426,7 @@ struct ManagedSessionDetailView: View {
                     )
                 HStack {
                     Button(role: .destructive) {
-                        Task { await state.stopRemoteSession(sessionId: session.id) }
+                        Task { await state.stopRemoteSession(sessionId: currentSession.id) }
                     } label: {
                         Label("Stop session", systemImage: "stop.circle")
                     }
@@ -438,7 +460,7 @@ struct ManagedSessionDetailView: View {
             }
             .padding()
         }
-        .navigationTitle(session.client_label ?? "Claude session")
+        .navigationTitle(currentSession.client_label ?? "Claude session")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             // Detail view owns its own refresh loop because SwiftUI may
@@ -473,13 +495,13 @@ struct ManagedSessionDetailView: View {
                 .background(PulseTheme.providerColor("Claude").opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 4) {
-                Text(session.client_label ?? "Claude session")
+                Text(currentSession.client_label ?? "Claude session")
                     .font(.title3.weight(.bold))
                 HStack(spacing: 8) {
-                    Text(session.status)
+                    Text(currentSession.status)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(statusColor)
-                    if let device = session.device_name, !device.isEmpty {
+                    if let device = currentSession.device_name, !device.isEmpty {
                         Text("·").foregroundStyle(.tertiary)
                         Label(device, systemImage: "desktopcomputer")
                             .font(.caption)
@@ -550,7 +572,7 @@ struct ManagedSessionDetailView: View {
     }
 
     private var statusColor: Color {
-        switch session.status {
+        switch currentSession.status {
         case "running": return .green
         case "pending": return .yellow
         case "stopped": return .secondary
@@ -562,7 +584,9 @@ struct ManagedSessionDetailView: View {
     private func sendPrompt() async {
         sending = true
         defer { sending = false }
-        let ok = await state.sendRemoteSessionPrompt(sessionId: session.id, text: promptText)
+        let ok = await state.sendRemoteSessionPrompt(
+            sessionId: currentSession.id, text: promptText
+        )
         if ok { promptText = "" }
     }
 }
