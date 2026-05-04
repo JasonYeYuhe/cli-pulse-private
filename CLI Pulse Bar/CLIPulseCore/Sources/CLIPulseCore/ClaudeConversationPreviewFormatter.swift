@@ -179,16 +179,19 @@ public enum ClaudeConversationPreviewFormatter {
     /// Specific TUI-joined word patterns we have observed in Claude
     /// responses. Applied longest-first so the 3-word merges resolve
     /// before the 2-word ones. Conservative list — broad dictionary-
-    /// based splitting is explicitly out of scope per Codex.
+    /// based splitting is explicitly out of scope.
     private static let joinedWordReplacements: [(String, String)] = [
         // 3-word merges first
         ("wouldyoulike", "would you like"),
+        ("shouldwework", "should we work"),
         ("toworkon",     "to work on"),
         // 2-word merges
         ("wouldyou", "would you"),
         ("youlike",  "you like"),
         ("liketo",   "like to"),
         ("workon",   "work on"),
+        ("shouldwe", "should we"),
+        ("wework",   "we work"),
     ]
 
     private static func applyJoinedWordReplacements(_ s: String) -> String {

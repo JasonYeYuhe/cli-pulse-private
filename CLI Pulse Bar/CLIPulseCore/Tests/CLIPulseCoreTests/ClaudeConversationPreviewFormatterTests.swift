@@ -285,6 +285,43 @@ final class ClaudeConversationPreviewFormatterTests: XCTestCase {
         )
     }
 
+    func test_jasons_polish_sample_v2_shouldwework_split() {
+        // Jason's latest manual retest still showed `shouldwework`
+        // joined in the assistant line. The visual line break in the
+        // panel is SwiftUI Text width-wrapping, not a formatter
+        // newline — so the underlying transcript is one logical line:
+        //   `⏺ Hi! Ready when you are — what shouldwework on?`
+        // Adding `shouldwework`, `shouldwe`, `wework` to the joined-
+        // word list closes the gap.
+        let event1 = "❯ hello\n"
+        let event2 = "⏺ Hi! Ready when you are — what shouldwework on?\n"
+        let preview = F.format(eventPayloads: [event1, event2])
+        XCTAssertEqual(
+            preview,
+            """
+            ❯ hello
+            ⏺ Hi! Ready when you are — what should we work on?
+            """,
+            "shouldwework must split into 'should we work': \(preview)"
+        )
+    }
+
+    func test_polish_splits_shouldwe_alone() {
+        // `shouldwe` without trailing `work` falls through to the
+        // 2-word rule.
+        XCTAssertEqual(
+            F.polishLine("⏺ shouldwe try a different angle?"),
+            "⏺ should we try a different angle?"
+        )
+    }
+
+    func test_polish_splits_wework_alone() {
+        XCTAssertEqual(
+            F.polishLine("⏺ wework on the parser"),
+            "⏺ we work on the parser"
+        )
+    }
+
     func test_aggregates_csi_split_across_events() {
         // `\u{1B}[31m` (red SGR) split across two events. Per-event
         // strip would leave "[31m" in the output. Aggregating first
