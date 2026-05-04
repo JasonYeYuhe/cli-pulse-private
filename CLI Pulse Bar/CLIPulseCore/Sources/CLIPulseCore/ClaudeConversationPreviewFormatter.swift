@@ -181,9 +181,10 @@ public enum ClaudeConversationPreviewFormatter {
     /// before the 2-word ones. Conservative list — broad dictionary-
     /// based splitting is explicitly out of scope.
     private static let joinedWordReplacements: [(String, String)] = [
-        // 3-word merges first
+        // 3-word merges first (longest-first ordering)
         ("wouldyoulike", "would you like"),
         ("shouldwework", "should we work"),
+        ("readytohelp",  "ready to help"),
         ("toworkon",     "to work on"),
         // 2-word merges
         ("wouldyou", "would you"),
@@ -192,6 +193,8 @@ public enum ClaudeConversationPreviewFormatter {
         ("workon",   "work on"),
         ("shouldwe", "should we"),
         ("wework",   "we work"),
+        ("readyto",  "ready to"),
+        ("tohelp",   "to help"),
     ]
 
     private static func applyJoinedWordReplacements(_ s: String) -> String {

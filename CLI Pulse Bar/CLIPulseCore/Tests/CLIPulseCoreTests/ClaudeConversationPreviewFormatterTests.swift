@@ -322,6 +322,46 @@ final class ClaudeConversationPreviewFormatterTests: XCTestCase {
         )
     }
 
+    func test_jasons_polish_sample_v3_readytohelp_split() {
+        // Jason's latest manual retest — last polish before marking
+        // PR #10 ready. The visual `●` Jason sees in the panel is
+        // SwiftUI font fallback rendering of `⏺` (U+23FA — used
+        // internally by Claude Code and by this formatter), not a
+        // different code point in the underlying transcript.
+        // Verify the conversation reduces to exactly Codex's expected.
+        let event1 = "❯ hello\n"
+        let event2 = "⏺ Hello! What would you like to work on?\n"
+        let event3 = "❯ how is it going\n"
+        let event4 = "⏺ Going well — readytohelp. What's up?\n"
+        let preview = F.format(eventPayloads: [event1, event2, event3, event4])
+        XCTAssertEqual(
+            preview,
+            """
+            ❯ hello
+            ⏺ Hello! What would you like to work on?
+            ❯ how is it going
+            ⏺ Going well — ready to help. What's up?
+            """,
+            "readytohelp must split into 'ready to help': \(preview)"
+        )
+    }
+
+    func test_polish_splits_readyto_alone() {
+        // 2-word fallback: `readyto` without trailing `help`.
+        XCTAssertEqual(
+            F.polishLine("⏺ readyto begin"),
+            "⏺ ready to begin"
+        )
+    }
+
+    func test_polish_splits_tohelp_alone() {
+        // 2-word fallback: `tohelp` without leading `ready`.
+        XCTAssertEqual(
+            F.polishLine("⏺ Available tohelp anytime"),
+            "⏺ Available to help anytime"
+        )
+    }
+
     func test_aggregates_csi_split_across_events() {
         // `\u{1B}[31m` (red SGR) split across two events. Per-event
         // strip would leave "[31m" in the output. Aggregating first
