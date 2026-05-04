@@ -645,11 +645,11 @@ struct ManagedSessionDetailView: View {
                 Image(systemName: "terminal")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                Text("Live output (last \(events.count))")
+                Text("Output preview · last \(events.count)")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                 Spacer()
-                Text("Secrets redacted before upload.")
+                Text("Pseudo-TTY · not a full terminal · secrets redacted")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -698,25 +698,30 @@ struct ManagedSessionDetailView: View {
         }()
         // Claude's TUI emits ANSI CSI / OSC sequences for cursor moves,
         // colors, and bracketed-paste mode — rendering raw shows
-        // `[2D[3B…` gibberish. Strip via the shared CLIPulseCore
-        // sanitizer so the user sees readable content. Status / info
-        // rows don't carry escape codes; sanitize anyway as defense
-        // in depth.
-        let display = AnsiSanitizer.strip(event.payload)
-        HStack(alignment: .top, spacing: 6) {
-            Text(event.kind)
-                .font(.caption2.monospaced().weight(.medium))
-                .foregroundStyle(kindColor)
-                .frame(width: 44, alignment: .leading)
-            Text(display)
-                .font(.callout.monospaced())
-                .foregroundStyle(.primary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+        // `[2D[3B…` gibberish. After stripping escapes, TUI chrome
+        // (box borders, status bar, spinner glyphs) still floods the
+        // panel; TerminalOutputPreviewFormatter drops obvious chrome
+        // and keeps substantive prose. v1 pragmatic preview, not a
+        // terminal emulator — Phase 3 work to render the full TTY.
+        let display = TerminalOutputPreviewFormatter.format(event.payload)
+        if display.isEmpty {
+            EmptyView()
+        } else {
+            HStack(alignment: .top, spacing: 6) {
+                Text(event.kind)
+                    .font(.caption2.monospaced().weight(.medium))
+                    .foregroundStyle(kindColor)
+                    .frame(width: 44, alignment: .leading)
+                Text(display)
+                    .font(.callout.monospaced())
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 2)
     }
 
     private var endedNotice: some View {

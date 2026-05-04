@@ -321,11 +321,11 @@ struct SessionsTab: View {
             HStack(spacing: 6) {
                 Image(systemName: "terminal").font(.system(size: 9))
                     .foregroundStyle(.tertiary)
-                Text("Live output (last \(events.count))")
+                Text("Output preview · last \(events.count)")
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                 Spacer()
-                Text("Secrets redacted before upload.")
+                Text("Pseudo-TTY · not a full terminal · secrets redacted")
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
             }
@@ -342,6 +342,12 @@ struct SessionsTab: View {
                             .foregroundStyle(.tertiary)
                             .padding(6)
                         } else {
+                            // outputRow may render an empty body when
+                            // an event was 100% TUI chrome that the
+                            // preview formatter dropped. Emit one row
+                            // per event regardless so scrolling stays
+                            // continuous; the empty rows collapse to
+                            // 1px-tall and don't draw chrome.
                             ForEach(events) { event in
                                 outputRow(event)
                                     .id(event.id)
@@ -379,25 +385,34 @@ struct SessionsTab: View {
         }()
         // Claude's TUI emits ANSI CSI / OSC sequences for cursor
         // moves, colors, and bracketed-paste — rendering them as raw
-        // text reads as `[2D[3B…` gibberish. We strip them here so
-        // the user sees readable content. Status / info rows are
-        // synthesized by the helper and don't carry escape codes,
-        // but we sanitize them too as defense in depth.
-        let display = AnsiSanitizer.strip(event.payload)
-        HStack(alignment: .top, spacing: 6) {
-            Text(event.kind)
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundStyle(kindColor)
-                .frame(width: 38, alignment: .leading)
-            Text(display)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.primary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+        // text reads as `[2D[3B…` gibberish. After stripping escapes
+        // we still get TUI chrome (box borders, status bar, spinner
+        // fragments). TerminalOutputPreviewFormatter drops obvious
+        // chrome lines and keeps the substantive prose so the
+        // preview reads naturally without a full terminal emulator.
+        // Status / info rows are synthesized by the helper and don't
+        // need either pass, but running both is harmless.
+        let display = TerminalOutputPreviewFormatter.format(event.payload)
+        if display.isEmpty {
+            // 100% TUI chrome event — collapse to nothing so the
+            // user doesn't see a gap with just a 'stdout' label.
+            EmptyView()
+        } else {
+            HStack(alignment: .top, spacing: 6) {
+                Text(event.kind)
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(kindColor)
+                    .frame(width: 38, alignment: .leading)
+                Text(display)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 1)
     }
 
     private func sendPrompt(for session: RemoteSession) async {
