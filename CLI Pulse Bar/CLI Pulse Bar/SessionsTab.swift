@@ -317,21 +317,32 @@ struct SessionsTab: View {
     @ViewBuilder
     private func outputPanel(for session: RemoteSession) -> some View {
         let events = state.remoteSessionEvents[session.id] ?? []
+        // Claude TUI scatters output across event boundaries
+        // (cursor repaints, CSI sequences split mid-byte, words
+        // overwritten in place). We aggregate the entire event tail
+        // and run a Claude-specific filter that emits only ❯ user
+        // echoes, ⏺ Claude replies, and error / login surfaces. The
+        // raw DB events stay intact for any future Phase 3 renderer.
+        let stdoutPayloads = events
+            .filter { $0.kind == "stdout" || $0.kind == "stderr" }
+            .map { $0.payload }
+        let transcript = ClaudeConversationPreviewFormatter
+            .format(eventPayloads: stdoutPayloads)
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Image(systemName: "terminal").font(.system(size: 9))
+                Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 9))
                     .foregroundStyle(.tertiary)
-                Text("Output preview · last \(events.count)")
+                Text("Claude conversation preview")
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                 Spacer()
-                Text("Pseudo-TTY · not a full terminal · secrets redacted")
+                Text("Best-effort · not a terminal · secrets redacted")
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
             }
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: true) {
-                    LazyVStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: 0) {
                         if events.isEmpty {
                             Text(
                                 state.remoteControlEnabled
@@ -342,29 +353,27 @@ struct SessionsTab: View {
                             .foregroundStyle(.tertiary)
                             .padding(6)
                         } else {
-                            // outputRow may render an empty body when
-                            // an event was 100% TUI chrome that the
-                            // preview formatter dropped. Emit one row
-                            // per event regardless so scrolling stays
-                            // continuous; the empty rows collapse to
-                            // 1px-tall and don't draw chrome.
-                            ForEach(events) { event in
-                                outputRow(event)
-                                    .id(event.id)
-                            }
+                            Text(transcript)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(
+                                    transcript == ClaudeConversationPreviewFormatter.emptyFallback
+                                        ? Color.secondary : Color.primary
+                                )
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .id("claude-transcript-\(events.count)")
+                                .padding(6)
                         }
                     }
                 }
-                .frame(maxHeight: 140)
-                .onChange(of: events.last?.id) { newId in
-                    // Auto-scroll to the newest event so streaming
-                    // output reads naturally without the user
-                    // having to chase the bottom. Single-arg form
-                    // because the bar target deploys to macOS 13.
-                    if let newId {
-                        withAnimation(.linear(duration: 0.1)) {
-                            proxy.scrollTo(newId, anchor: .bottom)
-                        }
+                .frame(maxHeight: 200)
+                .onChange(of: events.count) { _ in
+                    // Auto-scroll to the latest content as new events
+                    // arrive. We anchor on the transcript view's
+                    // count-derived id since the transcript is now a
+                    // single Text view rather than per-event rows.
+                    withAnimation(.linear(duration: 0.1)) {
+                        proxy.scrollTo("claude-transcript-\(events.count)", anchor: .bottom)
                     }
                 }
             }

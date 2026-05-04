@@ -640,22 +640,32 @@ struct ManagedSessionDetailView: View {
     @ViewBuilder
     private var outputPanel: some View {
         let events = state.remoteSessionEvents[currentSession.id] ?? []
+        // Aggregate stdout/stderr payloads in event order and run the
+        // Claude-specific conversation extractor (see macOS Sessions
+        // Tab for the rationale). Status events stay out of the
+        // transcript — they are session lifecycle markers, not
+        // conversational content.
+        let stdoutPayloads = events
+            .filter { $0.kind == "stdout" || $0.kind == "stderr" }
+            .map { $0.payload }
+        let transcript = ClaudeConversationPreviewFormatter
+            .format(eventPayloads: stdoutPayloads)
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Image(systemName: "terminal")
+                Image(systemName: "bubble.left.and.bubble.right")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                Text("Output preview · last \(events.count)")
+                Text("Claude conversation preview")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                 Spacer()
-                Text("Pseudo-TTY · not a full terminal · secrets redacted")
+                Text("Best-effort · not a terminal · secrets redacted")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: true) {
-                    LazyVStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: 0) {
                         if events.isEmpty {
                             Text(
                                 state.remoteControlEnabled
@@ -666,20 +676,25 @@ struct ManagedSessionDetailView: View {
                             .foregroundStyle(.tertiary)
                             .padding(8)
                         } else {
-                            ForEach(events) { event in
-                                outputRow(event).id(event.id)
-                            }
+                            Text(transcript)
+                                .font(.callout.monospaced())
+                                .foregroundStyle(
+                                    transcript == ClaudeConversationPreviewFormatter.emptyFallback
+                                        ? Color.secondary : Color.primary
+                                )
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .id("claude-transcript-\(events.count)")
+                                .padding(8)
                         }
                     }
                 }
-                .frame(maxHeight: 220)
+                .frame(maxHeight: 260)
                 .background(Color.secondary.opacity(0.06))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
-                .onChange(of: events.last?.id) { _, newId in
-                    if let newId {
-                        withAnimation(.linear(duration: 0.1)) {
-                            proxy.scrollTo(newId, anchor: .bottom)
-                        }
+                .onChange(of: events.count) { _, _ in
+                    withAnimation(.linear(duration: 0.1)) {
+                        proxy.scrollTo("claude-transcript-\(events.count)", anchor: .bottom)
                     }
                 }
             }
