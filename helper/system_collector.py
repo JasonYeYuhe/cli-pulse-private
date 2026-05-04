@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib as _hashlib
 import json as _json
 import logging
 import os
 import re
 import sqlite3
 import subprocess
+import time as _time
+import urllib.error
 import urllib.parse
 import urllib.request
 from contextlib import closing
@@ -763,8 +766,94 @@ def _infer_claude_plan(tier: str, sub_type: str) -> str:
     return sub_type.capitalize() if sub_type else "Unknown"
 
 
+# ── OAuth-429 backoff state ────────────────────────────────────
+#
+# The Anthropic OAuth `/api/oauth/usage` endpoint enforces a per-token
+# rate budget that two callers on the same Mac can blow through —
+# this helper PLUS the Mac app's `ClaudeOAuthStrategy` both hit it
+# every cycle. Once a token gets 429, Anthropic typically holds the
+# cooldown for minutes; hammering during the window can extend it.
+#
+# This module-level dict records 15-minute cooldowns keyed by SHA256
+# fingerprint of the token. `_fetch_claude_oauth_api` checks the
+# fingerprint before the call and short-circuits to return None
+# (which the caller already treats as "fall through to web") during
+# the cooldown.
+#
+# Mirrors the Swift-side `ClaudeOAuthBackoffState` actor on the app.
+# Both sides reset their entry on a successful response so a
+# transient 429 that clears doesn't get stuck in suppression.
+
+# Module-level state. Helper daemon is single-threaded (no need for
+# a lock); test isolation flushes via `_oauth_reset_all_for_testing`.
+_OAUTH_BACKOFF: dict[str, float] = {}  # fingerprint → expiry epoch seconds
+_OAUTH_BACKOFF_WINDOW_SECS: float = 15 * 60
+
+
+def _oauth_now() -> float:
+    """Indirected so tests can monkeypatch the clock."""
+    return _time.time()
+
+
+def _oauth_token_fingerprint(token: str) -> str:
+    """16-char hex prefix of SHA256(token). Safe to log (one-way
+    hash) but production code does NOT log it — principle of
+    minimum disclosure.
+    """
+    return _hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+
+
+def _oauth_record_failure(fingerprint: str) -> None:
+    _OAUTH_BACKOFF[fingerprint] = _oauth_now() + _OAUTH_BACKOFF_WINDOW_SECS
+
+
+def _oauth_remaining_backoff(fingerprint: str) -> float | None:
+    """Returns None when no backoff is active for `fingerprint`,
+    otherwise the seconds remaining until the entry expires. Lazily
+    evicts expired entries.
+    """
+    expiry = _OAUTH_BACKOFF.get(fingerprint)
+    if expiry is None:
+        return None
+    now = _oauth_now()
+    if now >= expiry:
+        _OAUTH_BACKOFF.pop(fingerprint, None)
+        return None
+    return expiry - now
+
+
+def _oauth_reset(fingerprint: str) -> None:
+    _OAUTH_BACKOFF.pop(fingerprint, None)
+
+
+def _oauth_reset_all_for_testing() -> None:
+    """Tests use this between cases to reset the module-level dict.
+    Production code never calls it.
+    """
+    _OAUTH_BACKOFF.clear()
+
+
 def _fetch_claude_oauth_api(token: str, plan_type: str | None) -> dict | None:
-    """Call Anthropic OAuth usage API and parse into tiers."""
+    """Call Anthropic OAuth usage API and parse into tiers.
+
+    Skips the call pre-emptively if a recent 429 for this token's
+    fingerprint is still inside the 15-min cooldown window. Returns
+    None on skip OR on any failure — caller falls through to the
+    web strategy regardless.
+
+    Failure handling: 429 records a backoff entry for the next
+    cycle; 401/403 do NOT (auth failures need a token refresh, not
+    a cooldown); network/parse errors do NOT (typically transient,
+    one-cycle recoverable).
+    """
+    fingerprint = _oauth_token_fingerprint(token)
+    remaining = _oauth_remaining_backoff(fingerprint)
+    if remaining is not None:
+        logger.debug(
+            "Claude OAuth API skipped: rate-limit backoff, ~%.0fm remaining",
+            remaining / 60,
+        )
+        return None
     try:
         req = urllib.request.Request(
             "https://api.anthropic.com/api/oauth/usage",
@@ -777,7 +866,16 @@ def _fetch_claude_oauth_api(token: str, plan_type: str | None) -> dict | None:
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = _json.loads(resp.read())
+        # Success — clear any stale backoff entry so the next
+        # observation reflects live state, not a ghost from a 429
+        # that has already cleared.
+        _oauth_reset(fingerprint)
         return _parse_claude_api_response(data, plan_type)
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            _oauth_record_failure(fingerprint)
+        logger.debug(f"Claude OAuth API HTTP {e.code}: {e}")
+        return None
     except Exception as e:
         logger.debug(f"Claude OAuth API failed: {e}")
         return None

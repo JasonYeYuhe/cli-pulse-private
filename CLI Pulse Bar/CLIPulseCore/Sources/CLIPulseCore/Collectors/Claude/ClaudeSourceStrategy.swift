@@ -370,6 +370,14 @@ public enum ClaudeStrategyError: LocalizedError, Sendable {
     case unauthorized
     case timedOut
     case processExited
+    /// OAuth strategy was skipped because a recent 429 is still in
+    /// the cooldown window. `remaining` is the seconds left in the
+    /// current backoff window. Always `shouldFallback == true` so
+    /// the resolver immediately moves to the next strategy without
+    /// hitting the network. Distinct from `httpError(429, _)` so the
+    /// resolver log clearly shows "skipped pre-emptively" vs "hit
+    /// 429 just now".
+    case rateLimitBackoff(remaining: TimeInterval)
 
     public var errorDescription: String? {
         switch self {
@@ -381,6 +389,12 @@ public enum ClaudeStrategyError: LocalizedError, Sendable {
         case .unauthorized: return "Claude session expired or unauthorized"
         case .timedOut: return "Claude probe timed out"
         case .processExited: return "Claude CLI process exited unexpectedly"
+        case .rateLimitBackoff(let remaining):
+            // Round to whole minutes for the user-visible log line —
+            // sub-minute precision adds nothing for "we're sitting out
+            // a rate-limit window" diagnostics.
+            let mins = Int(ceil(remaining / 60))
+            return "Claude OAuth rate-limit backoff active (~\(mins)m remaining)"
         }
     }
 
@@ -392,6 +406,10 @@ public enum ClaudeStrategyError: LocalizedError, Sendable {
         case .noToken, .noBinary, .noSessionKey, .unauthorized, .timedOut, .processExited:
             return true
         case .parseFailed:
+            return true
+        case .rateLimitBackoff:
+            // The whole point: skip OAuth pre-emptively, fall through
+            // to the next strategy.
             return true
         }
     }
