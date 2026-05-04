@@ -293,6 +293,40 @@ public final class AppState: ObservableObject {
     @Published public var remoteApprovalsLastRefresh: Date?
     @Published public var remoteApprovalsError: String?
 
+    // MARK: - Remote Sessions (Sessions Input iter 1)
+    /// Managed Claude sessions the helper has spawned (or is about to
+    /// spawn). Pulled from `remote_app_list_sessions`. Refreshed only
+    /// while the Sessions UI is on screen AND `remoteControlEnabled`
+    /// — same gating discipline as `remotePendingApprovals`. Cleared
+    /// when Remote Control toggles off and on logout.
+    @Published public var remoteSessions: [RemoteSession] = []
+    @Published public var remoteSessionsLastRefresh: Date?
+    @Published public var remoteSessionsError: String?
+
+    // MARK: - Remote Session Events (Sessions Input iter 2 — live tail)
+    /// Live output tail per managed session, keyed by `RemoteSession.id`.
+    /// Each list is the appended history of `stdout` / `stderr` /
+    /// `status` / `info` events the helper has posted, capped at
+    /// `remoteSessionEventsCap` rows so a chatty Claude run can't grow
+    /// app memory unbounded.
+    ///
+    /// Populated only while a detail view has the user-explicit
+    /// "Show output" toggle on AND `remoteControlEnabled` is true —
+    /// same default-off privacy posture as the rest of Remote
+    /// Control. Cleared when Remote Control toggles off and on
+    /// logout.
+    ///
+    /// Pagination: callers track the largest event `id` they've
+    /// stored locally and pass it as `afterId` on the next refresh,
+    /// so we never re-fetch unbounded history.
+    @Published public var remoteSessionEvents: [String: [RemoteSessionEvent]] = [:]
+
+    /// Per-session ring-buffer cap. 200 events × ≤ 4 KB / event = ~800
+    /// KB worst case per session (in practice much less because the
+    /// helper's batcher targets ~3.5 KB chunks and redaction shrinks
+    /// most output). Adjust if a future iter needs longer scrollback.
+    public static let remoteSessionEventsCap: Int = 200
+
     /// Aggregated per-provider summaries over the currently-selected range.
     /// Re-derived on every access; cheap because rows is small (≤ providers × days).
     public var yieldScoreSummaries: [YieldScoreSummary] {

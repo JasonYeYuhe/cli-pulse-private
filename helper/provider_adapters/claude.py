@@ -37,8 +37,12 @@ Always-Allow / `permissionUpdates` is intentionally never emitted in Phase 1.
 """
 from __future__ import annotations
 
-import re
 from typing import Any
+
+# Centralised secret-redaction patterns live in helper/redaction.py so the
+# Phase-2 stdout/info uploader in remote_agent.py shares the same regex
+# set. We import the module-level helper rather than re-declaring locals.
+from redaction import redact as _redact
 
 from .base import AdapterDecision, AdapterRisk, ParsedHookInput, ProviderAdapter
 
@@ -59,40 +63,11 @@ _HIGH_RISK_SHELL_TOKENS = (
     "history -c", "kextload", "csrutil ",
 )
 
-_REDACT_PATTERNS = (
-    # Provider API keys
-    re.compile(r"sk-[A-Za-z0-9_\-]{8,}"),
-    re.compile(r"sk-ant-[A-Za-z0-9_\-]{8,}"),
-    re.compile(r"AIza[0-9A-Za-z_\-]{20,}"),
-    re.compile(r"ghp_[A-Za-z0-9]{20,}"),
-    re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
-    # AWS-style
-    re.compile(r"AKIA[0-9A-Z]{12,}"),
-    # Generic Bearer
-    re.compile(r"Bearer\s+[A-Za-z0-9._\-]{16,}", re.IGNORECASE),
-    # JWTs — three base64url segments separated by dots, header always begins
-    # with `eyJ` (base64 of `{"`). Catches Supabase access tokens, Auth0
-    # tokens, GCP id_tokens, Anthropic OAuth refresh tokens, etc. Targeted
-    # rather than generic base64 because a wider \b[A-Za-z0-9+/=]{40,}\b
-    # over-matches long file paths and project identifiers.
-    re.compile(r"eyJ[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}"),
-    # Long hex tokens (covers helper_secret-style values, MD5/SHA hashes,
-    # un-dashed UUIDs).
-    re.compile(r"\b[A-Fa-f0-9]{32,}\b"),
-)
-
 # Future work (Gemini review P3 #9): tool inputs like `cat .env` or
 # `cat ~/.aws/credentials` will still pass through summary/payload because
 # the *filename* itself is non-secret text. A v2 redactor should match
 # sensitive filename patterns (.env, id_rsa, *.pem, credentials.json, ...)
 # and strip the surrounding command. Tracked separately, not in Phase 1.
-
-
-def _redact(text: str) -> str:
-    out = text
-    for pat in _REDACT_PATTERNS:
-        out = pat.sub("«REDACTED»", out)
-    return out
 
 
 def _truncate(text: str, limit: int) -> str:

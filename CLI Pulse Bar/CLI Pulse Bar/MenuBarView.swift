@@ -28,25 +28,53 @@ struct MenuBarView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if !SupabaseConstants.isConfigured {
-                configurationErrorBanner
-            }
-            // iter17 (2026-04-29): route via `state.isLocalMode` even
-            // when unauthenticated — that's the new user-opt-in flag
-            // set by `AppState.continueWithoutAccount()`. Pre-iter17
-            // the very first check was `!authState.isAuthenticated →
-            // notConnectedView`, which made `isLocalMode` meaningful
-            // only for signed-in unpaired Mac users (a flow that's
-            // mostly obsolete post-iter9). Now any user — signed in
-            // or not — who has `isLocalMode = true` lands in the
-            // full tab shell and sees their local Mac collector data.
-            // The signed-in-but-unpaired-non-local-mode branch
-            // (PairingSection flow) stays in `notConnectedView`.
-            if state.isLocalMode || authState.isPaired {
-                connectedView
+        Group {
+            // iter1 / iter2 review fix: previously the Remote Approvals
+            // surface was presented via `.sheet(isPresented:)` attached
+            // to the connected-view footer. Inside a
+            // `MenuBarExtra(...).menuBarExtraStyle(.window)` popover,
+            // SwiftUI renders that sheet but every click inside it —
+            // including refresh / X buttons and even empty area —
+            // propagated to the popover's click-outside handler,
+            // dismissing the entire menubar popover before the sheet's
+            // button actions could fire. The user could open the sheet
+            // but couldn't interact with it.
+            //
+            // Render INLINE instead. The approvals view becomes a
+            // full-popover replacement (taking over the same 380 ×
+            // effectiveHeight frame as the main content) with normal
+            // button click handling. The X button calls back through
+            // the explicit `onDismiss` closure to flip our state
+            // variable, which restores the main menubar content.
+            if showRemoteApprovals {
+                RemoteApprovalsSheet(onDismiss: {
+                    showRemoteApprovals = false
+                })
+                .environmentObject(state)
             } else {
-                notConnectedView
+                VStack(spacing: 0) {
+                    if !SupabaseConstants.isConfigured {
+                        configurationErrorBanner
+                    }
+                    // iter17 (2026-04-29): route via `state.isLocalMode`
+                    // even when unauthenticated — that's the new
+                    // user-opt-in flag set by
+                    // `AppState.continueWithoutAccount()`. Pre-iter17
+                    // the very first check was `!authState.isAuthenticated
+                    // → notConnectedView`, which made `isLocalMode`
+                    // meaningful only for signed-in unpaired Mac users
+                    // (a flow that's mostly obsolete post-iter9). Now
+                    // any user — signed in or not — who has
+                    // `isLocalMode = true` lands in the full tab shell
+                    // and sees their local Mac collector data. The
+                    // signed-in-but-unpaired-non-local-mode branch
+                    // (PairingSection flow) stays in `notConnectedView`.
+                    if state.isLocalMode || authState.isPaired {
+                        connectedView
+                    } else {
+                        notConnectedView
+                    }
+                }
             }
         }
         .frame(width: 380, height: effectiveHeight)
@@ -434,10 +462,13 @@ struct MenuBarView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
         .background(Color(nsColor: .separatorColor).opacity(0.1))
-        .sheet(isPresented: $showRemoteApprovals) {
-            RemoteApprovalsSheet()
-                .environmentObject(state)
-        }
+        // NOTE: `.sheet(isPresented: $showRemoteApprovals) { ... }`
+        // used to live here. Removed because clicks inside the sheet
+        // didn't capture event-wise inside a MenuBarExtra(.window)
+        // popover — they were treated as "outside the popover" and
+        // dismissed the whole menubar window. The approvals view is
+        // now rendered INLINE at the top level of the body's Group;
+        // see the `if showRemoteApprovals { ... }` branch in `body`.
     }
 
     // MARK: - Resize Handle

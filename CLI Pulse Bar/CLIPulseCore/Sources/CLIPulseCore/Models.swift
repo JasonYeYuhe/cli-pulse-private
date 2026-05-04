@@ -816,9 +816,15 @@ public enum RemoteCommandKind: String, Codable, Sendable {
 /// One Claude / Codex / shell session running under the helper.
 /// Snake-case to match the SQL → JSONB → REST shape. No transcript / API
 /// keys / cookies are ever included.
-public struct RemoteSession: Codable, Sendable, Identifiable {
+///
+/// `device_name` was introduced in iter 1 of Sessions Input — the new
+/// `remote_app_list_sessions` RPC joins `devices.name`. Optional so the
+/// model still decodes responses from older servers (during rollout) and
+/// from the existing Phase-1 paths that don't carry the join.
+public struct RemoteSession: Codable, Sendable, Identifiable, Hashable {
     public let id: String
     public let device_id: String
+    public let device_name: String?
     public let provider: String
     public let cwd_basename: String
     public let cwd_hmac: String?
@@ -828,14 +834,24 @@ public struct RemoteSession: Codable, Sendable, Identifiable {
     public let last_event_at: String?
 
     public init(
-        id: String, device_id: String, provider: String, cwd_basename: String,
+        id: String, device_id: String, device_name: String? = nil,
+        provider: String, cwd_basename: String,
         cwd_hmac: String? = nil, status: String, client_label: String? = nil,
         created_at: String, last_event_at: String? = nil
     ) {
-        self.id = id; self.device_id = device_id; self.provider = provider
+        self.id = id; self.device_id = device_id; self.device_name = device_name
+        self.provider = provider
         self.cwd_basename = cwd_basename; self.cwd_hmac = cwd_hmac
         self.status = status; self.client_label = client_label
         self.created_at = created_at; self.last_event_at = last_event_at
+    }
+
+    /// Convenience: pending or running. Used by Sessions UI to filter
+    /// out terminal-state rows that the server still returns until the
+    /// retention cron prunes them.
+    public var isManaged: Bool {
+        let s = (RemoteSessionStatus(rawValue: status) ?? .errored)
+        return s == .pending || s == .running
     }
 }
 

@@ -1959,6 +1959,20 @@ extension AppState {
                     // failure must not destroy that state.
                     remotePendingApprovals = []
                     remoteApprovalsLastRefresh = nil
+                    // Sessions Input iter 1: same posture — drop cached
+                    // managed sessions on disable. Server returns [] from
+                    // `remote_app_list_sessions` while the gate is off
+                    // anyway, but the optimistic clear avoids a one-frame
+                    // flicker until the next refresh.
+                    remoteSessions = []
+                    remoteSessionsLastRefresh = nil
+                    remoteSessionsError = nil
+                    // Sessions Input iter 2: drop the cached event tail
+                    // for every session. Without this, a "Show output"
+                    // panel that was open at toggle-off would briefly
+                    // keep rendering live events the helper has already
+                    // stopped uploading.
+                    remoteSessionEvents = [:]
                 }
             } catch {
                 // PATCH failed — revert to keep the UI honest about server
@@ -2051,6 +2065,177 @@ extension AppState {
             }
             remoteApprovalsError = "Decision failed: \(error.localizedDescription)"
         }
+    }
+
+    // MARK: - Remote Sessions (Sessions Input iter 1)
+
+    /// Refresh `remoteSessions` from the server. No-op (and clears the
+    /// local cache) when Remote Control is disabled, mirroring the
+    /// `refreshRemoteApprovals` discipline. Callers should drive this
+    /// only while the Sessions UI is on screen — refreshAll does NOT
+    /// invoke it because there's no Sessions UI in the menu-bar
+    /// approvals popover.
+    public func refreshRemoteSessions() async {
+        guard remoteControlEnabled else {
+            remoteSessions = []
+            remoteSessionsLastRefresh = Date()
+            return
+        }
+        do {
+            let pulled = try await api.remoteListSessions()
+            // Re-check the gate AFTER the await: if the user toggled
+            // Remote Control off mid-flight, drop the response. Same
+            // pattern as `refreshRemoteApprovals` (Gemini review P2 #8).
+            guard remoteControlEnabled else {
+                remoteSessions = []
+                remoteSessionsLastRefresh = Date()
+                return
+            }
+            remoteSessions = pulled.filter { $0.isManaged }
+            remoteSessionsLastRefresh = Date()
+            remoteSessionsError = nil
+        } catch {
+            guard remoteControlEnabled else { return }
+            remoteSessionsError = error.localizedDescription
+        }
+    }
+
+    /// Request that the helper paired with `deviceId` spawn a new managed
+    /// Claude session. Returns the freshly-created session row's id (so
+    /// the UI can immediately select it) or nil on failure. Refreshes
+    /// the sessions list on success so the row appears.
+    @discardableResult
+    public func requestRemoteClaudeSessionStart(
+        deviceId: String,
+        cwdBasename: String = "",
+        cwdHmac: String? = nil,
+        clientLabel: String? = nil
+    ) async -> String? {
+        guard remoteControlEnabled else {
+            remoteSessionsError = "Remote Control is disabled"
+            return nil
+        }
+        do {
+            let result = try await api.remoteRequestSessionStart(
+                deviceId: deviceId,
+                cwdBasename: cwdBasename,
+                cwdHmac: cwdHmac,
+                clientLabel: clientLabel
+            )
+            await refreshRemoteSessions()
+            return result.sessionId
+        } catch {
+            remoteSessionsError = "Couldn't start session: \(error.localizedDescription)"
+            return nil
+        }
+    }
+
+    /// Send the user's typed prompt to a managed session. Strips trailing
+    /// whitespace; the helper appends a newline before writing to the
+    /// child's stdin. Caller is responsible for clearing the input field
+    /// on success.
+    @discardableResult
+    public func sendRemoteSessionPrompt(
+        sessionId: String,
+        text: String
+    ) async -> Bool {
+        guard remoteControlEnabled else { return false }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        do {
+            _ = try await api.remoteSendCommand(
+                sessionId: sessionId,
+                kind: .prompt,
+                payload: trimmed
+            )
+            return true
+        } catch {
+            remoteSessionsError = "Send failed: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Stop a managed session. Helper sends SIGTERM to the child PTY's
+    /// process group and posts a `status='stopped'` event when the child
+    /// exits. The session row stays in the table until retention prunes
+    /// it (terminal `status` filter in `remote_app_list_sessions` keeps
+    /// it out of the active list immediately).
+    public func stopRemoteSession(sessionId: String) async {
+        guard remoteControlEnabled else { return }
+        do {
+            _ = try await api.remoteSendCommand(
+                sessionId: sessionId, kind: .stop, payload: ""
+            )
+            await refreshRemoteSessions()
+        } catch {
+            remoteSessionsError = "Stop failed: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Live event tail (Sessions Input iter 2)
+
+    /// Pull the next slice of events for `sessionId`, append them to
+    /// `remoteSessionEvents[sessionId]`, and trim the head to the
+    /// `remoteSessionEventsCap` ring-buffer size.
+    ///
+    /// Pagination is by max-id: we read the largest event id we've
+    /// already stored locally and pass it as `afterId`, so we never
+    /// re-fetch unbounded history. The first refresh on a session
+    /// (no local rows) sends `afterId=0` and the server returns up to
+    /// `limit` of the oldest active rows.
+    ///
+    /// Gated on `remoteControlEnabled` (clears the cache on OFF, same
+    /// posture as `refreshRemoteSessions`) and a non-empty
+    /// `sessionId`. Re-checks the gate AFTER the await so a flip
+    /// during the network round-trip doesn't repopulate state.
+    public func refreshRemoteSessionEvents(sessionId: String) async {
+        guard !sessionId.isEmpty else { return }
+        guard remoteControlEnabled else {
+            remoteSessionEvents[sessionId] = nil
+            return
+        }
+        let afterId = remoteSessionEvents[sessionId]?.map(\.id).max() ?? 0
+        do {
+            let fresh = try await api.remoteListSessionEvents(
+                sessionId: sessionId,
+                afterId: afterId,
+                limit: AppState.remoteSessionEventsCap
+            )
+            // Re-check the gate AFTER the await — if RC was flipped
+            // off mid-flight we drop the response. Same pattern as
+            // `refreshRemoteApprovals` (Gemini review P2 #8).
+            guard remoteControlEnabled else {
+                remoteSessionEvents[sessionId] = nil
+                return
+            }
+            if fresh.isEmpty { return }
+            var merged = remoteSessionEvents[sessionId] ?? []
+            merged.append(contentsOf: fresh)
+            // Trim head to cap. We keep the newest end of the ring
+            // buffer because the UI scrolls to the latest output;
+            // dropping ancient rows is the right tradeoff for a
+            // bounded-memory live tail.
+            let cap = AppState.remoteSessionEventsCap
+            if merged.count > cap {
+                merged.removeFirst(merged.count - cap)
+            }
+            remoteSessionEvents[sessionId] = merged
+        } catch {
+            // Non-fatal: a per-session-events failure shouldn't
+            // shadow the shared `remoteSessionsError` users actually
+            // need to see for the session list. The .task loop in
+            // the UI retries next tick.
+            #if DEBUG
+            print("[refreshRemoteSessionEvents] \(sessionId): \(error)")
+            #endif
+        }
+    }
+
+    /// Drop the cached event tail for a single session. Called by the
+    /// "Show output" toggle when the user collapses the view, so the
+    /// next reveal starts fresh rather than from the previous cache.
+    public func clearRemoteSessionEventsCache(sessionId: String) {
+        remoteSessionEvents[sessionId] = nil
     }
 
     func refreshContext() -> DataRefreshManager.Context {

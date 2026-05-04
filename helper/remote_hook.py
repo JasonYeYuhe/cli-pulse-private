@@ -24,11 +24,25 @@ import hmac
 import hashlib
 import json
 import logging
+import os
 import sys
 import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
+
+
+# Env var the helper sets when spawning a managed Claude session. The
+# hook prefers this over the raw `session_id` field in Claude's hook
+# input so that an inline approve in the Sessions UI lands on the row
+# matching the managed session, not the hook-internal session id.
+#
+# After UUID validation only — a mis-set env var that doesn't parse is
+# silently dropped and we fall through to the hook's own session_id.
+# If the env-var session_id doesn't belong to the calling user/device,
+# the SQL `remote_helper_create_permission_request` zeroes it out (see
+# v0.27 + v0.30) so the request still creates but is unbound.
+REMOTE_SESSION_ID_ENV = "CLI_PULSE_REMOTE_SESSION_ID"
 
 logger = logging.getLogger("cli_pulse.remote_hook")
 
@@ -215,7 +229,7 @@ def _run_hook_inner(
 
     request_id = str(uuid.uuid4())
     session_id_str = str(raw.get("session_id") or "")
-    session_uuid = _coerce_uuid(session_id_str)
+    session_uuid = _resolve_managed_session_id(session_id_str)
 
     sleep = sleep_fn or time.sleep
 
@@ -315,6 +329,37 @@ def _coerce_uuid(value: str) -> str | None:
         return str(uuid.UUID(value))
     except (ValueError, AttributeError, TypeError):
         return None
+
+
+def _resolve_managed_session_id(raw_session_id: str) -> str | None:
+    """Pick the session_id we should attach to a permission request.
+
+    iter 1 of Sessions Input introduced managed sessions: when the helper
+    spawns the provider CLI itself, it sets `CLI_PULSE_REMOTE_SESSION_ID`
+    on the child env so the hook can bind permission requests to the
+    managed session instead of Claude's internal hook session_id. That
+    binding is what lets the iOS/Mac Sessions UI inline-approve a
+    pending request — the request's `session_id` is exactly the one
+    the user has selected in the UI.
+
+    Order of precedence:
+      1. `CLI_PULSE_REMOTE_SESSION_ID` env var, if set AND a valid UUID.
+      2. Hook input's `session_id` field, if a valid UUID.
+      3. None — request is created unbound.
+
+    SQL safety: even if a malformed env var somehow points at a session
+    not owned by this device, `remote_helper_create_permission_request`
+    in v0.27 / v0.30 zeroes out a mismatched session_id rather than
+    raising, so the request is still produced (just unbound) and the
+    user's hand-opened Terminal Claude flow still falls through to the
+    standard pending-approvals sheet.
+    """
+    env_id = os.environ.get(REMOTE_SESSION_ID_ENV, "").strip()
+    if env_id:
+        validated = _coerce_uuid(env_id)
+        if validated:
+            return validated
+    return _coerce_uuid(raw_session_id)
 
 
 def main(argv: list[str] | None = None) -> int:

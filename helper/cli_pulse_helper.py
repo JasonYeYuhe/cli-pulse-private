@@ -293,6 +293,14 @@ def daemon(args: argparse.Namespace) -> None:
     user_settings.track_git_activity is true once Stage 7 lands), runs a git
     log scan whenever the active project set changes or every 10 minutes,
     whichever comes first. Per Codex review: never every cycle.
+
+    Remote Agent Sessions (iter 1): a `RemoteAgentManager` is constructed
+    once at startup and `tick()`-ed every second from inside the inner
+    sleep loop. This keeps the Sessions-Input UX snappy (a typed prompt
+    reaches the spawned `claude` within ~1s of being enqueued) without
+    stretching the slower heartbeat/sync cadence. The server-side
+    `_remote_authenticate_helper_gated` already rejects helper RPCs when
+    Remote Control is off, so calling tick() unconditionally is safe.
     """
     import signal
 
@@ -310,6 +318,32 @@ def daemon(args: argparse.Namespace) -> None:
     env_force_git = os.environ.get("CLI_PULSE_TRACK_GIT") == "1"
     if env_force_git:
         logger.info("git activity tracking forced on via CLI_PULSE_TRACK_GIT=1")
+
+    # Remote Agent Sessions manager. Lazily import so a Windows host (the
+    # Tauri desktop track will eventually call this same module) doesn't
+    # crash on `import pty` from the POSIX transport. POSIX transport is
+    # the default; ConPtyTransport is a stub for the desktop track.
+    remote_agent_manager = None
+    try:
+        from remote_agent import RemoteAgentManager  # type: ignore
+        config_for_manager = load_config()
+        remote_agent_manager = RemoteAgentManager(
+            helper_config=config_for_manager,
+            rpc_caller=supabase_rpc,
+        )
+        logger.info("remote agent manager initialised")
+    except ConfigError:
+        # Helper not paired yet — daemon will likely fail in heartbeat
+        # too. Don't synthesise a manager; the next iteration's
+        # heartbeat will surface the same error with the user-facing
+        # "run pair first" message.
+        pass
+    except NotImplementedError as exc:
+        # Windows ConPTY path — daemon still runs, just without managed
+        # sessions. The cli-pulse-desktop track owns this surface.
+        logger.warning("remote agent manager unavailable on this platform: %s", exc)
+    except Exception as exc:
+        logger.warning("remote agent manager init failed: %s", exc)
 
     def _handle_shutdown(signum, _frame):
         nonlocal stopping
@@ -384,13 +418,27 @@ def daemon(args: argparse.Namespace) -> None:
             except (Exception, SyncError) as exc:
                 # Transient network/API errors — log and retry next cycle
                 logger.error("daemon cycle failed: %s", exc)
-            # Sleep in small increments so SIGTERM is handled promptly
+            # Sleep in small increments so SIGTERM is handled promptly.
+            # Remote agent manager ticks once per second so typed prompts
+            # reach the spawned provider CLI within ~1s of being enqueued.
             for _ in range(interval):
                 if stopping:
                     break
+                if remote_agent_manager is not None:
+                    try:
+                        remote_agent_manager.tick()
+                    except Exception as exc:
+                        logger.warning("remote agent tick failed: %s", exc)
                 time.sleep(1)
     except KeyboardInterrupt:
         pass
+    finally:
+        # Drain managed sessions so a SIGTERM doesn't orphan child PTYs.
+        if remote_agent_manager is not None:
+            try:
+                remote_agent_manager.shutdown()
+            except Exception as exc:
+                logger.warning("remote agent shutdown failed: %s", exc)
     logger.info("daemon stopped")
 
 
