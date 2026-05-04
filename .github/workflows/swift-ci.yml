@@ -1,22 +1,88 @@
 name: Swift CI
 
+# Cost-control v1: feature-branch pushes and draft PRs run a cheap
+# smoke gate (CLIPulseCore tests + the macOS app build only). The
+# full 5-scheme matrix runs only for pushes to main, non-draft PRs,
+# the draft→ready transition, and manual dispatch.
+#
+# macOS runners cost 10x. Reducing 6 jobs → 2 on the common case
+# saves ~67% of macOS-minute burn per feature-branch iteration.
+
 on:
   push:
     paths:
       - 'CLI Pulse Bar/**'
+      - '!CLI Pulse Bar/docs/**'
+      - '!CLI Pulse Bar/screenshots/**'
+      - '!CLI Pulse Bar/scripts/**'
+      - '!CLI Pulse Bar/codexbar/**'
+      - '!CLI Pulse Bar/**/*.md'
       - '.github/workflows/swift-ci.yml'
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'CLI Pulse Bar/**'
+      - '!CLI Pulse Bar/docs/**'
+      - '!CLI Pulse Bar/screenshots/**'
+      - '!CLI Pulse Bar/scripts/**'
+      - '!CLI Pulse Bar/codexbar/**'
+      - '!CLI Pulse Bar/**/*.md'
       - '.github/workflows/swift-ci.yml'
+  workflow_dispatch:
 
 concurrency:
+  # Push and pull_request events get distinct group keys (refs/heads/X
+  # vs refs/pull/N/merge) so a same-commit push smoke cannot cancel a
+  # PR full matrix and vice versa. Within one event stream, newer runs
+  # cancel older ones for the same ref.
   group: swift-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  decide:
+    name: Decide matrix (smoke vs full)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+      run_full: ${{ steps.set.outputs.run_full }}
+    steps:
+      - id: set
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            FULL=true
+            REASON="manual workflow_dispatch"
+          elif [[ "$EVENT_NAME" == "push" && "$REF" == "refs/heads/main" ]]; then
+            FULL=true
+            REASON="push to main"
+          elif [[ "$EVENT_NAME" == "pull_request" && "$PR_DRAFT" != "true" ]]; then
+            FULL=true
+            REASON="pull_request not draft"
+          else
+            FULL=false
+            REASON="feature push or draft PR — smoke only"
+          fi
+
+          if [[ "$FULL" == "true" ]]; then
+            MATRIX='{"include":[{"scheme":"CLI Pulse Bar","destination":"platform=macOS"},{"scheme":"CLI Pulse iOS","destination":"generic/platform=iOS Simulator"},{"scheme":"CLI Pulse Watch","destination":"generic/platform=watchOS Simulator"},{"scheme":"CLI Pulse Widgets","destination":"platform=macOS"},{"scheme":"CLIPulseHelper","destination":"platform=macOS"}]}'
+          else
+            MATRIX='{"include":[{"scheme":"CLI Pulse Bar","destination":"platform=macOS"}]}'
+          fi
+
+          {
+            echo "run_full=$FULL"
+            echo "matrix=$MATRIX"
+          } >> "$GITHUB_OUTPUT"
+          echo "Decision: $REASON (run_full=$FULL)"
+          echo "Matrix: $MATRIX"
+
   test-core:
     name: CLIPulseCore unit tests
+    needs: decide
     # v1.10.6: bumped macos-14 → macos-15 for Xcode 16+ / Swift tools 6.0.
     # Sentry-cocoa 9.10+ declares swift-tools-version: 6.0 in its Package.swift,
     # which Xcode 15 (macos-14) can't parse → SPM resolve fails before compile.
@@ -45,22 +111,12 @@ jobs:
 
   build-apps:
     name: Build ${{ matrix.scheme }}
+    needs: decide
     runs-on: macos-15
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - scheme: CLI Pulse Bar
-            destination: platform=macOS
-          - scheme: CLI Pulse iOS
-            destination: generic/platform=iOS Simulator
-          - scheme: CLI Pulse Watch
-            destination: generic/platform=watchOS Simulator
-          - scheme: CLI Pulse Widgets
-            destination: platform=macOS
-          - scheme: CLIPulseHelper
-            destination: platform=macOS
+      matrix: ${{ fromJson(needs.decide.outputs.matrix) }}
 
     steps:
       - uses: actions/checkout@v4
