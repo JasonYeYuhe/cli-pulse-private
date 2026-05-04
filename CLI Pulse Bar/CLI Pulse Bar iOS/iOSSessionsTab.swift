@@ -235,7 +235,7 @@ struct iOSSessionsTab: View {
                     }
                     .padding(.vertical, 20)
                 }
-                Text("Analytics sessions are read-only — they reflect locally detected CLI activity. \"running\" rows have a confirmed process; \"recent activity\" / \"recent\" reflect JSONL mtimes only.")
+                Text("Running = process confirmed. Recent = JSONL activity only.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1045,14 +1045,27 @@ struct iOSSessionRow: View {
 
                 Spacer()
 
+                // One badge per row — see SessionsTab.swift macOS for
+                // rationale. Process-confirmed rows keep the
+                // localized "running" status pill; JSONL-only rows
+                // (activeJsonl / recentJsonl) drop the status pill
+                // and show only the freshness chip so we don't
+                // over-claim "running" when we only know JSONL mtime.
                 if let tier = freshnessTier, tier.isVisible {
-                    StatusBadge(text: tier.badge, color: tierColor(tier))
+                    if tier == .activeProcess {
+                        StatusBadge(
+                            text: L10n.status.localized(session.status),
+                            color: PulseTheme.statusColor(session.status)
+                        )
+                    } else {
+                        StatusBadge(text: tier.badge, color: tierColor(tier))
+                    }
+                } else {
+                    StatusBadge(
+                        text: L10n.status.localized(session.status),
+                        color: PulseTheme.statusColor(session.status)
+                    )
                 }
-
-                StatusBadge(
-                    text: L10n.status.localized(session.status),
-                    color: PulseTheme.statusColor(session.status)
-                )
             }
 
             HStack(spacing: 14) {

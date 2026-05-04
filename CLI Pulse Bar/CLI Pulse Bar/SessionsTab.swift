@@ -215,7 +215,7 @@ struct SessionsTab: View {
                         subtitle: L10n.sessions.emptyHint
                     )
                 }
-                Text("Analytics sessions are read-only — they reflect locally detected CLI activity. \"running\" rows have a confirmed process; \"recent activity\" / \"recent\" reflect JSONL mtimes only.")
+                Text("Running = process confirmed. Recent = JSONL activity only.")
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -640,14 +640,38 @@ struct SessionRow: View {
 
                 Spacer()
 
+                // One badge per row, not two — the previous shape
+                // showed both the helper-uploaded "running" status
+                // pill AND a freshness tier chip, which over-claimed
+                // process-running for JSONL-only rows.
+                //
+                //   * activeProcess    → green "running" status pill
+                //                       (process is genuinely confirmed
+                //                       by helper ps scan; freshness
+                //                       chip would be redundant)
+                //   * activeJsonl /
+                //     recentJsonl      → blue / gray freshness chip
+                //                       only — drop the status pill
+                //                       so we don't claim "running"
+                //                       when we only have JSONL mtime.
+                //   * tier == nil      → legacy callers (iPad list,
+                //                       cloud-only rows) keep the
+                //                       original status pill behavior.
                 if let tier = freshnessTier, tier.isVisible {
-                    StatusBadge(text: tier.badge, color: tierColor(tier))
+                    if tier == .activeProcess {
+                        StatusBadge(
+                            text: L10n.status.localized(session.status),
+                            color: PulseTheme.statusColor(session.status)
+                        )
+                    } else {
+                        StatusBadge(text: tier.badge, color: tierColor(tier))
+                    }
+                } else {
+                    StatusBadge(
+                        text: L10n.status.localized(session.status),
+                        color: PulseTheme.statusColor(session.status)
+                    )
                 }
-
-                StatusBadge(
-                    text: L10n.status.localized(session.status),
-                    color: PulseTheme.statusColor(session.status)
-                )
             }
 
             // Details
