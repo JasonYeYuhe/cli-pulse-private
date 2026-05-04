@@ -10,8 +10,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 # Make `helper/` importable when pytest runs from the repo root.
 HELPER_DIR = Path(__file__).resolve().parent
 if str(HELPER_DIR) not in sys.path:
