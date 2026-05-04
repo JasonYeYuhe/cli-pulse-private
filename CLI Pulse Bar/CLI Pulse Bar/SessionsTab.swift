@@ -200,15 +200,27 @@ struct SessionsTab: View {
         let pending = pendingApproval(for: session)
         let isHighRisk = pending.flatMap { RemotePermissionRisk(rawValue: $0.risk) } == .high
         let canApprove = pending != nil && !isHighRisk
+        // v0.41 UX: a managed session sits at status='pending' until
+        // the helper consumes its 'start' command. While pending, the
+        // PTY does not exist yet, so prompt input, Send, and live
+        // output tail can't do anything. Gate those affordances on
+        // the running state and relabel Stop → Cancel so the user
+        // sees an actionable control instead of an immortal queued
+        // command. v0.41's `remote_app_send_command` cancel branch
+        // makes the round-trip work without any helper.
+        let isRunning = session.status.caseInsensitiveCompare("running") == .orderedSame
+        let isPending = session.status.caseInsensitiveCompare("pending") == .orderedSame
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 TextField(
-                    "Prompt for Claude…",
+                    isRunning ? "Prompt for Claude…" : "Waiting for helper to start session…",
                     text: $promptText
                 )
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 11, design: .monospaced))
+                .disabled(!isRunning)
                 .onSubmit {
+                    guard isRunning else { return }
                     Task { await sendPrompt(for: session) }
                 }
                 // No `.keyboardShortcut(.return, modifiers: [])` here on
@@ -225,7 +237,7 @@ struct SessionsTab: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!isRunning || promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button(canApprove ? "Approve pending" : (pending != nil ? "Approve (high-risk)" : "Approve")) {
                     Task { await approveMatchingPending(for: session) }
                 }
@@ -236,7 +248,9 @@ struct SessionsTab: View {
                 .help(approveTooltip(pending: pending, isHighRisk: isHighRisk))
             }
             HStack(spacing: 8) {
-                Text("Enter to send · ⌘↩ to approve pending")
+                Text(isPending
+                     ? "Waiting for helper to consume the start command. Cancel to remove this session."
+                     : "Enter to send · ⌘↩ to approve pending")
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                 Spacer()
@@ -257,22 +271,34 @@ struct SessionsTab: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
-                .help(showOutput
-                      ? "Hide the live output tail. Helper keeps uploading events while Remote Control is on; this only controls what's shown here."
-                      : "Show the live output tail (stdout, status, info events). Default off — privacy-visible opt-in.")
+                .disabled(isPending)
+                .help(isPending
+                      ? "Output appears once the helper starts the session."
+                      : (showOutput
+                         ? "Hide the live output tail. Helper keeps uploading events while Remote Control is on; this only controls what's shown here."
+                         : "Show the live output tail (stdout, status, info events). Default off — privacy-visible opt-in."))
                 Button(role: .destructive) {
                     Task {
+                        // v0.41: stop on a pending session lands in the
+                        // RPC's app-side cancel branch — no helper
+                        // needed. Local view-state cleanup is the same
+                        // as the running-stop path.
                         await state.stopRemoteSession(sessionId: session.id)
                         if selectedManagedSessionId == session.id {
                             selectedManagedSessionId = nil
                         }
+                        state.clearRemoteSessionEventsCache(sessionId: session.id)
                     }
                 } label: {
-                    Label("Stop", systemImage: "stop.circle")
+                    Label(isPending ? "Cancel" : "Stop",
+                          systemImage: isPending ? "xmark.circle" : "stop.circle")
                         .font(.system(size: 10))
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
+                .help(isPending
+                      ? "Cancel this queued session. No helper running yet, so this just removes the row."
+                      : "Stop the running Claude session. Helper will terminate the PTY.")
             }
 
             if showOutput {

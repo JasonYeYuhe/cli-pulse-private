@@ -457,6 +457,23 @@ struct ManagedSessionDetailView: View {
             && !state.remoteSessions.contains(where: { $0.id == session.id })
     }
 
+    /// Pending = helper hasn't consumed the start command yet, so the
+    /// PTY does not exist and prompts/output are meaningless. Mirror
+    /// the macOS gating so the user sees a Cancel affordance instead
+    /// of an immortal Send button. v0.41 backend lets the cancel land
+    /// even with no helper.
+    private var isPending: Bool {
+        currentSession.status.caseInsensitiveCompare("pending") == .orderedSame
+    }
+
+    private var isRunning: Bool {
+        currentSession.status.caseInsensitiveCompare("running") == .orderedSame
+    }
+
+    private var inputsDisabled: Bool {
+        sessionEnded || !isRunning
+    }
+
     /// What the header status badge shows. The captured snapshot's
     /// status was probably `running` at navigation time, so falling
     /// back to it after the row leaves the active list would lie about
@@ -498,13 +515,19 @@ struct ManagedSessionDetailView: View {
                         RoundedRectangle(cornerRadius: 10)
                             .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
                     )
-                    .disabled(sessionEnded)
-                    .opacity(sessionEnded ? 0.5 : 1)
+                    .disabled(inputsDisabled)
+                    .opacity(inputsDisabled ? 0.5 : 1)
+                if isPending {
+                    Text("Waiting for the helper to start this session before input is accepted.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
                 HStack {
                     Button(role: .destructive) {
                         Task { await state.stopRemoteSession(sessionId: currentSession.id) }
                     } label: {
-                        Label("Stop session", systemImage: "stop.circle")
+                        Label(isPending ? "Cancel session" : "Stop session",
+                              systemImage: isPending ? "xmark.circle" : "stop.circle")
                     }
                     .buttonStyle(.bordered)
                     .disabled(sessionEnded)
@@ -524,7 +547,7 @@ struct ManagedSessionDetailView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(
                         sending
-                            || sessionEnded
+                            || inputsDisabled
                             || promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     )
                 }
