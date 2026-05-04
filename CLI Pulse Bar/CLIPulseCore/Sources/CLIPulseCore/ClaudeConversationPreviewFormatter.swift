@@ -70,9 +70,9 @@ public enum ClaudeConversationPreviewFormatter {
         for raw in rawLines {
             let trimmed = String(raw).trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty { continue }
-            if isPlaceholderEcho(trimmed) { continue }
+            if shouldDropAsHelperChrome(trimmed) { continue }
             if shouldKeep(trimmed) {
-                kept.append(trimmed)
+                kept.append(polishLine(trimmed))
             }
         }
         // Deduplicate runs of identical lines (TUI repaints emit the
@@ -106,14 +106,97 @@ public enum ClaudeConversationPreviewFormatter {
 
     /// Claude's empty input field shows a faded placeholder like
     /// `❯ Try "how does project.pbxproj work?"`. We drop those — they
-    /// are not the user's actual input.
-    public static func isPlaceholderEcho(_ trimmed: String) -> Bool {
-        guard trimmed.first == "❯" else { return false }
+    /// are not the user's actual input. Also drops bare `❯` markers
+    /// (empty input field repaint) and TUI-compressed forms like
+    /// `❯ Try"create a util/logging.py that…"` where the space
+    /// between `Try` and `"` was eaten by cursor repaint.
+    public static func shouldDropAsHelperChrome(_ trimmed: String) -> Bool {
+        guard let first = trimmed.first, first == "❯" else { return false }
         let body = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
-        // Claude's placeholder always starts with "Try " followed by
-        // an example in quotes.
-        return body.lowercased().hasPrefix("try ") &&
-               (body.contains("\"") || body.contains("\u{201C}"))
+        if body.isEmpty { return true }
+        // Claude's input-field placeholder always starts with `Try`
+        // (with or without a trailing space, with or without a quote
+        // separator after TUI compression).
+        let lower = body.lowercased()
+        if lower.hasPrefix("try") {
+            // Be lenient: `Try ` (with space), `Try"…"` (no space),
+            // `Try'…'`, and `Try…` (compressed) all count as
+            // placeholder. But "Try" alone — extremely short — is too
+            // ambiguous to drop confidently; require at least one
+            // following character so a real user prompt of just
+            // `❯ Try` survives (rare but possible).
+            return body.count > 3
+        }
+        return false
+    }
+
+    /// Backward-compatible alias retained for tests written against
+    /// the earlier API. Production callers use `shouldDropAsHelperChrome`.
+    public static func isPlaceholderEcho(_ trimmed: String) -> Bool {
+        shouldDropAsHelperChrome(trimmed)
+    }
+
+    // MARK: - polish
+
+    /// Conservative spacing repair on a single kept line. Restores
+    /// space after the `⏺` / `❯` markers, after sentence-ending
+    /// punctuation when followed by an uppercase letter, and a small
+    /// hard-coded list of TUI-joined word pairs (only applied to
+    /// assistant `⏺` lines so user prompts and error text keep the
+    /// caller's literal characters).
+    public static func polishLine(_ line: String) -> String {
+        var s = line
+        s = insertSpaceAfterMarker(s)
+        s = insertSpaceAfterSentencePunctuation(s)
+        if s.first == "⏺" {
+            s = applyJoinedWordReplacements(s)
+        }
+        return s
+    }
+
+    /// `⏺Hello` → `⏺ Hello`, `❯hello` → `❯ hello`.
+    private static func insertSpaceAfterMarker(_ s: String) -> String {
+        guard let first = s.first, first == "⏺" || first == "❯" else { return s }
+        let rest = s.dropFirst()
+        guard let next = rest.first, !next.isWhitespace else { return s }
+        return "\(first) \(rest)"
+    }
+
+    /// `.What` → `. What`, `?What` → `? What`, `!What` → `! What`.
+    /// Only triggers when the punctuation is immediately followed by
+    /// an uppercase ASCII letter (heuristic for sentence boundary).
+    private static let sentencePunctPattern: NSRegularExpression = {
+        try! NSRegularExpression(pattern: "([\\.!?])([A-Z])", options: [])
+    }()
+
+    private static func insertSpaceAfterSentencePunctuation(_ s: String) -> String {
+        let range = NSRange(s.startIndex..<s.endIndex, in: s)
+        return sentencePunctPattern.stringByReplacingMatches(
+            in: s, options: [], range: range, withTemplate: "$1 $2"
+        )
+    }
+
+    /// Specific TUI-joined word patterns we have observed in Claude
+    /// responses. Applied longest-first so the 3-word merges resolve
+    /// before the 2-word ones. Conservative list — broad dictionary-
+    /// based splitting is explicitly out of scope per Codex.
+    private static let joinedWordReplacements: [(String, String)] = [
+        // 3-word merges first
+        ("wouldyoulike", "would you like"),
+        ("toworkon",     "to work on"),
+        // 2-word merges
+        ("wouldyou", "would you"),
+        ("youlike",  "you like"),
+        ("liketo",   "like to"),
+        ("workon",   "work on"),
+    ]
+
+    private static func applyJoinedWordReplacements(_ s: String) -> String {
+        var out = s
+        for (joined, split) in joinedWordReplacements {
+            out = out.replacingOccurrences(of: joined, with: split)
+        }
+        return out
     }
 
     /// Removes orphan CSI bodies — `[<params>...<final>` sequences

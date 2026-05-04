@@ -73,11 +73,93 @@ final class ClaudeConversationPreviewFormatterTests: XCTestCase {
         XCTAssertEqual(preview, F.emptyFallback)
     }
 
-    // MARK: - placeholder filter
+    // MARK: - placeholder filter / bare marker drop
 
-    func test_drops_claude_input_placeholder() {
-        XCTAssertTrue(F.isPlaceholderEcho("❯ Try \"how does project.pbxproj work?\""))
-        XCTAssertFalse(F.isPlaceholderEcho("❯ hello"))
+    func test_drops_claude_input_placeholder_with_quote_space() {
+        XCTAssertTrue(F.shouldDropAsHelperChrome("❯ Try \"how does project.pbxproj work?\""))
+    }
+
+    func test_drops_claude_input_placeholder_compressed() {
+        // TUI compression eats the space between `Try` and `"` so the
+        // line reads `❯ Try"create a util/logging.py that…"`. Still a
+        // placeholder, must still drop.
+        XCTAssertTrue(F.shouldDropAsHelperChrome(#"❯ Try"create a util/logging.py that..."#))
+    }
+
+    func test_drops_bare_prompt_marker() {
+        // Empty input field repaints emit `❯` alone or `❯` + spaces.
+        XCTAssertTrue(F.shouldDropAsHelperChrome("❯"))
+        XCTAssertTrue(F.shouldDropAsHelperChrome("❯   "))
+    }
+
+    func test_keeps_real_user_prompt() {
+        XCTAssertFalse(F.shouldDropAsHelperChrome("❯ hello"))
+    }
+
+    // MARK: - polish: marker spacing
+
+    func test_polish_inserts_space_after_assistant_marker() {
+        XCTAssertEqual(F.polishLine("⏺Hello"), "⏺ Hello")
+    }
+
+    func test_polish_inserts_space_after_user_marker() {
+        XCTAssertEqual(F.polishLine("❯hello"), "❯ hello")
+    }
+
+    func test_polish_leaves_marker_alone_if_already_spaced() {
+        XCTAssertEqual(F.polishLine("⏺ Hello"), "⏺ Hello")
+        XCTAssertEqual(F.polishLine("❯ hello"), "❯ hello")
+    }
+
+    // MARK: - polish: sentence-ending punctuation
+
+    func test_polish_inserts_space_after_period_before_capital() {
+        XCTAssertEqual(F.polishLine("⏺ Ready to help.What"),
+                       "⏺ Ready to help. What")
+    }
+
+    func test_polish_inserts_space_after_question_before_capital() {
+        XCTAssertEqual(F.polishLine("⏺ How are you?What's next"),
+                       "⏺ How are you? What's next")
+    }
+
+    func test_polish_inserts_space_after_exclaim_before_capital() {
+        XCTAssertEqual(F.polishLine("⏺ Hi!What now"),
+                       "⏺ Hi! What now")
+    }
+
+    func test_polish_does_not_break_decimals() {
+        // "v2.1.126" must NOT get `2. 1. 126` — the next char after
+        // each dot is a digit, not an uppercase letter.
+        XCTAssertEqual(F.polishLine("⏺ Claude Code v2.1.126 ready"),
+                       "⏺ Claude Code v2.1.126 ready")
+    }
+
+    // MARK: - polish: joined-word replacements (assistant lines only)
+
+    func test_polish_splits_known_joined_words_in_assistant_line() {
+        XCTAssertEqual(
+            F.polishLine("⏺ wouldyoulike toworkon?"),
+            "⏺ would you like to work on?"
+        )
+    }
+
+    func test_polish_does_not_split_joined_words_in_user_line() {
+        // User-typed text is left alone — a user might intentionally
+        // omit spaces (e.g. tags, hashtags, deliberate typos).
+        XCTAssertEqual(
+            F.polishLine("❯ wouldyoulike toworkon?"),
+            "❯ wouldyoulike toworkon?"
+        )
+    }
+
+    func test_polish_two_word_replacements_apply_when_three_word_doesnt_match() {
+        // `wouldyou tomorrow` doesn't have the 3-word `wouldyoulike`,
+        // so the 2-word `wouldyou` rule fires.
+        XCTAssertEqual(
+            F.polishLine("⏺ wouldyou be free tomorrow?"),
+            "⏺ would you be free tomorrow?"
+        )
     }
 
     // MARK: - end-to-end format()
@@ -173,6 +255,34 @@ final class ClaudeConversationPreviewFormatterTests: XCTestCase {
         let occurrences = preview.components(separatedBy: "❯ hello").count - 1
         XCTAssertEqual(occurrences, 1, "expected dedup of repaint runs: \(preview)")
         XCTAssertTrue(preview.contains("⏺ Hello!"))
+    }
+
+    func test_jasons_polish_sample_matches_expected() {
+        // Jason's exact post-formatter preview (pre-polish) reads:
+        //   ❯ Try"createautillogging.pythat..."
+        //   ❯ hello
+        //   ❯
+        //   ⏺Hello! Ready to help.What wouldyoulike toworkon?
+        //   ❯
+        //
+        // Construct events that produce this set of lines, then verify
+        // the new polish reduces it to exactly:
+        //   ❯ hello
+        //   ⏺ Hello! Ready to help. What would you like to work on?
+        let event1 = "❯ Try\"createautillogging.pythat...\"\n"
+        let event2 = "❯ hello\n"
+        let event3 = "❯\n"
+        let event4 = "⏺Hello! Ready to help.What wouldyoulike toworkon?\n"
+        let event5 = "❯\n"
+        let preview = F.format(eventPayloads: [event1, event2, event3, event4, event5])
+        XCTAssertEqual(
+            preview,
+            """
+            ❯ hello
+            ⏺ Hello! Ready to help. What would you like to work on?
+            """,
+            "preview must match Codex's expected polish: \(preview)"
+        )
     }
 
     func test_aggregates_csi_split_across_events() {
