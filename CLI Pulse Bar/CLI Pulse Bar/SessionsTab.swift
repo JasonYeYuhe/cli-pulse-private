@@ -167,9 +167,19 @@ struct SessionsTab: View {
             Text(L10n.sessions.title)
                 .font(.system(size: 14, weight: .bold))
             Spacer()
-            let running = state.sessions.filter { $0.status.caseInsensitiveCompare("running") == .orderedSame }.count
-            if running > 0 {
-                StatusBadge(text: "\(running) \(L10n.sessions.running)", color: .green)
+            // Count only process-confirmed rows as "running" — JSONL-
+            // synthesized rows hardcode `status: "Running"` regardless
+            // of whether the process is alive, which previously made
+            // the green pill say "3 运行中" even when all three rows
+            // were JSONL-only "recent activity". One source of truth
+            // (the FreshnessTier classifier) for both the header and
+            // the row badges keeps the panel internally consistent.
+            let now = Date()
+            let runningCount = state.sessions.reduce(0) { acc, s in
+                acc + (SessionFreshnessTierClassifier.classify(s, now: now) == .activeProcess ? 1 : 0)
+            }
+            if runningCount > 0 {
+                StatusBadge(text: "\(runningCount) \(L10n.sessions.running)", color: .green)
             }
         }
     }

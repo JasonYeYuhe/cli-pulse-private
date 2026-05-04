@@ -38,18 +38,83 @@ public enum SessionFreshnessFilter {
         }
     }
 
-    /// Heuristic: process-enumeration artifacts have executable paths
-    /// or shell-style flag strings as their `name`, not the JSONL
-    /// session names that `CostUsageScanner.synthesizeSessions`
-    /// produces ("<provider> · <project>"). Rejecting these patterns
-    /// strips the helper-uploaded `device: "CLI Pulse Helper"` rows
-    /// that survived in cloud cache without dropping legit synthesized
-    /// sessions.
+    /// Decide whether a row is a process-enumeration artifact rather
+    /// than a real CLI session.
+    ///
+    /// Earlier shape (iter22) was too aggressive: any path-prefixed
+    /// name OR anything containing `.app/Contents/` got dropped. That
+    /// blanket rule incorrectly hides Claude Code 2.x — its CLI
+    /// binary lives at:
+    ///
+    ///   ~/Library/Application Support/Claude/claude-code/<version>/claude.app/Contents/MacOS/claude
+    ///
+    /// which is a real CLI tool, not a desktop-app artifact. The
+    /// helper's `_pretty_name` truncates the `ps` command line to
+    /// 48 chars, so even a normal Claude Code invocation surfaces a
+    /// session name beginning with `/Users/.../Library/...`.
+    ///
+    /// New rules (more surgical):
+    ///
+    ///   1. **Drop**: GUI desktop apps installed under `/Applications/`
+    ///      whose name implies a Helper / Frameworks / MacOS
+    ///      subprocess. Specifically:
+    ///        /Applications/<X>.app/Contents/MacOS/<X>           — desktop GUI binary
+    ///        /Applications/<X>.app/Contents/Helpers/...         — helper subprocess
+    ///        /Applications/<X>.app/Contents/Frameworks/...      — bundled framework
+    ///
+    ///   2. **Drop**: Electron / Chromium child processes with
+    ///      diagnostic flags (`--type=renderer / gpu-process /
+    ///      utility / zygote`, `--utility-sub-type`, `crashpad`,
+    ///      `electron framework`, `--ms-enable-electron`).
+    ///
+    ///   3. **Drop**: Native-host bridges (`nativehost`,
+    ///      `chrome-native-host`, `native-messaging`).
+    ///
+    ///   4. **Drop**: Specific noisy patterns (`node_modules/.bin`,
+    ///      bare `node --no-warnings`).
+    ///
+    ///   5. **Keep**: Any other name. In particular, paths under
+    ///      `~/Library/Application Support/...` and `/usr/local/bin/...`
+    ///      are real CLI tools the user installed and we should
+    ///      surface as process-confirmed when the helper sees them.
     public static func isProcessPathArtifact(_ session: SessionRecord) -> Bool {
         let name = session.name
-        if name.hasPrefix("/") { return true }                    // /Applications/..., /usr/..., /opt/...
-        if name.contains(".app/Contents/") { return true }        // Claude.app/Contents/Helper, Codex.app/...
+
+        // 1. /Applications/-rooted desktop-app subprocesses. The
+        //    `.app/Contents/` test inside `/Applications/` is broad
+        //    on purpose — anything in a bundle under /Applications is
+        //    a system-installed GUI app's binary or a helper. CLI
+        //    tools we want to track (Claude Code 2.x, codex,
+        //    homebrew, etc.) live elsewhere (~/Library/.../
+        //    claude.app/..., /usr/local/bin/, ~/.local/bin/).
+        if name.hasPrefix("/Applications/") && name.contains(".app/Contents/") {
+            return true
+        }
+
+        // 2. Electron / Chromium child processes.
+        if name.contains("--type=renderer")
+            || name.contains("--type=gpu-process")
+            || name.contains("--type=utility")
+            || name.contains("--type=zygote")
+            || name.contains("--utility-sub-type")
+            || name.contains(" --ms-enable-electron")
+            || name.contains("crashpad") {
+            return true
+        }
+        let lower = name.lowercased()
+        if lower.contains("electron framework") { return true }
+
+        // 3. Native-host bridges.
+        if lower.contains("nativehost") || lower.contains("chrome-native-host") {
+            return true
+        }
+
+        // 4. node_modules + bare-node noise.
+        if name.contains("node_modules/.bin") { return true }
         if name.hasPrefix("node ") || name.contains(" --no-warnings") { return true }
+
+        // 5. Otherwise keep — including ~/Library/.../claude.app/Contents/MacOS/claude
+        // (Claude Code 2.x) and /usr/local/bin/codex etc.
         return false
     }
 

@@ -214,6 +214,161 @@ final class SessionFreshnessTierTests: XCTestCase {
         XCTAssertEqual(FreshnessTier.hidden.badge,        "")
     }
 
+    // MARK: - Claude Code 2.x user-Library binaries are NOT artifacts
+
+    /// Claude Code 2.x packages its CLI as `claude.app` under the
+    /// user's Library. The helper's `_pretty_name` truncates the
+    /// `ps` command to ≤48 chars, which surfaces a session name like
+    /// `/Users/jason/Library/Application Support/Claud...`. The
+    /// earlier filter dropped any path-prefixed name, hiding the
+    /// real CLI even when the helper saw it as a live process.
+    func test_claude_code_2x_user_library_path_kept_as_activeProcess() {
+        let now = referenceNow
+        let s = make(
+            id: "proc-6168",
+            name: "/Users/jason/Library/Application Support/Claude/claude-code/2.1.121/claude.app/Contents/MacOS/claude --output-format stream-json",
+            ageSeconds: 30,
+            now: now
+        )
+        XCTAssertEqual(C.classify(s, now: now), .activeProcess,
+                       "Claude Code 2.x user-Library path must NOT be filtered as artifact")
+    }
+
+    func test_truncated_user_library_path_kept_as_activeProcess() {
+        // _pretty_name caps at 48 chars + "..." — pin the exact shape
+        // the helper would emit so a future truncation tweak can't
+        // silently re-introduce the false-positive.
+        let now = referenceNow
+        let s = make(
+            id: "proc-6168",
+            name: "/Users/jason/Library/Application Support/Cl...",
+            ageSeconds: 30,
+            now: now
+        )
+        XCTAssertEqual(C.classify(s, now: now), .activeProcess)
+    }
+
+    func test_plain_codex_command_kept_as_activeProcess() {
+        let now = referenceNow
+        let s = make(id: "proc-7777", name: "codex", ageSeconds: 5, now: now)
+        XCTAssertEqual(C.classify(s, now: now), .activeProcess)
+    }
+
+    func test_homebrew_codex_path_kept_as_activeProcess() {
+        let now = referenceNow
+        let s = make(
+            id: "proc-7777",
+            name: "/usr/local/bin/codex --some-flag",
+            ageSeconds: 5,
+            now: now
+        )
+        XCTAssertEqual(C.classify(s, now: now), .activeProcess)
+    }
+
+    // MARK: - actual artifacts still get hidden
+
+    func test_applications_claude_app_macos_binary_hidden() {
+        let now = referenceNow
+        let s = make(
+            id: "proc-1",
+            name: "/Applications/Claude.app/Contents/MacOS/Claude",
+            ageSeconds: 5,
+            now: now
+        )
+        XCTAssertEqual(C.classify(s, now: now), .hidden)
+    }
+
+    func test_applications_claude_disclaimer_helper_hidden() {
+        let now = referenceNow
+        let s = make(
+            id: "proc-1",
+            name: "/Applications/Claude.app/Contents/Helpers/disclaimer /Users/jason/Library/...",
+            ageSeconds: 5,
+            now: now
+        )
+        XCTAssertEqual(C.classify(s, now: now), .hidden)
+    }
+
+    func test_applications_frameworks_subprocess_hidden() {
+        let now = referenceNow
+        let s = make(
+            id: "proc-1",
+            name: "/Applications/Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/Claude Helper",
+            ageSeconds: 5,
+            now: now
+        )
+        XCTAssertEqual(C.classify(s, now: now), .hidden)
+    }
+
+    func test_electron_renderer_subprocess_hidden() {
+        let now = referenceNow
+        let s = make(
+            id: "proc-1",
+            name: "claude --type=renderer --enable-features=...",
+            ageSeconds: 5,
+            now: now
+        )
+        XCTAssertEqual(C.classify(s, now: now), .hidden)
+    }
+
+    func test_electron_gpu_process_hidden() {
+        let now = referenceNow
+        let s = make(
+            id: "proc-1",
+            name: "Codex Helper --type=gpu-process --field-trial-handle=...",
+            ageSeconds: 5,
+            now: now
+        )
+        XCTAssertEqual(C.classify(s, now: now), .hidden)
+    }
+
+    func test_nativehost_bridge_hidden() {
+        let now = referenceNow
+        let s = make(
+            id: "proc-1",
+            name: "/Applications/SomeApp.app/Contents/Resources/bin/nativehost",
+            ageSeconds: 5,
+            now: now
+        )
+        XCTAssertEqual(C.classify(s, now: now), .hidden)
+    }
+
+    // MARK: - header running count contract
+
+    func test_running_count_only_includes_activeProcess() {
+        // Mirror the macOS / iOS header-count code: count only rows
+        // whose tier is `.activeProcess`. JSONL rows must NOT bump
+        // the green pill from "0" to a positive number.
+        let now = referenceNow
+        let sessions = [
+            make(id: "proc-1",       ageSeconds: 30,  now: now),
+            make(id: "proc-2",       ageSeconds: 60,  now: now),
+            make(id: "jsonl-claude-a", ageSeconds: 100, now: now),  // .activeJsonl
+            make(id: "jsonl-claude-b", ageSeconds: 800, now: now),  // .recentJsonl
+        ]
+        let count = sessions.reduce(0) { acc, s in
+            acc + (C.classify(s, now: now) == .activeProcess ? 1 : 0)
+        }
+        XCTAssertEqual(count, 2,
+                       "Only the two proc-* rows should count as running")
+    }
+
+    func test_running_count_zero_when_only_jsonl_rows() {
+        // The exact case from Jason's screenshot: 3 JSONL rows, no
+        // helper proc-* rows. Pre-fix the header pill said "3 运行中";
+        // post-fix it must say nothing (count == 0).
+        let now = referenceNow
+        let sessions = [
+            make(id: "jsonl-codex-a",  ageSeconds: 180, now: now),
+            make(id: "jsonl-claude-b", ageSeconds: 240, now: now),
+            make(id: "jsonl-claude-c", ageSeconds: 240, now: now),
+        ]
+        let count = sessions.reduce(0) { acc, s in
+            acc + (C.classify(s, now: now) == .activeProcess ? 1 : 0)
+        }
+        XCTAssertEqual(count, 0)
+    }
+
     // MARK: - intentional divergence from filterCurrent
 
     /// Documents that the classifier intentionally diverges from the
