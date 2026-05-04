@@ -1,14 +1,9 @@
 -- ============================================================
--- PENDING (placeholder slot) — Remote Session Input (iter 1)
--- Date: 2026-05-03
--- Status: NOT YET APPLIED to live Supabase. NOT YET assigned a v0.3X slot.
---
--- Why placeholder?
---   The cli-pulse-desktop track (Tauri 2 — Windows + Linux) is shipping its
---   own schema backlog targeting v0.4.4. To prevent two concurrent tracks
---   from claiming the same migration number, this file deliberately uses a
---   non-numeric name. Jason will green-light a v0.3X slot AND apply this to
---   live Supabase via the Mgmt API once both tracks have aligned.
+-- v0.39 — Remote Session Input (iter 1)
+-- Slot assigned: 2026-05-04. Originally drafted 2026-05-03 as a
+-- non-numeric placeholder file while the cli-pulse-desktop (Tauri 2 —
+-- Windows + Linux) track aligned its own schema backlog; promoted to
+-- v0.39 once desktop confirmed it would not contend for this slot.
 --
 -- Adds (all idempotent):
 --   1. Widen `remote_session_commands.kind` CHECK to include the new
