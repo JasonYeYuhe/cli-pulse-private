@@ -377,12 +377,19 @@ struct SessionsTab: View {
             default:       return .primary // stdout
             }
         }()
+        // Claude's TUI emits ANSI CSI / OSC sequences for cursor
+        // moves, colors, and bracketed-paste — rendering them as raw
+        // text reads as `[2D[3B…` gibberish. We strip them here so
+        // the user sees readable content. Status / info rows are
+        // synthesized by the helper and don't carry escape codes,
+        // but we sanitize them too as defense in depth.
+        let display = AnsiSanitizer.strip(event.payload)
         HStack(alignment: .top, spacing: 6) {
             Text(event.kind)
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundStyle(kindColor)
                 .frame(width: 38, alignment: .leading)
-            Text(event.payload)
+            Text(display)
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(.primary)
                 .textSelection(.enabled)

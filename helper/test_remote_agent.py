@@ -266,9 +266,13 @@ def test_dispatch_prompt_writes_to_session_stdin():
     mgr.tick()  # spawn
     mgr.tick()  # prompt
 
-    # write_stdin should have received "hello claude\n" (newline auto-added).
+    # write_stdin should have received "hello claude\r" — Claude Code's
+    # TUI runs raw with bracketed-paste enabled, so LF is "more text"
+    # and CR is the submit key. write_to_session normalizes any trailing
+    # terminator to CR. See helper/test_remote_agent_submit.py for the
+    # full matrix; this assertion just pins the dispatch wiring.
     stdin = b"".join(transport.stdin_log.get(session_id, []))
-    assert stdin == b"hello claude\n"
+    assert stdin == b"hello claude\r"
 
     # Both commands completed delivered.
     completes = [p for n, p in log if n == "remote_helper_complete_command"]

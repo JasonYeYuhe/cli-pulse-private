@@ -310,19 +310,40 @@ class RemoteAgentManager:
         self.transport.interrupt(sess.handle)
 
     def write_to_session(self, session_id: str, payload: str) -> bool:
-        """Write the user's typed text to the child's stdin, suffixed
-        with a newline so the provider treats it as a complete prompt.
+        """Write the user's typed text to the child's stdin and submit
+        it. Returns True if the child accepted the bytes, False if the
+        child is gone (in which case the caller should mark the command
+        failed).
 
-        Returns True if the child accepted the bytes, False if the child
-        is gone (in which case the caller should mark the command failed).
+        Submit semantics: Claude Code's TUI is a raw-mode application
+        that enables bracketed-paste mode (CSI ?2004h) and treats LF
+        ('\\n') as "more text being pasted," not as Enter. Sending
+        "hello\\n" causes the chars to render in the input field but
+        Claude never submits to its API. The Enter key in raw mode is
+        Carriage Return (CR, '\\r'), so we normalize the trailing
+        terminator to '\\r' here. This also works for codex's TUI and
+        for line-buffered shell modes (the shell's icrnl termios
+        setting will map CR back to LF on the way in).
         """
         sess = self._sessions.get(session_id)
         if sess is None:
+            logger.warning("write_to_session(%s): no live session — child likely exited", session_id)
             return False
         # Cap mirrors the column CHECK on `remote_session_commands.payload`.
         body = payload[:8192].encode("utf-8", errors="replace")
-        if not body.endswith(b"\n"):
-            body = body + b"\n"
+        # Normalize trailing terminator to CR. Replace a single trailing
+        # LF if the caller already added one; do nothing if CR is already
+        # there; append CR otherwise.
+        if body.endswith(b"\r\n"):
+            body = body[:-2] + b"\r"
+        elif body.endswith(b"\n"):
+            body = body[:-1] + b"\r"
+        elif not body.endswith(b"\r"):
+            body = body + b"\r"
+        logger.info(
+            "write_to_session(%s): writing %d bytes (payload chars=%d)",
+            session_id, len(body), len(payload),
+        )
         written = self.transport.write_stdin(sess.handle, body)
         if written <= 0:
             logger.warning(
@@ -330,6 +351,7 @@ class RemoteAgentManager:
                 session_id,
             )
             return False
+        logger.info("write_to_session(%s): wrote %d bytes ok", session_id, written)
         return True
 
     def shutdown(self) -> None:
@@ -387,6 +409,8 @@ class RemoteAgentManager:
         if not isinstance(result, list):
             return 0
 
+        if result:
+            logger.info("pulled %d command(s) from queue", len(result))
         for cmd in result:
             if not isinstance(cmd, dict):
                 continue
@@ -400,6 +424,15 @@ class RemoteAgentManager:
         payload = cmd.get("payload") or ""
         if not cmd_id:
             return
+
+        # Per-command dispatch observability. Plaintext payload is NOT
+        # logged; only its length, so a careless reader of the helper
+        # log doesn't see what the user typed. session_id+cmd_id is
+        # enough to correlate with remote_session_commands rows.
+        logger.info(
+            "dispatch kind=%s session=%s cmd=%s payload_chars=%d",
+            kind, session_id, cmd_id, len(payload),
+        )
 
         ok: bool
         err: str
@@ -430,6 +463,12 @@ class RemoteAgentManager:
                     "p_status": "delivered" if ok else "failed",
                     "p_error": err or None,
                 },
+            )
+            logger.info(
+                "complete_command cmd=%s kind=%s session=%s status=%s%s",
+                cmd_id, kind, session_id,
+                "delivered" if ok else "failed",
+                f" err={err}" if err else "",
             )
         except Exception as exc:
             logger.warning("complete_command(%s) failed: %s", cmd_id, exc)

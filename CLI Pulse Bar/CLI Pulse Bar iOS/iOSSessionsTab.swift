@@ -696,12 +696,19 @@ struct ManagedSessionDetailView: View {
             default:       return .primary
             }
         }()
+        // Claude's TUI emits ANSI CSI / OSC sequences for cursor moves,
+        // colors, and bracketed-paste mode — rendering raw shows
+        // `[2D[3B…` gibberish. Strip via the shared CLIPulseCore
+        // sanitizer so the user sees readable content. Status / info
+        // rows don't carry escape codes; sanitize anyway as defense
+        // in depth.
+        let display = AnsiSanitizer.strip(event.payload)
         HStack(alignment: .top, spacing: 6) {
             Text(event.kind)
                 .font(.caption2.monospaced().weight(.medium))
                 .foregroundStyle(kindColor)
                 .frame(width: 44, alignment: .leading)
-            Text(event.payload)
+            Text(display)
                 .font(.callout.monospaced())
                 .foregroundStyle(.primary)
                 .textSelection(.enabled)
