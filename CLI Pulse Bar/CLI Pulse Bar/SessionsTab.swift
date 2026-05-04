@@ -183,13 +183,68 @@ struct SessionsTab: View {
                 subtitle: L10n.sessions.emptyHint
             )
         } else {
-            VStack(spacing: 8) {
-                ForEach(state.sessions) { session in
-                    SessionRow(session: session, showCost: state.showCost)
+            // Split analytics rows into Active and Recent sections by
+            // FreshnessTier. Active = process-confirmed (still running)
+            // and recent JSONL activity (≤ 5 min). Recent = JSONL
+            // activity in the last 30 min that's no longer fresh
+            // enough to call active. Older rows are hidden, same as
+            // before.
+            let now = Date()
+            let buckets = SessionFreshnessTierClassifier.partition(
+                state.sessions, now: now
+            )
+            VStack(alignment: .leading, spacing: 12) {
+                if !buckets.active.isEmpty {
+                    sessionSection(
+                        header: "Active",
+                        sessions: buckets.active,
+                        now: now
+                    )
                 }
-                Text("Analytics sessions are read-only — they reflect locally detected CLI activity.")
+                if !buckets.recent.isEmpty {
+                    sessionSection(
+                        header: "Recent · last 30 min",
+                        sessions: buckets.recent,
+                        now: now
+                    )
+                }
+                if buckets.active.isEmpty && buckets.recent.isEmpty {
+                    EmptyStateView(
+                        icon: "terminal",
+                        title: L10n.sessions.noSessions,
+                        subtitle: L10n.sessions.emptyHint
+                    )
+                }
+                Text("Analytics sessions are read-only — they reflect locally detected CLI activity. \"running\" rows have a confirmed process; \"recent activity\" / \"recent\" reflect JSONL mtimes only.")
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func sessionSection(
+        header: String,
+        sessions: [SessionRecord],
+        now: Date
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(header)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text("· \(sessions.count)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                Spacer()
+            }
+            ForEach(sessions) { session in
+                let tier = SessionFreshnessTierClassifier.classify(session, now: now)
+                SessionRow(
+                    session: session,
+                    showCost: state.showCost,
+                    freshnessTier: tier
+                )
             }
         }
     }
@@ -558,6 +613,18 @@ private struct ManagedSessionRow: View {
 struct SessionRow: View {
     let session: SessionRecord
     let showCost: Bool
+    /// Optional tier badge — Active vs Recent split passes its
+    /// classifier result so the user can see whether the row is
+    /// process-confirmed ("running") vs JSONL-only ("recent
+    /// activity" / "recent"). Optional so older callers don't need
+    /// to pass it; renders nothing when nil.
+    let freshnessTier: FreshnessTier?
+
+    init(session: SessionRecord, showCost: Bool, freshnessTier: FreshnessTier? = nil) {
+        self.session = session
+        self.showCost = showCost
+        self.freshnessTier = freshnessTier
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -572,6 +639,10 @@ struct SessionRow: View {
                     .lineLimit(1)
 
                 Spacer()
+
+                if let tier = freshnessTier, tier.isVisible {
+                    StatusBadge(text: tier.badge, color: tierColor(tier))
+                }
 
                 StatusBadge(
                     text: L10n.status.localized(session.status),
@@ -626,6 +697,17 @@ struct SessionRow: View {
             Text(value)
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
                 .foregroundStyle(color)
+        }
+    }
+
+    /// Confidence badge color: green for process-confirmed, blue for
+    /// recent JSONL activity, gray for older Recent rows.
+    private func tierColor(_ tier: FreshnessTier) -> Color {
+        switch tier {
+        case .activeProcess: return .green
+        case .activeJsonl:   return .blue
+        case .recentJsonl:   return .secondary
+        case .hidden:        return .clear
         }
     }
 }

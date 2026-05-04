@@ -209,15 +209,65 @@ struct iOSSessionsTab: View {
                 }
                 .padding(.vertical, 20)
             } else {
-                ForEach(state.sessions) { session in
-                    NavigationLink(value: session) {
-                        iOSSessionRow(session: session, showCost: state.showCost)
-                    }
-                    .buttonStyle(.plain)
+                let now = Date()
+                let buckets = SessionFreshnessTierClassifier.partition(
+                    state.sessions, now: now
+                )
+                if !buckets.active.isEmpty {
+                    iosSessionSection(
+                        header: "Active",
+                        sessions: buckets.active,
+                        now: now
+                    )
                 }
-                Text("Analytics sessions are read-only — they reflect locally detected CLI activity.")
+                if !buckets.recent.isEmpty {
+                    iosSessionSection(
+                        header: "Recent · last 30 min",
+                        sessions: buckets.recent,
+                        now: now
+                    )
+                }
+                if buckets.active.isEmpty && buckets.recent.isEmpty {
+                    ContentUnavailableView {
+                        Label(L10n.sessions.noSessions, systemImage: "terminal")
+                    } description: {
+                        Text(L10n.sessions.emptyHint)
+                    }
+                    .padding(.vertical, 20)
+                }
+                Text("Analytics sessions are read-only — they reflect locally detected CLI activity. \"running\" rows have a confirmed process; \"recent activity\" / \"recent\" reflect JSONL mtimes only.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func iosSessionSection(
+        header: String,
+        sessions: [SessionRecord],
+        now: Date
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(header)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text("· \(sessions.count)")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+            }
+            ForEach(sessions) { session in
+                let tier = SessionFreshnessTierClassifier.classify(session, now: now)
+                NavigationLink(value: session) {
+                    iOSSessionRow(
+                        session: session,
+                        showCost: state.showCost,
+                        freshnessTier: tier
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -973,6 +1023,15 @@ struct SessionDetailView: View {
 struct iOSSessionRow: View {
     let session: SessionRecord
     let showCost: Bool
+    /// Optional Active/Recent tier badge. Nil when this row is
+    /// rendered outside the analytics section split (legacy callers).
+    let freshnessTier: FreshnessTier?
+
+    init(session: SessionRecord, showCost: Bool, freshnessTier: FreshnessTier? = nil) {
+        self.session = session
+        self.showCost = showCost
+        self.freshnessTier = freshnessTier
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -985,6 +1044,10 @@ struct iOSSessionRow: View {
                     .lineLimit(1)
 
                 Spacer()
+
+                if let tier = freshnessTier, tier.isVisible {
+                    StatusBadge(text: tier.badge, color: tierColor(tier))
+                }
 
                 StatusBadge(
                     text: L10n.status.localized(session.status),
@@ -1039,6 +1102,15 @@ struct iOSSessionRow: View {
             Text(value)
                 .font(.subheadline.weight(.bold).monospacedDigit())
                 .foregroundStyle(color)
+        }
+    }
+
+    private func tierColor(_ tier: FreshnessTier) -> Color {
+        switch tier {
+        case .activeProcess: return .green
+        case .activeJsonl:   return .blue
+        case .recentJsonl:   return .secondary
+        case .hidden:        return .clear
         }
     }
 }
