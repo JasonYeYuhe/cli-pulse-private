@@ -488,6 +488,22 @@ public struct SessionRecord: Codable, Identifiable, Sendable, Hashable {
         sharedISO8601Formatter.date(from: last_active_at)
     }
 
+    /// Whether the row's `requests` metric reflects real assistant-turn
+    /// counting. `CostUsageScanner.buildCodexCandidates` currently
+    /// hard-codes `messageCount: 0` for Codex JSONL candidates, which
+    /// `synthesizeSessions` then floors to `max(1, 0) = 1`. Showing
+    /// "1 requests" next to "26.3M I/O tokens" is misleading — the row
+    /// has clearly seen many turns. The UI uses this flag to suppress
+    /// the requests metric for those rows specifically; Claude JSONL
+    /// rows count correctly, helper-emitted process rows compute a
+    /// duration-based estimate, and remote/cloud rows trust the
+    /// uploader. Proper Codex turn counting is a separate follow-up
+    /// that requires extending the parser's CodexParseResult and the
+    /// per-file cache schema.
+    public var hasMeaningfulRequestCount: Bool {
+        !(id.hasPrefix("jsonl-codex-") && requests <= 1)
+    }
+
     public init(
         id: String, name: String, provider: String, project: String,
         device_name: String, started_at: String, last_active_at: String,

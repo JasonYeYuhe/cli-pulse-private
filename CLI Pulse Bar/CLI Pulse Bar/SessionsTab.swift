@@ -690,7 +690,9 @@ struct SessionRow: View {
                 if showCost {
                     metricItem(label: L10n.detail.cost, value: CostFormatter.format(session.estimated_cost), color: .green)
                 }
-                metricItem(label: L10n.detail.requests, value: "\(session.requests)")
+                if session.hasMeaningfulRequestCount {
+                    metricItem(label: L10n.detail.requests, value: "\(session.requests)")
+                }
                 if session.error_count > 0 {
                     metricItem(label: L10n.detail.errors, value: "\(session.error_count)", color: .red)
                 }
