@@ -28,7 +28,20 @@ internal final class DataRefreshManager {
         let providers: [ProviderUsage]
         let maxDevices: Int
         let maxProviders: Int
+        /// Display-form tier name — "Free", "Pro", "Team" (localized).
+        /// Used in the banner copy. NOT the lowercase rawValue, which
+        /// would surface as "Over free plan limits" without "CLI
+        /// Pulse" context — the original surface that confused
+        /// Claude/Codex Pro users into thinking it was about their
+        /// provider plan. See `SubscriptionManager.tierName(for:)`.
         let currentTierName: String
+        /// PR #18 follow-up: `tierLimitWarning(...)` only fires when
+        /// this is `.resolvedConfirmed`. `.unresolved` (race: tier
+        /// not checked yet) and `.resolvedDegraded` (server / receipt
+        /// validator returned an error category) both suppress the
+        /// banner — confirmed-free is the only state that can claim
+        /// "Over CLI Pulse Free plan limits."
+        let tierResolutionState: TierResolutionState
         /// iter17 (2026-04-29): macOS-only "use local mode" flag — true
         /// when the user explicitly opted into the unauthenticated local
         /// scanner path (`AppState.continueWithoutAccount()`). The
@@ -263,7 +276,8 @@ internal final class DataRefreshManager {
                 ),
                 maxDevices: context.maxDevices,
                 maxProviders: context.maxProviders,
-                currentTierName: context.currentTierName
+                currentTierName: context.currentTierName,
+                tierResolutionState: context.tierResolutionState
             )
 
             // v1.9.3: synthesise local quota-depletion alerts and merge them
@@ -1042,13 +1056,28 @@ internal final class DataRefreshManager {
         }
     }
 
-    private static func tierLimitWarning(
+    /// `internal nonisolated` (not `private`) so XCTest can call it
+    /// directly without juggling `@MainActor` ceremony. Pure function —
+    /// no side effects, no AppState observation, no StoreKit / network
+    /// access — keeps the test surface tight.
+    nonisolated static func tierLimitWarning(
         deviceCount: Int,
         activeProviderCount: Int,
         maxDevices: Int,
         maxProviders: Int,
-        currentTierName: String
+        currentTierName: String,
+        tierResolutionState: TierResolutionState
     ) -> String? {
+        // PR #18 follow-up: the banner is ONLY safe to show once the
+        // tier is `.resolvedConfirmed`. `.unresolved` (singleton init
+        // race / pre-auth state) and `.resolvedDegraded` (server /
+        // receipt validator returned an error) both suppress.
+        // Otherwise a Pro user with a transient receipt-validator
+        // hiccup gets accused of being over the free plan limit
+        // (the actual bug Jason hit on PR #18 manual test).
+        guard tierResolutionState == .resolvedConfirmed else {
+            return nil
+        }
         var warnings: [String] = []
         if maxDevices >= 0, deviceCount > maxDevices {
             warnings.append("Devices: \(deviceCount)/\(maxDevices)")
@@ -1057,7 +1086,14 @@ internal final class DataRefreshManager {
             warnings.append("Providers: \(activeProviderCount)/\(maxProviders)")
         }
         guard !warnings.isEmpty else { return nil }
-        return "Over \(currentTierName) plan limits — \(warnings.joined(separator: ", ")). Upgrade or reduce usage."
+        // Copy explicitly says "CLI Pulse" + the localized tier name
+        // ("Free", "Pro", "Team"). Pre-fix the lowercase rawValue
+        // produced "Over free plan limits" which read identically to
+        // a Claude/Codex Pro banner from another app — Jason's
+        // account is Claude Pro but NOT CLI Pulse Pro and the
+        // banner gave him no way to tell which app's plan was being
+        // gated.
+        return "Over CLI Pulse \(currentTierName) plan limits — \(warnings.joined(separator: ", ")). Upgrade or reduce usage."
     }
 
     /// "Active providers" for plan-limit gating purposes. Counts distinct
@@ -2292,7 +2328,15 @@ extension AppState {
             providers: providers,
             maxDevices: subscriptionManager.maxDevices,
             maxProviders: subscriptionManager.maxProviders,
-            currentTierName: subscriptionManager.currentTier.rawValue,
+            // Display-form name (localized "Free"/"Pro"/"Team") so
+            // the banner reads "Over CLI Pulse Pro plan limits…"
+            // instead of the lowercase rawValue ("free") that pre-
+            // fix made the banner indistinguishable from a
+            // Claude/Codex Pro provider banner.
+            currentTierName: subscriptionManager.tierName(
+                for: subscriptionManager.currentTier
+            ),
+            tierResolutionState: subscriptionManager.tierResolutionState,
             isLocalMode: isLocalMode
         )
     }

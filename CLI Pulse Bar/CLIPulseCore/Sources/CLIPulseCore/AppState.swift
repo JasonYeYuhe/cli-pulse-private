@@ -620,7 +620,15 @@ public final class AppState: ObservableObject {
             if maxProviders >= 0 {
                 let currentEnabled = providerConfigs.filter(\.isEnabled).count
                 if currentEnabled >= maxProviders {
-                    tierLimitWarning = "Your \(subscriptionManager.currentTier.rawValue) plan allows up to \(maxProviders) providers. Upgrade to enable more."
+                    // Same "CLI Pulse" disambiguation as the periodic
+                    // tier-limit banner — see DataRefreshManager
+                    // .tierLimitWarning. Use the localized display
+                    // name ("Free", "Pro", "Team") rather than the
+                    // lowercase enum rawValue ("free"/"pro"/"team").
+                    let tierLabel = subscriptionManager.tierName(
+                        for: subscriptionManager.currentTier
+                    )
+                    tierLimitWarning = "Your CLI Pulse \(tierLabel) plan allows up to \(maxProviders) providers. Upgrade to enable more."
                     return
                 }
             }

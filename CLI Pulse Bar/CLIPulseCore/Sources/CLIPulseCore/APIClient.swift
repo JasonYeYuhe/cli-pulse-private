@@ -917,12 +917,22 @@ public actor APIClient {
 
     // MARK: - Server Tier
 
-    public func serverTier() async -> String {
+    /// Result type for `serverTier()`. Distinguishes "server returned
+    /// `free`" from "the RPC failed and we don't actually know" so the
+    /// caller can mark its tier resolution state correctly.
+    public struct ServerTierResult: Sendable {
+        public let tier: String
+        public let error: TierRefreshErrorCategory?
+    }
+
+    public func serverTier() async -> ServerTierResult {
         do {
             let response: UserTierPayload = try await rpc("get_user_tier")
-            return response.tier ?? "free"
+            return ServerTierResult(tier: response.tier ?? "free", error: nil)
         } catch {
-            return "free"
+            // We log the type only — never the localized description
+            // (which can include URLs, response bodies, JWT claims).
+            return ServerTierResult(tier: "free", error: .serverTierError)
         }
     }
 
@@ -1458,11 +1468,22 @@ public actor APIClient {
     // MARK: - Receipt Validation
 
     /// Validate a StoreKit 2 JWS signed transaction server-side.
-    /// Returns the verified tier from the server, or nil on failure.
-    public func validateReceipt(transactionJWS: String, productId: String) async -> (verified: Bool, tier: String) {
+    /// Returns whether the server verified the receipt + the tier
+    /// it reported. The optional `error` field carries an internal
+    /// category string when the round-trip failed (network / decode /
+    /// non-2xx response). The caller uses it to distinguish "server
+    /// said this is a free account" (error == nil, verified == false,
+    /// tier == "free") from "we couldn't reach the server" (error != nil).
+    public struct ValidateReceiptResult: Sendable {
+        public let verified: Bool
+        public let tier: String
+        public let error: TierRefreshErrorCategory?
+    }
+
+    public func validateReceipt(transactionJWS: String, productId: String) async -> ValidateReceiptResult {
         do {
             guard let url = URL(string: "\(supabaseURL)/functions/v1/validate-receipt") else {
-                return (false, "free")
+                return ValidateReceiptResult(verified: false, tier: "free", error: .receiptValidatorError)
             }
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
@@ -1472,12 +1493,16 @@ public actor APIClient {
             )
             let (data, response) = try await dataWithRetry(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-                return (false, "free")
+                return ValidateReceiptResult(verified: false, tier: "free", error: .receiptValidatorError)
             }
             let result = try decode(ValidateReceiptResponse.self, from: data)
-            return (result.verified, result.tier ?? "free")
+            return ValidateReceiptResult(
+                verified: result.verified,
+                tier: result.tier ?? "free",
+                error: nil
+            )
         } catch {
-            return (false, "free")
+            return ValidateReceiptResult(verified: false, tier: "free", error: .receiptValidatorError)
         }
     }
 

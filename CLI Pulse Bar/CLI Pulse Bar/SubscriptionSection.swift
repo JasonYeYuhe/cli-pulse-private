@@ -26,6 +26,19 @@ struct SubscriptionSection: View {
                 SubscriptionBadge(tier: subscriptionManager.currentTier)
             }
 
+            // Diagnostic line — only renders when the tier hasn't been
+            // confirmed yet (cold launch race) or the most recent
+            // refresh fell into the degraded path (server / receipt
+            // validator failed). PR #18 follow-up: pre-fix, a Pro user
+            // who hit a transient receipt-validator hiccup got a
+            // confirmed-free verdict + a "free plan limits" banner.
+            // Showing the resolution state here gives the user (and
+            // future debugging) a way to see *why* the badge says what
+            // it says without digging through Xcode logs.
+            if subscriptionManager.tierResolutionState != .resolvedConfirmed {
+                tierResolutionDiagnostic
+            }
+
             HStack {
                 Text(L10n.settings.providers)
                     .font(.system(size: 10))
@@ -106,6 +119,53 @@ struct SubscriptionSection: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(PulseTheme.accent)
             }
+        }
+    }
+
+    /// One-line diagnostic shown when the tier hasn't been confirmed
+    /// (init race) or the last refresh degraded (server / validator
+    /// fail). Stays grey + small so it doesn't compete with the
+    /// SubscriptionBadge above. No PII — just internal category
+    /// strings (`no-api-client`, `server-tier-error`, etc.).
+    @ViewBuilder
+    private var tierResolutionDiagnostic: some View {
+        HStack(spacing: 4) {
+            Image(systemName: subscriptionManager.tierResolutionState == .unresolved
+                  ? "hourglass" : "exclamationmark.triangle")
+                .font(.system(size: 9))
+            Text(tierResolutionDiagnosticText())
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            // User-initiated retry — no automatic AppStore.sync to
+            // avoid surprising store interactions on cold launch.
+            if subscriptionManager.tierResolutionState == .resolvedDegraded {
+                Button {
+                    Task { await subscriptionManager.updateCurrentEntitlements() }
+                } label: {
+                    Text("Retry")
+                        .font(.system(size: 9))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(PulseTheme.accent)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+
+    private func tierResolutionDiagnosticText() -> String {
+        switch subscriptionManager.tierResolutionState {
+        case .unresolved:
+            return "Tier check in progress…"
+        case .resolvedDegraded:
+            let category = subscriptionManager.lastTierRefreshError?.rawValue ?? "unknown"
+            return "Tier check incomplete (\(category)). Showing best-effort plan."
+        case .resolvedConfirmed:
+            return ""
         }
     }
 
