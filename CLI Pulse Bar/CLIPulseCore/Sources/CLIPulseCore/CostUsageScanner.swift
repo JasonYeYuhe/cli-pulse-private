@@ -527,14 +527,17 @@ public enum CostUsageScanner {
             "claude-opus-4-5": .init(inputCostPerToken: 5e-6, outputCostPerToken: 2.5e-5, cacheCreationCostPerToken: 6.25e-6, cacheReadCostPerToken: 5e-7, thresholdTokens: nil, inputAbove: nil, outputAbove: nil, cacheCreationAbove: nil, cacheReadAbove: nil),
             "claude-opus-4-6-20260205": .init(inputCostPerToken: 5e-6, outputCostPerToken: 2.5e-5, cacheCreationCostPerToken: 6.25e-6, cacheReadCostPerToken: 5e-7, thresholdTokens: nil, inputAbove: nil, outputAbove: nil, cacheCreationAbove: nil, cacheReadAbove: nil),
             "claude-opus-4-6": .init(inputCostPerToken: 5e-6, outputCostPerToken: 2.5e-5, cacheCreationCostPerToken: 6.25e-6, cacheReadCostPerToken: 5e-7, thresholdTokens: nil, inputAbove: nil, outputAbove: nil, cacheCreationAbove: nil, cacheReadAbove: nil),
-            // Opus 4.7 — Anthropic kept the headline rate identical to 4.6:
-            // $5 input / $25 output / $0.50 cache_read (10% of input) / $6.25
-            // cache_create (1.25× input). Source: Anthropic API pricing docs +
-            // multiple independent third-party trackers, April 2026.
-            // Without these entries every Opus 4.7 assistant event was
-            // contributing $0 to the Today/Week cost totals — all current
-            // Claude Code (Max 20x) traffic uses opus-4-7, so the user's
-            // card showed `<$0.01` despite hundreds of M cache_read tokens.
+            // Opus 4.7 — official Anthropic pricing
+            // (https://platform.claude.com/docs/en/about-claude/pricing,
+            // checked May 2026): $5 / 1M input, $25 / 1M output, $0.50 /
+            // 1M cache_read (10% of input), $6.25 / 1M cache_create
+            // (1.25× input — Anthropic's standard 5-minute cache write
+            // multiplier). Headline rate is unchanged from Opus 4.6.
+            // Without this entry every Opus 4.7 assistant event was
+            // contributing $0 to the Today/Week cost totals — current
+            // Claude Code (Max 20x) traffic is ~100% opus-4-7, so the
+            // user's card showed `<$0.01` despite hundreds of M
+            // cache_read tokens flowing through the same scanner.
             "claude-opus-4-7": .init(inputCostPerToken: 5e-6, outputCostPerToken: 2.5e-5, cacheCreationCostPerToken: 6.25e-6, cacheReadCostPerToken: 5e-7, thresholdTokens: nil, inputAbove: nil, outputAbove: nil, cacheCreationAbove: nil, cacheReadAbove: nil),
             "claude-sonnet-4-5": .init(inputCostPerToken: 3e-6, outputCostPerToken: 1.5e-5, cacheCreationCostPerToken: 3.75e-6, cacheReadCostPerToken: 3e-7, thresholdTokens: 200_000, inputAbove: 6e-6, outputAbove: 2.25e-5, cacheCreationAbove: 7.5e-6, cacheReadAbove: 6e-7),
             "claude-sonnet-4-5-20250929": .init(inputCostPerToken: 3e-6, outputCostPerToken: 1.5e-5, cacheCreationCostPerToken: 3.75e-6, cacheReadCostPerToken: 3e-7, thresholdTokens: 200_000, inputAbove: 6e-6, outputAbove: 2.25e-5, cacheCreationAbove: 7.5e-6, cacheReadAbove: 6e-7),

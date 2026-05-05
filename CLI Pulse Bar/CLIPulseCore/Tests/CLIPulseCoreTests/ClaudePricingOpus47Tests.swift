@@ -13,9 +13,17 @@ import XCTest
 /// path returned `nil` → `costNanos = 0` → the "Today" sum was
 /// trivially 0.
 ///
-/// These tests pin three guarantees:
+/// Pricing source for the values asserted below: Anthropic's
+/// official API pricing page
+/// (https://platform.claude.com/docs/en/about-claude/pricing).
+/// Opus 4.7 published rate is $5 / 1M input, $25 / 1M output,
+/// $0.50 / 1M cache_read (10% of input), $6.25 / 1M cache_create
+/// (1.25× input — Anthropic's standard 5-minute cache write
+/// multiplier). Headline rate is unchanged from Opus 4.6.
+///
+/// These tests pin four guarantees:
 ///  1. `claude-opus-4-7` round-trips through the explicit dictionary
-///     entry with the published $5/$25/$0.50/$6.25 rate card.
+///     entry with the official $5/$25/$0.50/$6.25 rate card.
 ///  2. A future `claude-(opus|sonnet|haiku)-N-X` whose exact key
 ///     hasn't been added yet falls back to the highest-numbered
 ///     priced sibling in the same family — never $0.
@@ -29,12 +37,15 @@ final class ClaudePricingOpus47Tests: XCTestCase {
 
     // MARK: - 1. Explicit Opus 4.7 entry
 
-    func testOpus47_inputOutputCacheCostsMatchPublishedRateCard() {
-        // 1,000,000 input @ $5/M  → $5
-        // 1,000,000 output @ $25/M → $25
-        // 1,000,000 cache_read @ $0.50/M → $0.50
-        // 1,000,000 cache_create @ $6.25/M → $6.25
-        // Total: $36.75
+    func testOpus47_inputOutputCacheCostsMatchOfficialAnthropicRateCard() {
+        // Per https://platform.claude.com/docs/en/about-claude/pricing
+        // (Opus 4.7 row, May 2026):
+        //   1,000,000 input        @ $5/M    → $5.00
+        //   1,000,000 output       @ $25/M   → $25.00
+        //   1,000,000 cache_read   @ $0.50/M → $0.50
+        //   1,000,000 cache_create @ $6.25/M → $6.25
+        //   ──────────────────────────────────────────
+        //                                       $36.75
         let cost = CostUsageScanner.Pricing.claudeCostUSD(
             model: "claude-opus-4-7",
             inputTokens: 1_000_000,
@@ -47,8 +58,8 @@ final class ClaudePricingOpus47Tests: XCTestCase {
     }
 
     func testOpus47_priceMatchesOpus46Exactly() {
-        // Anthropic published Opus 4.7 with the same headline rate as
-        // Opus 4.6 (April 2026 announcement). Lock that invariant in
+        // Anthropic's official pricing page lists Opus 4.7 at the same
+        // headline rate as Opus 4.6 (May 2026). Lock that invariant in
         // so a future edit to one entry doesn't drift the other.
         let bundle = (
             input: 1_234_567,
