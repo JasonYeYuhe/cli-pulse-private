@@ -158,6 +158,75 @@ extension AppState {
         return true
     }
 
+    /// Same predicate framed for the "is starting a new local
+    /// managed session viable right now?" question — used by the
+    /// Open button to decide whether to render. Doesn't require a
+    /// target device id because the start path implicitly targets
+    /// THIS Mac.
+    public var canStartLocalManagedSession: Bool {
+        guard let mine = selfDeviceId, !mine.isEmpty else { return false }
+        return localHelperReachable && localControlEnabled
+    }
+
+    /// **The fix for the integration gap Codex flagged on PR #17**:
+    /// merge `remoteSessions` (Supabase-backed) with `localManagedSessions`
+    /// (UDS-backed) into one list the macOS UI renders directly, so
+    /// helper-owned sessions show up immediately even when:
+    ///   * Remote Control is OFF (which clears `remoteSessions`)
+    ///   * Supabase registration / list freshness is delayed
+    ///   * The helper is reachable but has never bounced through
+    ///     `register_session` (e.g. between spawn and the first
+    ///     successful Supabase round-trip)
+    ///
+    /// Dedupe by session id. When a session id appears in BOTH lists
+    /// we prefer the remote row because it carries richer metadata
+    /// (`device_name`, `created_at`, `last_event_at`, `cwd_hmac`)
+    /// the local snapshot doesn't. The local-only rows are
+    /// synthesised into the same `RemoteSession` shape the UI
+    /// already consumes — `device_id` set to `selfDeviceId` so
+    /// row-level routing decisions correctly pick the local path.
+    @MainActor
+    public var displayedManagedSessions: [RemoteSession] {
+        let remote = remoteSessions
+        let remoteIds = Set(remote.map(\.id))
+        let synthesised = localManagedSessions
+            .filter { !remoteIds.contains($0.id) }
+            .map { synthesiseRemoteSession(from: $0) }
+        // Sort: most recent local-managed rows first, then remote
+        // rows in their existing order (which is server-side
+        // ordered by created_at desc).
+        return synthesised + remote
+    }
+
+    /// Synthesise a `RemoteSession` row from a local-only managed
+    /// `SessionControlSummary`. Fills `device_id` with this Mac's
+    /// helper id so row-level routing (`shouldUseLocalSessionControl
+    /// (forDeviceId:)`) correctly picks the local UDS path.
+    /// Other fields (`device_name`, `cwd_basename`, `cwd_hmac`,
+    /// `client_label`, `created_at`, `last_event_at`) get safe
+    /// defaults — once the helper's `register_session` RPC catches
+    /// up, the dedupe step replaces this synthesised row with the
+    /// real Supabase one.
+    private func synthesiseRemoteSession(
+        from summary: SessionControlSummary
+    ) -> RemoteSession {
+        RemoteSession(
+            id: summary.id,
+            device_id: selfDeviceId ?? "",
+            device_name: HelperConfig.load()?.deviceName,
+            provider: summary.provider.lowercased() == "claude" ? "claude" : summary.provider,
+            cwd_basename: "",
+            cwd_hmac: nil,
+            status: summary.status,
+            client_label: summary.clientLabel,
+            // Use ISO8601 of "now" so the row sorts as freshest;
+            // again, dedupe replaces this with the real value
+            // once Supabase catches up.
+            created_at: ISO8601DateFormatter().string(from: Date()),
+            last_event_at: nil
+        )
+    }
+
     /// Try to start a Claude session via the local UDS fast path.
     /// Returns the new session id on success, or nil on any failure
     /// (the caller should fall back to the remote path).

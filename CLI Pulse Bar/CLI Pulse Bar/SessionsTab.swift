@@ -77,7 +77,14 @@ struct SessionsTab: View {
             Text("Managed Claude sessions")
                 .font(.system(size: 14, weight: .bold))
             Spacer()
-            if state.remoteControlEnabled {
+            // Codex review on PR #17: the Open button used to be
+            // gated solely on `remoteControlEnabled`, which hid it
+            // when Remote Control was off even if the local fast
+            // path was viable. Show it when EITHER path is
+            // available; the start router picks the right one.
+            let canStartRemote = state.remoteControlEnabled && targetDeviceForStart != nil
+            let canStartLocal = state.canStartLocalManagedSession
+            if canStartRemote || canStartLocal {
                 Button {
                     Task { await openManagedClaudeSession() }
                 } label: {
@@ -86,34 +93,47 @@ struct SessionsTab: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(targetDeviceForStart == nil)
-                .help(targetDeviceForStart == nil
-                      ? "No paired Mac with the helper installed and online."
-                      : "Spawns a new Claude Code session on \(targetDeviceForStart?.name ?? "your Mac").")
+                .help(openManagedHelpText(localAvailable: canStartLocal,
+                                          remoteAvailable: canStartRemote))
             }
         }
+    }
+
+    private func openManagedHelpText(localAvailable: Bool, remoteAvailable: Bool) -> String {
+        if localAvailable {
+            return "Spawns a new Claude Code session on this Mac via the local helper (UDS, no Supabase round-trip)."
+        }
+        if remoteAvailable, let device = targetDeviceForStart {
+            return "Spawns a new Claude Code session on \(device.name) via Supabase."
+        }
+        return ""
     }
 
     @ViewBuilder
     private var managedBody: some View {
         // Local same-Mac control is INDEPENDENT from `remoteControlEnabled`.
-        // The cloud Remote Control consent gates the Supabase RPCs only;
-        // the helper UDS path runs on its own `localControlEnabled` toggle.
-        // Codex review on PR #15 caught this — the previous shape blocked
-        // local actions whenever Remote Control was off, conflating two
-        // distinct consent decisions.
-        let localPathAvailable = state.shouldUseLocalSessionControl(
-            forDeviceId: targetDeviceForStart?.id
-        )
+        // Codex reviews on PR #15 + #17 caught two distinct shapes of this
+        // bug: (a) blocking the Open button on `remoteControlEnabled`,
+        // (b) rendering rows from `remoteSessions` only — which
+        // `refreshRemoteSessions` clears when Remote Control is off.
+        //
+        // The fix: build the primary list off
+        // `state.displayedManagedSessions`, which merges remote rows
+        // with locally-known managed rows (deduped by id). Helper-
+        // owned same-Mac sessions render even when Remote Control is
+        // off, and row actions route per `session.device_id`.
+        let localStartAvailable = state.canStartLocalManagedSession
+        let remoteUsable = state.remoteControlEnabled
+        let displayed = state.displayedManagedSessions
 
-        if !state.remoteControlEnabled && !localPathAvailable {
+        if !remoteUsable && !localStartAvailable && displayed.isEmpty {
             inlineHint(
                 icon: "lock.shield",
                 text: "Remote Control is disabled. Turn it on in Settings → Privacy, or enable Local fast path below to drive a Claude session through the local helper."
             )
-            // Even with Remote Control off, expose the local toggle row
-            // when the helper is reachable so the user can opt in
-            // without flipping unrelated cloud consent.
+            // Expose the local toggle row when the helper is
+            // reachable so the user can opt in without flipping
+            // unrelated cloud consent.
             if state.localHelperReachable && state.isSelfDevice(targetDeviceForStart?.id) {
                 localFastPathToggle
             } else if shouldShowHelperNotRunningBanner {
@@ -128,16 +148,17 @@ struct SessionsTab: View {
             if let err = state.remoteSessionsError {
                 errorHint(err)
             }
-            if state.remoteSessions.isEmpty {
+            if displayed.isEmpty {
                 inlineHint(
                     icon: "terminal.fill",
-                    text: targetDeviceForStart == nil
-                          ? "No paired Mac with the helper installed. Install the helper to open a managed session."
-                          : "No managed sessions yet. Click \"Open managed Claude session\" to spawn one."
+                    text: emptyStateText(
+                        localStartAvailable: localStartAvailable,
+                        remoteUsable: remoteUsable
+                    )
                 )
             } else {
                 VStack(spacing: 8) {
-                    ForEach(state.remoteSessions) { session in
+                    ForEach(displayed) { session in
                         ManagedSessionRow(
                             session: session,
                             isSelected: selectedManagedSessionId == session.id,
@@ -153,13 +174,15 @@ struct SessionsTab: View {
                     }
                 }
             }
-            // Phase 3 Iter 2A: detected same-Mac sessions the helper
-            // saw via `_detect_provider` (PR #14). Read-only — the
-            // helper does NOT own these PTYs, so we explicitly
-            // surface them as non-controllable rather than offering
-            // action buttons that would silently fail.
             detectedLocalSessionsSection
         }
+    }
+
+    private func emptyStateText(localStartAvailable: Bool, remoteUsable: Bool) -> String {
+        if localStartAvailable || (remoteUsable && targetDeviceForStart != nil) {
+            return "No managed sessions yet. Click \"Open managed Claude session\" to spawn one."
+        }
+        return "No paired Mac with the helper installed. Install the helper to open a managed session."
     }
 
     @ViewBuilder
@@ -350,17 +373,32 @@ struct SessionsTab: View {
         // makes the round-trip work without any helper.
         let isRunning = session.status.caseInsensitiveCompare("running") == .orderedSame
         let isPending = session.status.caseInsensitiveCompare("pending") == .orderedSame
+        // Capability gate (Codex review on PR #17): when this row
+        // routes through the local UDS path AND the helper says it
+        // can't accept stdin (`send_input: false`), DISABLE the
+        // prompt input rather than silently falling back to the
+        // Supabase queue. A silent fallback would let an old helper
+        // that doesn't support send_input quietly reroute typed
+        // text to the cloud, defeating both the user's "local fast
+        // path" expectation and the Codex review's posture that
+        // capabilities must be honoured.
+        let routesLocally = state.shouldUseLocalSessionControl(forDeviceId: session.device_id)
+        let localSendUnsupported = routesLocally && (state.localCapabilities?.sendInput == false)
+        let promptDisabled = !isRunning || localSendUnsupported
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 TextField(
-                    isRunning ? "Prompt for Claude…" : "Waiting for helper to start session…",
+                    promptPlaceholder(
+                        isRunning: isRunning,
+                        localSendUnsupported: localSendUnsupported
+                    ),
                     text: $promptText
                 )
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 11, design: .monospaced))
-                .disabled(!isRunning)
+                .disabled(promptDisabled)
                 .onSubmit {
-                    guard isRunning else { return }
+                    guard !promptDisabled else { return }
                     Task { await sendPrompt(for: session) }
                 }
                 // No `.keyboardShortcut(.return, modifiers: [])` here on
@@ -377,7 +415,7 @@ struct SessionsTab: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(!isRunning || promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(promptDisabled || promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button(canApprove ? "Approve pending" : (pending != nil ? "Approve (high-risk)" : "Approve")) {
                     Task { await approveMatchingPending(for: session) }
                 }
@@ -573,20 +611,35 @@ struct SessionsTab: View {
     private func sendPrompt(for session: RemoteSession) async {
         let text = promptText
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        // Phase 3 Iter 2A routing + capability gate: prefer the local
-        // UDS path when the helper supports `send_input` AND owns the
-        // session's PTY (same-Mac + local enabled + reachable). Fall
-        // back to the Supabase command queue for cross-device control
-        // and for any case where the local path isn't ready.
-        let useLocal = state.shouldUseLocalSessionControl(forDeviceId: session.device_id)
-            && (state.localCapabilities?.sendInput ?? false)
+        // Phase 3 routing decision (Codex-reviewed):
+        //   * Row routes locally (same-Mac + local enabled + reachable):
+        //     - Helper says `send_input: true` → UDS send.
+        //     - Helper says `send_input: false` → DO NOT silently
+        //       fall back to Supabase. The capability gate above
+        //       already disabled the input, so this branch is
+        //       defensive — drop the send rather than route via a
+        //       transport the user didn't opt into.
+        //   * Row routes remotely → Supabase prompt RPC.
+        let routesLocally = state.shouldUseLocalSessionControl(forDeviceId: session.device_id)
         let ok: Bool
-        if useLocal {
+        if routesLocally {
+            guard state.localCapabilities?.sendInput == true else {
+                // No silent cloud fallback for local-routed rows.
+                return
+            }
             ok = await state.sendLocalSessionInput(sessionId: session.id, payload: text)
         } else {
             ok = await state.sendRemoteSessionPrompt(sessionId: session.id, text: text)
         }
         if ok { promptText = "" }
+    }
+
+    private func promptPlaceholder(isRunning: Bool, localSendUnsupported: Bool) -> String {
+        if !isRunning { return "Waiting for helper to start session…" }
+        if localSendUnsupported {
+            return "This local helper doesn't support send_input — update the helper to type prompts."
+        }
+        return "Prompt for Claude…"
     }
 
     private func approveMatchingPending(for session: RemoteSession) async {
@@ -623,26 +676,33 @@ struct SessionsTab: View {
     }
 
     private func openManagedClaudeSession() async {
-        guard let device = targetDeviceForStart else { return }
-        // Phase 3 Iter 1: when the target Mac is THIS Mac and the
-        // user has opted into local control AND the helper UDS is
-        // reachable, take the fast path. Anything else falls back
-        // to the existing Supabase route so iOS / iPad / Watch and
-        // cross-device Mac control continue to work unchanged.
+        // Decision tree (Codex-reviewed):
+        //   1. Same-Mac + local fast path available → UDS start.
+        //      Works even when Remote Control is OFF (local consent
+        //      is independent from cloud consent).
+        //   2. Otherwise, if a remote target exists AND Remote Control
+        //      is on → Supabase start.
+        //   3. Otherwise: nothing to do (the Open button shouldn't
+        //      have been visible).
         let newSessionId: String?
-        if state.isSelfDevice(device.id),
-           state.localControlEnabled,
-           state.localHelperReachable {
+        if state.canStartLocalManagedSession,
+           targetDeviceForStart.map({ state.isSelfDevice($0.id) }) ?? true {
+            // Local start path: implicitly targets THIS Mac.
+            let label = targetDeviceForStart?.name
+                ?? HelperConfig.load()?.deviceName
+                ?? "this Mac"
             newSessionId = await state.requestLocalClaudeSessionStart(
-                clientLabel: device.name
+                clientLabel: label
             )
-        } else {
+        } else if state.remoteControlEnabled, let device = targetDeviceForStart {
             newSessionId = await state.requestRemoteClaudeSessionStart(
                 deviceId: device.id,
                 cwdBasename: "",
                 cwdHmac: nil,
                 clientLabel: device.name
             )
+        } else {
+            newSessionId = nil
         }
         if let id = newSessionId {
             selectedManagedSessionId = id
