@@ -90,8 +90,10 @@ struct SessionsTab: View {
                 Button {
                     Task { await openManagedClaudeSession() }
                 } label: {
-                    Label("Open managed Claude session", systemImage: "plus.circle.fill")
+                    Label(canStartLocal ? "New local Claude" : "New Claude session",
+                          systemImage: "plus.circle.fill")
                         .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
@@ -200,6 +202,9 @@ struct SessionsTab: View {
                             session: session,
                             isSelected: selectedManagedSessionId == session.id,
                             pendingApproval: pendingApproval(for: session),
+                            routesLocally: state.shouldUseLocalSessionControl(
+                                forDeviceId: session.device_id
+                            ),
                             onSelect: {
                                 selectedManagedSessionId = (selectedManagedSessionId == session.id)
                                     ? nil : session.id
@@ -787,9 +792,13 @@ struct SessionsTab: View {
         if state.canStartLocalManagedSession,
            targetDeviceForStart.map({ state.isSelfDevice($0.id) }) ?? true {
             // Local start path: implicitly targets THIS Mac.
-            let label = targetDeviceForStart?.name
-                ?? HelperConfig.load()?.deviceName
-                ?? "this Mac"
+            // Codex review: do NOT set client_label to the device
+            // name (the row already renders device name as a
+            // secondary column — duplicating it produced the
+            // "CLI Pulse Helper · CLI Pulse Helper" UX wart).
+            // Use a label that describes what the session IS,
+            // not where it lives.
+            let label = "Local Claude session"
             newSessionId = await state.requestLocalClaudeSessionStart(
                 clientLabel: label
             )
@@ -922,7 +931,36 @@ private struct ManagedSessionRow: View {
     let session: RemoteSession
     let isSelected: Bool
     let pendingApproval: RemotePermissionRequest?
+    /// True when the row's actions (prompt/stop) route through the
+    /// local UDS path rather than Supabase. Drives the "Local"
+    /// badge so the user can see at a glance which transport they
+    /// will hit. (Codex review on PR #17 manual verification.)
+    let routesLocally: Bool
     let onSelect: () -> Void
+
+    /// Display label, with the duplicate-name workaround for
+    /// helper-spawned sessions whose `client_label` and
+    /// `device_name` are both "CLI Pulse Helper". Codex flagged
+    /// the previous "CLI Pulse Helper · CLI Pulse Helper" rendering
+    /// as confusing.
+    private var displayLabel: String {
+        let label = session.client_label?.trimmingCharacters(in: .whitespaces) ?? ""
+        let device = session.device_name?.trimmingCharacters(in: .whitespaces) ?? ""
+        if label.isEmpty { return "Claude session" }
+        // If label and device are the same string, the second column
+        // would just repeat — collapse to a single line.
+        if !device.isEmpty && label.caseInsensitiveCompare(device) == .orderedSame {
+            return "Claude on \(device)"
+        }
+        return label
+    }
+
+    private var showSecondaryDevice: Bool {
+        let label = session.client_label?.trimmingCharacters(in: .whitespaces) ?? ""
+        let device = session.device_name?.trimmingCharacters(in: .whitespaces) ?? ""
+        guard !device.isEmpty else { return false }
+        return label.caseInsensitiveCompare(device) != .orderedSame
+    }
 
     var body: some View {
         Button(action: onSelect) {
@@ -932,12 +970,20 @@ private struct ManagedSessionRow: View {
                     .foregroundStyle(PulseTheme.providerColor("Claude"))
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text(session.client_label ?? "Claude session")
+                        Text(displayLabel)
                             .font(.system(size: 11, weight: .semibold))
                             .lineLimit(1)
-                        if let device = session.device_name, !device.isEmpty {
+                        if showSecondaryDevice, let device = session.device_name {
                             Text("·").foregroundStyle(.tertiary).font(.system(size: 11))
                             Text(device).font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                        // Transport badge — at-a-glance which path
+                        // row actions use. Removes the "I don't
+                        // know which row is local-controllable"
+                        // confusion Codex flagged.
+                        if routesLocally {
+                            transportBadge(text: "Local", color: .green)
+                                .help("Prompt and Stop on this row use the local UDS fast path (helper-owned PTY).")
                         }
                     }
                     HStack(spacing: 6) {
@@ -948,6 +994,14 @@ private struct ManagedSessionRow: View {
                             Text("· pending approval")
                                 .font(.system(size: 9, weight: .semibold))
                                 .foregroundStyle(.orange)
+                        }
+                        // Affordance hint so the chevron isn't the
+                        // only indication that a row expands into
+                        // controls.
+                        if !isSelected {
+                            Text("· tap to control")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.tertiary)
                         }
                     }
                 }
@@ -961,6 +1015,17 @@ private struct ManagedSessionRow: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func transportBadge(text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(color.opacity(0.15))
+            .clipShape(Capsule())
     }
 
     private var statusColor: Color {

@@ -1752,7 +1752,27 @@ extension AppState {
     private func refreshCostForecast() async {
         let usage = await api.fetchDailyUsage(days: 30)
         dailyUsage = usage
-        costForecast = CostForecastEngine.forecast(from: usage)
+        // Codex review on PR #17 manual verify: Forecast was
+        // showing ~$8.6 spent so far / ~$37.4 month-end while
+        // Today's actual cost was hundreds of dollars (the
+        // accurate one shipped with PR #16's pricing fix).
+        // Cause: `daily_usage_metrics` server table missed
+        // recent rows due to a separate `[syncDailyUsage] failed:
+        // HTTP 403` issue. Feed the local cost scan (which has
+        // accurate per-day cost from `~/.claude/projects` JSONL)
+        // into the engine as an override so the forecast heals
+        // even when the server is stale.
+        var localOverrides: [String: Double] = [:]
+        if let scan = costUsageScanResult {
+            for entry in scan.entries {
+                guard let cost = entry.costUSD else { continue }
+                localOverrides[entry.date, default: 0] += cost
+            }
+        }
+        costForecast = CostForecastEngine.forecast(
+            from: usage,
+            localOverrides: localOverrides
+        )
     }
 
     /// Pull last 90 days of daily yield rollups so the UI can re-aggregate
