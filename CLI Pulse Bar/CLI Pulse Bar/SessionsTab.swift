@@ -10,6 +10,10 @@ struct SessionsTab: View {
     /// but rendering the tail is a privacy-visible choice the user
     /// has to make per detail view.
     @State private var showOutput: Bool = false
+    /// Codex review on PR #17: surfacing local helper diagnostics in
+    /// the UI so users (and Codex on review) can see resolved
+    /// socket / token paths without opening Xcode logs.
+    @State private var showLocalDiagnostics: Bool = false
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
@@ -47,7 +51,8 @@ struct SessionsTab: View {
             while !Task.isCancelled {
                 async let _sessions: () = state.refreshRemoteSessions()
                 async let _approvals: () = state.refreshRemoteApprovals()
-                _ = await (_sessions, _approvals)
+                async let _local: () = state.refreshLocalSessionControlState()
+                _ = await (_sessions, _approvals, _local)
                 if showOutput, let sid = selectedManagedSessionId {
                     await state.refreshRemoteSessionEvents(sessionId: sid)
                 }
@@ -75,61 +80,133 @@ struct SessionsTab: View {
         HStack {
             Text("Managed Claude sessions")
                 .font(.system(size: 14, weight: .bold))
+            // Status pill so the user sees local state without
+            // having to read logs (Codex review on PR #17).
+            localFastPathStatusPill
             Spacer()
-            if state.remoteControlEnabled {
+            let canStartRemote = state.remoteControlEnabled && targetDeviceForStart != nil
+            let canStartLocal = state.canStartLocalManagedSession
+            if canStartRemote || canStartLocal {
                 Button {
                     Task { await openManagedClaudeSession() }
                 } label: {
-                    Label("Open managed Claude session", systemImage: "plus.circle.fill")
+                    // Codex review: "New local Clau..." was still
+                    // truncating at `.small` width. Shortened to
+                    // "New Local" / "New" — both fit cleanly and the
+                    // `.help(...)` tooltip carries the full meaning.
+                    Label(canStartLocal ? "New Local" : "New",
+                          systemImage: "plus.circle.fill")
                         .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(targetDeviceForStart == nil)
-                .help(targetDeviceForStart == nil
-                      ? "No paired Mac with the helper installed and online."
-                      : "Spawns a new Claude Code session on \(targetDeviceForStart?.name ?? "your Mac").")
+                .help(openManagedHelpText(localAvailable: canStartLocal,
+                                          remoteAvailable: canStartRemote))
             }
         }
     }
 
     @ViewBuilder
+    private var localFastPathStatusPill: some View {
+        if localUIAvailable {
+            let (text, color, systemImage) = localFastPathStatus()
+            HStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 9))
+                Text(text)
+                    .font(.system(size: 9, weight: .medium))
+            }
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.12))
+            .clipShape(Capsule())
+            .help("Local fast path = same-Mac session control over the helper UDS socket. Independent from cloud Remote Control.")
+        }
+    }
+
+    private func localFastPathStatus() -> (text: String, color: Color, systemImage: String) {
+        if !state.localHelperReachable {
+            return ("local: helper not running", .gray, "bolt.slash")
+        }
+        if state.localHelperError != nil {
+            return ("local: error", .orange, "exclamationmark.triangle")
+        }
+        if state.localControlEnabled {
+            return ("local: active", .green, "bolt.fill")
+        }
+        return ("local: off", .secondary, "bolt")
+    }
+
+    private func openManagedHelpText(localAvailable: Bool, remoteAvailable: Bool) -> String {
+        if localAvailable {
+            return "Spawns a new Claude Code session on this Mac via the local helper (UDS, no Supabase round-trip)."
+        }
+        if remoteAvailable, let device = targetDeviceForStart {
+            return "Spawns a new Claude Code session on \(device.name) via Supabase."
+        }
+        return ""
+    }
+
+    @ViewBuilder
     private var managedBody: some View {
-        if !state.remoteControlEnabled {
+        // State surfaces (Codex review on PR #17 — manual verification
+        // failed because the local UI surfaces never appeared). Render
+        // EVERY local-control state explicitly so the user never has
+        // to read Xcode logs to know what's going on:
+        //
+        //   1. selfDeviceId == nil          → defer to existing remote
+        //                                     hints (helper not paired)
+        //   2. !localHelperReachable        → "Helper not running" banner
+        //                                     [Open Helper Setup, no auto-spawn]
+        //   3. localHelperReachable
+        //        + localHelperError != nil  → "Local helper reachable
+        //                                     but failing: <error>" + diagnose
+        //   4. localHelperReachable + gate off → toggle row prompting opt-in
+        //   5. localHelperReachable + gate on  → toggle row (active) + active list
+        //
+        // Plus per-Codex: local UI is INDEPENDENT from `targetDevice
+        // ForStart` — the local transport implicitly targets THIS Mac.
+        let displayed = state.displayedManagedSessions
+        let localStartAvailable = state.canStartLocalManagedSession
+        let remoteUsable = state.remoteControlEnabled
+
+        if localUIAvailable {
+            if !state.localHelperReachable {
+                helperNotRunningBanner
+            } else if let err = state.localHelperError {
+                localHelperErrorBanner(message: err)
+            } else {
+                localFastPathToggle
+            }
+        }
+
+        if !remoteUsable && !localStartAvailable && displayed.isEmpty {
             inlineHint(
                 icon: "lock.shield",
-                text: "Remote Control is disabled. Turn it on in Settings → Privacy to drive a Claude session from this app."
+                text: "Remote Control is disabled. Turn it on in Settings → Privacy, or start the local helper to drive a Claude session through the local fast path."
             )
         } else {
-            // Error banner FIRST when RC is on — render regardless of
-            // whether `remoteSessions` is empty or populated.
-            //
-            // The earlier shape only rendered this banner inside the
-            // `else { ForEach... }` branch, so a failed
-            // `remote_app_list_sessions` (the prod-without-placeholder-
-            // migration case is the obvious one — 404; transient
-            // network blips are another) silently kept the user on the
-            // identical "No managed sessions yet" empty state. Lifting
-            // the banner out of the non-empty branch makes the
-            // failure visible without removing the empty hint when
-            // there genuinely are no sessions yet.
             if let err = state.remoteSessionsError {
                 errorHint(err)
             }
-            if state.remoteSessions.isEmpty {
+            if displayed.isEmpty {
                 inlineHint(
                     icon: "terminal.fill",
-                    text: targetDeviceForStart == nil
-                          ? "No paired Mac with the helper installed. Install the helper to open a managed session."
-                          : "No managed sessions yet. Click \"Open managed Claude session\" to spawn one."
+                    text: emptyStateText(
+                        localStartAvailable: localStartAvailable,
+                        remoteUsable: remoteUsable
+                    )
                 )
             } else {
                 VStack(spacing: 8) {
-                    ForEach(state.remoteSessions) { session in
+                    ForEach(displayed) { session in
                         ManagedSessionRow(
                             session: session,
                             isSelected: selectedManagedSessionId == session.id,
                             pendingApproval: pendingApproval(for: session),
+                            routesLocally: state.shouldRouteSessionLocally(session),
                             onSelect: {
                                 selectedManagedSessionId = (selectedManagedSessionId == session.id)
                                     ? nil : session.id
@@ -141,7 +218,134 @@ struct SessionsTab: View {
                     }
                 }
             }
+            detectedLocalSessionsSection
         }
+    }
+
+    private func localHelperErrorBanner(message: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Local helper reachable but failing")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(message)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                Spacer()
+                Button("Diagnose") { showLocalDiagnostics.toggle() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            if showLocalDiagnostics, let diag = state.localDiagnostics {
+                localDiagnosticsPanel(diag)
+            }
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    @ViewBuilder
+    private func localDiagnosticsPanel(_ diag: LocalSessionControlClient.Diagnostics) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Divider().padding(.vertical, 2)
+            diagnosticRow(label: "Resolved socket path", value: diag.resolvedSocketPath)
+            diagnosticRow(label: "Socket exists",       value: diag.socketExists ? "yes" : "no")
+            diagnosticRow(label: "Resolved token path", value: diag.resolvedTokenPath)
+            diagnosticRow(label: "Token exists",        value: diag.tokenExists ? "yes" : "no")
+            diagnosticRow(label: "Token readable",      value: diag.tokenReadable ? "yes" : "no")
+            diagnosticRow(label: "App-group container", value: diag.appGroupContainerPath ?? "<nil>")
+            diagnosticRow(label: "NSHomeDirectory",     value: diag.nsHomeDirectory)
+            Text("If \"Socket exists\" is no but the helper terminal log shows it bound to that exact path, the sandboxed app and unsandboxed helper are seeing different inodes — usually a firmlink / app-group container mismatch. Share this snapshot when reporting.")
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+        }
+    }
+
+    private func diagnosticRow(label: String, value: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(label + ":")
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .frame(width: 150, alignment: .leading)
+            Text(value)
+                .font(.system(size: 9, design: .monospaced))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func emptyStateText(localStartAvailable: Bool, remoteUsable: Bool) -> String {
+        if localStartAvailable || (remoteUsable && targetDeviceForStart != nil) {
+            return "No managed sessions yet. Click \"Open managed Claude session\" to spawn one."
+        }
+        return "No paired Mac with the helper installed. Install the helper to open a managed session."
+    }
+
+    @ViewBuilder
+    private var detectedLocalSessionsSection: some View {
+        let detected = state.localDetectedSessions
+        if !detected.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Divider().padding(.vertical, 2)
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass.circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                    Text("Detected on this Mac · read-only")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(detected.count)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+                ForEach(detected, id: \.id) { row in
+                    detectedSessionRow(row)
+                }
+                Text("These Claude sessions are running on this Mac but were not started by CLI Pulse, so the helper can't safely send input or stop them. Use them in the originating terminal instead.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 2)
+            }
+        }
+    }
+
+    private func detectedSessionRow(_ row: SessionControlSummary) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "terminal")
+                .font(.system(size: 11))
+                .foregroundStyle(PulseTheme.providerColor(row.provider))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.clientLabel ?? "Claude session")
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+                Text(row.status)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("read-only")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.secondary.opacity(0.10))
+                .clipShape(Capsule())
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     private func errorHint(_ message: String) -> some View {
@@ -265,57 +469,69 @@ struct SessionsTab: View {
         let pending = pendingApproval(for: session)
         let isHighRisk = pending.flatMap { RemotePermissionRisk(rawValue: $0.risk) } == .high
         let canApprove = pending != nil && !isHighRisk
-        // v0.41 UX: a managed session sits at status='pending' until
-        // the helper consumes its 'start' command. While pending, the
-        // PTY does not exist yet, so prompt input, Send, and live
-        // output tail can't do anything. Gate those affordances on
-        // the running state and relabel Stop → Cancel so the user
-        // sees an actionable control instead of an immortal queued
-        // command. v0.41's `remote_app_send_command` cancel branch
-        // makes the round-trip work without any helper.
         let isRunning = session.status.caseInsensitiveCompare("running") == .orderedSame
         let isPending = session.status.caseInsensitiveCompare("pending") == .orderedSame
+        let routesLocally = state.shouldRouteSessionLocally(session)
+        let localSendUnsupported = routesLocally && (state.localCapabilities?.sendInput == false)
+        let promptDisabled = !isRunning || localSendUnsupported
+        // Codex review on PR #17 wrap-up: hide the disabled Approve
+        // button + ⌘↩ hint when the row is locally routed AND the
+        // helper's advertised capabilities don't include
+        // `approvals`. Local approvals (hook restructure +
+        // per-session capability token) are explicitly out of scope
+        // for this PR — they ship in Iter 2B from a fresh branch
+        // off main. Showing a permanently-disabled Approve button
+        // implies "the feature exists but isn't actionable here";
+        // the iter-2A surface is "the feature isn't here yet". Hide
+        // entirely on local-routed rows + replace the hint copy.
+        let approvalsAvailable: Bool = {
+            if routesLocally {
+                return state.localCapabilities?.approvals == true
+            }
+            // Remote / Supabase row: existing approval flow ships
+            // via RemoteApprovalsSheet — keep the Approve button
+            // visible regardless of pending state so the user can
+            // reach the existing surface.
+            return true
+        }()
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 TextField(
-                    isRunning ? "Prompt for Claude…" : "Waiting for helper to start session…",
+                    promptPlaceholder(
+                        isRunning: isRunning,
+                        localSendUnsupported: localSendUnsupported
+                    ),
                     text: $promptText
                 )
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 11, design: .monospaced))
-                .disabled(!isRunning)
+                .disabled(promptDisabled)
                 .onSubmit {
-                    guard isRunning else { return }
+                    guard !promptDisabled else { return }
                     Task { await sendPrompt(for: session) }
                 }
-                // No `.keyboardShortcut(.return, modifiers: [])` here on
-                // purpose. SwiftUI on macOS routes a plain Return to BOTH
-                // the focused TextField (firing `.onSubmit`) AND any
-                // button that claims `.return` as its default-action
-                // shortcut, which double-sends the prompt. Enter is
-                // already handled exclusively by the TextField above.
-                // The button stays clickable for users who tab away
-                // from the field. ⌘↩ on the Approve button keeps its
-                // distinct command-modifier shortcut.
                 Button("Send") {
                     Task { await sendPrompt(for: session) }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(!isRunning || promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button(canApprove ? "Approve pending" : (pending != nil ? "Approve (high-risk)" : "Approve")) {
-                    Task { await approveMatchingPending(for: session) }
+                .disabled(promptDisabled || promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if approvalsAvailable {
+                    Button(canApprove ? "Approve pending" : (pending != nil ? "Approve (high-risk)" : "Approve")) {
+                        Task { await approveMatchingPending(for: session) }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!canApprove)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .help(approveTooltip(pending: pending, isHighRisk: isHighRisk))
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(!canApprove)
-                .keyboardShortcut(.return, modifiers: .command)
-                .help(approveTooltip(pending: pending, isHighRisk: isHighRisk))
             }
             HStack(spacing: 8) {
-                Text(isPending
-                     ? "Waiting for helper to consume the start command. Cancel to remove this session."
-                     : "Enter to send · ⌘↩ to approve pending")
+                Text(commandBarHintText(
+                    isPending: isPending,
+                    approvalsAvailable: approvalsAvailable
+                ))
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                 Spacer()
@@ -344,11 +560,22 @@ struct SessionsTab: View {
                          : "Show the live output tail (stdout, status, info events). Default off — privacy-visible opt-in."))
                 Button(role: .destructive) {
                     Task {
-                        // v0.41: stop on a pending session lands in the
-                        // RPC's app-side cancel branch — no helper
-                        // needed. Local view-state cleanup is the same
-                        // as the running-stop path.
-                        await state.stopRemoteSession(sessionId: session.id)
+                        // Codex review on PR #17 second manual verify:
+                        // route by **ownership of the session id**,
+                        // not by `session.device_id` equality. The
+                        // Supabase row carries the HELPER's device_id
+                        // which can drift from `selfDeviceId` if the
+                        // two paired stores got out of sync — id-based
+                        // ownership via `localManagedSessions` is the
+                        // reliable signal. `shouldRouteSessionLocally`
+                        // checks ownership-by-id first, falls back to
+                        // device-id equality for fresh rows the local
+                        // list hasn't seen yet.
+                        if state.shouldRouteSessionLocally(session) {
+                            _ = await state.stopLocalSession(sessionId: session.id)
+                        } else {
+                            await state.stopRemoteSession(sessionId: session.id)
+                        }
                         if selectedManagedSessionId == session.id {
                             selectedManagedSessionId = nil
                         }
@@ -492,8 +719,52 @@ struct SessionsTab: View {
     private func sendPrompt(for session: RemoteSession) async {
         let text = promptText
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let ok = await state.sendRemoteSessionPrompt(sessionId: session.id, text: text)
+        // Routing: ownership-by-id first (helper-owned → UDS),
+        // device-id equality fallback for rows the local list
+        // hasn't caught up to yet. Codex-reviewed: this fixes the
+        // same regression class as Stop — `session.device_id` from
+        // Supabase can disagree with `selfDeviceId` if the two
+        // pairing stores drifted, and a strict device-id check
+        // routes helper-owned sessions through Supabase by mistake.
+        let routesLocally = state.shouldRouteSessionLocally(session)
+        let ok: Bool
+        if routesLocally {
+            guard state.localCapabilities?.sendInput == true else {
+                // No silent cloud fallback for local-routed rows.
+                return
+            }
+            ok = await state.sendLocalSessionInput(sessionId: session.id, payload: text)
+        } else {
+            ok = await state.sendRemoteSessionPrompt(sessionId: session.id, text: text)
+        }
         if ok { promptText = "" }
+    }
+
+    private func promptPlaceholder(isRunning: Bool, localSendUnsupported: Bool) -> String {
+        if !isRunning { return "Waiting for helper to start session…" }
+        if localSendUnsupported {
+            return "This local helper doesn't support send_input — update the helper to type prompts."
+        }
+        return "Prompt for Claude…"
+    }
+
+    /// Status-line text under the prompt input. Branches on:
+    ///   * pending: the session hasn't started yet (helper hasn't
+    ///     consumed the start command).
+    ///   * approvals available (remote rows or local helper that
+    ///     advertised `approvals: true`): show the ⌘↩ shortcut.
+    ///   * approvals NOT available (local-routed + helper hasn't
+    ///     shipped local approvals yet): replace the ⌘↩ hint with
+    ///     a clear "out-of-scope for now" sentence so the user
+    ///     understands they're not missing a button.
+    private func commandBarHintText(isPending: Bool, approvalsAvailable: Bool) -> String {
+        if isPending {
+            return "Waiting for helper to consume the start command. Cancel to remove this session."
+        }
+        if approvalsAvailable {
+            return "Enter to send · ⌘↩ to approve pending"
+        }
+        return "Enter to send · approvals arrive in the next iteration"
     }
 
     private func approveMatchingPending(for session: RemoteSession) async {
@@ -530,17 +801,68 @@ struct SessionsTab: View {
     }
 
     private func openManagedClaudeSession() async {
-        guard let device = targetDeviceForStart else { return }
-        let newSessionId = await state.requestRemoteClaudeSessionStart(
-            deviceId: device.id,
-            cwdBasename: "",
-            cwdHmac: nil,
-            clientLabel: device.name
-        )
+        // Decision tree (Codex-reviewed twice):
+        //   1. Local fast path available → UDS start. The local
+        //      transport ALWAYS targets THIS Mac; `targetDevice
+        //      ForStart` (which auto-picks the most recently-online
+        //      paired Mac from Supabase) is irrelevant for local
+        //      start — and *checking it* is what regressed start
+        //      routing in the previous commit. Same-class bug as
+        //      Stop: `state.isSelfDevice(targetDeviceForStart.id)`
+        //      does strict device-id equality and silently fails
+        //      when the helper's recorded `device_id` (from
+        //      `~/.cli-pulse-helper.json`) and the macOS app's
+        //      `helper_config.deviceId` (from app-group
+        //      UserDefaults) drifted, even though the helper is
+        //      reachable + gate is on.
+        //   2. Else, if Remote Control is on AND a target exists
+        //      → Supabase start.
+        //   3. Else: nothing (Open button shouldn't have been
+        //      visible).
+        let newSessionId: String?
+        if state.canStartLocalManagedSession {
+            // Local start path: implicitly targets THIS Mac.
+            // Trust `canStartLocalManagedSession` (which already
+            // checks `selfDeviceId != nil && localHelperReachable
+            // && localControlEnabled`); don't add a redundant
+            // device-id-equality gate that re-introduces the
+            // store-drift bug.
+            let label = "Local Claude session"
+            newSessionId = await state.requestLocalClaudeSessionStart(
+                clientLabel: label
+            )
+        } else if state.remoteControlEnabled, let device = targetDeviceForStart {
+            newSessionId = await state.requestRemoteClaudeSessionStart(
+                deviceId: device.id,
+                cwdBasename: "",
+                cwdHmac: nil,
+                clientLabel: device.name
+            )
+        } else {
+            newSessionId = nil
+        }
         if let id = newSessionId {
             selectedManagedSessionId = id
             promptText = ""
         }
+    }
+
+    /// True when this Mac has a paired helper but its UDS socket
+    /// can't be reached. Drives the helper-not-running banner.
+    /// **Independent from `targetDeviceForStart`** — the local
+    /// transport always targets THIS Mac, so the banner availability
+    /// shouldn't require a non-nil cross-device target.
+    /// (Codex review on PR #17 caught the original coupling.)
+    private var shouldShowHelperNotRunningBanner: Bool {
+        guard state.selfDeviceId != nil else { return false }
+        return !state.localHelperReachable
+    }
+
+    /// Local UI is for THIS Mac. Available whenever the user has a
+    /// paired helper, regardless of whether `state.devices` (the
+    /// Supabase-backed list) is fresh enough to surface a target.
+    private var localUIAvailable: Bool {
+        state.selfDeviceId != nil
     }
 
     private func inlineHint(icon: String, text: String) -> some View {
@@ -558,6 +880,78 @@ struct SessionsTab: View {
         .background(Color.secondary.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
+
+    // MARK: - Phase 3 Iter 1 banner + local-fast-path toggle
+
+    private var helperNotRunningBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "bolt.slash.circle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Helper not running")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("CLI Pulse can't reach the local helper on this Mac. Same-device session control falls back to the slower remote path until the helper is started.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button("Diagnose") { showLocalDiagnostics.toggle() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                Button("Open Helper Setup") {
+                    state.selectedTab = .settings
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Open Settings → Advanced to enable the Background Helper.")
+            }
+            // Codex review on PR #17 manual verification: when the
+            // helper IS running per terminal but the app sees ENOENT,
+            // surfacing the resolved paths inline lets the user (and
+            // Codex on review) ground the issue in concrete data
+            // without capturing Xcode logs.
+            if showLocalDiagnostics, let diag = state.localDiagnostics {
+                localDiagnosticsPanel(diag)
+            }
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private var localFastPathToggle: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Image(systemName: "bolt.circle")
+                .font(.system(size: 12))
+                .foregroundStyle(state.localControlEnabled ? .green : .secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Local fast path")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(state.localControlEnabled
+                     ? "Same-device sessions go through the local helper socket — no Supabase round-trip."
+                     : "Off by default. Turn on to spawn and stop same-device Claude sessions through the local helper socket instead of the cloud.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Toggle("", isOn: Binding(
+                get: { state.localControlEnabled },
+                set: { newValue in
+                    Task { await state.setLocalControlEnabled(newValue) }
+                }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
+        }
+        .padding(10)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
 }
 
 // MARK: - Managed session row
@@ -566,7 +960,36 @@ private struct ManagedSessionRow: View {
     let session: RemoteSession
     let isSelected: Bool
     let pendingApproval: RemotePermissionRequest?
+    /// True when the row's actions (prompt/stop) route through the
+    /// local UDS path rather than Supabase. Drives the "Local"
+    /// badge so the user can see at a glance which transport they
+    /// will hit. (Codex review on PR #17 manual verification.)
+    let routesLocally: Bool
     let onSelect: () -> Void
+
+    /// Display label, with the duplicate-name workaround for
+    /// helper-spawned sessions whose `client_label` and
+    /// `device_name` are both "CLI Pulse Helper". Codex flagged
+    /// the previous "CLI Pulse Helper · CLI Pulse Helper" rendering
+    /// as confusing.
+    private var displayLabel: String {
+        let label = session.client_label?.trimmingCharacters(in: .whitespaces) ?? ""
+        let device = session.device_name?.trimmingCharacters(in: .whitespaces) ?? ""
+        if label.isEmpty { return "Claude session" }
+        // If label and device are the same string, the second column
+        // would just repeat — collapse to a single line.
+        if !device.isEmpty && label.caseInsensitiveCompare(device) == .orderedSame {
+            return "Claude on \(device)"
+        }
+        return label
+    }
+
+    private var showSecondaryDevice: Bool {
+        let label = session.client_label?.trimmingCharacters(in: .whitespaces) ?? ""
+        let device = session.device_name?.trimmingCharacters(in: .whitespaces) ?? ""
+        guard !device.isEmpty else { return false }
+        return label.caseInsensitiveCompare(device) != .orderedSame
+    }
 
     var body: some View {
         Button(action: onSelect) {
@@ -576,12 +999,20 @@ private struct ManagedSessionRow: View {
                     .foregroundStyle(PulseTheme.providerColor("Claude"))
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text(session.client_label ?? "Claude session")
+                        Text(displayLabel)
                             .font(.system(size: 11, weight: .semibold))
                             .lineLimit(1)
-                        if let device = session.device_name, !device.isEmpty {
+                        if showSecondaryDevice, let device = session.device_name {
                             Text("·").foregroundStyle(.tertiary).font(.system(size: 11))
                             Text(device).font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                        // Transport badge — at-a-glance which path
+                        // row actions use. Removes the "I don't
+                        // know which row is local-controllable"
+                        // confusion Codex flagged.
+                        if routesLocally {
+                            transportBadge(text: "Local", color: .green)
+                                .help("Prompt and Stop on this row use the local UDS fast path (helper-owned PTY).")
                         }
                     }
                     HStack(spacing: 6) {
@@ -592,6 +1023,14 @@ private struct ManagedSessionRow: View {
                             Text("· pending approval")
                                 .font(.system(size: 9, weight: .semibold))
                                 .foregroundStyle(.orange)
+                        }
+                        // Affordance hint so the chevron isn't the
+                        // only indication that a row expands into
+                        // controls.
+                        if !isSelected {
+                            Text("· tap to control")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.tertiary)
                         }
                     }
                 }
@@ -605,6 +1044,17 @@ private struct ManagedSessionRow: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func transportBadge(text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(color.opacity(0.15))
+            .clipShape(Capsule())
     }
 
     private var statusColor: Color {

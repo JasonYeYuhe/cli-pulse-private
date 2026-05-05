@@ -508,13 +508,27 @@ public actor APIClient {
         let activeSessions = summary.active_sessions ?? 0
         let onlineDevices = summary.online_devices ?? 0
         let unresolvedAlerts = summary.unresolved_alerts ?? 0
-        let todaySessions = summary.today_sessions ?? 0
+
+        // Codex review on PR #17 manual verify: the previous code
+        // mapped `summary.today_sessions` (server-side count of
+        // sessions started today) into `total_requests_today`,
+        // which the Overview UI labels "Requests". With Jason's
+        // 2 sessions today the card showed "Requests=2" — the
+        // number was a session count masquerading as a request
+        // count. Stop the misleading mapping: the local refresh
+        // path computes request counts from session records
+        // (`DataRefreshManager` line ~511, sums each session's
+        // `requests` field) and is the authoritative source. When
+        // the server-only path runs without local data, leave the
+        // metric at 0 rather than misrepresenting sessions as
+        // requests.
+        let totalRequestsToday = 0
 
         return DashboardSummary(
             total_usage_today: todayUsage,
             total_estimated_cost_today: todayCost,
             cost_status: "Estimated",
-            total_requests_today: todaySessions,
+            total_requests_today: totalRequestsToday,
             active_sessions: activeSessions,
             online_devices: onlineDevices,
             unresolved_alerts: unresolvedAlerts,

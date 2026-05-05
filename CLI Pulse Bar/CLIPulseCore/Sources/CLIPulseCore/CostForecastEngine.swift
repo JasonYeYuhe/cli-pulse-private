@@ -26,10 +26,21 @@ public enum CostForecastEngine {
     ///
     /// - Parameters:
     ///   - dailyUsage: Raw per-provider/model daily usage entries
+    ///     (server-side aggregates from `daily_usage_metrics`).
+    ///   - localOverrides: Optional per-day cost rollups from the
+    ///     local JSONL scan. When present, each day's effective cost
+    ///     is `max(server_cost, local_cost)` — local IS more accurate
+    ///     for recent days because it reads the actual JSONL files,
+    ///     and the server side may be stale (e.g.
+    ///     `[syncDailyUsage] failed: HTTP 403` during a token glitch
+    ///     leaves today's row missing from the server). Codex review
+    ///     on PR #17 manual verify caught the stale-server case
+    ///     producing forecast values orders of magnitude below reality.
     ///   - referenceDate: Date to forecast from (defaults to today)
     /// - Returns: A CostForecast, or nil if insufficient data
     public static func forecast(
         from dailyUsage: [DailyUsage],
+        localOverrides: [String: Double] = [:],
         referenceDate: Date = Date()
     ) -> CostForecast? {
         let calendar = Calendar.current
@@ -41,8 +52,15 @@ public enum CostForecastEngine {
             return nil
         }
 
-        // Aggregate cost per date
-        let costByDate = aggregateCostByDate(dailyUsage)
+        // Aggregate cost per date — server side first, then take
+        // the max with the local scan value for each day. This makes
+        // the engine robust to stale-server outages while still
+        // benefiting from the server's older history when local
+        // scan data isn't available for those dates.
+        var costByDate = aggregateCostByDate(dailyUsage)
+        for (day, localCost) in localOverrides {
+            costByDate[day] = max(costByDate[day] ?? 0, localCost)
+        }
 
         // Build time series for current month: day_of_month -> cost
         let dateFormatter = DateFormatter()

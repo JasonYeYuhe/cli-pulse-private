@@ -300,9 +300,17 @@ struct OverviewTab: View {
                             .font(.system(size: 16, weight: .bold, design: .rounded))
                             .foregroundStyle(.green)
                         if providerState.costSummary.todayTokens > 0 {
+                            // Codex review on PR #17: explicit "I/O
+                            // tokens" label + tooltip avoids the
+                            // CodexBar-vs-CLI Pulse comparison
+                            // confusion. CLI Pulse counts input +
+                            // output only; CodexBar's "tokens"
+                            // includes cache reads. Cost calc on
+                            // both sides includes cache.
                             Text(L10n.cost.tokensSuffix(TokenFormatter.format(providerState.costSummary.todayTokens)))
                                 .font(.system(size: 9))
                                 .foregroundStyle(.tertiary)
+                                .help("I/O tokens = input + output. Excludes cache reads (which are ~98% of Claude's raw token volume but billed at 10% — included in cost). CodexBar's 'tokens' figure rolls cache in; ours doesn't, so the numbers will differ. Cost is computed with full per-component pricing on both sides and matches.")
                         }
                     }
                 }
@@ -318,6 +326,7 @@ struct OverviewTab: View {
                             Text(L10n.cost.tokensSuffix(TokenFormatter.format(providerState.costSummary.thirtyDayTokens)))
                                 .font(.system(size: 9))
                                 .foregroundStyle(.tertiary)
+                                .help("I/O tokens = input + output. Excludes cache reads (which are ~98% of Claude's raw token volume but billed at 10% — included in cost).")
                         }
                     }
                 }
@@ -437,14 +446,42 @@ struct OverviewTab: View {
 
                 Divider().padding(.vertical, 2)
 
-                HStack {
-                    Text(L10n.dashboard.totalMonthly)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("~" + CostFormatter.format(providerState.costSummary.grandTotal))
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundStyle(.primary)
+                // Codex review on PR #17 manual verify: "Total
+                // Monthly" was confusing because it summed two
+                // unrelated values (API-equivalent 30-day cost +
+                // subscription monthly cost) under a label that
+                // could be misread as "your real monthly bill".
+                // Render the two halves explicitly + a help
+                // tooltip so the composition is clear.
+                VStack(spacing: 2) {
+                    HStack {
+                        Text("API equivalent (30d)")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(CostFormatter.format(providerState.costSummary.thirtyDayTotal))
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.green)
+                    }
+                    HStack {
+                        Text("Subscriptions")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(CostFormatter.format(providerState.costSummary.subscriptionTotal) + "/mo")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.orange)
+                    }
+                    HStack {
+                        Text("All-in monthly (est.)")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("~" + CostFormatter.format(providerState.costSummary.grandTotal))
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(.primary)
+                    }
+                    .help("API-equivalent 30-day cost from your usage PLUS monthly subscription cost. This is NOT a real bill — Anthropic / OpenAI / Google charge subscription cost only; the API-equivalent figure shows what your usage would have cost on pay-as-you-go.")
                 }
             }
 

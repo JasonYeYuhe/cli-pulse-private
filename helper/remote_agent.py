@@ -50,6 +50,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from local_executor import LocalExecutor
 from redaction import redact
 from transports import SessionHandle, SessionTransport, TransportError
 
@@ -180,6 +181,7 @@ class RemoteAgentManager:
         helper_config: Any,
         rpc_caller: Callable[..., Any],
         transport: SessionTransport | None = None,
+        executor: LocalExecutor | None = None,
     ) -> None:
         self.helper_config = helper_config
         self.rpc_caller = rpc_caller
@@ -187,6 +189,14 @@ class RemoteAgentManager:
             transport = self._default_transport()
         self.transport = transport
         self._sessions: dict[str, _ManagedSession] = {}
+        # Phase 3 Iter 1: when an executor is supplied, every public
+        # mutation method submits its work onto it and waits for the
+        # result. The daemon poll loop and the local UDS server then
+        # share a single writer thread, eliminating races on
+        # `_sessions` and the per-session counters. When `executor` is
+        # None (existing tests, ad-hoc callers), the methods run
+        # inline and behave exactly as they did before.
+        self._executor = executor
 
     @staticmethod
     def _default_transport() -> SessionTransport:
@@ -200,9 +210,24 @@ class RemoteAgentManager:
         from transports.posix_pty import PosixPtyTransport
         return PosixPtyTransport()
 
+    # ── executor routing ─────────────────────────────────────
+
+    def _dispatch(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Route mutation `fn` through the single-writer executor when
+        present, else run inline. Public methods call this; internal
+        helpers (already on the executor thread when one exists) call
+        the `_*_impl` methods directly to avoid recursive submit.
+        """
+        if self._executor is None:
+            return fn(*args, **kwargs)
+        return self._executor.submit_and_wait(fn, *args, **kwargs)
+
     # ── lifecycle ────────────────────────────────────────────
 
     def spawn_session(self, params: SessionStartParams) -> bool:
+        return self._dispatch(self._spawn_session_impl, params)
+
+    def _spawn_session_impl(self, params: SessionStartParams) -> bool:
         """Spawn the provider CLI under the configured transport.
 
         Returns True on success, False if the spawn failed (transport
@@ -287,6 +312,9 @@ class RemoteAgentManager:
         return True
 
     def stop_session(self, session_id: str) -> None:
+        return self._dispatch(self._stop_session_impl, session_id)
+
+    def _stop_session_impl(self, session_id: str) -> None:
         """Terminate the child and close transport resources."""
         sess = self._sessions.get(session_id)
         if sess is None:
@@ -303,6 +331,9 @@ class RemoteAgentManager:
         self._sessions.pop(session_id, None)
 
     def interrupt_session(self, session_id: str) -> None:
+        return self._dispatch(self._interrupt_session_impl, session_id)
+
+    def _interrupt_session_impl(self, session_id: str) -> None:
         """Send SIGINT-equivalent to the foreground process group."""
         sess = self._sessions.get(session_id)
         if sess is None:
@@ -310,6 +341,9 @@ class RemoteAgentManager:
         self.transport.interrupt(sess.handle)
 
     def write_to_session(self, session_id: str, payload: str) -> bool:
+        return self._dispatch(self._write_to_session_impl, session_id, payload)
+
+    def _write_to_session_impl(self, session_id: str, payload: str) -> bool:
         """Write the user's typed text to the child's stdin and submit
         it. Returns True if the child accepted the bytes, False if the
         child is gone (in which case the caller should mark the command
@@ -355,6 +389,9 @@ class RemoteAgentManager:
         return True
 
     def shutdown(self) -> None:
+        return self._dispatch(self._shutdown_impl)
+
+    def _shutdown_impl(self) -> None:
         """Terminate every running session. Idempotent. Safe to call
         from a signal handler — uses no async primitives.
         """
@@ -363,13 +400,16 @@ class RemoteAgentManager:
         logger.info("shutting down %d managed session(s)", len(self._sessions))
         for session_id in list(self._sessions.keys()):
             try:
-                self.stop_session(session_id)
+                self._stop_session_impl(session_id)
             except Exception as exc:
                 logger.warning("shutdown(%s) failed: %s", session_id, exc)
 
     # ── per-cycle ────────────────────────────────────────────
 
     def tick(self, max_commands: int = 10) -> dict[str, int]:
+        return self._dispatch(self._tick_impl, max_commands)
+
+    def _tick_impl(self, max_commands: int = 10) -> dict[str, int]:
         """One daemon cycle. Pulls commands, dispatches, drains stdout,
         observes child exits.
 
@@ -442,10 +482,10 @@ class RemoteAgentManager:
             elif kind == "prompt":
                 ok, err = self._handle_prompt(session_id, payload)
             elif kind == "stop":
-                self.stop_session(session_id)
+                self._stop_session_impl(session_id)
                 ok, err = True, ""
             elif kind == "interrupt":
-                self.interrupt_session(session_id)
+                self._interrupt_session_impl(session_id)
                 ok, err = True, ""
             else:
                 ok, err = False, f"unknown command kind: {kind!r}"
@@ -515,7 +555,7 @@ class RemoteAgentManager:
             cwd_hmac=cwd_hmac,
             client_label=client_label,
         )
-        ok = self.spawn_session(params)
+        ok = self._spawn_session_impl(params)
         return ok, "" if ok else "spawn failed"
 
     def _handle_prompt(self, session_id: str, payload: str) -> tuple[bool, str]:
@@ -523,7 +563,7 @@ class RemoteAgentManager:
             return False, "prompt requires session_id"
         if session_id not in self._sessions:
             return False, "session not running on this helper"
-        ok = self.write_to_session(session_id, payload)
+        ok = self._write_to_session_impl(session_id, payload)
         return ok, "" if ok else "child exited"
 
     # ── stdout drain + exit observation (iter 1: no upload) ────
@@ -619,6 +659,107 @@ class RemoteAgentManager:
         chunk = sess.stdout_batcher.drain()
         if chunk:
             self._post_stdout_chunk(session_id, chunk)
+
+    # ── local UDS entry points (Phase 3 Iter 1) ──────────────
+
+    def local_start_claude_session(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Start a new managed Claude session on behalf of the local
+        macOS app. The UDS server submits this through the executor
+        (so this body always runs on the writer thread); we generate
+        the session id here, spawn the PTY, and return the id back
+        for the client to track.
+
+        Note: we do NOT round-trip through Supabase to "create the
+        pending row" first, because that's the latency the local
+        path exists to avoid. `_spawn_session_impl` still calls
+        `remote_helper_register_session` (best-effort) so iOS / Watch
+        viewers see the session row appear via existing remote_app
+        list paths within the next sync cycle. If the helper is
+        offline, the session still works locally; the row simply
+        doesn't propagate.
+        """
+        return self._dispatch(self._local_start_claude_session_impl, payload)
+
+    def _local_start_claude_session_impl(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        session_id = str(uuid.uuid4())
+        client_label = payload.get("client_label")
+        cwd_hmac = payload.get("cwd_hmac")
+        params = SessionStartParams(
+            session_id=session_id,
+            provider="claude",
+            cwd="",
+            cwd_hmac=cwd_hmac if isinstance(cwd_hmac, str) else None,
+            client_label=client_label if isinstance(client_label, str) else None,
+        )
+        ok = self._spawn_session_impl(params)
+        return {
+            "session_id": session_id,
+            "ok": ok,
+        }
+
+    def local_list_sessions(self) -> list[dict[str, Any]]:
+        """Snapshot of every live session this helper currently owns.
+
+        This is the local fast path's analogue of `remote_app_list_sessions`,
+        but scoped to *this* helper's in-memory state. Cross-device
+        viewers (iOS / Watch) still rely on the Supabase-backed list.
+
+        Each row carries the bare minimum the UI needs to render the
+        session list: id, provider, client_label, spawn time,
+        last_status_posted. No transcript, no environment, no PID.
+        """
+        return self._dispatch(self._local_list_sessions_impl)
+
+    def _local_list_sessions_impl(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for sid, sess in self._sessions.items():
+            rows.append({
+                "session_id": sid,
+                "provider": sess.params.provider,
+                "client_label": sess.params.client_label,
+                "spawned_at_monotonic": sess.spawned_at,
+                "status": sess.last_status_posted,
+            })
+        return rows
+
+    def local_stop_session(self, session_id: str) -> dict[str, Any]:
+        """Stop a managed session by id. Symmetric with
+        `_handle_stop` on the Supabase path (both end up calling
+        `_stop_session_impl`).
+        """
+        return self._dispatch(self._local_stop_session_impl, session_id)
+
+    def _local_stop_session_impl(self, session_id: str) -> dict[str, Any]:
+        present = session_id in self._sessions
+        if present:
+            self._stop_session_impl(session_id)
+        return {"session_id": session_id, "stopped": present}
+
+    def local_send_input(self, session_id: str, payload: str) -> dict[str, Any]:
+        """Write `payload` to the stdin of a helper-owned managed
+        session. Reuses the SAME `_write_to_session_impl` path the
+        Supabase RPC went through in PR #10, so the existing CR /
+        newline submit semantics (covered by
+        `helper/test_remote_agent_submit.py`) are preserved without
+        modification — that's the design contract.
+
+        Returns:
+            {"session_id": id, "written": bool}
+
+        `written: False` means the helper does not own this session
+        (id not in `_sessions`). The UDS server maps that to the
+        wire-level `not_controllable` / `session_not_found` taxonomy
+        based on whether the id is in the detected set.
+        """
+        return self._dispatch(self._local_send_input_impl, session_id, payload)
+
+    def _local_send_input_impl(self, session_id: str, payload: str) -> dict[str, Any]:
+        if session_id not in self._sessions:
+            return {"session_id": session_id, "written": False}
+        ok = self._write_to_session_impl(session_id, payload)
+        return {"session_id": session_id, "written": ok}
 
     # ── helpers ──────────────────────────────────────────────
 

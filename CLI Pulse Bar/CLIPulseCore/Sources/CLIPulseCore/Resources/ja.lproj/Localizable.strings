@@ -618,10 +618,10 @@
 "common.no_provider_selected" = "プロバイダーが選択されていません";
 "cost.exact" = "正確";
 "cost.estimated" = "推定";
-"cost.tokens_suffix" = "· %@ トークン";
+"cost.tokens_suffix" = "· %@ I/O トークン";
 "cost.tokens_short_suffix" = "· %@";
 "cost.thirty_day_precise" = "30日";
-"cost.tokens_value" = "%@ トークン";
+"cost.tokens_value" = "%@ I/O トークン";
 "cost.day_progress" = "%d/%d 日";
 "cost.by_model" = "モデル別";
 "watch.unread_count" = "%d 件未読";

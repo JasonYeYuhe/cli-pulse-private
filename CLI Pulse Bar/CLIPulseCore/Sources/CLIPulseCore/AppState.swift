@@ -327,6 +327,66 @@ public final class AppState: ObservableObject {
     /// most output). Adjust if a future iter needs longer scrollback.
     public static let remoteSessionEventsCap: Int = 200
 
+    // MARK: - Local Session Control (Phase 3 Iter 1, macOS-only)
+    #if os(macOS)
+    /// True iff the most recent `LocalSessionControlClient.hello()`
+    /// against this Mac's helper UDS socket succeeded. Drives the
+    /// "helper not running" banner and the local-vs-remote routing
+    /// decision in `openManagedClaudeSession`. Reset to false on any
+    /// transport failure.
+    @Published public var localHelperReachable: Bool = false
+
+    /// Last known `local_control_enabled` value reported by the
+    /// helper. Defaults false (privacy-default opt-out). Updated by
+    /// `setLocalControlEnabled`; not refreshed automatically because
+    /// reading it back from the helper would itself require the gate
+    /// to be on for most methods (chicken-and-egg).
+    @Published public var localControlEnabled: Bool = false
+
+    /// Capability flags returned by the helper's `hello`. Used by the
+    /// macOS UI to decide which controls to enable when local routing
+    /// is in effect (iter 1: start / list / stop only).
+    @Published public var localCapabilities: SessionControlCapabilities?
+
+    /// Helper protocol version reported by `hello`. Pinned at 1 by
+    /// the iter-1 server; iter 2A may bump it.
+    @Published public var localProtocolVersion: Int = 0
+
+    /// Last error string from any local-control call, surfaced inline
+    /// in the Sessions UI when non-nil. Cleared on a successful
+    /// `refreshLocalSessionControlState`.
+    @Published public var localHelperError: String?
+
+    /// Phase 3 Iter 2A: same-Mac Claude processes the helper detected
+    /// via `_detect_provider` (PR #14) but does NOT own. Read-only
+    /// from the macOS UI's perspective: the Sessions tab renders
+    /// these in a separate "Detected on this Mac" section so users
+    /// can see what's running outside CLI Pulse without believing
+    /// the app can safely write to or stop them. Populated from
+    /// `LocalSessionControlClient.listSessions` filtered to
+    /// `controllable == false`.
+    @Published public var localDetectedSessions: [SessionControlSummary] = []
+
+    /// Companion to `localDetectedSessions` for the helper-owned
+    /// managed rows the local UDS surface returned on the most recent
+    /// refresh. The macOS UI continues to drive its primary list off
+    /// `remoteSessions` (which already includes managed local rows
+    /// via the helper's `register_session` RPC). This field exists
+    /// for tests + future UI surfaces that want to render
+    /// local-managed-only without waiting for Supabase freshness.
+    @Published public var localManagedSessions: [SessionControlSummary] = []
+
+    /// Diagnostic snapshot from the most recent
+    /// `refreshLocalSessionControlState` tick. Surfaced in the
+    /// "Diagnose" panel under Sessions so the user (and Codex) can
+    /// see resolved socket / token paths + existence state in the
+    /// UI rather than having to read Xcode logs.
+    ///
+    /// Cleared to nil on logout / sign-out, otherwise refreshed
+    /// every tick the Sessions tab is on screen.
+    @Published public var localDiagnostics: LocalSessionControlClient.Diagnostics?
+    #endif
+
     /// Aggregated per-provider summaries over the currently-selected range.
     /// Re-derived on every access; cheap because rows is small (≤ providers × days).
     public var yieldScoreSummaries: [YieldScoreSummary] {
