@@ -375,6 +375,16 @@ public final class AppState: ObservableObject {
     /// for tests + future UI surfaces that want to render
     /// local-managed-only without waiting for Supabase freshness.
     @Published public var localManagedSessions: [SessionControlSummary] = []
+
+    /// Diagnostic snapshot from the most recent
+    /// `refreshLocalSessionControlState` tick. Surfaced in the
+    /// "Diagnose" panel under Sessions so the user (and Codex) can
+    /// see resolved socket / token paths + existence state in the
+    /// UI rather than having to read Xcode logs.
+    ///
+    /// Cleared to nil on logout / sign-out, otherwise refreshed
+    /// every tick the Sessions tab is on screen.
+    @Published public var localDiagnostics: LocalSessionControlClient.Diagnostics?
     #endif
 
     /// Aggregated per-provider summaries over the currently-selected range.

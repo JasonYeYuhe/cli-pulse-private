@@ -10,6 +10,10 @@ struct SessionsTab: View {
     /// but rendering the tail is a privacy-visible choice the user
     /// has to make per detail view.
     @State private var showOutput: Bool = false
+    /// Codex review on PR #17: surfacing local helper diagnostics in
+    /// the UI so users (and Codex on review) can see resolved
+    /// socket / token paths without opening Xcode logs.
+    @State private var showLocalDiagnostics: Bool = false
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
@@ -76,12 +80,10 @@ struct SessionsTab: View {
         HStack {
             Text("Managed Claude sessions")
                 .font(.system(size: 14, weight: .bold))
+            // Status pill so the user sees local state without
+            // having to read logs (Codex review on PR #17).
+            localFastPathStatusPill
             Spacer()
-            // Codex review on PR #17: the Open button used to be
-            // gated solely on `remoteControlEnabled`, which hid it
-            // when Remote Control was off even if the local fast
-            // path was viable. Show it when EITHER path is
-            // available; the start router picks the right one.
             let canStartRemote = state.remoteControlEnabled && targetDeviceForStart != nil
             let canStartLocal = state.canStartLocalManagedSession
             if canStartRemote || canStartLocal {
@@ -99,6 +101,38 @@ struct SessionsTab: View {
         }
     }
 
+    @ViewBuilder
+    private var localFastPathStatusPill: some View {
+        if localUIAvailable {
+            let (text, color, systemImage) = localFastPathStatus()
+            HStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 9))
+                Text(text)
+                    .font(.system(size: 9, weight: .medium))
+            }
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.12))
+            .clipShape(Capsule())
+            .help("Local fast path = same-Mac session control over the helper UDS socket. Independent from cloud Remote Control.")
+        }
+    }
+
+    private func localFastPathStatus() -> (text: String, color: Color, systemImage: String) {
+        if !state.localHelperReachable {
+            return ("local: helper not running", .gray, "bolt.slash")
+        }
+        if state.localHelperError != nil {
+            return ("local: error", .orange, "exclamationmark.triangle")
+        }
+        if state.localControlEnabled {
+            return ("local: active", .green, "bolt.fill")
+        }
+        return ("local: off", .secondary, "bolt")
+    }
+
     private func openManagedHelpText(localAvailable: Bool, remoteAvailable: Bool) -> String {
         if localAvailable {
             return "Spawns a new Claude Code session on this Mac via the local helper (UDS, no Supabase round-trip)."
@@ -111,40 +145,43 @@ struct SessionsTab: View {
 
     @ViewBuilder
     private var managedBody: some View {
-        // Local same-Mac control is INDEPENDENT from `remoteControlEnabled`.
-        // Codex reviews on PR #15 + #17 caught two distinct shapes of this
-        // bug: (a) blocking the Open button on `remoteControlEnabled`,
-        // (b) rendering rows from `remoteSessions` only — which
-        // `refreshRemoteSessions` clears when Remote Control is off.
+        // State surfaces (Codex review on PR #17 — manual verification
+        // failed because the local UI surfaces never appeared). Render
+        // EVERY local-control state explicitly so the user never has
+        // to read Xcode logs to know what's going on:
         //
-        // The fix: build the primary list off
-        // `state.displayedManagedSessions`, which merges remote rows
-        // with locally-known managed rows (deduped by id). Helper-
-        // owned same-Mac sessions render even when Remote Control is
-        // off, and row actions route per `session.device_id`.
+        //   1. selfDeviceId == nil          → defer to existing remote
+        //                                     hints (helper not paired)
+        //   2. !localHelperReachable        → "Helper not running" banner
+        //                                     [Open Helper Setup, no auto-spawn]
+        //   3. localHelperReachable
+        //        + localHelperError != nil  → "Local helper reachable
+        //                                     but failing: <error>" + diagnose
+        //   4. localHelperReachable + gate off → toggle row prompting opt-in
+        //   5. localHelperReachable + gate on  → toggle row (active) + active list
+        //
+        // Plus per-Codex: local UI is INDEPENDENT from `targetDevice
+        // ForStart` — the local transport implicitly targets THIS Mac.
+        let displayed = state.displayedManagedSessions
         let localStartAvailable = state.canStartLocalManagedSession
         let remoteUsable = state.remoteControlEnabled
-        let displayed = state.displayedManagedSessions
+
+        if localUIAvailable {
+            if !state.localHelperReachable {
+                helperNotRunningBanner
+            } else if let err = state.localHelperError {
+                localHelperErrorBanner(message: err)
+            } else {
+                localFastPathToggle
+            }
+        }
 
         if !remoteUsable && !localStartAvailable && displayed.isEmpty {
             inlineHint(
                 icon: "lock.shield",
-                text: "Remote Control is disabled. Turn it on in Settings → Privacy, or enable Local fast path below to drive a Claude session through the local helper."
+                text: "Remote Control is disabled. Turn it on in Settings → Privacy, or start the local helper to drive a Claude session through the local fast path."
             )
-            // Expose the local toggle row when the helper is
-            // reachable so the user can opt in without flipping
-            // unrelated cloud consent.
-            if state.localHelperReachable && state.isSelfDevice(targetDeviceForStart?.id) {
-                localFastPathToggle
-            } else if shouldShowHelperNotRunningBanner {
-                helperNotRunningBanner
-            }
         } else {
-            if shouldShowHelperNotRunningBanner {
-                helperNotRunningBanner
-            } else if state.localHelperReachable && state.isSelfDevice(targetDeviceForStart?.id) {
-                localFastPathToggle
-            }
             if let err = state.remoteSessionsError {
                 errorHint(err)
             }
@@ -175,6 +212,68 @@ struct SessionsTab: View {
                 }
             }
             detectedLocalSessionsSection
+        }
+    }
+
+    private func localHelperErrorBanner(message: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Local helper reachable but failing")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(message)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                Spacer()
+                Button("Diagnose") { showLocalDiagnostics.toggle() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            if showLocalDiagnostics, let diag = state.localDiagnostics {
+                localDiagnosticsPanel(diag)
+            }
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    @ViewBuilder
+    private func localDiagnosticsPanel(_ diag: LocalSessionControlClient.Diagnostics) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Divider().padding(.vertical, 2)
+            diagnosticRow(label: "Resolved socket path", value: diag.resolvedSocketPath)
+            diagnosticRow(label: "Socket exists",       value: diag.socketExists ? "yes" : "no")
+            diagnosticRow(label: "Resolved token path", value: diag.resolvedTokenPath)
+            diagnosticRow(label: "Token exists",        value: diag.tokenExists ? "yes" : "no")
+            diagnosticRow(label: "Token readable",      value: diag.tokenReadable ? "yes" : "no")
+            diagnosticRow(label: "App-group container", value: diag.appGroupContainerPath ?? "<nil>")
+            diagnosticRow(label: "NSHomeDirectory",     value: diag.nsHomeDirectory)
+            Text("If \"Socket exists\" is no but the helper terminal log shows it bound to that exact path, the sandboxed app and unsandboxed helper are seeing different inodes — usually a firmlink / app-group container mismatch. Share this snapshot when reporting.")
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+        }
+    }
+
+    private func diagnosticRow(label: String, value: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(label + ":")
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .frame(width: 150, alignment: .leading)
+            Text(value)
+                .font(.system(size: 9, design: .monospaced))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
     }
 
@@ -710,12 +809,22 @@ struct SessionsTab: View {
         }
     }
 
-    /// True when the user is targeting THIS Mac and the helper isn't
-    /// reachable on the local UDS socket. Drives the helper-not-running
-    /// banner — we deliberately don't auto-spawn the helper in iter 1.
+    /// True when this Mac has a paired helper but its UDS socket
+    /// can't be reached. Drives the helper-not-running banner.
+    /// **Independent from `targetDeviceForStart`** — the local
+    /// transport always targets THIS Mac, so the banner availability
+    /// shouldn't require a non-nil cross-device target.
+    /// (Codex review on PR #17 caught the original coupling.)
     private var shouldShowHelperNotRunningBanner: Bool {
-        guard let device = targetDeviceForStart else { return false }
-        return state.isSelfDevice(device.id) && !state.localHelperReachable
+        guard state.selfDeviceId != nil else { return false }
+        return !state.localHelperReachable
+    }
+
+    /// Local UI is for THIS Mac. Available whenever the user has a
+    /// paired helper, regardless of whether `state.devices` (the
+    /// Supabase-backed list) is fresh enough to surface a target.
+    private var localUIAvailable: Bool {
+        state.selfDeviceId != nil
     }
 
     private func inlineHint(icon: String, text: String) -> some View {
@@ -737,25 +846,38 @@ struct SessionsTab: View {
     // MARK: - Phase 3 Iter 1 banner + local-fast-path toggle
 
     private var helperNotRunningBanner: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "bolt.slash.circle")
-                .font(.system(size: 12))
-                .foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Helper not running")
-                    .font(.system(size: 11, weight: .semibold))
-                Text("CLI Pulse can't reach the local helper on this Mac. Same-device session control falls back to the slower remote path until the helper is started.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "bolt.slash.circle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Helper not running")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("CLI Pulse can't reach the local helper on this Mac. Same-device session control falls back to the slower remote path until the helper is started.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button("Diagnose") { showLocalDiagnostics.toggle() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                Button("Open Helper Setup") {
+                    state.selectedTab = .settings
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Open Settings → Advanced to enable the Background Helper.")
             }
-            Spacer()
-            Button("Open Helper Setup") {
-                state.selectedTab = .settings
+            // Codex review on PR #17 manual verification: when the
+            // helper IS running per terminal but the app sees ENOENT,
+            // surfacing the resolved paths inline lets the user (and
+            // Codex on review) ground the issue in concrete data
+            // without capturing Xcode logs.
+            if showLocalDiagnostics, let diag = state.localDiagnostics {
+                localDiagnosticsPanel(diag)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .help("Open Settings → Advanced to enable the Background Helper.")
         }
         .padding(10)
         .background(Color.orange.opacity(0.08))

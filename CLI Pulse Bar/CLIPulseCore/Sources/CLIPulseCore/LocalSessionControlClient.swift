@@ -1,6 +1,11 @@
 #if os(macOS)
 import Foundation
 import Network
+import os
+
+private let localSessionLog = Logger(
+    subsystem: "com.cli-pulse.bar", category: "local-session-client"
+)
 
 /// Reply payload from `LocalSessionControlClient.getLocalControlStatus`.
 /// macOS-only because the local UDS surface is macOS-only — iOS / iPad
@@ -62,6 +67,58 @@ public final class LocalSessionControlClient: SessionControlClient {
         }
         self.connectTimeout = connectTimeout
         self.requestTimeout = requestTimeout
+    }
+
+    /// Diagnostic snapshot of the paths this client resolved + their
+    /// on-disk state. Surfaced in the UI via a debug-only "Diagnose"
+    /// button so we can ground "the helper says it's listening but
+    /// the app sees ENOENT" in concrete data instead of guessing
+    /// at firmlink/sandbox path translations.
+    public struct Diagnostics: Sendable, Equatable {
+        public let resolvedSocketPath: String
+        public let socketExists: Bool
+        public let resolvedTokenPath: String
+        public let tokenExists: Bool
+        public let tokenReadable: Bool
+        public let appGroupContainerPath: String?
+        public let nsHomeDirectory: String
+
+        public init(resolvedSocketPath: String, socketExists: Bool,
+                    resolvedTokenPath: String, tokenExists: Bool,
+                    tokenReadable: Bool, appGroupContainerPath: String?,
+                    nsHomeDirectory: String) {
+            self.resolvedSocketPath = resolvedSocketPath
+            self.socketExists = socketExists
+            self.resolvedTokenPath = resolvedTokenPath
+            self.tokenExists = tokenExists
+            self.tokenReadable = tokenReadable
+            self.appGroupContainerPath = appGroupContainerPath
+            self.nsHomeDirectory = nsHomeDirectory
+        }
+    }
+
+    public func diagnostics() -> Diagnostics {
+        let containerURL = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: Self.appGroupID
+        )
+        let socketExists = FileManager.default.fileExists(atPath: socketPath)
+        let tokenExists = FileManager.default.fileExists(atPath: tokenPath)
+        let tokenReadable: Bool
+        if tokenExists {
+            tokenReadable = (try? String(contentsOfFile: tokenPath))
+                .map { !$0.isEmpty } ?? false
+        } else {
+            tokenReadable = false
+        }
+        return Diagnostics(
+            resolvedSocketPath: socketPath,
+            socketExists: socketExists,
+            resolvedTokenPath: tokenPath,
+            tokenExists: tokenExists,
+            tokenReadable: tokenReadable,
+            appGroupContainerPath: containerURL?.path,
+            nsHomeDirectory: NSHomeDirectory()
+        )
     }
 
     // MARK: - SessionControlClient
@@ -245,6 +302,16 @@ public final class LocalSessionControlClient: SessionControlClient {
     // MARK: - NWConnection helpers
 
     private func connect() async throws -> NWConnection {
+        // Pre-flight diagnostic — surface the kind of path mismatch
+        // that would make the unsandboxed helper write to one inode
+        // and the sandboxed app try to connect to another. Logged
+        // every attempt at debug level so the noise stays bounded
+        // and the cause is grepable in Xcode log without a custom
+        // build flag.
+        let socketExists = FileManager.default.fileExists(atPath: socketPath)
+        localSessionLog.debug(
+            "uds.connect attempt path=\(self.socketPath, privacy: .public) socketExists=\(socketExists, privacy: .public)"
+        )
         let endpoint = NWEndpoint.unix(path: socketPath)
         let connection = NWConnection(to: endpoint, using: .tcp)
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in

@@ -504,13 +504,36 @@ class LocalSessionServer:
                 )
 
         # 4. Method-specific dispatch.
+        # Diagnostic log — non-sensitive: only the method name and
+        # (when present) the session_id reference. Never the payload.
+        # Mirrors the existing Supabase remote-poll dispatcher's
+        # observability so users can see in helper.log whether a UI
+        # action took the local UDS path or the cloud queue path.
+        sid = params.get("session_id") if isinstance(params, dict) else None
+        if isinstance(sid, str):
+            logger.info("local_rpc method=%s session=%s", method, sid)
+        else:
+            logger.info("local_rpc method=%s", method)
         try:
             result = self._handle_method(method, params)
         except _RequestError as exc:
+            logger.info(
+                "local_rpc method=%s result=error code=%s",
+                method, exc.code,
+            )
             return _err(req_id, exc.code, exc.message)
         except Exception as exc:  # noqa: BLE001 — internal
             logger.warning("method %s raised: %s", method, exc)
             return _err(req_id, "internal", f"{type(exc).__name__}")
+        # Light result logging for list_sessions so the user can see
+        # managed/detected counts without needing to capture the
+        # whole reply.
+        if method == "list_sessions" and isinstance(result, dict):
+            logger.info(
+                "local_rpc method=list_sessions managed=%d detected=%d",
+                len(result.get("managed", []) or []),
+                len(result.get("detected", []) or []),
+            )
         return _ok(req_id, result)
 
     def _handle_method(self, method: str, params: dict) -> Any:

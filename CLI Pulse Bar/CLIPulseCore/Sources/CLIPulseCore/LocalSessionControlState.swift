@@ -59,6 +59,26 @@ extension AppState {
     @MainActor
     public func refreshLocalSessionControlState() async {
         let client = LocalSessionControlClient()
+        // Diagnostic snapshot on every tick — non-sensitive: paths
+        // and existence flags only, no token contents. Surfaces the
+        // path-mismatch class of bug (sandboxed app's containerURL
+        // resolving differently from the unsandboxed helper) without
+        // requiring a custom debug build.
+        let diag = client.diagnostics()
+        Self.localStateLogger.debug(
+            """
+            local-state refresh: \
+            socket=\(diag.resolvedSocketPath, privacy: .public) \
+            socketExists=\(diag.socketExists, privacy: .public) \
+            token=\(diag.resolvedTokenPath, privacy: .public) \
+            tokenExists=\(diag.tokenExists, privacy: .public) \
+            tokenReadable=\(diag.tokenReadable, privacy: .public) \
+            appGroup=\(diag.appGroupContainerPath ?? "<nil>", privacy: .public) \
+            home=\(diag.nsHomeDirectory, privacy: .public)
+            """
+        )
+        self.localDiagnostics = diag
+
         do {
             let hello = try await client.hello()
             self.localHelperReachable = true
@@ -73,13 +93,16 @@ extension AppState {
             default:
                 self.localHelperError = String(describing: err)
             }
-            // Helper not reachable → can't hydrate the gate either.
-            // Leave the cached value as-is (the toggle UI will read
-            // it on next attempt).
+            Self.localStateLogger.info(
+                "hello failed: \(String(describing: err), privacy: .public) (socketExists=\(diag.socketExists, privacy: .public))"
+            )
             return
         } catch {
             self.localHelperReachable = false
             self.localHelperError = String(describing: error)
+            Self.localStateLogger.info(
+                "hello failed (non-typed): \(String(describing: error), privacy: .public)"
+            )
             return
         }
         // Hydrate the gate from the authenticated status RPC. This

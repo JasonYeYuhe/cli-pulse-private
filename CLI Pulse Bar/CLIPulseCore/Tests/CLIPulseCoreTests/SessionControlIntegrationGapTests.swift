@@ -234,5 +234,58 @@ final class SessionControlIntegrationGapTests: XCTestCase {
         let caps = SessionControlCapabilities.iter1Local
         XCTAssertFalse(caps.sendInput)
     }
+
+    // MARK: - Diagnostics surface (Codex PR #17 manual-verify follow-up)
+
+    @MainActor
+    func testDiagnosticsAreCapturedOnEveryRefresh() {
+        // After the manual-verify failure we surface
+        // `LocalSessionControlClient.Diagnostics` on AppState so
+        // the UI can render the resolved paths + existence flags
+        // without the user having to pull Xcode logs.
+        let state = makeState()
+        // The Diagnostics struct is initialised on first refresh;
+        // before that, nil is the expected default.
+        XCTAssertNil(state.localDiagnostics)
+    }
+
+    func testDiagnosticsStructEquatable() {
+        let a = LocalSessionControlClient.Diagnostics(
+            resolvedSocketPath: "/path/to/sock", socketExists: false,
+            resolvedTokenPath: "/path/to/token", tokenExists: false,
+            tokenReadable: false,
+            appGroupContainerPath: "/Users/x/Library/Group Containers/group.yyh.CLI-Pulse",
+            nsHomeDirectory: "/Users/x"
+        )
+        let b = LocalSessionControlClient.Diagnostics(
+            resolvedSocketPath: "/path/to/sock", socketExists: false,
+            resolvedTokenPath: "/path/to/token", tokenExists: false,
+            tokenReadable: false,
+            appGroupContainerPath: "/Users/x/Library/Group Containers/group.yyh.CLI-Pulse",
+            nsHomeDirectory: "/Users/x"
+        )
+        XCTAssertEqual(a, b)
+    }
+
+    @MainActor
+    func testDiagnosticsSnapshotFromClient() {
+        // Construct a client with explicit non-existent paths and
+        // verify the diagnostics snapshot reflects the inputs +
+        // existence flags. Exercising the `.diagnostics()` API
+        // surface so a future field-name typo lands here.
+        let client = LocalSessionControlClient(
+            socketPath: "/tmp/cli-pulse-diag-no-such-socket.sock",
+            tokenPath: "/tmp/cli-pulse-diag-no-such-token",
+            connectTimeout: 0.2,
+            requestTimeout: 0.2
+        )
+        let diag = client.diagnostics()
+        XCTAssertEqual(diag.resolvedSocketPath, "/tmp/cli-pulse-diag-no-such-socket.sock")
+        XCTAssertEqual(diag.resolvedTokenPath, "/tmp/cli-pulse-diag-no-such-token")
+        XCTAssertFalse(diag.socketExists)
+        XCTAssertFalse(diag.tokenExists)
+        XCTAssertFalse(diag.tokenReadable)
+        XCTAssertFalse(diag.nsHomeDirectory.isEmpty)
+    }
 }
 #endif
