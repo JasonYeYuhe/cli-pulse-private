@@ -47,7 +47,8 @@ struct SessionsTab: View {
             while !Task.isCancelled {
                 async let _sessions: () = state.refreshRemoteSessions()
                 async let _approvals: () = state.refreshRemoteApprovals()
-                _ = await (_sessions, _approvals)
+                async let _local: () = state.refreshLocalSessionControlState()
+                _ = await (_sessions, _approvals, _local)
                 if showOutput, let sid = selectedManagedSessionId {
                     await state.refreshRemoteSessionEvents(sessionId: sid)
                 }
@@ -101,6 +102,16 @@ struct SessionsTab: View {
                 text: "Remote Control is disabled. Turn it on in Settings → Privacy to drive a Claude session from this app."
             )
         } else {
+            // Phase 3 Iter 1: helper-not-running banner. Renders only
+            // when the user is targeting THIS Mac and the local UDS
+            // socket can't be reached. The banner intentionally only
+            // navigates to Settings → Advanced (Background Helper) —
+            // we do NOT auto-spawn the helper in iter 1.
+            if shouldShowHelperNotRunningBanner {
+                helperNotRunningBanner
+            } else if state.localHelperReachable && state.isSelfDevice(targetDeviceForStart?.id) {
+                localFastPathToggle
+            }
             // Error banner FIRST when RC is on — render regardless of
             // whether `remoteSessions` is empty or populated.
             //
@@ -531,16 +542,38 @@ struct SessionsTab: View {
 
     private func openManagedClaudeSession() async {
         guard let device = targetDeviceForStart else { return }
-        let newSessionId = await state.requestRemoteClaudeSessionStart(
-            deviceId: device.id,
-            cwdBasename: "",
-            cwdHmac: nil,
-            clientLabel: device.name
-        )
+        // Phase 3 Iter 1: when the target Mac is THIS Mac and the
+        // user has opted into local control AND the helper UDS is
+        // reachable, take the fast path. Anything else falls back
+        // to the existing Supabase route so iOS / iPad / Watch and
+        // cross-device Mac control continue to work unchanged.
+        let newSessionId: String?
+        if state.isSelfDevice(device.id),
+           state.localControlEnabled,
+           state.localHelperReachable {
+            newSessionId = await state.requestLocalClaudeSessionStart(
+                clientLabel: device.name
+            )
+        } else {
+            newSessionId = await state.requestRemoteClaudeSessionStart(
+                deviceId: device.id,
+                cwdBasename: "",
+                cwdHmac: nil,
+                clientLabel: device.name
+            )
+        }
         if let id = newSessionId {
             selectedManagedSessionId = id
             promptText = ""
         }
+    }
+
+    /// True when the user is targeting THIS Mac and the helper isn't
+    /// reachable on the local UDS socket. Drives the helper-not-running
+    /// banner — we deliberately don't auto-spawn the helper in iter 1.
+    private var shouldShowHelperNotRunningBanner: Bool {
+        guard let device = targetDeviceForStart else { return false }
+        return state.isSelfDevice(device.id) && !state.localHelperReachable
     }
 
     private func inlineHint(icon: String, text: String) -> some View {
@@ -553,6 +586,65 @@ struct SessionsTab: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
+        }
+        .padding(10)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    // MARK: - Phase 3 Iter 1 banner + local-fast-path toggle
+
+    private var helperNotRunningBanner: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "bolt.slash.circle")
+                .font(.system(size: 12))
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Helper not running")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("CLI Pulse can't reach the local helper on this Mac. Same-device session control falls back to the slower remote path until the helper is started.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button("Open Helper Setup") {
+                state.selectedTab = .settings
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Open Settings → Advanced to enable the Background Helper.")
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private var localFastPathToggle: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Image(systemName: "bolt.circle")
+                .font(.system(size: 12))
+                .foregroundStyle(state.localControlEnabled ? .green : .secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Local fast path")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(state.localControlEnabled
+                     ? "Same-device sessions go through the local helper socket — no Supabase round-trip."
+                     : "Off by default. Turn on to spawn and stop same-device Claude sessions through the local helper socket instead of the cloud.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Toggle("", isOn: Binding(
+                get: { state.localControlEnabled },
+                set: { newValue in
+                    Task { await state.setLocalControlEnabled(newValue) }
+                }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
         }
         .padding(10)
         .background(Color.secondary.opacity(0.06))

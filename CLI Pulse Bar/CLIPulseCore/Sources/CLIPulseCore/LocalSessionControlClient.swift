@@ -1,0 +1,309 @@
+#if os(macOS)
+import Foundation
+import Network
+
+/// macOS-only `SessionControlClient` that talks to the helper's UDS
+/// server inside the app group container.
+///
+/// Wire format: 4-byte big-endian length prefix + UTF-8 JSON body.
+/// Mirrors `helper/local_session_server.py` symmetrically; the
+/// envelope shapes and error codes are documented there.
+///
+/// Connection model: each method opens a fresh NWConnection, performs
+/// one request/reply, and tears it down. iter 1 doesn't need
+/// connection pooling (every operation is a one-shot from the user's
+/// perspective). When iter 2A introduces a streaming `subscribe_events`
+/// surface, that path will hold a connection open for the lifetime of
+/// the subscription — but iter 1 does NOT need that.
+public final class LocalSessionControlClient: SessionControlClient {
+    public static let appGroupID = "group.yyh.CLI-Pulse"
+    public static let socketFilename = "clipulse-helper.sock"
+    public static let authTokenFilename = "helper-auth-token"
+    public static let protocolVersion = 1
+    public static let maxPayload: UInt32 = 1 << 20    // 1 MiB
+
+    private let socketPath: String
+    private let tokenPath: String
+    private let connectTimeout: TimeInterval
+    private let requestTimeout: TimeInterval
+    private let queue = DispatchQueue(label: "com.cli-pulse.local-session-client")
+
+    public init(
+        socketPath: String? = nil,
+        tokenPath: String? = nil,
+        connectTimeout: TimeInterval = 3,
+        requestTimeout: TimeInterval = 5
+    ) {
+        if let socketPath, let tokenPath {
+            self.socketPath = socketPath
+            self.tokenPath = tokenPath
+        } else {
+            let containerURL = FileManager.default.containerURL(
+                forSecurityApplicationGroupIdentifier: Self.appGroupID
+            )
+            let base = containerURL?.path ?? NSHomeDirectory()
+            self.socketPath = socketPath ?? (base as NSString)
+                .appendingPathComponent(Self.socketFilename)
+            self.tokenPath = tokenPath ?? (base as NSString)
+                .appendingPathComponent(Self.authTokenFilename)
+        }
+        self.connectTimeout = connectTimeout
+        self.requestTimeout = requestTimeout
+    }
+
+    // MARK: - SessionControlClient
+
+    public func hello() async throws -> SessionControlHello {
+        let result = try await send(
+            method: "hello",
+            params: ["client_protocol_version": Self.protocolVersion],
+            requireAuth: false
+        )
+        guard let version = result["protocol_version"] as? Int,
+              let methods = result["supported_methods"] as? [String],
+              let capsRaw = result["capabilities"] as? [String: Any]
+        else {
+            throw SessionControlError.invalidResponse("hello reply missing fields")
+        }
+        let caps = SessionControlCapabilities(
+            sendInput: (capsRaw["send_input"] as? Bool) ?? false,
+            subscribeEvents: (capsRaw["subscribe_events"] as? Bool) ?? false,
+            approvals: (capsRaw["approvals"] as? Bool) ?? false
+        )
+        return SessionControlHello(
+            protocolVersion: version,
+            supportedMethods: Set(methods),
+            capabilities: caps
+        )
+    }
+
+    public func startClaudeSession(
+        clientLabel: String?,
+        cwdBasename: String?,
+        cwdHmac: String?
+    ) async throws -> SessionControlStartResult {
+        var params: [String: Any] = ["provider": "claude"]
+        if let clientLabel { params["client_label"] = clientLabel }
+        if let cwdBasename { params["cwd_basename"] = cwdBasename }
+        if let cwdHmac { params["cwd_hmac"] = cwdHmac }
+        let result = try await send(method: "start_session", params: params)
+        guard let sid = result["session_id"] as? String, !sid.isEmpty else {
+            throw SessionControlError.invalidResponse("start_session: missing session_id")
+        }
+        return SessionControlStartResult(sessionId: sid, commandId: nil)
+    }
+
+    public func listSessions() async throws -> [SessionControlSummary] {
+        let result = try await send(method: "list_sessions", params: [:])
+        guard let rows = result["sessions"] as? [[String: Any]] else {
+            throw SessionControlError.invalidResponse("list_sessions: not an array")
+        }
+        return rows.compactMap { row in
+            guard let id = row["session_id"] as? String else { return nil }
+            return SessionControlSummary(
+                id: id,
+                provider: (row["provider"] as? String) ?? "claude",
+                clientLabel: row["client_label"] as? String,
+                status: (row["status"] as? String) ?? "running"
+            )
+        }
+    }
+
+    public func stopSession(sessionId: String) async throws {
+        _ = try await send(
+            method: "stop_session",
+            params: ["session_id": sessionId]
+        )
+    }
+
+    /// Flip the helper's `local_control_enabled` toggle. NOT part of
+    /// the protocol — exposed as a concrete-class method because only
+    /// the local transport has this concept (the remote transport's
+    /// gate lives server-side under a different toggle entirely).
+    @discardableResult
+    public func setLocalControlEnabled(_ enabled: Bool) async throws -> Bool {
+        let result = try await send(
+            method: "set_local_control_enabled",
+            params: ["enabled": enabled]
+        )
+        return (result["enabled"] as? Bool) ?? enabled
+    }
+
+    // MARK: - Wire core
+
+    private func send(
+        method: String,
+        params: [String: Any],
+        requireAuth: Bool = true
+    ) async throws -> [String: Any] {
+        // Build envelope. Auth token re-read each call so a manual
+        // helper restart (which rotates the token) takes effect
+        // without an app restart.
+        var envelope: [String: Any] = [
+            "id": UUID().uuidString,
+            "method": method,
+            "params": params,
+        ]
+        if requireAuth {
+            guard let token = readToken(), !token.isEmpty else {
+                throw SessionControlError.unauthenticated
+            }
+            envelope["auth_token"] = token
+        }
+        let body = try JSONSerialization.data(
+            withJSONObject: envelope,
+            options: [.sortedKeys]
+        )
+        let conn = try await connect()
+        defer { conn.cancel() }
+        try await sendFrame(conn, body: body)
+        let reply = try await receiveFrame(conn)
+        return try parseReply(reply)
+    }
+
+    private func parseReply(_ data: Data) throws -> [String: Any] {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw SessionControlError.invalidResponse("reply not a JSON object")
+        }
+        if let okFlag = obj["ok"] as? Bool, !okFlag {
+            let err = obj["error"] as? [String: Any] ?? [:]
+            let code = (err["code"] as? String) ?? "internal"
+            let message = (err["message"] as? String) ?? "(no message)"
+            throw SessionControlErrorMapping.error(forWireCode: code, message: message)
+        }
+        guard let result = obj["result"] as? [String: Any] else {
+            throw SessionControlError.invalidResponse("reply missing 'result' on ok=true")
+        }
+        return result
+    }
+
+    private func readToken() -> String? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: tokenPath)),
+              let str = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return str.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: - NWConnection helpers
+
+    private func connect() async throws -> NWConnection {
+        let endpoint = NWEndpoint.unix(path: socketPath)
+        let connection = NWConnection(to: endpoint, using: .tcp)
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            var resumed = false
+            let resumeOnce: (Result<Void, Error>) -> Void = { result in
+                guard !resumed else { return }
+                resumed = true
+                switch result {
+                case .success:        cont.resume()
+                case .failure(let e): cont.resume(throwing: e)
+                }
+            }
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    resumeOnce(.success(()))
+                case .failed(let err):
+                    // POSIXErrorCode .ENOENT → file missing → helper not running.
+                    // POSIXErrorCode .ECONNREFUSED → socket exists but no listener.
+                    if let posix = (err as NSError).userInfo[NSUnderlyingErrorKey] as? POSIXError {
+                        if posix.code == .ENOENT || posix.code == .ECONNREFUSED {
+                            resumeOnce(.failure(SessionControlError.helperNotRunning))
+                            return
+                        }
+                    }
+                    let nsErr = err as NSError
+                    if nsErr.domain == NSPOSIXErrorDomain {
+                        if nsErr.code == Int(POSIXErrorCode.ENOENT.rawValue)
+                            || nsErr.code == Int(POSIXErrorCode.ECONNREFUSED.rawValue) {
+                            resumeOnce(.failure(SessionControlError.helperNotRunning))
+                            return
+                        }
+                    }
+                    resumeOnce(.failure(SessionControlError.disconnected))
+                case .cancelled:
+                    resumeOnce(.failure(SessionControlError.disconnected))
+                default:
+                    break
+                }
+            }
+            connection.start(queue: queue)
+            // Soft connect timeout. The continuation guard means a late
+            // .ready after the timeout doesn't double-resume.
+            queue.asyncAfter(deadline: .now() + connectTimeout) {
+                resumeOnce(.failure(SessionControlError.timeout))
+            }
+        }
+        return connection
+    }
+
+    private func sendFrame(_ conn: NWConnection, body: Data) async throws {
+        if body.count > Int(Self.maxPayload) {
+            throw SessionControlError.invalidResponse("outbound frame > 1 MiB")
+        }
+        var header = Data(count: 4)
+        let length = UInt32(body.count).bigEndian
+        header.withUnsafeMutableBytes { ptr in
+            ptr.storeBytes(of: length, as: UInt32.self)
+        }
+        let frame = header + body
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            conn.send(content: frame, completion: .contentProcessed { err in
+                if let err {
+                    if (err as NSError).domain == NSPOSIXErrorDomain {
+                        cont.resume(throwing: SessionControlError.disconnected)
+                    } else {
+                        cont.resume(throwing: SessionControlError.disconnected)
+                    }
+                } else {
+                    cont.resume()
+                }
+            })
+        }
+    }
+
+    private func receiveFrame(_ conn: NWConnection) async throws -> Data {
+        let header = try await receiveExact(conn, count: 4)
+        let length = header.withUnsafeBytes { $0.load(as: UInt32.self) }.bigEndian
+        if length > Self.maxPayload {
+            throw SessionControlError.invalidResponse("inbound frame > 1 MiB (\(length))")
+        }
+        if length == 0 { return Data() }
+        return try await receiveExact(conn, count: Int(length))
+    }
+
+    private func receiveExact(_ conn: NWConnection, count: Int) async throws -> Data {
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Data, Error>) in
+            var resumed = false
+            let resumeOnce: (Result<Data, Error>) -> Void = { result in
+                guard !resumed else { return }
+                resumed = true
+                switch result {
+                case .success(let d): cont.resume(returning: d)
+                case .failure(let e): cont.resume(throwing: e)
+                }
+            }
+            conn.receive(minimumIncompleteLength: count, maximumLength: count) { data, _, _, err in
+                if let err {
+                    let nsErr = err as NSError
+                    if nsErr.domain == NSPOSIXErrorDomain {
+                        resumeOnce(.failure(SessionControlError.disconnected))
+                    } else {
+                        resumeOnce(.failure(SessionControlError.disconnected))
+                    }
+                    return
+                }
+                guard let data, data.count == count else {
+                    resumeOnce(.failure(SessionControlError.disconnected))
+                    return
+                }
+                resumeOnce(.success(data))
+            }
+            queue.asyncAfter(deadline: .now() + requestTimeout) {
+                resumeOnce(.failure(SessionControlError.timeout))
+            }
+        }
+    }
+}
+#endif

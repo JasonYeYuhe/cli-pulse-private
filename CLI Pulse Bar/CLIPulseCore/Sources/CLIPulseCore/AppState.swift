@@ -327,6 +327,37 @@ public final class AppState: ObservableObject {
     /// most output). Adjust if a future iter needs longer scrollback.
     public static let remoteSessionEventsCap: Int = 200
 
+    // MARK: - Local Session Control (Phase 3 Iter 1, macOS-only)
+    #if os(macOS)
+    /// True iff the most recent `LocalSessionControlClient.hello()`
+    /// against this Mac's helper UDS socket succeeded. Drives the
+    /// "helper not running" banner and the local-vs-remote routing
+    /// decision in `openManagedClaudeSession`. Reset to false on any
+    /// transport failure.
+    @Published public var localHelperReachable: Bool = false
+
+    /// Last known `local_control_enabled` value reported by the
+    /// helper. Defaults false (privacy-default opt-out). Updated by
+    /// `setLocalControlEnabled`; not refreshed automatically because
+    /// reading it back from the helper would itself require the gate
+    /// to be on for most methods (chicken-and-egg).
+    @Published public var localControlEnabled: Bool = false
+
+    /// Capability flags returned by the helper's `hello`. Used by the
+    /// macOS UI to decide which controls to enable when local routing
+    /// is in effect (iter 1: start / list / stop only).
+    @Published public var localCapabilities: SessionControlCapabilities?
+
+    /// Helper protocol version reported by `hello`. Pinned at 1 by
+    /// the iter-1 server; iter 2A may bump it.
+    @Published public var localProtocolVersion: Int = 0
+
+    /// Last error string from any local-control call, surfaced inline
+    /// in the Sessions UI when non-nil. Cleared on a successful
+    /// `refreshLocalSessionControlState`.
+    @Published public var localHelperError: String?
+    #endif
+
     /// Aggregated per-provider summaries over the currently-selected range.
     /// Re-derived on every access; cheap because rows is small (≤ providers × days).
     public var yieldScoreSummaries: [YieldScoreSummary] {
