@@ -2,8 +2,50 @@ import Foundation
 
 // MARK: - Shared Formatter
 
-/// Package-level shared ISO8601 formatter to avoid repeated allocations.
+/// Package-level shared ISO8601 formatter (no fractional seconds).
+/// Used for outputting timestamps that other clients can round-trip
+/// without needing to support fractional-second parsing.
 nonisolated(unsafe) public let sharedISO8601Formatter = ISO8601DateFormatter()
+
+/// Companion formatter that parses ISO8601 strings *with* fractional
+/// seconds, which `sharedISO8601Formatter` rejects.
+nonisolated(unsafe) private let sharedISO8601FormatterFractional: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return f
+}()
+
+private let sharedISO8601ParseLock = NSLock()
+
+/// Robust ISO-8601 parser that tolerates BOTH:
+///   `2026-05-05T12:34:56Z`              (no fractional seconds)
+///   `2026-05-05T12:34:56+00:00`         (timezone offset)
+///   `2026-05-05T12:34:56.789012+00:00`  (Python `datetime.isoformat()`)
+///   `2026-05-05T12:34:56.789Z`          (with fractional + Z)
+///
+/// Why: helper/system_collector.py writes
+/// `datetime.now(timezone.utc).isoformat()` which always includes
+/// microsecond fractionals (`+00:00` form). The default
+/// `ISO8601DateFormatter()` (no `withFractionalSeconds` option)
+/// returns nil for those inputs. That dropout silently broke every
+/// helper-uploaded `SessionRecord` — `lastActiveDate` returned nil,
+/// `SessionFreshnessFilter.filterCurrent` then evicted the row via
+/// `guard let lastActive = … else { return false }`. Net effect:
+/// `cloudRaw=50 cloudFresh=0` and only JSONL-synthesized rows
+/// survived to the UI.
+///
+/// `ISO8601DateFormatter` is thread-safe per Apple docs since macOS
+/// 10.12, but we keep a small `NSLock` because we mutate two
+/// formatters' state via `.date(from:)` indirectly (Apple's
+/// implementation is "thread-safe for parsing" but the documentation
+/// is light on details for fallback chains). The lock is uncontended
+/// in practice.
+public func sharedISO8601Parse(_ text: String) -> Date? {
+    sharedISO8601ParseLock.lock()
+    defer { sharedISO8601ParseLock.unlock() }
+    if let d = sharedISO8601Formatter.date(from: text) { return d }
+    return sharedISO8601FormatterFractional.date(from: text)
+}
 
 // MARK: - Enums
 
@@ -481,11 +523,11 @@ public struct SessionRecord: Codable, Identifiable, Sendable, Hashable {
     }
 
     public var startedDate: Date? {
-        sharedISO8601Formatter.date(from: started_at)
+        sharedISO8601Parse(started_at)
     }
 
     public var lastActiveDate: Date? {
-        sharedISO8601Formatter.date(from: last_active_at)
+        sharedISO8601Parse(last_active_at)
     }
 
     /// Whether the row's `requests` metric reflects real assistant-turn
@@ -599,7 +641,7 @@ public struct AlertRecord: Codable, Identifiable, Sendable {
     }
 
     public var createdDate: Date? {
-        sharedISO8601Formatter.date(from: created_at)
+        sharedISO8601Parse(created_at)
     }
 
     public init(

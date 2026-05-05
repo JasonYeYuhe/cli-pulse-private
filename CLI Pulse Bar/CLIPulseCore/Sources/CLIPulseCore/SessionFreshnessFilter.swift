@@ -237,11 +237,13 @@ public enum SessionFreshnessFilter {
         for l in localFresh {
             merged[key(l)] = l
         }
-        // Stable order: most-recently-active first.
-        let isoFormatter = ISO8601DateFormatter()
+        // Stable order: most-recently-active first. Use the robust
+        // shared parser so helper-uploaded fractional-second
+        // timestamps (Python `datetime.isoformat()`) sort correctly
+        // alongside locally-synthesized no-fractional timestamps.
         return merged.values.sorted { lhs, rhs in
-            let l = isoFormatter.date(from: lhs.last_active_at) ?? .distantPast
-            let r = isoFormatter.date(from: rhs.last_active_at) ?? .distantPast
+            let l = sharedISO8601Parse(lhs.last_active_at) ?? .distantPast
+            let r = sharedISO8601Parse(rhs.last_active_at) ?? .distantPast
             return l > r
         }
     }

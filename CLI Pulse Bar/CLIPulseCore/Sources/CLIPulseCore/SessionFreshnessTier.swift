@@ -127,10 +127,11 @@ public enum SessionFreshnessTierClassifier {
             case .hidden: break
             }
         }
-        let isoFormatter = ISO8601DateFormatter()
+        // Use the robust shared parser — same fractional-second
+        // tolerance fix as in SessionFreshnessFilter.merge sort.
         let order: (SessionRecord, SessionRecord) -> Bool = { lhs, rhs in
-            let l = isoFormatter.date(from: lhs.last_active_at) ?? .distantPast
-            let r = isoFormatter.date(from: rhs.last_active_at) ?? .distantPast
+            let l = sharedISO8601Parse(lhs.last_active_at) ?? .distantPast
+            let r = sharedISO8601Parse(rhs.last_active_at) ?? .distantPast
             return l > r
         }
         return (active.sorted(by: order), recent.sorted(by: order))
