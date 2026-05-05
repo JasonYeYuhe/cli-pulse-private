@@ -356,6 +356,25 @@ public final class AppState: ObservableObject {
     /// in the Sessions UI when non-nil. Cleared on a successful
     /// `refreshLocalSessionControlState`.
     @Published public var localHelperError: String?
+
+    /// Phase 3 Iter 2A: same-Mac Claude processes the helper detected
+    /// via `_detect_provider` (PR #14) but does NOT own. Read-only
+    /// from the macOS UI's perspective: the Sessions tab renders
+    /// these in a separate "Detected on this Mac" section so users
+    /// can see what's running outside CLI Pulse without believing
+    /// the app can safely write to or stop them. Populated from
+    /// `LocalSessionControlClient.listSessions` filtered to
+    /// `controllable == false`.
+    @Published public var localDetectedSessions: [SessionControlSummary] = []
+
+    /// Companion to `localDetectedSessions` for the helper-owned
+    /// managed rows the local UDS surface returned on the most recent
+    /// refresh. The macOS UI continues to drive its primary list off
+    /// `remoteSessions` (which already includes managed local rows
+    /// via the helper's `register_session` RPC). This field exists
+    /// for tests + future UI surfaces that want to render
+    /// local-managed-only without waiting for Supabase freshness.
+    @Published public var localManagedSessions: [SessionControlSummary] = []
     #endif
 
     /// Aggregated per-provider summaries over the currently-selected range.

@@ -96,34 +96,35 @@ struct SessionsTab: View {
 
     @ViewBuilder
     private var managedBody: some View {
-        if !state.remoteControlEnabled {
+        // Local same-Mac control is INDEPENDENT from `remoteControlEnabled`.
+        // The cloud Remote Control consent gates the Supabase RPCs only;
+        // the helper UDS path runs on its own `localControlEnabled` toggle.
+        // Codex review on PR #15 caught this — the previous shape blocked
+        // local actions whenever Remote Control was off, conflating two
+        // distinct consent decisions.
+        let localPathAvailable = state.shouldUseLocalSessionControl(
+            forDeviceId: targetDeviceForStart?.id
+        )
+
+        if !state.remoteControlEnabled && !localPathAvailable {
             inlineHint(
                 icon: "lock.shield",
-                text: "Remote Control is disabled. Turn it on in Settings → Privacy to drive a Claude session from this app."
+                text: "Remote Control is disabled. Turn it on in Settings → Privacy, or enable Local fast path below to drive a Claude session through the local helper."
             )
+            // Even with Remote Control off, expose the local toggle row
+            // when the helper is reachable so the user can opt in
+            // without flipping unrelated cloud consent.
+            if state.localHelperReachable && state.isSelfDevice(targetDeviceForStart?.id) {
+                localFastPathToggle
+            } else if shouldShowHelperNotRunningBanner {
+                helperNotRunningBanner
+            }
         } else {
-            // Phase 3 Iter 1: helper-not-running banner. Renders only
-            // when the user is targeting THIS Mac and the local UDS
-            // socket can't be reached. The banner intentionally only
-            // navigates to Settings → Advanced (Background Helper) —
-            // we do NOT auto-spawn the helper in iter 1.
             if shouldShowHelperNotRunningBanner {
                 helperNotRunningBanner
             } else if state.localHelperReachable && state.isSelfDevice(targetDeviceForStart?.id) {
                 localFastPathToggle
             }
-            // Error banner FIRST when RC is on — render regardless of
-            // whether `remoteSessions` is empty or populated.
-            //
-            // The earlier shape only rendered this banner inside the
-            // `else { ForEach... }` branch, so a failed
-            // `remote_app_list_sessions` (the prod-without-placeholder-
-            // migration case is the obvious one — 404; transient
-            // network blips are another) silently kept the user on the
-            // identical "No managed sessions yet" empty state. Lifting
-            // the banner out of the non-empty branch makes the
-            // failure visible without removing the empty hint when
-            // there genuinely are no sessions yet.
             if let err = state.remoteSessionsError {
                 errorHint(err)
             }
@@ -152,7 +153,70 @@ struct SessionsTab: View {
                     }
                 }
             }
+            // Phase 3 Iter 2A: detected same-Mac sessions the helper
+            // saw via `_detect_provider` (PR #14). Read-only — the
+            // helper does NOT own these PTYs, so we explicitly
+            // surface them as non-controllable rather than offering
+            // action buttons that would silently fail.
+            detectedLocalSessionsSection
         }
+    }
+
+    @ViewBuilder
+    private var detectedLocalSessionsSection: some View {
+        let detected = state.localDetectedSessions
+        if !detected.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Divider().padding(.vertical, 2)
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass.circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                    Text("Detected on this Mac · read-only")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(detected.count)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+                ForEach(detected, id: \.id) { row in
+                    detectedSessionRow(row)
+                }
+                Text("These Claude sessions are running on this Mac but were not started by CLI Pulse, so the helper can't safely send input or stop them. Use them in the originating terminal instead.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 2)
+            }
+        }
+    }
+
+    private func detectedSessionRow(_ row: SessionControlSummary) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "terminal")
+                .font(.system(size: 11))
+                .foregroundStyle(PulseTheme.providerColor(row.provider))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.clientLabel ?? "Claude session")
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+                Text(row.status)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("read-only")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.secondary.opacity(0.10))
+                .clipShape(Capsule())
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     private func errorHint(_ message: String) -> some View {
@@ -355,11 +419,17 @@ struct SessionsTab: View {
                          : "Show the live output tail (stdout, status, info events). Default off — privacy-visible opt-in."))
                 Button(role: .destructive) {
                     Task {
-                        // v0.41: stop on a pending session lands in the
-                        // RPC's app-side cancel branch — no helper
-                        // needed. Local view-state cleanup is the same
-                        // as the running-stop path.
-                        await state.stopRemoteSession(sessionId: session.id)
+                        // Phase 3 Iter 2A routing: if the session
+                        // belongs to THIS Mac AND the local fast path
+                        // is reachable+enabled, prefer the UDS stop.
+                        // Otherwise fall back to the Supabase queue
+                        // (cross-device control, or local helper not
+                        // available right now).
+                        if state.shouldUseLocalSessionControl(forDeviceId: session.device_id) {
+                            _ = await state.stopLocalSession(sessionId: session.id)
+                        } else {
+                            await state.stopRemoteSession(sessionId: session.id)
+                        }
                         if selectedManagedSessionId == session.id {
                             selectedManagedSessionId = nil
                         }
@@ -503,7 +573,19 @@ struct SessionsTab: View {
     private func sendPrompt(for session: RemoteSession) async {
         let text = promptText
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let ok = await state.sendRemoteSessionPrompt(sessionId: session.id, text: text)
+        // Phase 3 Iter 2A routing + capability gate: prefer the local
+        // UDS path when the helper supports `send_input` AND owns the
+        // session's PTY (same-Mac + local enabled + reachable). Fall
+        // back to the Supabase command queue for cross-device control
+        // and for any case where the local path isn't ready.
+        let useLocal = state.shouldUseLocalSessionControl(forDeviceId: session.device_id)
+            && (state.localCapabilities?.sendInput ?? false)
+        let ok: Bool
+        if useLocal {
+            ok = await state.sendLocalSessionInput(sessionId: session.id, payload: text)
+        } else {
+            ok = await state.sendRemoteSessionPrompt(sessionId: session.id, text: text)
+        }
         if ok { promptText = "" }
     }
 

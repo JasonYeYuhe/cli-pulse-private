@@ -2,6 +2,19 @@
 import Foundation
 import Network
 
+/// Reply payload from `LocalSessionControlClient.getLocalControlStatus`.
+/// macOS-only because the local UDS surface is macOS-only — iOS / iPad
+/// / Watch always go through the Supabase remote path.
+public struct LocalControlStatus: Sendable, Equatable {
+    public let localControlEnabled: Bool
+    public let protocolVersion: Int
+
+    public init(localControlEnabled: Bool, protocolVersion: Int) {
+        self.localControlEnabled = localControlEnabled
+        self.protocolVersion = protocolVersion
+    }
+}
+
 /// macOS-only `SessionControlClient` that talks to the helper's UDS
 /// server inside the app group container.
 ///
@@ -95,24 +108,68 @@ public final class LocalSessionControlClient: SessionControlClient {
 
     public func listSessions() async throws -> [SessionControlSummary] {
         let result = try await send(method: "list_sessions", params: [:])
-        guard let rows = result["sessions"] as? [[String: Any]] else {
-            throw SessionControlError.invalidResponse("list_sessions: not an array")
-        }
-        return rows.compactMap { row in
-            guard let id = row["session_id"] as? String else { return nil }
-            return SessionControlSummary(
+        // iter 2A reply shape:
+        //   { "managed": [...], "detected": [...], "sessions": [...legacy...] }
+        // Older helper revisions only return `sessions`. Read both
+        // and merge so the caller sees a single uniform list with
+        // `controllable` + `source` set per row.
+        let managedRaw = (result["managed"] as? [[String: Any]])
+            ?? (result["sessions"] as? [[String: Any]])
+            ?? []
+        let detectedRaw = (result["detected"] as? [[String: Any]]) ?? []
+        var rows: [SessionControlSummary] = []
+        for row in managedRaw {
+            guard let id = row["session_id"] as? String else { continue }
+            rows.append(.init(
                 id: id,
                 provider: (row["provider"] as? String) ?? "claude",
                 clientLabel: row["client_label"] as? String,
-                status: (row["status"] as? String) ?? "running"
-            )
+                status: (row["status"] as? String) ?? "running",
+                controllable: (row["controllable"] as? Bool) ?? true,
+                source: .managed
+            ))
         }
+        for row in detectedRaw {
+            guard let id = row["session_id"] as? String else { continue }
+            rows.append(.init(
+                id: id,
+                provider: (row["provider"] as? String) ?? "claude",
+                clientLabel: row["client_label"] as? String,
+                status: (row["status"] as? String) ?? "running",
+                controllable: false,
+                source: .detected
+            ))
+        }
+        return rows
     }
 
     public func stopSession(sessionId: String) async throws {
         _ = try await send(
             method: "stop_session",
             params: ["session_id": sessionId]
+        )
+    }
+
+    public func sendInput(sessionId: String, payload: String) async throws {
+        _ = try await send(
+            method: "send_input",
+            params: ["session_id": sessionId, "payload": payload]
+        )
+    }
+
+    /// Read the helper's persisted `local_control_enabled` value.
+    /// Used on app launch to hydrate `AppState.localControlEnabled`
+    /// without keeping a duplicate local copy that can drift.
+    public func getLocalControlStatus() async throws -> LocalControlStatus {
+        let result = try await send(method: "get_local_control_status", params: [:])
+        guard let enabled = result["local_control_enabled"] as? Bool else {
+            throw SessionControlError.invalidResponse(
+                "get_local_control_status: missing local_control_enabled"
+            )
+        }
+        return LocalControlStatus(
+            localControlEnabled: enabled,
+            protocolVersion: (result["protocol_version"] as? Int) ?? 0
         )
     }
 

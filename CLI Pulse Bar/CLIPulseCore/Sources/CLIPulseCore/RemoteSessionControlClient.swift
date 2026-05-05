@@ -70,7 +70,9 @@ public final class RemoteSessionControlClient: SessionControlClient {
                         id: row.id,
                         provider: row.provider,
                         clientLabel: row.client_label,
-                        status: row.status
+                        status: row.status,
+                        controllable: true,
+                        source: .remote
                     )
                 }
         } catch {
@@ -84,6 +86,21 @@ public final class RemoteSessionControlClient: SessionControlClient {
                 sessionId: sessionId,
                 kind: .stop,
                 payload: ""
+            )
+        } catch {
+            throw mapRemoteError(error)
+        }
+    }
+
+    /// Remote / Supabase transport sends prompts via
+    /// `remoteSendCommand(.prompt)`. Same call site the existing
+    /// `DataRefreshManager.sendRemoteSessionPrompt` uses.
+    public func sendInput(sessionId: String, payload: String) async throws {
+        do {
+            _ = try await api.remoteSendCommand(
+                sessionId: sessionId,
+                kind: .prompt,
+                payload: payload
             )
         } catch {
             throw mapRemoteError(error)

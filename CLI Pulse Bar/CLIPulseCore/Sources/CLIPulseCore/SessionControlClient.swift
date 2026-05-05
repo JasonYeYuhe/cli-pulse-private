@@ -1,6 +1,6 @@
 import Foundation
 
-/// Phase 3 Iter 1 — Local Transport Foundation.
+/// Phase 3 — Local Transport Foundation + Same-Mac Existing Session Control.
 ///
 /// The macOS Sessions UI used to drive a single Supabase-backed surface
 /// for every managed-session action (start / list / stop / send input).
@@ -11,25 +11,29 @@ import Foundation
 ///
 /// `SessionControlClient` is the small protocol that lets the Sessions
 /// UI talk to either transport without branching on `if isSelfDevice`
-/// in three places. Two conformers ship in iter 1:
+/// in three places. Two conformers ship:
 ///
 ///   * `RemoteSessionControlClient` — wraps the existing APIClient
 ///     session-control methods (`remoteListSessions`,
-///     `remoteRequestSessionStart`, `remoteSendCommand`). Rename + thin
-///     adapter only — no behaviour change.
+///     `remoteRequestSessionStart`, `remoteSendCommand`). Thin adapter,
+///     no behaviour change.
 ///   * `LocalSessionControlClient` (macOS only) — talks to the helper
 ///     UDS server inside the app group container. Implements
-///     `start_session`, `list_sessions`, `stop_session`. `sendInput`
-///     is intentionally NOT in iter 1; the protocol exposes
-///     `capabilities.sendInput` so the UI can disable the input field
-///     when local is selected.
+///     `hello / ping / get_local_control_status / set_local_control
+///     _enabled / start_session / list_sessions / stop_session /
+///     send_input`.
 ///
-/// iter 2A will add `sendInput` and a streaming `subscribeEvents`
-/// surface; iter 2B will add `approvals`. The `capabilities` payload
-/// returned by `hello` is how the UI decides what to enable per
-/// transport, NOT a hard-coded version check — a future helper that
-/// gains `sendInput` support will surface it through `capabilities`
-/// without an app update.
+/// The `capabilities` payload returned by `hello` is how the UI decides
+/// what to enable per transport, NOT a hard-coded version check — a
+/// future helper that gains `subscribeEvents` will surface it through
+/// `capabilities` without an app update.
+///
+/// `listSessions` returns BOTH helper-owned managed sessions
+/// (`controllable: true`) AND same-Mac processes the helper detected
+/// via PR #14's `_should_ignore_command` + `_detect_provider`
+/// (`controllable: false`). The latter are read-only by design — the
+/// helper does not own those PTYs, so writing keystrokes / killing
+/// arbitrary processes is unsafe and explicitly out of scope.
 public protocol SessionControlClient: Sendable {
     /// Probe the transport. Returns the negotiated protocol version,
     /// the methods the server supports, and the capability flags the
@@ -40,7 +44,7 @@ public protocol SessionControlClient: Sendable {
     /// error if the socket isn't there.
     func hello() async throws -> SessionControlHello
 
-    /// Spawn a new managed Claude session. iter 1 only supports
+    /// Spawn a new managed Claude session. Phase 3 only supports
     /// `provider == "claude"`; codex / shell / etc. are out of scope.
     func startClaudeSession(
         clientLabel: String?,
@@ -48,12 +52,33 @@ public protocol SessionControlClient: Sendable {
         cwdHmac: String?
     ) async throws -> SessionControlStartResult
 
-    /// List the sessions visible through this transport.
-    /// Local lists in-memory helper state; remote lists Supabase rows.
+    /// List the sessions visible through this transport. Local
+    /// returns helper-owned managed rows AND detected same-Mac
+    /// processes; remote returns Supabase rows.
     func listSessions() async throws -> [SessionControlSummary]
 
-    /// Stop a managed session by id.
+    /// Stop a managed session by id. Throws `notControllable` if the
+    /// id refers to a detected-but-unmanaged session (helper does
+    /// not own the PTY) and `sessionNotFound` if no such id exists.
     func stopSession(sessionId: String) async throws
+
+    /// Write `payload` to the stdin of a helper-owned managed
+    /// session. CR/newline submit semantics live with the helper —
+    /// this is just the transport.
+    ///
+    /// Throws `notImplemented` if the transport's capability set
+    /// doesn't include `send_input`. Throws `sessionNotFound` for an
+    /// unknown id and `notControllable` for a detected-only id.
+    /// Default conformance throws `notImplemented` so existing
+    /// transports (the remote / Supabase path) don't need a body
+    /// when their semantics route input differently.
+    func sendInput(sessionId: String, payload: String) async throws
+}
+
+extension SessionControlClient {
+    public func sendInput(sessionId: String, payload: String) async throws {
+        throw SessionControlError.notImplemented
+    }
 }
 
 /// Reply payload for `hello`.
@@ -88,10 +113,20 @@ public struct SessionControlCapabilities: Sendable, Equatable {
         self.approvals = approvals
     }
 
-    /// What the iter-1 LocalSessionControlClient advertises after a
-    /// successful hello — start/list/stop only.
+    /// What the iter-1 LocalSessionControlClient advertised after a
+    /// successful hello — start/list/stop only. Kept for tests that
+    /// pin the iter-1 invariant; production now ships `iter2aLocal`.
     public static let iter1Local = SessionControlCapabilities(
         sendInput: false,
+        subscribeEvents: false,
+        approvals: false
+    )
+
+    /// What the iter-2A LocalSessionControlClient advertises after a
+    /// successful hello — start/list/stop/send_input. Streaming
+    /// (subscribe_events) and approvals stay deferred to iter 2B.
+    public static let iter2aLocal = SessionControlCapabilities(
+        sendInput: true,
         subscribeEvents: false,
         approvals: false
     )
@@ -124,18 +159,43 @@ public struct SessionControlStartResult: Sendable, Equatable {
 /// Minimal session row returned by `listSessions`. Both transports
 /// converge on the same shape; the macOS UI never has to know which
 /// transport produced it.
+///
+/// `controllable` distinguishes helper-owned managed sessions
+/// (`true`: start / list / stop / send_input safe) from
+/// detected-but-unmanaged same-Mac sessions (`false`: list / status
+/// only — the helper does not own the PTY). The UI uses this flag
+/// directly to decide which row-level actions to render. Default
+/// `true` so callers that don't know about the distinction (the
+/// remote / Supabase transport) get backward-compatible behaviour.
 public struct SessionControlSummary: Sendable, Identifiable, Equatable {
     public let id: String
     public let provider: String
     public let clientLabel: String?
     public let status: String
+    public let controllable: Bool
+    public let source: SessionControlSource
 
-    public init(id: String, provider: String, clientLabel: String?, status: String) {
+    public init(id: String, provider: String, clientLabel: String?,
+                status: String, controllable: Bool = true,
+                source: SessionControlSource = .managed) {
         self.id = id
         self.provider = provider
         self.clientLabel = clientLabel
         self.status = status
+        self.controllable = controllable
+        self.source = source
     }
+}
+
+/// How the row was discovered. `managed` means the helper spawned
+/// it via `start_session` and owns its PTY; `detected` means the
+/// helper noticed the process via `_detect_provider` (PR #14) and
+/// can list/show but not control it. `remote` means the row came
+/// from the Supabase-backed `remoteListSessions` path.
+public enum SessionControlSource: String, Sendable, Equatable, Codable {
+    case managed
+    case detected
+    case remote
 }
 
 /// Typed error surface for the SessionControlClient protocol.
@@ -180,6 +240,17 @@ public enum SessionControlError: Error, Equatable, Sendable, CustomStringConvert
     /// short form (no stack trace, no PII).
     case internalError(String)
 
+    /// Referenced session id has no record on either the managed
+    /// or detected list — typo, restart, or already-stopped.
+    case sessionNotFound
+
+    /// Referenced session is detected via process scan but the
+    /// helper does not own its PTY. Stop / send_input would require
+    /// injecting into a user terminal — explicitly out of scope and
+    /// unsafe. The UI surfaces "this session is read-only from
+    /// here" rather than offering action buttons.
+    case notControllable
+
     public var description: String {
         switch self {
         case .helperNotRunning:    return "helper not running"
@@ -189,6 +260,8 @@ public enum SessionControlError: Error, Equatable, Sendable, CustomStringConvert
         case .localControlOff:     return "local control disabled"
         case .timeout:             return "timeout"
         case .disconnected:        return "disconnected"
+        case .sessionNotFound:     return "session not found"
+        case .notControllable:     return "session not controllable from here"
         case .invalidResponse(let detail): return "invalid response: \(detail)"
         case .internalError(let detail):   return "internal error: \(detail)"
         }
@@ -210,6 +283,8 @@ public enum SessionControlErrorMapping {
         case "unknown_method":    return .notImplemented
         case "frame_too_large":   return .invalidResponse(message)
         case "frame_truncated":   return .disconnected
+        case "session_not_found": return .sessionNotFound
+        case "not_controllable":  return .notControllable
         default:                  return .internalError("\(code): \(message)")
         }
     }

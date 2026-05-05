@@ -1,6 +1,7 @@
 """Helper-side Unix domain socket server for local control.
 
-Phase 3 Iter 1 — "Local Transport Foundation".
+Phase 3 — "Local Transport Foundation" (Iter 1) plus the next slice
+that lets the macOS app drive same-Mac existing sessions (Iter 2A).
 
 Wire format:
     [4-byte big-endian uint32 length] [UTF-8 JSON request body]
@@ -13,8 +14,10 @@ read and write reject anything > 1 MiB without writing it.
 Request envelope:
     {
         "id": "<opaque correlation id, echoed in reply>",
-        "method": "hello" | "ping" | "set_local_control_enabled" |
-                  "start_session" | "list_sessions" | "stop_session",
+        "method": "hello" | "ping" | "get_local_control_status" |
+                  "set_local_control_enabled" |
+                  "start_session" | "list_sessions" | "stop_session" |
+                  "send_input",
         "auth_token": "<base64 helper-auth-token>",
         "params": { ... method-specific ... }
     }
@@ -37,17 +40,53 @@ each one to a typed error case):
     "unknown_method"      method string is not one of the documented set
     "frame_too_large"     declared length > MAX_PAYLOAD
     "frame_truncated"     stream closed mid-body
+    "session_not_found"   send_input / stop_session referenced an id
+                          that has no record in either the managed
+                          set or the detected set
+    "not_controllable"    the id IS visible (detected via process
+                          scanning) but the helper does not own its
+                          PTY, so write/stop is not safe to attempt
 
-`hello` is the ONLY method that does not require a valid auth_token —
-the client uses it to negotiate protocol/capabilities before signing
-its first real call. This mirrors many handshake protocols and lets
-the macOS app surface "helper not running" without first needing to
-read the on-disk token.
+Auth posture
+============
 
-Iter 1 explicitly does NOT implement: send_input, subscribe_events,
-hooks, approvals. The hello capability list reflects this so the
-client can grey out unsupported actions in the UI rather than failing
-on dispatch.
+`hello` is the ONE method that may be called without a valid
+`auth_token` — the client uses it to negotiate protocol / capabilities
+before signing its first real call, AND to detect "helper not
+running" without first needing the on-disk token to exist. Every
+other method, including `ping`, requires a matching auth_token.
+
+(Iter 1 of this branch let `ping` slip through unauthenticated; that
+gave any local process a free liveness probe of the helper. The Codex
+review caught it; this iteration tightens the policy to "hello-only
+bypass". `ping` is still cheap and useful — clients just have to
+include the token.)
+
+Capabilities
+============
+
+The `hello` reply advertises a `capabilities` map the macOS UI uses
+to gate features:
+
+    {
+        "send_input":        true,    # iter 2A: managed sessions accept stdin
+        "subscribe_events":  false,   # iter 2A+: streaming output (deferred)
+        "approvals":         false,   # iter 2B: hook approvals (deferred)
+    }
+
+Listing existing same-Mac sessions
+==================================
+
+`list_sessions` returns BOTH:
+  * `managed`: sessions this helper spawned via `start_session` —
+    full lifecycle control (start / list / stop / send_input).
+  * `detected`: same-Mac processes the helper's existing
+    `_should_ignore_command` + `_detect_provider` classifier
+    (PR #14) recognises as Claude. **Read-only**: the helper does
+    not own these PTYs, so `send_input` and `stop_session` against a
+    detected-but-not-managed id are rejected with
+    `session_not_found`. Listing is safe; arbitrary writes to a
+    user terminal are not.
 """
 from __future__ import annotations
 
@@ -73,28 +112,33 @@ LENGTH_PREFIX = 4                # 4-byte big-endian uint32
 MAX_PAYLOAD = 1 << 20            # 1 MiB
 LISTEN_BACKLOG = 8
 
-# Methods the iter 1 hello call advertises. iter 2A will add
-# "send_input" and "subscribe_events"; iter 2B "approve" / "deny".
+# Methods this revision of the helper advertises in `hello`. iter 2A
+# adds `status` (authenticated state hydration), `send_input` (managed
+# session stdin); iter 2B will add `subscribe_events` + approvals.
 SUPPORTED_METHODS = (
     "hello",
     "ping",
+    "get_local_control_status",
     "set_local_control_enabled",
     "start_session",
     "list_sessions",
     "stop_session",
+    "send_input",
 )
 
-# Methods whose body is allowed to skip auth_token validation. Hello
-# is unauthenticated by design; ping is too so a client can probe a
-# server that has no token yet (the macOS app may launch before the
-# token file lands on disk during a fresh install).
-UNAUTHENTICATED_METHODS = frozenset({"hello", "ping"})
+# Methods whose body may skip auth_token validation. `hello` is the
+# only one — the client uses it to negotiate protocol / capabilities
+# before it has any reason to authenticate. `ping` no longer bypasses
+# (Codex review fix): a free liveness probe was a small but pointless
+# information leak, and clients always have the token by the time
+# they're calling ping (they read it once at startup).
+UNAUTHENTICATED_METHODS = frozenset({"hello"})
 
 # Methods that do NOT require local_control_enabled = true. The
-# handshake methods + the toggle itself all bypass this gate; the
-# session-control methods do not.
+# handshake / introspection methods + the toggle itself all bypass
+# this gate; the session-control methods do not.
 GATE_BYPASSED_METHODS = frozenset(
-    {"hello", "ping", "set_local_control_enabled"}
+    {"hello", "ping", "get_local_control_status", "set_local_control_enabled"}
 )
 
 
@@ -254,6 +298,8 @@ class LocalSessionServer:
         start_session: Callable[[dict], dict],
         list_sessions: Callable[[], list[dict]],
         stop_session: Callable[[str], dict],
+        send_input: Callable[[str, str], dict],
+        list_detected_sessions: Callable[[], list[dict]] | None = None,
         max_payload: int = MAX_PAYLOAD,
     ) -> None:
         self._socket_path = Path(socket_path)
@@ -263,6 +309,13 @@ class LocalSessionServer:
         self._start_session = start_session
         self._list_sessions = list_sessions
         self._stop_session = stop_session
+        self._send_input = send_input
+        # `list_detected_sessions` returns same-Mac Claude processes
+        # the helper detected via PR #14's `_should_ignore_command` +
+        # `_detect_provider`. These are read-only for the local UDS
+        # surface — see module docstring for the controllability
+        # boundary. Optional so unit tests can omit it.
+        self._list_detected_sessions = list_detected_sessions
         self._max_payload = max_payload
 
         self._listener: socket.socket | None = None
@@ -464,9 +517,6 @@ class LocalSessionServer:
         if method == "hello":
             requested = params.get("client_protocol_version")
             if requested is not None and requested != PROTOCOL_VERSION:
-                # Iter 1 only speaks protocol 1. We surface the typed
-                # error so the Swift client can map it to
-                # `versionMismatch` rather than retrying blindly.
                 raise _RequestError(
                     "version_mismatch",
                     f"helper speaks protocol {PROTOCOL_VERSION}, client requested {requested}",
@@ -476,11 +526,12 @@ class LocalSessionServer:
                 "supported_methods": list(SUPPORTED_METHODS),
                 "helper_pid": os.getpid(),
                 # Capability flags the UI uses to decide what to show.
-                # send_input/subscribe_events arrive in iter 2A, so the
-                # client must NOT enable that UI in iter 1 even if the
-                # caps list grows in a later helper version.
+                # send_input lights up this iteration — managed Claude
+                # sessions accept stdin via the executor → same code
+                # path as the existing Supabase prompt RPC.
+                # subscribe_events + approvals stay false until iter 2B.
                 "capabilities": {
-                    "send_input": False,
+                    "send_input": True,
                     "subscribe_events": False,
                     "approvals": False,
                 },
@@ -488,6 +539,22 @@ class LocalSessionServer:
 
         if method == "ping":
             return {"pong": True}
+
+        if method == "get_local_control_status":
+            # Authenticated state hydration — the macOS app calls this
+            # on launch (and after `set_local_control_enabled`) so the
+            # toggle UI reflects the helper's actual state without the
+            # app having to keep its own duplicate.
+            try:
+                enabled = bool(self._get_local_control_enabled())
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("local_control_enabled getter raised: %s", exc)
+                raise _RequestError("internal", "config state unavailable") from exc
+            return {
+                "local_control_enabled": enabled,
+                "protocol_version": PROTOCOL_VERSION,
+                "helper_pid": os.getpid(),
+            }
 
         if method == "set_local_control_enabled":
             value = params.get("enabled")
@@ -499,15 +566,13 @@ class LocalSessionServer:
             return {"enabled": value}
 
         if method == "start_session":
-            # Required: provider (must be 'claude' in iter 1).
-            # Optional: client_label, cwd_basename, cwd_hmac.
             provider = params.get("provider", "claude")
             if not isinstance(provider, str) or not provider:
                 raise _RequestError("bad_request", "'provider' must be a string")
             if provider != "claude":
                 raise _RequestError(
                     "not_implemented",
-                    f"provider {provider!r} not supported in iter 1",
+                    f"provider {provider!r} not supported in this iteration",
                 )
             client_label = params.get("client_label")
             cwd_basename = params.get("cwd_basename") or ""
@@ -521,17 +586,103 @@ class LocalSessionServer:
             return self._start_session(payload)
 
         if method == "list_sessions":
-            return {"sessions": self._list_sessions()}
+            # The reply now distinguishes `managed` (helper-spawned;
+            # full lifecycle control) from `detected` (visible via
+            # process scan but NOT helper-owned; read-only). Both
+            # arrays carry a `controllable` flag so the UI can render
+            # the right action set without having to know the source
+            # taxonomy.
+            managed_rows = self._list_sessions() or []
+            detected_rows: list[dict] = []
+            if self._list_detected_sessions is not None:
+                try:
+                    detected_rows = list(self._list_detected_sessions() or [])
+                except Exception as exc:  # noqa: BLE001
+                    # Detection is best-effort — a `ps` failure must
+                    # not break the (more important) managed list.
+                    logger.warning("list_detected_sessions raised: %s", exc)
+                    detected_rows = []
+            for row in managed_rows:
+                row.setdefault("controllable", True)
+                row.setdefault("source", "managed")
+            for row in detected_rows:
+                row["controllable"] = False
+                row["source"] = "detected"
+            return {
+                "managed": managed_rows,
+                "detected": detected_rows,
+                # `sessions` kept for backward compatibility with
+                # any client written against the iter-1 reply shape.
+                # New clients should consume `managed` + `detected`.
+                "sessions": managed_rows,
+            }
 
         if method == "stop_session":
             session_id = params.get("session_id")
             if not isinstance(session_id, str) or not session_id:
                 raise _RequestError("bad_request", "'session_id' must be a non-empty string")
-            return self._stop_session(session_id)
+            result = self._stop_session(session_id)
+            # `local_stop_session` returns {"session_id":..., "stopped": bool}.
+            # If `stopped` is False AND the id is in the detected set,
+            # surface `not_controllable` so the UI can phrase it
+            # correctly. Otherwise treat as `session_not_found`.
+            if isinstance(result, dict) and result.get("stopped") is False:
+                if self._is_detected_only(session_id):
+                    raise _RequestError(
+                        "not_controllable",
+                        "session is detected via process scan but not helper-owned; "
+                        "stop must be done from the user's terminal directly",
+                    )
+                raise _RequestError(
+                    "session_not_found",
+                    f"no managed session with id {session_id!r}",
+                )
+            return result
+
+        if method == "send_input":
+            session_id = params.get("session_id")
+            payload = params.get("payload")
+            if not isinstance(session_id, str) or not session_id:
+                raise _RequestError("bad_request", "'session_id' must be a non-empty string")
+            if not isinstance(payload, str):
+                raise _RequestError("bad_request", "'payload' must be a string")
+            # Symmetric with stop: the helper-owned send delegates to
+            # `RemoteAgentManager.write_to_session` (already covered by
+            # `helper/test_remote_agent_submit.py` for CR/newline
+            # behaviour, which we do NOT regress here).
+            result = self._send_input(session_id, payload)
+            if isinstance(result, dict) and result.get("written") is False:
+                if self._is_detected_only(session_id):
+                    raise _RequestError(
+                        "not_controllable",
+                        "session is detected via process scan but not helper-owned; "
+                        "input would need to go through the user's terminal directly",
+                    )
+                raise _RequestError(
+                    "session_not_found",
+                    f"no managed session with id {session_id!r}",
+                )
+            return result
 
         # Should be unreachable: SUPPORTED_METHODS / _handle_method
         # must stay in sync.
         raise _RequestError("unknown_method", f"unhandled method: {method!r}")
+
+    def _is_detected_only(self, session_id: str) -> bool:
+        """True if `session_id` is in the detected-but-unmanaged set.
+        Cheap re-call of the detected getter; the alternative
+        (caching the detected list across the request) would risk
+        showing stale ownership during a process restart.
+        """
+        if self._list_detected_sessions is None:
+            return False
+        try:
+            for row in self._list_detected_sessions() or []:
+                if row.get("session_id") == session_id:
+                    return True
+        except Exception:  # noqa: BLE001
+            pass
+        return False
 
 
 class _RequestError(Exception):
@@ -571,13 +722,16 @@ def _cli() -> int:
     enabled = {"v": args.enabled}
 
     def fake_start(_p: dict) -> dict:
-        return {"session_id": "fake-cli", "command_id": "fake-cmd"}
+        return {"session_id": "fake-cli", "ok": True}
 
     def fake_list() -> list[dict]:
         return []
 
     def fake_stop(sid: str) -> dict:
-        return {"stopped": sid}
+        return {"session_id": sid, "stopped": False}
+
+    def fake_send_input(sid: str, _payload: str) -> dict:
+        return {"session_id": sid, "written": False}
 
     server = LocalSessionServer(
         socket_path=default_socket_path(),
@@ -587,6 +741,8 @@ def _cli() -> int:
         start_session=fake_start,
         list_sessions=fake_list,
         stop_session=fake_stop,
+        send_input=fake_send_input,
+        list_detected_sessions=lambda: [],
     )
     server.start()
     try:

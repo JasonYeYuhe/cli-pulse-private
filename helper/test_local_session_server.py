@@ -149,6 +149,7 @@ class FakeManager:
         self.start_calls: list[dict] = []
         self.list_calls: int = 0
         self.stop_calls: list[str] = []
+        self.send_calls: list[tuple[str, str]] = []
         self._sessions: list[dict] = []
         self._next_id_counter = 0
 
@@ -175,6 +176,11 @@ class FakeManager:
         self._sessions = [s for s in self._sessions if s["session_id"] != session_id]
         return {"session_id": session_id, "stopped": before != len(self._sessions)}
 
+    def local_send_input(self, session_id: str, payload: str) -> dict:
+        self.send_calls.append((session_id, payload))
+        owns = any(s["session_id"] == session_id for s in self._sessions)
+        return {"session_id": session_id, "written": owns}
+
 
 def _client_call(sock_path: Path, body: dict, timeout: float = 1.0) -> dict:
     """One-shot client: connect, send one frame, read one reply."""
@@ -191,7 +197,9 @@ def _client_call(sock_path: Path, body: dict, timeout: float = 1.0) -> dict:
 
 
 def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
-                 manager: FakeManager | None = None) -> tuple[LocalSessionServer, FakeManager, dict]:
+                 manager: FakeManager | None = None,
+                 detected: list[dict] | None = None
+                 ) -> tuple[LocalSessionServer, FakeManager, dict]:
     """Spin up a server bound to a tmp socket. Returns (server, manager,
     state-dict-for-toggle-introspection).
     """
@@ -202,6 +210,7 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
     def _set(v: bool) -> None:
         state["enabled"] = bool(v)
 
+    detected_rows = detected if detected is not None else []
     server = LocalSessionServer(
         socket_path=sock_path,
         get_auth_token=lambda: token,
@@ -210,6 +219,8 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
         start_session=mgr.local_start_claude_session,
         list_sessions=mgr.local_list_sessions,
         stop_session=mgr.local_stop_session,
+        send_input=mgr.local_send_input,
+        list_detected_sessions=lambda: list(detected_rows),
     )
     server.start()
     return server, mgr, state
@@ -227,9 +238,10 @@ def test_hello_returns_caps_without_auth(short_sock_dir):
         result = reply["result"]
         assert result["protocol_version"] == PROTOCOL_VERSION
         assert set(result["supported_methods"]) == set(SUPPORTED_METHODS)
-        # iter 1 caps: send_input + subscribe_events + approvals all off.
+        # send_input lights up this iteration; subscribe_events +
+        # approvals stay deferred to iter 2B.
         assert result["capabilities"] == {
-            "send_input": False,
+            "send_input": True,
             "subscribe_events": False,
             "approvals": False,
         }
@@ -251,12 +263,28 @@ def test_hello_version_mismatch_returns_typed_error(short_sock_dir):
         server.stop()
 
 
-def test_ping_bypasses_auth(short_sock_dir):
+def test_ping_now_requires_auth_codex_review(short_sock_dir):
+    """Codex review fix from PR #15: `ping` previously bypassed auth.
+    That gave any local process a free liveness probe of the helper.
+    Locked down — `ping` now requires a matching token like every
+    other method except `hello`.
+    """
     server, _mgr, _state = _make_server(short_sock_dir, token="real-token")
     try:
-        # Note: no auth_token in this request.
-        reply = _client_call(server._socket_path, {"id": "p", "method": "ping"})
-        assert reply == {"id": "p", "ok": True, "result": {"pong": True}}
+        # No auth_token → unauthenticated.
+        no_auth = _client_call(server._socket_path, {"id": "p", "method": "ping"})
+        assert no_auth["ok"] is False
+        assert no_auth["error"]["code"] == "unauthenticated"
+        # Wrong token → unauthenticated.
+        bad = _client_call(server._socket_path, {
+            "id": "p2", "method": "ping", "auth_token": "wrong",
+        })
+        assert bad["error"]["code"] == "unauthenticated"
+        # Correct token → pong.
+        good = _client_call(server._socket_path, {
+            "id": "p3", "method": "ping", "auth_token": "real-token",
+        })
+        assert good == {"id": "p3", "ok": True, "result": {"pong": True}}
     finally:
         server.stop()
 
@@ -295,7 +323,10 @@ def test_authenticated_method_accepts_correct_token(short_sock_dir):
             "params": {},
         })
         assert reply["ok"] is True
-        assert reply["result"] == {"sessions": []}
+        # New shape: managed + detected + backward-compat `sessions`.
+        assert reply["result"]["managed"] == []
+        assert reply["result"]["detected"] == []
+        assert reply["result"]["sessions"] == []
         assert mgr.list_calls == 1
     finally:
         server.stop()
@@ -538,11 +569,14 @@ def test_server_dispatches_through_real_executor(short_sock_dir):
         start_session=mgr.local_start_claude_session,
         list_sessions=mgr.local_list_sessions,
         stop_session=mgr.local_stop_session,
+        send_input=mgr.local_send_input,
+        list_detected_sessions=lambda: [],
     )
     server.start()
     try:
-        # Start one session via UDS, list it, stop it. All hops route
-        # through the executor; no manual locking needed.
+        # Start one session via UDS, list it, send a prompt to it,
+        # stop it. All hops route through the executor; no manual
+        # locking needed.
         start_reply = _client_call(sock_path, {
             "id": "1", "method": "start_session",
             "auth_token": "T",
@@ -556,16 +590,320 @@ def test_server_dispatches_through_real_executor(short_sock_dir):
             "auth_token": "T", "params": {},
         })
         assert list_reply["ok"] is True
-        sessions = list_reply["result"]["sessions"]
-        assert len(sessions) == 1 and sessions[0]["session_id"] == sid
+        # New (managed/detected) shape with backward-compat `sessions`.
+        managed = list_reply["result"]["managed"]
+        assert len(managed) == 1 and managed[0]["session_id"] == sid
+        assert managed[0]["controllable"] is True
+        assert managed[0]["source"] == "managed"
+        assert list_reply["result"]["detected"] == []
+
+        send_reply = _client_call(sock_path, {
+            "id": "3", "method": "send_input",
+            "auth_token": "T",
+            "params": {"session_id": sid, "payload": "hello\n"},
+        })
+        assert send_reply["ok"] is True
+        assert send_reply["result"]["written"] is True
 
         stop_reply = _client_call(sock_path, {
-            "id": "3", "method": "stop_session",
+            "id": "4", "method": "stop_session",
             "auth_token": "T",
             "params": {"session_id": sid},
         })
         assert stop_reply["ok"] is True
         assert stop_reply["result"]["stopped"] is True
+    finally:
+        server.stop()
+        executor.shutdown(wait=True, timeout=2.0)
+
+
+# ── new RPC coverage (Codex review fixes + iter 2A) ─────────────
+
+
+def test_get_local_control_status_returns_gate_value(short_sock_dir):
+    """Hydration RPC: the macOS app calls this on launch (and after
+    flipping the toggle) so the UI reflects the helper's actual
+    persisted state without keeping a duplicate.
+    """
+    server, _mgr, state = _make_server(short_sock_dir, token="T", enabled=False)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "s", "method": "get_local_control_status",
+            "auth_token": "T", "params": {},
+        })
+        assert reply["ok"] is True
+        assert reply["result"]["local_control_enabled"] is False
+        assert reply["result"]["protocol_version"] == PROTOCOL_VERSION
+        # Flip and re-query — must reflect the new value without a
+        # restart.
+        state["enabled"] = True
+        reply2 = _client_call(server._socket_path, {
+            "id": "s2", "method": "get_local_control_status",
+            "auth_token": "T", "params": {},
+        })
+        assert reply2["result"]["local_control_enabled"] is True
+    finally:
+        server.stop()
+
+
+def test_get_local_control_status_requires_auth(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir, token="T", enabled=False)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "s", "method": "get_local_control_status", "params": {},
+        })
+        assert reply["error"]["code"] == "unauthenticated"
+    finally:
+        server.stop()
+
+
+def test_get_local_control_status_bypasses_gate(short_sock_dir):
+    """The hydration RPC must work even when the gate is OFF —
+    otherwise the UI couldn't introspect "is local control on?"
+    without first turning it on, which would defeat the purpose.
+    """
+    server, _mgr, _state = _make_server(short_sock_dir, token="T", enabled=False)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "s", "method": "get_local_control_status",
+            "auth_token": "T", "params": {},
+        })
+        assert reply["ok"] is True
+        assert reply["result"]["local_control_enabled"] is False
+    finally:
+        server.stop()
+
+
+def test_send_input_round_trip_for_managed_session(short_sock_dir):
+    server, mgr, _state = _make_server(short_sock_dir, token="T", enabled=True)
+    try:
+        # Spawn a managed session first.
+        start = _client_call(server._socket_path, {
+            "id": "1", "method": "start_session",
+            "auth_token": "T",
+            "params": {"provider": "claude"},
+        })
+        sid = start["result"]["session_id"]
+        # send_input → manager records the call.
+        reply = _client_call(server._socket_path, {
+            "id": "2", "method": "send_input",
+            "auth_token": "T",
+            "params": {"session_id": sid, "payload": "hello\n"},
+        })
+        assert reply["ok"] is True
+        assert reply["result"] == {"session_id": sid, "written": True}
+        assert mgr.send_calls == [(sid, "hello\n")]
+    finally:
+        server.stop()
+
+
+def test_send_input_requires_auth(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir, token="T", enabled=True)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "x", "method": "send_input",
+            "params": {"session_id": "any", "payload": "hi"},
+        })
+        assert reply["error"]["code"] == "unauthenticated"
+    finally:
+        server.stop()
+
+
+def test_send_input_blocked_when_gate_off(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir, token="T", enabled=False)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "x", "method": "send_input",
+            "auth_token": "T",
+            "params": {"session_id": "any", "payload": "hi"},
+        })
+        assert reply["error"]["code"] == "local_control_off"
+    finally:
+        server.stop()
+
+
+def test_send_input_unknown_session_returns_session_not_found(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir, token="T", enabled=True)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "x", "method": "send_input",
+            "auth_token": "T",
+            "params": {"session_id": "no-such", "payload": "hi"},
+        })
+        assert reply["error"]["code"] == "session_not_found"
+    finally:
+        server.stop()
+
+
+def test_send_input_for_detected_only_session_returns_not_controllable(short_sock_dir):
+    """Existing same-Mac Claude process the helper detected via
+    `_detect_provider` but does NOT own. Writing to its stdin would
+    require the helper to inject keystrokes into a user terminal —
+    explicitly out of scope and unsafe — so the helper rejects with
+    `not_controllable`.
+    """
+    detected_id = "proc-1234"
+    detected = [{"session_id": detected_id, "provider": "Claude", "client_label": "claude"}]
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T", enabled=True, detected=detected
+    )
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "x", "method": "send_input",
+            "auth_token": "T",
+            "params": {"session_id": detected_id, "payload": "hi"},
+        })
+        assert reply["error"]["code"] == "not_controllable"
+    finally:
+        server.stop()
+
+
+def test_stop_for_detected_only_session_returns_not_controllable(short_sock_dir):
+    detected_id = "proc-9999"
+    detected = [{"session_id": detected_id, "provider": "Claude"}]
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T", enabled=True, detected=detected
+    )
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "x", "method": "stop_session",
+            "auth_token": "T",
+            "params": {"session_id": detected_id},
+        })
+        assert reply["error"]["code"] == "not_controllable"
+    finally:
+        server.stop()
+
+
+def test_list_sessions_includes_managed_and_detected(short_sock_dir):
+    """The reply distinguishes managed (helper-spawned) from detected
+    (process-scan-only) so the UI can render the right action set
+    per row without knowing the source taxonomy.
+    """
+    detected = [
+        {"session_id": "proc-1", "provider": "Claude", "client_label": "claude"},
+        {"session_id": "proc-2", "provider": "Claude", "project": "demo"},
+    ]
+    server, mgr, _state = _make_server(
+        short_sock_dir, token="T", enabled=True, detected=detected
+    )
+    try:
+        # Spawn one managed session via UDS so we have a mix.
+        _client_call(server._socket_path, {
+            "id": "1", "method": "start_session",
+            "auth_token": "T",
+            "params": {"provider": "claude", "client_label": "X"},
+        })
+        reply = _client_call(server._socket_path, {
+            "id": "2", "method": "list_sessions",
+            "auth_token": "T", "params": {},
+        })
+        assert reply["ok"] is True
+        assert len(reply["result"]["managed"]) == 1
+        assert reply["result"]["managed"][0]["controllable"] is True
+        assert reply["result"]["managed"][0]["source"] == "managed"
+        assert len(reply["result"]["detected"]) == 2
+        assert all(row["controllable"] is False for row in reply["result"]["detected"])
+        assert all(row["source"] == "detected" for row in reply["result"]["detected"])
+        # Backward-compat `sessions` array still equals managed-only.
+        assert reply["result"]["sessions"] == reply["result"]["managed"]
+        # The detected getter is called once per list_sessions; this
+        # also proves the manager's list path was invoked.
+        assert mgr.list_calls == 1
+    finally:
+        server.stop()
+
+
+def test_send_input_routes_through_executor_no_duplicate_write(short_sock_dir):
+    """End-to-end with a real LocalExecutor + real RemoteAgentManager.
+    Asserts a single send_input request causes exactly one transport
+    write and serializes correctly with the executor's queue (no
+    duplicate-write race when the connection thread + the daemon
+    poll thread share the executor).
+    """
+    from remote_agent import RemoteAgentManager
+    from transports import SessionHandle, SessionTransport
+
+    class CountingTransport(SessionTransport):
+        def __init__(self) -> None:
+            self.handles: dict[str, SessionHandle] = {}
+            self.writes: list[bytes] = []
+
+        def start(self, *, session_id, argv, env=None, cwd=None):
+            h = SessionHandle(session_id=session_id, payload={"alive": True})
+            self.handles[session_id] = h
+            return h
+
+        def write_stdin(self, handle, body):
+            self.writes.append(bytes(body))
+            return len(body)
+
+        def read_stdout(self, handle, max_bytes=4096):
+            return b""
+
+        def is_alive(self, handle):
+            return True
+
+        def wait(self, handle, timeout=0):
+            return None
+
+        def terminate(self, handle):
+            pass
+
+        def interrupt(self, handle):
+            pass
+
+        def close(self, handle):
+            self.handles.pop(handle.session_id, None)
+
+    class FakeConfig:
+        device_id = "dev"
+        helper_secret = "secret"
+
+    transport = CountingTransport()
+    executor = LocalExecutor()
+    mgr = RemoteAgentManager(
+        helper_config=FakeConfig(),
+        rpc_caller=lambda *_a, **_k: None,
+        transport=transport,
+        executor=executor,
+    )
+    sock_path = short_sock_dir / "exec.sock"
+    state = {"enabled": True}
+    server = LocalSessionServer(
+        socket_path=sock_path,
+        get_auth_token=lambda: "T",
+        get_local_control_enabled=lambda: state["enabled"],
+        set_local_control_enabled=lambda v: state.update(enabled=bool(v)),
+        start_session=mgr.local_start_claude_session,
+        list_sessions=mgr.local_list_sessions,
+        stop_session=mgr.local_stop_session,
+        send_input=mgr.local_send_input,
+        list_detected_sessions=lambda: [],
+    )
+    server.start()
+    try:
+        start = _client_call(sock_path, {
+            "id": "1", "method": "start_session",
+            "auth_token": "T",
+            "params": {"provider": "claude"},
+        })
+        sid = start["result"]["session_id"]
+        reply = _client_call(sock_path, {
+            "id": "2", "method": "send_input",
+            "auth_token": "T",
+            "params": {"session_id": sid, "payload": "hello"},
+        })
+        assert reply["ok"] is True
+        assert reply["result"]["written"] is True
+        # Exactly one transport write — the executor serialised the
+        # call, no duplicate-write race.
+        assert len(transport.writes) == 1
+        # The CR/newline submit semantics from
+        # `helper/test_remote_agent_submit.py` are preserved by the
+        # underlying `_write_to_session_impl` — payload "hello"
+        # without a trailing newline becomes "hello\r" on the wire.
+        assert transport.writes[0] == b"hello\r"
     finally:
         server.stop()
         executor.shutdown(wait=True, timeout=2.0)

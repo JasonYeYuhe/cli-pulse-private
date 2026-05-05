@@ -416,6 +416,40 @@ def daemon(args: argparse.Namespace) -> None:
             def _stop_local(session_id: str) -> dict[str, Any]:
                 return remote_agent_manager.local_stop_session(session_id)
 
+            def _send_input_local(session_id: str, payload: str) -> dict[str, Any]:
+                return remote_agent_manager.local_send_input(session_id, payload)
+
+            def _list_detected_local() -> list[dict[str, Any]]:
+                # iter 2A: surface same-Mac Claude processes the
+                # PR #14 collector recognises. Read-only on the UDS
+                # surface — the helper does NOT own these PTYs.
+                # Wrapped lazily so an unrelated `system_collector`
+                # import failure (e.g. missing ps on a stripped
+                # container) doesn't break the whole UDS server.
+                try:
+                    from system_collector import collect_sessions
+                    rows: list[dict[str, Any]] = []
+                    for sess in collect_sessions():
+                        if sess.provider != "Claude":
+                            continue
+                        rows.append({
+                            "session_id": sess.session_id,
+                            "provider": sess.provider,
+                            "client_label": sess.name,
+                            "project": sess.project,
+                            "status": sess.status,
+                            # Process-confirmed → controllable=False on
+                            # the UDS surface; the server adds the flag
+                            # before the reply leaves.
+                            "started_at": sess.started_at,
+                            "last_active_at": sess.last_active_at,
+                            "collection_confidence": sess.collection_confidence,
+                        })
+                    return rows
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("detected-session collector failed: %s", exc)
+                    return []
+
             local_uds_server = LocalSessionServer(
                 socket_path=default_socket_path(),
                 get_auth_token=_get_token,
@@ -424,6 +458,8 @@ def daemon(args: argparse.Namespace) -> None:
                 start_session=_start_local,
                 list_sessions=_list_local,
                 stop_session=_stop_local,
+                send_input=_send_input_local,
+                list_detected_sessions=_list_detected_local,
             )
             local_uds_server.start()
             logger.info(

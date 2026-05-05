@@ -737,6 +737,30 @@ class RemoteAgentManager:
             self._stop_session_impl(session_id)
         return {"session_id": session_id, "stopped": present}
 
+    def local_send_input(self, session_id: str, payload: str) -> dict[str, Any]:
+        """Write `payload` to the stdin of a helper-owned managed
+        session. Reuses the SAME `_write_to_session_impl` path the
+        Supabase RPC went through in PR #10, so the existing CR /
+        newline submit semantics (covered by
+        `helper/test_remote_agent_submit.py`) are preserved without
+        modification — that's the design contract.
+
+        Returns:
+            {"session_id": id, "written": bool}
+
+        `written: False` means the helper does not own this session
+        (id not in `_sessions`). The UDS server maps that to the
+        wire-level `not_controllable` / `session_not_found` taxonomy
+        based on whether the id is in the detected set.
+        """
+        return self._dispatch(self._local_send_input_impl, session_id, payload)
+
+    def _local_send_input_impl(self, session_id: str, payload: str) -> dict[str, Any]:
+        if session_id not in self._sessions:
+            return {"session_id": session_id, "written": False}
+        ok = self._write_to_session_impl(session_id, payload)
+        return {"session_id": session_id, "written": ok}
+
     # ── helpers ──────────────────────────────────────────────
 
     def _argv_for(self, provider: str) -> list[str] | None:

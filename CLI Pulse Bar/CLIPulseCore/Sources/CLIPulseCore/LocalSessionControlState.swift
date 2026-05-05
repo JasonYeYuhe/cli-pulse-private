@@ -50,10 +50,12 @@ extension AppState {
         return deviceId == mine
     }
 
-    /// Re-probe the helper UDS surface. Cheap (one round trip) and
-    /// idempotent — call it from the Sessions tab `.task` loop on a
-    /// short cadence. Updates `localHelperReachable`, `localCapabilities`,
-    /// and (best-effort) `localControlEnabled`.
+    /// Re-probe the helper UDS surface AND hydrate the gate state.
+    /// Two round-trips when the helper is reachable: `hello` (caps +
+    /// version, no auth) followed by `get_local_control_status`
+    /// (gate value, auth required). Single round trip (none) when
+    /// the helper isn't running. Both calls are cheap; the Sessions
+    /// tab can call this from its `.task` loop on a short cadence.
     @MainActor
     public func refreshLocalSessionControlState() async {
         let client = LocalSessionControlClient()
@@ -63,24 +65,62 @@ extension AppState {
             self.localCapabilities = hello.capabilities
             self.localProtocolVersion = hello.protocolVersion
             self.localHelperError = nil
-            // hello doesn't include the gate value — it lives on the
-            // config side. We can't read it without an authenticated
-            // call (that itself requires the gate to be on for most
-            // methods), so the gate state is updated as a side-effect
-            // of the user calling setLocalControlEnabled. Until then
-            // we treat False as the privacy default.
         } catch let err as SessionControlError {
+            self.localHelperReachable = false
             switch err {
             case .helperNotRunning:
-                self.localHelperReachable = false
-                self.localHelperError = nil  // not an error per se
+                self.localHelperError = nil  // not really an error
             default:
-                self.localHelperReachable = false
                 self.localHelperError = String(describing: err)
             }
+            // Helper not reachable → can't hydrate the gate either.
+            // Leave the cached value as-is (the toggle UI will read
+            // it on next attempt).
+            return
         } catch {
             self.localHelperReachable = false
             self.localHelperError = String(describing: error)
+            return
+        }
+        // Hydrate the gate from the authenticated status RPC. This
+        // closes the Codex review gap where `localControlEnabled`
+        // didn't survive an app restart — previously the UI just
+        // remembered whatever the user last clicked, drifting from
+        // the helper's persisted truth.
+        do {
+            let status = try await client.getLocalControlStatus()
+            self.localControlEnabled = status.localControlEnabled
+        } catch let err as SessionControlError where err == .unauthenticated {
+            // Token file may not be readable yet on a freshly-installed
+            // app. Don't surface as a hard error; the next refresh
+            // tick will retry once the file lands.
+            Self.localStateLogger.debug(
+                "get_local_control_status: unauthenticated (token not yet readable)"
+            )
+        } catch {
+            Self.localStateLogger.warning(
+                "get_local_control_status failed: \(String(describing: error), privacy: .public)"
+            )
+        }
+        // Hydrate the local managed/detected snapshots when the gate
+        // is on; the list_sessions call requires it.
+        if self.localControlEnabled {
+            do {
+                let rows = try await client.listSessions()
+                self.localManagedSessions = rows.filter { $0.source == .managed }
+                self.localDetectedSessions = rows.filter { $0.source == .detected }
+            } catch let err as SessionControlError where err == .localControlOff {
+                // Race between the gate hydration and a flip — leave
+                // the snapshots as-is for the next tick.
+                Self.localStateLogger.debug("list_sessions raced gate flip; will retry")
+            } catch {
+                Self.localStateLogger.warning(
+                    "local list_sessions failed: \(String(describing: error), privacy: .public)"
+                )
+            }
+        } else {
+            self.localManagedSessions = []
+            self.localDetectedSessions = []
         }
     }
 
@@ -104,14 +144,23 @@ extension AppState {
         }
     }
 
+    /// True iff the local fast path is the right transport for
+    /// `deviceId`'s session traffic right now: same Mac, helper
+    /// reachable, gate on. **Independent from `remoteControlEnabled`** —
+    /// the cloud Remote Control consent doesn't gate same-Mac local
+    /// control. The Codex review on PR #15 caught this: previously
+    /// turning Remote Control off in Settings disabled the local
+    /// fast path too, conflating two unrelated consent decisions.
+    public func shouldUseLocalSessionControl(forDeviceId deviceId: String?) -> Bool {
+        guard isSelfDevice(deviceId) else { return false }
+        guard localHelperReachable else { return false }
+        guard localControlEnabled else { return false }
+        return true
+    }
+
     /// Try to start a Claude session via the local UDS fast path.
     /// Returns the new session id on success, or nil on any failure
     /// (the caller should fall back to the remote path).
-    ///
-    /// Updates `remoteSessions` opportunistically by calling
-    /// `refreshRemoteSessions` afterwards so the cross-device list
-    /// (and the local UI's session row) appear without waiting for
-    /// the next refresh tick.
     @MainActor
     public func requestLocalClaudeSessionStart(clientLabel: String?) async -> String? {
         let client = LocalSessionControlClient()
@@ -150,6 +199,45 @@ extension AppState {
             )
             self.localHelperError = String(describing: error)
             return false
+        }
+    }
+
+    /// Send `payload` to a helper-owned managed session via UDS.
+    /// Returns true on success. Returns false on any error (typed
+    /// error string is stashed in `localHelperError` so the caller
+    /// can render a helpful tooltip).
+    @MainActor
+    public func sendLocalSessionInput(sessionId: String, payload: String) async -> Bool {
+        // Capability gate: don't try if the helper said it can't.
+        guard localCapabilities?.sendInput == true else { return false }
+        let client = LocalSessionControlClient()
+        do {
+            try await client.sendInput(sessionId: sessionId, payload: payload)
+            return true
+        } catch {
+            Self.localStateLogger.warning(
+                "local send_input failed: \(String(describing: error), privacy: .public)"
+            )
+            self.localHelperError = String(describing: error)
+            return false
+        }
+    }
+
+    /// Snapshot of helper-side sessions over UDS — managed AND
+    /// detected. Returns an empty list (NOT nil) when the helper is
+    /// unreachable; callers can `.isEmpty` or fall through to the
+    /// remote-list path uniformly.
+    @MainActor
+    public func listLocalSessions() async -> [SessionControlSummary] {
+        guard localHelperReachable, localControlEnabled else { return [] }
+        let client = LocalSessionControlClient()
+        do {
+            return try await client.listSessions()
+        } catch {
+            Self.localStateLogger.warning(
+                "local list_sessions failed: \(String(describing: error), privacy: .public)"
+            )
+            return []
         }
     }
 }
