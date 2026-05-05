@@ -1,10 +1,13 @@
 """Tests for provider quota parsing and collection in system_collector.py."""
 from __future__ import annotations
 import unittest
+from datetime import datetime, timezone
 from system_collector import (
     _parse_claude_api_response, _parse_claude_usage_output, _infer_claude_plan,
     _parse_gemini_quota_response, _load_gemini_project_id,
     _parse_codex_usage_response, collect_device_snapshot, collect_all,
+    _detect_provider, _should_ignore_command, _deduplicate_sessions,
+    CollectedSession,
 )
 
 
@@ -350,6 +353,208 @@ class TestCollectAll(unittest.TestCase):
         self.assertIsInstance(result.alerts, list)
         self.assertIsInstance(result.provider_remaining, dict)
         self.assertIsInstance(result.collection_errors, list)
+
+
+class TestDetectProviderClassification(unittest.TestCase):
+    """Pin the executable-token-only matching that
+    `_detect_provider` does, so plugin / arg paths can't influence
+    provider classification.
+
+    The shapes here come from Jason's actual `ps -axo command` output
+    on a Mac running Claude Code 2.x — verbatim except for trimming
+    repeated arg whitespace for readability.
+    """
+
+    # Scenario 1: Claude Code 2.x process whose argv contains an
+    # `openai-codex` plugin path. Pre-fix this matched Codex first
+    # (Codex's `\bcodex\b` pattern is checked before Claude's, and
+    # the substring search ran over the whole command string).
+    CLAUDE_CODE_2X_WITH_CODEX_PLUGIN = (
+        "/Users/jason/Library/Application Support/Claude/claude-code/2.1.121/claude.app/Contents/MacOS/claude "
+        "--output-format stream-json --verbose --input-format stream-json "
+        "--plugin-dir /Users/jason/.claude/plugins/cache/openai-codex/codex/1.0.1 "
+        "--model claude-opus-4-7"
+    )
+
+    # Scenario 2: /Applications/Claude.app's pre-launch wrapper.
+    # Has the actual claude CLI as its first argv. The wrapper
+    # process should be IGNORED by `_should_ignore_command`, so the
+    # row never reaches `_detect_provider` in production.
+    DISCLAIMER_WRAPPER = (
+        "/Applications/Claude.app/Contents/Helpers/disclaimer "
+        "/Users/jason/Library/Application Support/Claude/claude-code/2.1.121/claude.app/Contents/MacOS/claude "
+        "--output-format stream-json --plugin-dir /Users/jason/.claude/plugins/..."
+    )
+
+    # Scenario 3: real Codex CLI invocations.
+    REAL_CODEX_BREW = "/usr/local/bin/codex --some-flag"
+    REAL_CODEX_BARE = "codex"
+
+    def test_claude_code_2x_with_codex_plugin_classifies_as_claude(self):
+        match = _detect_provider(self.CLAUDE_CODE_2X_WITH_CODEX_PLUGIN)
+        self.assertIsNotNone(match)
+        provider, confidence = match
+        self.assertEqual(provider, "Claude")
+        self.assertEqual(confidence, "high")
+
+    def test_disclaimer_wrapper_is_ignored(self):
+        # The dedicated guard: even before reaching _detect_provider,
+        # the wrapper is filtered out as noise. This prevents it from
+        # winning the dedup primary slot and surfacing a name that
+        # the macOS Sessions panel then hides as artifact.
+        self.assertTrue(_should_ignore_command(self.DISCLAIMER_WRAPPER))
+
+    def test_codex_computer_use_app_is_ignored(self):
+        # Codex Computer Use.app is a long-running MCP server, not a
+        # user CLI session. Pre-fix it surfaced as a green "running"
+        # Codex row in the Sessions panel.
+        commands = [
+            "/Users/jason/.codex/installations/Codex Computer Use.app/Contents/MacOS/SkyComputerUseClient",
+            "./Codex Computer Use.app/Contents/SharedSupport/...",
+            "/Applications/Codex.app/Contents/Resources/.../Codex Computer Use.app/...",
+        ]
+        for cmd in commands:
+            self.assertTrue(
+                _should_ignore_command(cmd),
+                f"must drop Codex Computer Use support process: {cmd}",
+            )
+
+    def test_app_server_broker_is_ignored(self):
+        # Codex app-server runs as node-based broker / launcher.
+        # Both are infrastructure, not user sessions.
+        commands = [
+            "/opt/homebrew/Cellar/node/25.9.0_2/bin/node /Applications/Codex.app/Contents/Resources/app-server-broker.mjs --some-flag",
+            "node /path/to/app-server-launcher.mjs",
+        ]
+        for cmd in commands:
+            self.assertTrue(
+                _should_ignore_command(cmd),
+                f"must drop Codex app-server: {cmd}",
+            )
+
+    def test_real_codex_cli_still_surfaces(self):
+        # Defensive: don't over-filter the user's actual codex CLI.
+        for cmd in ["codex", "/usr/local/bin/codex --some-flag", "/Users/jason/.local/bin/codex"]:
+            self.assertFalse(
+                _should_ignore_command(cmd),
+                f"must NOT drop real codex CLI: {cmd}",
+            )
+
+    def test_disclaimer_wrapper_classification_when_not_ignored_is_still_claude(self):
+        # Defensive: even if the ignore guard ever regresses, the
+        # executable-only matcher must NOT classify the disclaimer
+        # path as Codex (its argv contains openai-codex paths).
+        match = _detect_provider(self.DISCLAIMER_WRAPPER)
+        self.assertIsNotNone(match)
+        provider, _confidence = match
+        self.assertEqual(provider, "Claude")
+
+    def test_real_codex_brew_path_classifies_as_codex(self):
+        match = _detect_provider(self.REAL_CODEX_BREW)
+        self.assertIsNotNone(match)
+        provider, _confidence = match
+        self.assertEqual(provider, "Codex")
+
+    def test_real_codex_bare_command_classifies_as_codex(self):
+        match = _detect_provider(self.REAL_CODEX_BARE)
+        self.assertIsNotNone(match)
+        provider, _confidence = match
+        self.assertEqual(provider, "Codex")
+
+    def test_empty_command_returns_none(self):
+        self.assertIsNone(_detect_provider(""))
+        self.assertIsNone(_detect_provider("   "))
+
+    def test_args_only_codex_substring_does_not_classify_as_codex(self):
+        # A node process whose argv mentions codex (e.g. running a
+        # Codex unit test). Pre-fix would classify as Codex; post-fix
+        # the executable token is `node` so no provider matches.
+        match = _detect_provider("node --no-warnings /opt/codex/cli.js")
+        # Note: this row is also caught by IGNORED_COMMAND_PATTERNS
+        # (`node ` prefix + ` --no-warnings`), so in production it
+        # wouldn't even reach detect_provider. We assert detection
+        # alone here so a future ignore-pattern tweak doesn't silently
+        # reintroduce the classification false positive.
+        self.assertIsNone(match)
+
+
+class TestSessionDedupClaudeCode2x(unittest.TestCase):
+    """Mixed-input dedup must produce a clean Claude row even when the
+    process tree includes the disclaimer wrapper alongside the real
+    Claude Code child.
+    """
+
+    def _make(self, *, pid: str, name: str, provider: str, confidence: str,
+              project: str = "Documents-cli-pulse",
+              cpu_usage: float = 1.0) -> CollectedSession:
+        ts = datetime.now(timezone.utc).isoformat()
+        return CollectedSession(
+            session_id=f"proc-{pid}",
+            name=name,
+            provider=provider,
+            project=project,
+            status="Running",
+            total_usage=1000,
+            requests=1,
+            error_count=0,
+            started_at=ts,
+            last_active_at=ts,
+            exact_cost=None,
+            cpu_usage=cpu_usage,
+            command="",
+            collection_confidence=confidence,
+            project_hash=None,
+            project_root=None,
+            _child_pids=[pid],
+        )
+
+    def test_dedup_picks_claude_child_not_disclaimer(self):
+        # In production, the disclaimer row would be filtered before
+        # entering dedup (test_disclaimer_wrapper_is_ignored above).
+        # This test simulates a regression where it slipped through:
+        # dedup must STILL produce a clean Claude row in that case.
+        # The actual Claude child (high-conf, real binary path) wins
+        # over the disclaimer wrapper because we deliberately give the
+        # wrapper a lower-confidence label downstream of any helper-
+        # side regressions.
+        disclaimer = self._make(
+            pid="6167",
+            name="/Applications/Claude.app/Contents/Helpers/disclaim...",
+            provider="Claude",
+            confidence="medium",  # if the ignore guard ever lets this through, it should rank below the real child
+        )
+        real_child = self._make(
+            pid="6168",
+            name="/Users/jason/Library/Application Support/Cl...",
+            provider="Claude",
+            confidence="high",
+        )
+        merged = _deduplicate_sessions([disclaimer, real_child])
+        self.assertEqual(len(merged), 1, "Same provider+project must dedup to one row")
+        self.assertTrue(
+            "/Library/" in merged[0].name or merged[0].name.startswith("/Users/"),
+            f"Primary should be the real child, got name={merged[0].name}",
+        )
+
+    def test_dedup_keeps_codex_separate_from_claude(self):
+        codex = self._make(
+            pid="9001",
+            name="/usr/local/bin/codex",
+            provider="Codex",
+            confidence="high",
+            project="Documents-cli-pulse",
+        )
+        claude = self._make(
+            pid="9002",
+            name="/Users/jason/Library/.../claude",
+            provider="Claude",
+            confidence="high",
+            project="Documents-cli-pulse",
+        )
+        merged = _deduplicate_sessions([codex, claude])
+        # Different providers → both survive even with same project.
+        providers = sorted(s.provider for s in merged)
+        self.assertEqual(providers, ["Claude", "Codex"])
 
 
 if __name__ == "__main__":

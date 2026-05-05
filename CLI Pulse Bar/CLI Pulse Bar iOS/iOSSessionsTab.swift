@@ -91,9 +91,17 @@ struct iOSSessionsTab: View {
             }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    let running = state.sessions.filter { $0.status.caseInsensitiveCompare("running") == .orderedSame }.count
-                    if running > 0 {
-                        StatusBadge(text: L10n.sessions.countRunning(running), color: .green)
+                    // Source of truth = FreshnessTier classifier so the
+                    // running pill matches the row badges (only proc-
+                    // confirmed rows count as "running"; JSONL-synthesized
+                    // rows are "recent activity" / "recent" and don't
+                    // contribute).
+                    let now = Date()
+                    let runningCount = state.sessions.reduce(0) { acc, s in
+                        acc + (SessionFreshnessTierClassifier.classify(s, now: now) == .activeProcess ? 1 : 0)
+                    }
+                    if runningCount > 0 {
+                        StatusBadge(text: L10n.sessions.countRunning(runningCount), color: .green)
                     }
                 }
             }
@@ -209,15 +217,65 @@ struct iOSSessionsTab: View {
                 }
                 .padding(.vertical, 20)
             } else {
-                ForEach(state.sessions) { session in
-                    NavigationLink(value: session) {
-                        iOSSessionRow(session: session, showCost: state.showCost)
-                    }
-                    .buttonStyle(.plain)
+                let now = Date()
+                let buckets = SessionFreshnessTierClassifier.partition(
+                    state.sessions, now: now
+                )
+                if !buckets.active.isEmpty {
+                    iosSessionSection(
+                        header: "Active",
+                        sessions: buckets.active,
+                        now: now
+                    )
                 }
-                Text("Analytics sessions are read-only — they reflect locally detected CLI activity.")
+                if !buckets.recent.isEmpty {
+                    iosSessionSection(
+                        header: "Recent · last 30 min",
+                        sessions: buckets.recent,
+                        now: now
+                    )
+                }
+                if buckets.active.isEmpty && buckets.recent.isEmpty {
+                    ContentUnavailableView {
+                        Label(L10n.sessions.noSessions, systemImage: "terminal")
+                    } description: {
+                        Text(L10n.sessions.emptyHint)
+                    }
+                    .padding(.vertical, 20)
+                }
+                Text("Running = process confirmed. Recent = JSONL activity only.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func iosSessionSection(
+        header: String,
+        sessions: [SessionRecord],
+        now: Date
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(header)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text("· \(sessions.count)")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+            }
+            ForEach(sessions) { session in
+                let tier = SessionFreshnessTierClassifier.classify(session, now: now)
+                NavigationLink(value: session) {
+                    iOSSessionRow(
+                        session: session,
+                        showCost: state.showCost,
+                        freshnessTier: tier
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -330,7 +388,13 @@ struct iOSSessionsTab: View {
                 }
             }
             ToolbarItem(placement: .primaryAction) {
-                let running = state.sessions.filter { $0.status.caseInsensitiveCompare("running") == .orderedSame }.count
+                // Same FreshnessTier source as the iPhone toolbar — only
+                // proc-confirmed rows count as "running" in the pill.
+                let now = Date()
+                let runningTierCount = state.sessions.reduce(0) { acc, s in
+                    acc + (SessionFreshnessTierClassifier.classify(s, now: now) == .activeProcess ? 1 : 0)
+                }
+                let running = runningTierCount
                 if running > 0 {
                     StatusBadge(text: L10n.sessions.countRunning(running), color: .green)
                 }
@@ -973,6 +1037,15 @@ struct SessionDetailView: View {
 struct iOSSessionRow: View {
     let session: SessionRecord
     let showCost: Bool
+    /// Optional Active/Recent tier badge. Nil when this row is
+    /// rendered outside the analytics section split (legacy callers).
+    let freshnessTier: FreshnessTier?
+
+    init(session: SessionRecord, showCost: Bool, freshnessTier: FreshnessTier? = nil) {
+        self.session = session
+        self.showCost = showCost
+        self.freshnessTier = freshnessTier
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -980,16 +1053,33 @@ struct iOSSessionRow: View {
                 Image(systemName: session.providerKind?.iconName ?? "terminal")
                     .foregroundStyle(PulseTheme.providerColor(session.provider))
 
-                Text(session.name)
+                Text(session.displayName)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
 
                 Spacer()
 
-                StatusBadge(
-                    text: L10n.status.localized(session.status),
-                    color: PulseTheme.statusColor(session.status)
-                )
+                // One badge per row — see SessionsTab.swift macOS for
+                // rationale. Process-confirmed rows keep the
+                // localized "running" status pill; JSONL-only rows
+                // (activeJsonl / recentJsonl) drop the status pill
+                // and show only the freshness chip so we don't
+                // over-claim "running" when we only know JSONL mtime.
+                if let tier = freshnessTier, tier.isVisible {
+                    if tier == .activeProcess {
+                        StatusBadge(
+                            text: L10n.status.localized(session.status),
+                            color: PulseTheme.statusColor(session.status)
+                        )
+                    } else {
+                        StatusBadge(text: tier.badge, color: tierColor(tier))
+                    }
+                } else {
+                    StatusBadge(
+                        text: L10n.status.localized(session.status),
+                        color: PulseTheme.statusColor(session.status)
+                    )
+                }
             }
 
             HStack(spacing: 14) {
@@ -1004,11 +1094,18 @@ struct iOSSessionRow: View {
             .lineLimit(1)
 
             HStack(spacing: 18) {
-                metricItem(label: L10n.detail.usage, value: CostFormatter.formatUsage(session.total_usage))
-                if showCost {
-                    metricItem(label: L10n.detail.cost, value: CostFormatter.format(session.estimated_cost), color: .green)
+                // Same gate as macOS: proc-* rows have heuristic
+                // metrics that mislead at long uptimes. Hide the
+                // trio for those rows; tier badge tells the story.
+                if !session.hasProcessHeuristicMetrics {
+                    metricItem(label: L10n.detail.usage, value: CostFormatter.formatUsage(session.total_usage))
+                    if showCost {
+                        metricItem(label: L10n.detail.cost, value: CostFormatter.format(session.estimated_cost), color: .green)
+                    }
+                    if session.hasMeaningfulRequestCount {
+                        metricItem(label: L10n.detail.requests, value: "\(session.requests)")
+                    }
                 }
-                metricItem(label: L10n.detail.requests, value: "\(session.requests)")
                 if session.error_count > 0 {
                     metricItem(label: L10n.detail.errors, value: "\(session.error_count)", color: .red)
                 }
@@ -1039,6 +1136,15 @@ struct iOSSessionRow: View {
             Text(value)
                 .font(.subheadline.weight(.bold).monospacedDigit())
                 .foregroundStyle(color)
+        }
+    }
+
+    private func tierColor(_ tier: FreshnessTier) -> Color {
+        switch tier {
+        case .activeProcess: return .green
+        case .activeJsonl:   return .blue
+        case .recentJsonl:   return .secondary
+        case .hidden:        return .clear
         }
     }
 }

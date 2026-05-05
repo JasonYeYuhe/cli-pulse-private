@@ -2,8 +2,50 @@ import Foundation
 
 // MARK: - Shared Formatter
 
-/// Package-level shared ISO8601 formatter to avoid repeated allocations.
+/// Package-level shared ISO8601 formatter (no fractional seconds).
+/// Used for outputting timestamps that other clients can round-trip
+/// without needing to support fractional-second parsing.
 nonisolated(unsafe) public let sharedISO8601Formatter = ISO8601DateFormatter()
+
+/// Companion formatter that parses ISO8601 strings *with* fractional
+/// seconds, which `sharedISO8601Formatter` rejects.
+nonisolated(unsafe) private let sharedISO8601FormatterFractional: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return f
+}()
+
+private let sharedISO8601ParseLock = NSLock()
+
+/// Robust ISO-8601 parser that tolerates BOTH:
+///   `2026-05-05T12:34:56Z`              (no fractional seconds)
+///   `2026-05-05T12:34:56+00:00`         (timezone offset)
+///   `2026-05-05T12:34:56.789012+00:00`  (Python `datetime.isoformat()`)
+///   `2026-05-05T12:34:56.789Z`          (with fractional + Z)
+///
+/// Why: helper/system_collector.py writes
+/// `datetime.now(timezone.utc).isoformat()` which always includes
+/// microsecond fractionals (`+00:00` form). The default
+/// `ISO8601DateFormatter()` (no `withFractionalSeconds` option)
+/// returns nil for those inputs. That dropout silently broke every
+/// helper-uploaded `SessionRecord` — `lastActiveDate` returned nil,
+/// `SessionFreshnessFilter.filterCurrent` then evicted the row via
+/// `guard let lastActive = … else { return false }`. Net effect:
+/// `cloudRaw=50 cloudFresh=0` and only JSONL-synthesized rows
+/// survived to the UI.
+///
+/// `ISO8601DateFormatter` is thread-safe per Apple docs since macOS
+/// 10.12, but we keep a small `NSLock` because we mutate two
+/// formatters' state via `.date(from:)` indirectly (Apple's
+/// implementation is "thread-safe for parsing" but the documentation
+/// is light on details for fallback chains). The lock is uncontended
+/// in practice.
+public func sharedISO8601Parse(_ text: String) -> Date? {
+    sharedISO8601ParseLock.lock()
+    defer { sharedISO8601ParseLock.unlock() }
+    if let d = sharedISO8601Formatter.date(from: text) { return d }
+    return sharedISO8601FormatterFractional.date(from: text)
+}
 
 // MARK: - Enums
 
@@ -481,11 +523,63 @@ public struct SessionRecord: Codable, Identifiable, Sendable, Hashable {
     }
 
     public var startedDate: Date? {
-        sharedISO8601Formatter.date(from: started_at)
+        sharedISO8601Parse(started_at)
     }
 
     public var lastActiveDate: Date? {
-        sharedISO8601Formatter.date(from: last_active_at)
+        sharedISO8601Parse(last_active_at)
+    }
+
+    /// Whether the row's `requests` metric reflects real assistant-turn
+    /// counting. `CostUsageScanner.buildCodexCandidates` currently
+    /// hard-codes `messageCount: 0` for Codex JSONL candidates, which
+    /// `synthesizeSessions` then floors to `max(1, 0) = 1`. Showing
+    /// "1 requests" next to "26.3M I/O tokens" is misleading — the row
+    /// has clearly seen many turns. The UI uses this flag to suppress
+    /// the requests metric for those rows specifically; Claude JSONL
+    /// rows count correctly, helper-emitted process rows compute a
+    /// duration-based estimate, and remote/cloud rows trust the
+    /// uploader. Proper Codex turn counting is a separate follow-up
+    /// that requires extending the parser's CodexParseResult and the
+    /// per-file cache schema.
+    public var hasMeaningfulRequestCount: Bool {
+        if hasProcessHeuristicMetrics { return false }
+        return !(id.hasPrefix("jsonl-codex-") && requests <= 1)
+    }
+
+    /// Whether the row's `total_usage` / `estimated_cost` / `requests`
+    /// fields are derived from heuristics rather than parsed usage.
+    /// True for helper-emitted `proc-{pid}` rows, where:
+    ///   total_usage = max(500, elapsed_seconds * (1.5 + cpu))
+    ///   requests    = max(1, elapsed_seconds // 45)
+    /// Both grow monotonically with how long the process has been
+    /// alive, with no relationship to actual API/token usage. Showing
+    /// "86038 requests" next to a Claude Code session that's been
+    /// running 8+ hours is technically what the formula produces, but
+    /// it's noise to the user.
+    ///
+    /// The UI uses this flag to suppress the `usage / cost / requests`
+    /// trio for proc-* rows; the green "running" status pill plus the
+    /// row's provider/project label is enough to convey "this is alive."
+    public var hasProcessHeuristicMetrics: Bool {
+        id.hasPrefix("proc-")
+    }
+
+    /// Display name for the Sessions panel row. Helper-emitted proc-*
+    /// rows have `name = command line truncated to 48 chars`, which
+    /// surfaces unfriendly strings like `/Users/jason/Library/Application Support/C...`
+    /// or `./Codex Computer Use.app/Contents/Shar...`. Replace with
+    /// "{provider} · {project}" when we have provider info, falling
+    /// back to "{provider} process" if project is empty/generic.
+    /// JSONL-synthesized rows already carry friendly names like
+    /// "Claude session" — leave those alone.
+    public var displayName: String {
+        guard hasProcessHeuristicMetrics else { return name }
+        let cleanProject = project.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanProject.isEmpty {
+            return "\(provider) · \(cleanProject)"
+        }
+        return "\(provider) process"
     }
 
     public init(
@@ -583,7 +677,7 @@ public struct AlertRecord: Codable, Identifiable, Sendable {
     }
 
     public var createdDate: Date? {
-        sharedISO8601Formatter.date(from: created_at)
+        sharedISO8601Parse(created_at)
     }
 
     public init(

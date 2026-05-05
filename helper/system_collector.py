@@ -69,6 +69,26 @@ IGNORED_COMMAND_PATTERNS: list[str] = [
     r"\.vscode-server",
     r"--ms-enable-electron",
     r"node_modules/\.bin",
+    # Claude desktop GUI app's pre-launch wrapper. It re-execs the
+    # actual Claude Code CLI as a child, so the *child* process
+    # already shows up separately in `ps`. Including the wrapper too
+    # would duplicate the row AND, because dedup picks by confidence
+    # rank with stable sort on ties, can let the wrapper become the
+    # primary representative — surfacing a name like
+    # `/Applications/Claude.app/Contents/Helpers/disclaimer …` that
+    # the macOS Sessions panel then correctly hides as an artifact,
+    # leaving the user with no proc-confirmed Claude row at all.
+    r"contents/helpers/disclaimer",
+    # Codex support / infrastructure processes — these are NOT user
+    # CLI sessions but were getting classified as Codex via the
+    # `\bcodex\b` substring match and surfacing as green "running"
+    # rows in the Sessions panel. Drop them at the helper level so
+    # only real user-driven Codex invocations (codex CLI binary)
+    # reach dedup.
+    r"codex computer use\.app",   # Codex Computer Use.app MCP server + workers
+    r"skycomputeruseclient",      # variant naming used by some builds
+    r"app-server-broker",         # node-based Codex app-server broker
+    r"app-server-launcher",       # codex.app launcher subprocess
 ]
 
 # Confidence ranking for deduplication: higher is better
@@ -1410,10 +1430,47 @@ def _elapsed_to_seconds(raw: str) -> int:
 
 
 def _detect_provider(command: str) -> tuple[str, str] | None:
-    """Return (provider_name, confidence) or None."""
-    lowered = command.lower()
+    """Return (provider_name, confidence) or None.
+
+    Strategy: match against the EXECUTABLE PART of the command line
+    only — defined as everything before the first arg-flag (` -X`
+    or ` --X`). This avoids classifying a Claude Code 2.x process
+    as Codex just because its `--plugin-dir` argv contains
+    `openai-codex/codex/...`.
+
+    Why not "first whitespace-separated token": macOS paths legitimately
+    contain spaces, e.g. Claude Code 2.x lives under
+        /Users/<u>/Library/Application Support/Claude/claude-code/<v>/claude.app/Contents/MacOS/claude
+    with two real spaces inside the path ("Application Support",
+    "claude-code"). Splitting on whitespace gives us
+    `/Users/<u>/Library/Application` — useless for provider detection.
+    Cutting at the first arg-flag instead preserves the full
+    executable path even when it contains spaces, while still
+    excluding `--plugin-dir`-style argv.
+
+    Reverse case (real Codex CLI at `/usr/local/bin/codex`,
+    `~/.local/bin/codex`, or bare `codex`) still classifies as Codex
+    because the executable part contains the `codex` substring at
+    a word boundary.
+
+    Rows whose executable is something generic like `node` or
+    `python` and whose argv contains an AI provider name no longer
+    classify as that provider — they fall through and the helper
+    drops them. (`IGNORED_COMMAND_PATTERNS` already catches the
+    common `node --no-warnings` / `node_modules/.bin` cases.)
+    """
+    lowered = command.lower().strip()
+    if not lowered:
+        return None
+    # Cut at the first arg flag (` -X` or ` --X`). The lookahead
+    # `[\w-]` ensures we only stop at real flag characters, not at
+    # a literal `-` that happens to appear inside a path component
+    # (path hyphens like `claude-code` have no leading whitespace
+    # so they don't trigger the cut).
+    flag_match = re.search(r"\s-(?=[\w-])", lowered)
+    executable_part = lowered[: flag_match.start()] if flag_match else lowered
     for provider, pattern, confidence in PROCESS_PATTERNS:
-        if re.search(pattern, lowered):
+        if re.search(pattern, executable_part):
             return provider, confidence
     return None
 

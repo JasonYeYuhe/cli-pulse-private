@@ -167,9 +167,19 @@ struct SessionsTab: View {
             Text(L10n.sessions.title)
                 .font(.system(size: 14, weight: .bold))
             Spacer()
-            let running = state.sessions.filter { $0.status.caseInsensitiveCompare("running") == .orderedSame }.count
-            if running > 0 {
-                StatusBadge(text: "\(running) \(L10n.sessions.running)", color: .green)
+            // Count only process-confirmed rows as "running" — JSONL-
+            // synthesized rows hardcode `status: "Running"` regardless
+            // of whether the process is alive, which previously made
+            // the green pill say "3 运行中" even when all three rows
+            // were JSONL-only "recent activity". One source of truth
+            // (the FreshnessTier classifier) for both the header and
+            // the row badges keeps the panel internally consistent.
+            let now = Date()
+            let runningCount = state.sessions.reduce(0) { acc, s in
+                acc + (SessionFreshnessTierClassifier.classify(s, now: now) == .activeProcess ? 1 : 0)
+            }
+            if runningCount > 0 {
+                StatusBadge(text: "\(runningCount) \(L10n.sessions.running)", color: .green)
             }
         }
     }
@@ -183,13 +193,68 @@ struct SessionsTab: View {
                 subtitle: L10n.sessions.emptyHint
             )
         } else {
-            VStack(spacing: 8) {
-                ForEach(state.sessions) { session in
-                    SessionRow(session: session, showCost: state.showCost)
+            // Split analytics rows into Active and Recent sections by
+            // FreshnessTier. Active = process-confirmed (still running)
+            // and recent JSONL activity (≤ 5 min). Recent = JSONL
+            // activity in the last 30 min that's no longer fresh
+            // enough to call active. Older rows are hidden, same as
+            // before.
+            let now = Date()
+            let buckets = SessionFreshnessTierClassifier.partition(
+                state.sessions, now: now
+            )
+            VStack(alignment: .leading, spacing: 12) {
+                if !buckets.active.isEmpty {
+                    sessionSection(
+                        header: "Active",
+                        sessions: buckets.active,
+                        now: now
+                    )
                 }
-                Text("Analytics sessions are read-only — they reflect locally detected CLI activity.")
+                if !buckets.recent.isEmpty {
+                    sessionSection(
+                        header: "Recent · last 30 min",
+                        sessions: buckets.recent,
+                        now: now
+                    )
+                }
+                if buckets.active.isEmpty && buckets.recent.isEmpty {
+                    EmptyStateView(
+                        icon: "terminal",
+                        title: L10n.sessions.noSessions,
+                        subtitle: L10n.sessions.emptyHint
+                    )
+                }
+                Text("Running = process confirmed. Recent = JSONL activity only.")
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func sessionSection(
+        header: String,
+        sessions: [SessionRecord],
+        now: Date
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(header)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text("· \(sessions.count)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                Spacer()
+            }
+            ForEach(sessions) { session in
+                let tier = SessionFreshnessTierClassifier.classify(session, now: now)
+                SessionRow(
+                    session: session,
+                    showCost: state.showCost,
+                    freshnessTier: tier
+                )
             }
         }
     }
@@ -558,6 +623,18 @@ private struct ManagedSessionRow: View {
 struct SessionRow: View {
     let session: SessionRecord
     let showCost: Bool
+    /// Optional tier badge — Active vs Recent split passes its
+    /// classifier result so the user can see whether the row is
+    /// process-confirmed ("running") vs JSONL-only ("recent
+    /// activity" / "recent"). Optional so older callers don't need
+    /// to pass it; renders nothing when nil.
+    let freshnessTier: FreshnessTier?
+
+    init(session: SessionRecord, showCost: Bool, freshnessTier: FreshnessTier? = nil) {
+        self.session = session
+        self.showCost = showCost
+        self.freshnessTier = freshnessTier
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -567,16 +644,44 @@ struct SessionRow: View {
                     .font(.system(size: 10))
                     .foregroundStyle(PulseTheme.providerColor(session.provider))
 
-                Text(session.name)
+                Text(session.displayName)
                     .font(.system(size: 11, weight: .semibold))
                     .lineLimit(1)
 
                 Spacer()
 
-                StatusBadge(
-                    text: L10n.status.localized(session.status),
-                    color: PulseTheme.statusColor(session.status)
-                )
+                // One badge per row, not two — the previous shape
+                // showed both the helper-uploaded "running" status
+                // pill AND a freshness tier chip, which over-claimed
+                // process-running for JSONL-only rows.
+                //
+                //   * activeProcess    → green "running" status pill
+                //                       (process is genuinely confirmed
+                //                       by helper ps scan; freshness
+                //                       chip would be redundant)
+                //   * activeJsonl /
+                //     recentJsonl      → blue / gray freshness chip
+                //                       only — drop the status pill
+                //                       so we don't claim "running"
+                //                       when we only have JSONL mtime.
+                //   * tier == nil      → legacy callers (iPad list,
+                //                       cloud-only rows) keep the
+                //                       original status pill behavior.
+                if let tier = freshnessTier, tier.isVisible {
+                    if tier == .activeProcess {
+                        StatusBadge(
+                            text: L10n.status.localized(session.status),
+                            color: PulseTheme.statusColor(session.status)
+                        )
+                    } else {
+                        StatusBadge(text: tier.badge, color: tierColor(tier))
+                    }
+                } else {
+                    StatusBadge(
+                        text: L10n.status.localized(session.status),
+                        color: PulseTheme.statusColor(session.status)
+                    )
+                }
             }
 
             // Details
@@ -589,13 +694,23 @@ struct SessionRow: View {
             .foregroundStyle(.secondary)
             .lineLimit(1)
 
-            // Metrics
+            // Metrics. Proc-* rows have heuristic-derived metrics
+            // (total_usage / cost / requests are all functions of
+            // elapsed_seconds and CPU), so showing "86038 requests"
+            // next to an 8-hour Claude Code process is misleading.
+            // Hide the entire trio for those rows; the row label and
+            // green "running" badge already convey "this is alive."
+            // JSONL-synthesized + cloud rows show metrics as before.
             HStack(spacing: 16) {
-                metricItem(label: L10n.detail.usage, value: CostFormatter.formatUsage(session.total_usage))
-                if showCost {
-                    metricItem(label: L10n.detail.cost, value: CostFormatter.format(session.estimated_cost), color: .green)
+                if !session.hasProcessHeuristicMetrics {
+                    metricItem(label: L10n.detail.usage, value: CostFormatter.formatUsage(session.total_usage))
+                    if showCost {
+                        metricItem(label: L10n.detail.cost, value: CostFormatter.format(session.estimated_cost), color: .green)
+                    }
+                    if session.hasMeaningfulRequestCount {
+                        metricItem(label: L10n.detail.requests, value: "\(session.requests)")
+                    }
                 }
-                metricItem(label: L10n.detail.requests, value: "\(session.requests)")
                 if session.error_count > 0 {
                     metricItem(label: L10n.detail.errors, value: "\(session.error_count)", color: .red)
                 }
@@ -626,6 +741,17 @@ struct SessionRow: View {
             Text(value)
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
                 .foregroundStyle(color)
+        }
+    }
+
+    /// Confidence badge color: green for process-confirmed, blue for
+    /// recent JSONL activity, gray for older Recent rows.
+    private func tierColor(_ tier: FreshnessTier) -> Color {
+        switch tier {
+        case .activeProcess: return .green
+        case .activeJsonl:   return .blue
+        case .recentJsonl:   return .secondary
+        case .hidden:        return .clear
         }
     }
 }
