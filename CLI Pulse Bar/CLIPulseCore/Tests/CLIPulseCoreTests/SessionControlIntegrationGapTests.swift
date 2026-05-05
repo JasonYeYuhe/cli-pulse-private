@@ -235,6 +235,81 @@ final class SessionControlIntegrationGapTests: XCTestCase {
         XCTAssertFalse(caps.sendInput)
     }
 
+    // MARK: - shouldRouteSessionLocally(_:) — Codex PR #17 stop-routing fix
+
+    @MainActor
+    private func makeRow(id: String, deviceId: String) -> RemoteSession {
+        RemoteSession(
+            id: id, device_id: deviceId,
+            device_name: nil, provider: "claude",
+            cwd_basename: "", cwd_hmac: nil,
+            status: "running", client_label: "test",
+            created_at: "2026-05-05T00:00:00Z",
+            last_event_at: nil
+        )
+    }
+
+    @MainActor
+    func testRouteLocally_ownershipById_winsOverDeviceIdMismatch() {
+        // The exact regression Codex caught: helper-owned session
+        // appears in `localManagedSessions`, but its Supabase row
+        // (in `remoteSessions`) carries a `device_id` that DOESN'T
+        // match `selfDeviceId` because the two pairing stores
+        // drifted. Ownership-by-id MUST win.
+        let state = makeState()
+        state.localHelperReachable = true
+        state.localControlEnabled = true
+        state.localManagedSessions = [
+            .init(id: "S-1", provider: "claude", clientLabel: "test",
+                  status: "running", controllable: true, source: .managed)
+        ]
+        // Row with device_id that does NOT match `selfDeviceId`
+        // (which is nil in the test rig anyway).
+        let row = makeRow(id: "S-1", deviceId: "some-other-helper-deviceid")
+        XCTAssertTrue(state.shouldRouteSessionLocally(row),
+            "ownership-by-id must win even when device_id doesn't match selfDeviceId")
+    }
+
+    @MainActor
+    func testRouteLocally_falseWhenSessionUnknownToBothPaths() {
+        // Cross-device row, not in localManagedSessions, device_id
+        // doesn't match → must NOT route locally.
+        let state = makeState()
+        state.localHelperReachable = true
+        state.localControlEnabled = true
+        state.localManagedSessions = []
+        let row = makeRow(id: "X", deviceId: "remote-mac-id")
+        XCTAssertFalse(state.shouldRouteSessionLocally(row))
+    }
+
+    @MainActor
+    func testRouteLocally_falseWhenHelperUnreachable() {
+        let state = makeState()
+        state.localHelperReachable = false
+        state.localControlEnabled = true
+        state.localManagedSessions = [
+            .init(id: "S-1", provider: "claude", clientLabel: nil,
+                  status: "running", controllable: true, source: .managed)
+        ]
+        let row = makeRow(id: "S-1", deviceId: "any")
+        XCTAssertFalse(state.shouldRouteSessionLocally(row),
+            "no UDS calls when helper is unreachable, even if id is owned")
+    }
+
+    @MainActor
+    func testRouteLocally_falseWhenGateOff() {
+        let state = makeState()
+        state.localHelperReachable = true
+        state.localControlEnabled = false
+        state.localManagedSessions = [
+            .init(id: "S-1", provider: "claude", clientLabel: nil,
+                  status: "running", controllable: true, source: .managed)
+        ]
+        let row = makeRow(id: "S-1", deviceId: "any")
+        XCTAssertFalse(state.shouldRouteSessionLocally(row),
+            "gate off must short-circuit even when helper is reachable")
+    }
+
     // MARK: - Diagnostics surface (Codex PR #17 manual-verify follow-up)
 
     @MainActor

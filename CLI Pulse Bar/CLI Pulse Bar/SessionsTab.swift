@@ -90,7 +90,11 @@ struct SessionsTab: View {
                 Button {
                     Task { await openManagedClaudeSession() }
                 } label: {
-                    Label(canStartLocal ? "New local Claude" : "New Claude session",
+                    // Codex review: "New local Clau..." was still
+                    // truncating at `.small` width. Shortened to
+                    // "New Local" / "New" — both fit cleanly and the
+                    // `.help(...)` tooltip carries the full meaning.
+                    Label(canStartLocal ? "New Local" : "New",
                           systemImage: "plus.circle.fill")
                         .font(.system(size: 11, weight: .medium))
                         .lineLimit(1)
@@ -202,9 +206,7 @@ struct SessionsTab: View {
                             session: session,
                             isSelected: selectedManagedSessionId == session.id,
                             pendingApproval: pendingApproval(for: session),
-                            routesLocally: state.shouldUseLocalSessionControl(
-                                forDeviceId: session.device_id
-                            ),
+                            routesLocally: state.shouldRouteSessionLocally(session),
                             onSelect: {
                                 selectedManagedSessionId = (selectedManagedSessionId == session.id)
                                     ? nil : session.id
@@ -486,7 +488,7 @@ struct SessionsTab: View {
         // text to the cloud, defeating both the user's "local fast
         // path" expectation and the Codex review's posture that
         // capabilities must be honoured.
-        let routesLocally = state.shouldUseLocalSessionControl(forDeviceId: session.device_id)
+        let routesLocally = state.shouldRouteSessionLocally(session)
         let localSendUnsupported = routesLocally && (state.localCapabilities?.sendInput == false)
         let promptDisabled = !isRunning || localSendUnsupported
         return VStack(alignment: .leading, spacing: 6) {
@@ -561,13 +563,18 @@ struct SessionsTab: View {
                          : "Show the live output tail (stdout, status, info events). Default off — privacy-visible opt-in."))
                 Button(role: .destructive) {
                     Task {
-                        // Phase 3 Iter 2A routing: if the session
-                        // belongs to THIS Mac AND the local fast path
-                        // is reachable+enabled, prefer the UDS stop.
-                        // Otherwise fall back to the Supabase queue
-                        // (cross-device control, or local helper not
-                        // available right now).
-                        if state.shouldUseLocalSessionControl(forDeviceId: session.device_id) {
+                        // Codex review on PR #17 second manual verify:
+                        // route by **ownership of the session id**,
+                        // not by `session.device_id` equality. The
+                        // Supabase row carries the HELPER's device_id
+                        // which can drift from `selfDeviceId` if the
+                        // two paired stores got out of sync — id-based
+                        // ownership via `localManagedSessions` is the
+                        // reliable signal. `shouldRouteSessionLocally`
+                        // checks ownership-by-id first, falls back to
+                        // device-id equality for fresh rows the local
+                        // list hasn't seen yet.
+                        if state.shouldRouteSessionLocally(session) {
                             _ = await state.stopLocalSession(sessionId: session.id)
                         } else {
                             await state.stopRemoteSession(sessionId: session.id)
@@ -715,16 +722,14 @@ struct SessionsTab: View {
     private func sendPrompt(for session: RemoteSession) async {
         let text = promptText
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        // Phase 3 routing decision (Codex-reviewed):
-        //   * Row routes locally (same-Mac + local enabled + reachable):
-        //     - Helper says `send_input: true` → UDS send.
-        //     - Helper says `send_input: false` → DO NOT silently
-        //       fall back to Supabase. The capability gate above
-        //       already disabled the input, so this branch is
-        //       defensive — drop the send rather than route via a
-        //       transport the user didn't opt into.
-        //   * Row routes remotely → Supabase prompt RPC.
-        let routesLocally = state.shouldUseLocalSessionControl(forDeviceId: session.device_id)
+        // Routing: ownership-by-id first (helper-owned → UDS),
+        // device-id equality fallback for rows the local list
+        // hasn't caught up to yet. Codex-reviewed: this fixes the
+        // same regression class as Stop — `session.device_id` from
+        // Supabase can disagree with `selfDeviceId` if the two
+        // pairing stores drifted, and a strict device-id check
+        // routes helper-owned sessions through Supabase by mistake.
+        let routesLocally = state.shouldRouteSessionLocally(session)
         let ok: Bool
         if routesLocally {
             guard state.localCapabilities?.sendInput == true else {

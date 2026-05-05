@@ -616,10 +616,10 @@
 "common.no_provider_selected" = "No provider selected";
 "cost.exact" = "Exact";
 "cost.estimated" = "Estimated";
-"cost.tokens_suffix" = "· %@ tokens";
+"cost.tokens_suffix" = "· %@ I/O tokens";
 "cost.tokens_short_suffix" = "· %@";
 "cost.thirty_day_precise" = "30 Day";
-"cost.tokens_value" = "%@ tokens";
+"cost.tokens_value" = "%@ I/O tokens";
 "cost.day_progress" = "%d/%d days";
 "cost.by_model" = "By Model";
 "watch.unread_count" = "%d unread";

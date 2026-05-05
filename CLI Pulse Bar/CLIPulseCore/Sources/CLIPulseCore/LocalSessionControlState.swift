@@ -191,6 +191,40 @@ extension AppState {
         return localHelperReachable && localControlEnabled
     }
 
+    /// True iff actions on `session` should route through the local
+    /// UDS path. **This is the right router for stop / send / row
+    /// transport-badge decisions, not `shouldUseLocalSession
+    /// Control(forDeviceId:)`.**
+    ///
+    /// Why a second predicate: Codex review on PR #17 manual
+    /// verification caught a stop-routing regression. After the
+    /// helper's `register_session` Supabase RPC commits, the row in
+    /// `remoteSessions` carries the helper's recorded `device_id`
+    /// (from `~/.cli-pulse-helper.json`). The macOS app's
+    /// `selfDeviceId` reads from the app-group UserDefaults
+    /// `helper_config` key. If those two stores ever drift (Python
+    /// `pair` ran separately from the macOS pairing flow, or one
+    /// was repaired without the other), the id-equality check
+    /// silently fails → stop falls back to Supabase even for
+    /// helper-owned sessions.
+    ///
+    /// The robust signal is **ownership by id**: if the session
+    /// appears in `localManagedSessions`, the helper owns its PTY
+    /// regardless of what `device_id` the Supabase row records.
+    /// Use this predicate everywhere the UI dispatches an action
+    /// against a known row.
+    public func shouldRouteSessionLocally(_ session: RemoteSession) -> Bool {
+        guard localHelperReachable, localControlEnabled else { return false }
+        // Path 1: helper definitively owns this id.
+        if localManagedSessions.contains(where: { $0.id == session.id }) {
+            return true
+        }
+        // Path 2: device_id match — covers brief windows where the
+        // local list hasn't caught up yet (still important for
+        // freshly-started rows).
+        return isSelfDevice(session.device_id)
+    }
+
     /// **The fix for the integration gap Codex flagged on PR #17**:
     /// merge `remoteSessions` (Supabase-backed) with `localManagedSessions`
     /// (UDS-backed) into one list the macOS UI renders directly, so

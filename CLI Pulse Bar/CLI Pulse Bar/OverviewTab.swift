@@ -300,9 +300,17 @@ struct OverviewTab: View {
                             .font(.system(size: 16, weight: .bold, design: .rounded))
                             .foregroundStyle(.green)
                         if providerState.costSummary.todayTokens > 0 {
+                            // Codex review on PR #17: explicit "I/O
+                            // tokens" label + tooltip avoids the
+                            // CodexBar-vs-CLI Pulse comparison
+                            // confusion. CLI Pulse counts input +
+                            // output only; CodexBar's "tokens"
+                            // includes cache reads. Cost calc on
+                            // both sides includes cache.
                             Text(L10n.cost.tokensSuffix(TokenFormatter.format(providerState.costSummary.todayTokens)))
                                 .font(.system(size: 9))
                                 .foregroundStyle(.tertiary)
+                                .help("I/O tokens = input + output. Excludes cache reads (which are ~98% of Claude's raw token volume but billed at 10% — included in cost). CodexBar's 'tokens' figure rolls cache in; ours doesn't, so the numbers will differ. Cost is computed with full per-component pricing on both sides and matches.")
                         }
                     }
                 }
@@ -318,6 +326,7 @@ struct OverviewTab: View {
                             Text(L10n.cost.tokensSuffix(TokenFormatter.format(providerState.costSummary.thirtyDayTokens)))
                                 .font(.system(size: 9))
                                 .foregroundStyle(.tertiary)
+                                .help("I/O tokens = input + output. Excludes cache reads (which are ~98% of Claude's raw token volume but billed at 10% — included in cost).")
                         }
                     }
                 }
