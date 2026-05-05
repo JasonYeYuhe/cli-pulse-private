@@ -189,8 +189,8 @@ public enum SessionControlError: Error, Equatable, Sendable, CustomStringConvert
         case .localControlOff:     return "local control disabled"
         case .timeout:             return "timeout"
         case .disconnected:        return "disconnected"
-        case .invalidResponse(let m): return "invalid response: \(m)"
-        case .internalError(let m):   return "internal error: \(m)"
+        case .invalidResponse(let detail): return "invalid response: \(detail)"
+        case .internalError(let detail):   return "internal error: \(detail)"
         }
     }
 }
