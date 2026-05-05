@@ -438,6 +438,12 @@ public final class LocalSessionControlClient: SessionControlClient {
     ///     transport failure
     public func subscribeEvents(sessionId: String? = nil) -> AsyncThrowingStream<LocalSessionEvent, Error> {
         AsyncThrowingStream { continuation in
+            // Box for the connection so the outer onTermination (set
+            // BEFORE the inner Task runs) can still reach it. The
+            // inner Task assigns into this box once `connect()`
+            // returns; before that, onTermination just cancels the
+            // task and connect() will throw `.timeout` to unwind.
+            let connBox = _ConnectionBox()
             let task = Task { [self] in
                 do {
                     var params: [String: Any] = [:]
@@ -455,17 +461,23 @@ public final class LocalSessionControlClient: SessionControlClient {
                         withJSONObject: envelope, options: [.sortedKeys]
                     )
                     let conn = try await connect()
-                    // Stamp the connection on the continuation so
-                    // onTermination can yank it.
-                    continuation.onTermination = { _ in
+                    connBox.connection = conn
+                    // If the consumer already cancelled while we were
+                    // connecting, drop the connection now and bail.
+                    if Task.isCancelled {
                         conn.cancel()
+                        continuation.finish()
+                        return
                     }
                     try await sendFrame(conn, body: body)
-                    // First frame is the ack envelope: {"ok":true,
-                    // "result":{...initial snapshot...}} OR an error
-                    // envelope. We map ok=true → emit .subscribed,
-                    // ok=false → throw the typed SessionControlError.
-                    let ackBytes = try await receiveFrame(conn)
+                    // First frame is the ack envelope. The ack is the
+                    // helper's snapshot reply built synchronously from
+                    // the registry + broker, so a watchdog timeout on
+                    // it IS still the right behaviour (a missing ack
+                    // means the helper hung). The streaming receives
+                    // below run with `timeout: nil` precisely because
+                    // a missing event is normal during idle.
+                    let ackBytes = try await receiveFrame(conn, timeout: requestTimeout)
                     let ackResult = try parseReply(ackBytes)
                     let initialSessions = (ackResult["managed_sessions"] as? [[String: Any]]) ?? []
                     let initialApprovals = (ackResult["pending_approvals"] as? [[String: Any]]) ?? []
@@ -487,35 +499,37 @@ public final class LocalSessionControlClient: SessionControlClient {
                         managedSessions: sessionRows,
                         pendingApprovals: approvals
                     ))
-                    // Streaming loop. Each frame is a bare event
-                    // dict (NOT wrapped in {"ok":..., "result":...}).
+                    // Streaming loop. Each frame is a bare event dict
+                    // (NOT wrapped in {"ok":..., "result":...}).
+                    //
+                    // `timeout: nil` is load-bearing here. With a
+                    // watchdog, an idle period longer than the
+                    // watchdog throws `.timeout`, the loop continues,
+                    // a second `receive` is scheduled, and the OLD
+                    // receive callback (still pending on the
+                    // NWConnection) eats the next frame's bytes
+                    // before the new receive sees them. Codex caught
+                    // this on PR #18 (heartbeat=15s, requestTimeout=5s
+                    // → frames lost on every idle gap). Keeping
+                    // exactly one outstanding receive at a time means
+                    // the kernel/Network framework hands bytes to the
+                    // single live continuation.
                     while !Task.isCancelled {
                         let frameBytes: Data
                         do {
-                            frameBytes = try await receiveFrame(conn)
-                        } catch SessionControlError.timeout {
-                            // Idle — keep waiting. The helper sends
-                            // heartbeats periodically, so we should
-                            // rarely actually time out here. Loop.
-                            continue
+                            frameBytes = try await receiveFrame(conn, timeout: nil)
                         } catch let err as SessionControlError where err == .disconnected {
+                            // Connection torn down (cancellation or
+                            // helper shutdown). Exit cleanly.
                             throw err
                         }
                         guard let raw = try? JSONSerialization.jsonObject(with: frameBytes) as? [String: Any] else {
                             throw SessionControlError.invalidResponse("event frame not a JSON object")
                         }
                         guard let event = LocalSessionEvent.decode(from: raw) else {
-                            // Empty or malformed frame; drop and keep
-                            // going. The macOS UI tolerates gaps in
-                            // the live stream by falling back to
-                            // snapshot polls.
                             continue
                         }
                         continuation.yield(event)
-                        // If the helper's overflow path emitted an
-                        // error event, we're effectively done — the
-                        // helper detached us. Surface as a stream
-                        // termination so AppState can re-subscribe.
                         if case .error = event {
                             break
                         }
@@ -523,11 +537,20 @@ public final class LocalSessionControlClient: SessionControlClient {
                     conn.cancel()
                     continuation.finish()
                 } catch {
+                    connBox.connection?.cancel()
                     continuation.finish(throwing: error)
                 }
             }
-            // If the consumer cancels its Task, we cancel ours.
-            continuation.onTermination = { @Sendable [task] _ in
+            // Single onTermination handler that yanks BOTH the
+            // connection (so the pending receive resolves with an
+            // error and the inner Task unblocks) AND the Task
+            // itself. Previously two assignments existed and the
+            // second overwrote the first, so cancellation only
+            // cancelled the Task — which doesn't auto-resolve a
+            // continuation suspended on receive — and the stream
+            // hung until the helper independently disconnected.
+            continuation.onTermination = { @Sendable [task, connBox] _ in
+                connBox.connection?.cancel()
                 task.cancel()
             }
         }
@@ -624,7 +647,9 @@ public final class LocalSessionControlClient: SessionControlClient {
         let conn = try await connect()
         defer { conn.cancel() }
         try await sendFrame(conn, body: body)
-        let reply = try await receiveFrame(conn)
+        // One-shot RPC: missing reply IS a timeout-class error,
+        // so apply the configured requestTimeout watchdog.
+        let reply = try await receiveFrame(conn, timeout: requestTimeout)
         return try parseReply(reply)
     }
 
@@ -740,17 +765,61 @@ public final class LocalSessionControlClient: SessionControlClient {
         }
     }
 
-    private func receiveFrame(_ conn: NWConnection) async throws -> Data {
-        let header = try await receiveExact(conn, count: 4)
+    /// Receive one length-prefixed frame.
+    ///
+    /// `timeout` semantics:
+    ///   * `.some(seconds)` — schedule an `asyncAfter` watchdog that
+    ///     resumes the continuation with `.timeout` if no bytes
+    ///     arrive in time. Used by request/reply RPCs, the
+    ///     `subscribe_events` initial ack, and any other call where
+    ///     a missing reply is itself a hard error.
+    ///   * `nil` — NO watchdog. Used by streaming-loop event reads:
+    ///     the helper heartbeats every 15s but a 5s `requestTimeout`
+    ///     would fire repeatedly during normal idle, leaving the
+    ///     pre-existing `conn.receive(...)` callback dangling. When
+    ///     the next frame eventually arrives the OLD callback fires
+    ///     first, sees `resumed == true`, and silently swallows
+    ///     the bytes — the loop's brand-new `receive` call sees
+    ///     nothing. Codex caught this on PR #18; with `timeout=nil`
+    ///     there is exactly one outstanding receive and bytes are
+    ///     never lost.
+    ///
+    /// Cancellation flow without a timeout watchdog: `subscribeEvents`
+    /// hooks `continuation.onTermination` to call `conn.cancel()`,
+    /// which transitions NWConnection to .cancelled and fires the
+    /// pending receive callback with an error → the continuation
+    /// resumes via `.failure(.disconnected)` → the loop exits.
+    private func receiveFrame(
+        _ conn: NWConnection,
+        timeout: TimeInterval? = nil
+    ) async throws -> Data {
+        let resolvedTimeout: TimeInterval? = timeout
+        let header = try await receiveExact(conn, count: 4, timeout: resolvedTimeout)
         let length = header.withUnsafeBytes { $0.load(as: UInt32.self) }.bigEndian
         if length > Self.maxPayload {
             throw SessionControlError.invalidResponse("inbound frame > 1 MiB (\(length))")
         }
         if length == 0 { return Data() }
-        return try await receiveExact(conn, count: Int(length))
+        return try await receiveExact(conn, count: Int(length), timeout: resolvedTimeout)
     }
 
-    private func receiveExact(_ conn: NWConnection, count: Int) async throws -> Data {
+    /// Mutable reference holder so a `@Sendable` cancellation
+    /// closure outside the inner Task can see the `NWConnection`
+    /// the inner Task assigns once `connect()` resolves. NWConnection
+    /// is itself a class so the box only needs to wrap a single
+    /// optional. `@unchecked Sendable` is sound here because the
+    /// only writer is the inner Task and the only reader is the
+    /// onTermination closure, both of which serialise via the
+    /// AsyncThrowingStream's continuation contract.
+    private final class _ConnectionBox: @unchecked Sendable {
+        var connection: NWConnection?
+    }
+
+    private func receiveExact(
+        _ conn: NWConnection,
+        count: Int,
+        timeout: TimeInterval?
+    ) async throws -> Data {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Data, Error>) in
             var resumed = false
             let resumeOnce: (Result<Data, Error>) -> Void = { result in
@@ -777,8 +846,10 @@ public final class LocalSessionControlClient: SessionControlClient {
                 }
                 resumeOnce(.success(data))
             }
-            queue.asyncAfter(deadline: .now() + requestTimeout) {
-                resumeOnce(.failure(SessionControlError.timeout))
+            if let timeout {
+                queue.asyncAfter(deadline: .now() + timeout) {
+                    resumeOnce(.failure(SessionControlError.timeout))
+                }
             }
         }
     }

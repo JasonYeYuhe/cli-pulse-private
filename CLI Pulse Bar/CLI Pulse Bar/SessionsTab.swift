@@ -64,12 +64,21 @@ struct SessionsTab: View {
                     await state.refreshLocalPendingApprovals(sessionId: nil)
                 }
                 if showOutput, let sid = selectedManagedSessionId {
-                    // Remote-routed rows still pull events from the
-                    // Supabase tail. Local-routed rows are driven
+                    // Remote-routed rows pull events from the Supabase
+                    // tail. Local-routed rows are driven exclusively
                     // by `subscribeToLocalEvents` (kicked off in
-                    // .onChange(of: showOutput) below) — no per-tick
-                    // poll needed.
-                    await state.refreshRemoteSessionEvents(sessionId: sid)
+                    // .onChange(of: showOutput) below) — calling the
+                    // remote-events refresh on a local row would
+                    // (a) issue a Supabase RPC for data we don't render
+                    // anyway and (b) repopulate `remoteSessionEvents`
+                    // for an id whose preview already comes from
+                    // `localOutputPreview`, double-rendering noise.
+                    // Codex review on PR #18: gate on
+                    // `shouldRouteSessionLocally` first.
+                    if let row = state.displayedManagedSessions.first(where: { $0.id == sid }),
+                       !state.shouldRouteSessionLocally(row) {
+                        await state.refreshRemoteSessionEvents(sessionId: sid)
+                    }
                 }
                 if !state.remoteControlEnabled {
                     try? await Task.sleep(nanoseconds: 10_000_000_000)

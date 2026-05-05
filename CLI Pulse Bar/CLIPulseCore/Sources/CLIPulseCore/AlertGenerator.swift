@@ -33,21 +33,39 @@ public enum AlertGenerator {
 
         // Rule 1: Device CPU >= 85%
         //
-        // Iter2 fix: id was `cpu-spike-global` (or `Usage Spike:global` on the
-        // suppression side). Two latent bugs:
-        //   1. helper_sync ON CONFLICT preserves `is_resolved`, so once the
-        //      user resolved the row the device never alerted again on that
-        //      id — same row gets re-upserted forever with is_resolved=true.
-        //   2. `global` had no device qualifier, so a user with two macs
-        //      would have one device's high-CPU silence the other's.
+        // History:
+        //   * `cpu-spike-global` → silenced multi-device users + once the
+        //     user resolved the row the helper UPSERT-with-ON-CONFLICT
+        //     preserved is_resolved=true forever.
+        //   * `cpu-spike-<device>-<hourBucket>` (iter2) → multi-device safe
+        //     and re-fires on the next hour, BUT created a brand-new
+        //     unresolved alert row every hour the device stayed above
+        //     85%. Resolving / snoozing was useless because the next hour
+        //     produced a fresh id with no suppression match. Settings
+        //     also offered no knob to turn this off, so users were stuck
+        //     with a recurring noise floor.
+        //   * iter3 (this PR, post-Codex review on PR #18): drop hourBucket
+        //     entirely. Stable id `cpu-spike-<device>` lets the helper's
+        //     ON CONFLICT preserve `is_resolved` once the user resolves /
+        //     snoozes / dismisses, so the same device-level CPU
+        //     condition does NOT keep generating new unresolved rows.
+        //     The visible `created_at` still updates each cycle so the
+        //     row's timestamp reflects the most recent sample, but the
+        //     row identity is stable — which is what the suppression
+        //     infra (both client-side `suppressedAlertIDs` and server-
+        //     side `is_resolved`) keys on. Re-firing after a recovery /
+        //     re-spike is intentionally deferred: doing it well requires
+        //     a "below threshold for N consecutive cycles" recovery
+        //     detector + a Settings page to expose the knob, both of
+        //     which are out of scope for the iter 2B noise-reduction
+        //     pass.
         //
-        // Bucketing by hour rotates the id (so re-spike after the hour
-        // boundary creates a new row), and prefixing with deviceID keeps
-        // multi-device alerts independent. previousSuppressionKeys still
-        // dedups within a single refresh cycle.
-        let hourBucket = Int(now.timeIntervalSince1970 / 3600)
+        // The pinning test that asserted the hourly rotation
+        // (`testCpuSpikeIdRotatesByHour`) flips to assert id stability
+        // across hours so a future engineer doesn't reintroduce the
+        // bug under the original-comment justification.
         if device.cpuUsage >= 85 {
-            let stableID = "cpu-spike-\(deviceID)-\(hourBucket)"
+            let stableID = "cpu-spike-\(deviceID)"
             alerts.append([
                 "id": stableID,
                 "type": "Usage Spike",

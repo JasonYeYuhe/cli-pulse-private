@@ -169,13 +169,22 @@ struct AdvancedSection: View {
             // iter4: route every flip through `setRemoteControlEnabled(_:)`
             // so a failed PATCH cleanly reverts the UI instead of leaving it
             // out of sync with the server-side gate.
+            //
+            // iter6 (post-Codex review on PR #18): the consent confirmation
+            // moved from a system `.alert` to an inline card rendered
+            // beneath the toggle. SwiftUI's `.alert` doesn't capture
+            // clicks reliably inside `MenuBarExtra(.window)` — the same
+            // class of bug `RemoteApprovalsSheet` already documented for
+            // `.sheet`. Inline buttons in the popover's own SwiftUI tree
+            // get clicks every time and don't dismiss the popover.
             Toggle(isOn: Binding(
                 get: { state.remoteControlEnabled },
                 set: { newValue in
                     if newValue && !state.remoteControlEnabled {
-                        // Going ON requires consent — let the alert handle
-                        // the actual flip. Don't touch state here, otherwise
-                        // the toggle visually flips before consent is given.
+                        // Going ON requires consent — show the inline
+                        // card. We deliberately do NOT mutate state
+                        // here (otherwise the toggle flips visually
+                        // before consent is given).
                         showRemoteControlConsent = true
                     } else {
                         // Going OFF (or repeated set to current value, which
@@ -204,27 +213,9 @@ struct AdvancedSection: View {
             // double-tap (or any other re-entrant call) can't race a stale
             // request past the latest intent.
             .disabled(state.remoteControlSaving)
-            .alert(L10n.advanced.remoteConsentTitle, isPresented: $showRemoteControlConsent) {
-                Button(L10n.common.cancel, role: .cancel) {}
-                Button(L10n.advanced.enable) {
-                    // Single atomic entry point — handles optimistic set,
-                    // PATCH, and revert-on-failure. UI never desyncs from
-                    // the server-side gate.
-                    state.setRemoteControlEnabled(true)
-                }
-            } message: {
-                Text(
-                    "When Remote Control is on, CLI Pulse can:\n" +
-                    "• upload a redacted summary of each Claude permission request (tool name, short summary, risk badge)\n" +
-                    "• upload a short tail of terminal output and the session status\n" +
-                    "• accept your remote Approve / Deny back into the local hook\n\n" +
-                    "What never leaves this Mac:\n" +
-                    "• provider API keys, cookies, OAuth tokens\n" +
-                    "• full transcripts or session log files\n" +
-                    "• full project paths (only basename + HMAC)\n\n" +
-                    "Approve here is per-request only — it does NOT add a Claude Code Always-Allow rule. You'll be asked again the next time Claude needs the same tool. To set persistent rules, use Claude Code's own \"Always Allow\" UI on the Mac.\n\n" +
-                    "Approving a request executes the tool call on this Mac. Only approve requests you understand."
-                )
+
+            if showRemoteControlConsent {
+                remoteControlConsentCard
             }
 
             Divider()
@@ -267,6 +258,77 @@ struct AdvancedSection: View {
                 }
             }
         }
+    }
+
+    /// Inline consent card rendered below the Remote Control toggle
+    /// when the user flips it on. Replaces the previous `.alert(...)`
+    /// usage which was unreliable inside `MenuBarExtra(.window)` —
+    /// `.alert` and `.sheet` both have a known click-capture issue
+    /// in that context (RemoteApprovalsSheet documents the same bug
+    /// for the approval surface).
+    ///
+    /// Cancel / Enable are plain SwiftUI Buttons. They dispatch on
+    /// the popover's own runloop without causing MenuBarExtra
+    /// dismissal — verified manually + pinned by the build's
+    /// existing snapshot of advanced-section structure.
+    private var remoteControlConsentCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tint)
+                Text(L10n.advanced.remoteConsentTitle)
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+            }
+            Text(remoteControlConsentBody)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            HStack(spacing: 8) {
+                Spacer()
+                Button(L10n.common.cancel) {
+                    showRemoteControlConsent = false
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .keyboardShortcut(.cancelAction)
+                Button(L10n.advanced.enable) {
+                    // Single atomic entry point — handles optimistic
+                    // set, PATCH, and revert-on-failure.
+                    state.setRemoteControlEnabled(true)
+                    showRemoteControlConsent = false
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(10)
+        .background(Color.accentColor.opacity(0.10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.30), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .transition(.opacity.combined(with: .move(edge: .top)))
+        .animation(.easeInOut(duration: 0.18), value: showRemoteControlConsent)
+    }
+
+    /// Body copy for the Remote Control consent — same content as
+    /// the old `.alert` message so the consent text doesn't drift.
+    private var remoteControlConsentBody: String {
+        "When Remote Control is on, CLI Pulse can:\n" +
+        "• upload a redacted summary of each Claude permission request (tool name, short summary, risk badge)\n" +
+        "• upload a short tail of terminal output and the session status\n" +
+        "• accept your remote Approve / Deny back into the local hook\n\n" +
+        "What never leaves this Mac:\n" +
+        "• provider API keys, cookies, OAuth tokens\n" +
+        "• full transcripts or session log files\n" +
+        "• full project paths (only basename + HMAC)\n\n" +
+        "Approve here is per-request only — it does NOT add a Claude Code Always-Allow rule. You'll be asked again the next time Claude needs the same tool. To set persistent rules, use Claude Code's own \"Always Allow\" UI on the Mac.\n\n" +
+        "Approving a request executes the tool call on this Mac. Only approve requests you understand."
     }
 
     /// v1.9.4 privacy disclosure row. Green = stays on device,
