@@ -355,6 +355,29 @@ internal final class DataRefreshManager {
             )
             let mergedSessions = resolution.merged
             refreshLogger.info("refreshCloud sessions: cloudRaw=\(resolution.cloudRaw) cloudFresh=\(resolution.cloudFresh) candidates=\(resolution.candidatesRaw) localSynth=\(resolution.localSynth) final=\(mergedSessions.count)")
+
+            #if DEBUG
+            // PR #14 / sessions-active-recent-split: when only JSONL
+            // rows are surviving despite the helper running, this
+            // breakdown makes it obvious which leg is dropping the
+            // proc-* rows. Logs id-prefix × tier counts plus the
+            // (id, provider, tier) tuple per row. No names, no
+            // payloads — names from the helper's _pretty_name include
+            // process paths that could leak project / username info.
+            var tierByEvidence: [String: Int] = [:]
+            var rowSummaries: [String] = []
+            for s in mergedSessions {
+                let tier = SessionFreshnessTierClassifier.classify(s, now: now)
+                let evidence: String
+                if s.id.hasPrefix("proc-") { evidence = "proc" }
+                else if s.id.hasPrefix("jsonl-") { evidence = "jsonl" }
+                else { evidence = "cloud" }
+                tierByEvidence["\(evidence)/\(tier.rawValue)", default: 0] += 1
+                rowSummaries.append("[\(s.id) \(s.provider) tier=\(tier.rawValue)]")
+            }
+            refreshLogger.debug("session tier breakdown: \(tierByEvidence)")
+            refreshLogger.debug("session rows: \(rowSummaries.joined(separator: " "))")
+            #endif
             #else
             let mergedSessions = SessionFreshnessFilter.filterCurrent(sessionData, now: now)
             #endif
