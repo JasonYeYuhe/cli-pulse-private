@@ -100,7 +100,9 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
+from local_approvals import ApprovalError, ApprovalRegistry
 from local_auth_token import compare as compare_tokens
+from local_events import EventBroker, Subscription
 
 logger = logging.getLogger("cli_pulse.local_session_server")
 
@@ -124,7 +126,24 @@ SUPPORTED_METHODS = (
     "list_sessions",
     "stop_session",
     "send_input",
+    # Phase 3 Iter 2B: app-side streaming + structured approvals.
+    "subscribe_events",
+    "approve_action",
+    "get_pending_approvals",
+    # Hook-side ingress. These methods reject the app auth_token and
+    # accept ONLY a per-session capability token + session_id. See
+    # `_dispatch` for the auth-table enforcement.
+    "hook_create_approval",
+    "hook_wait_decision",
 )
+
+# Methods whose body uses the per-session capability token (set by
+# `RemoteAgentManager._build_env`) instead of the global app auth
+# token. They are reachable by the hook subprocess Claude spawns and
+# are deliberately kept narrow: the hook can request an approval or
+# wait for one to resolve, but cannot list sessions, cannot send
+# input, and cannot decide approvals on its own.
+HOOK_AUTH_METHODS = frozenset({"hook_create_approval", "hook_wait_decision"})
 
 # Methods whose body may skip auth_token validation. `hello` is the
 # only one — the client uses it to negotiate protocol / capabilities
@@ -300,6 +319,9 @@ class LocalSessionServer:
         stop_session: Callable[[str], dict],
         send_input: Callable[[str, str], dict],
         list_detected_sessions: Callable[[], list[dict]] | None = None,
+        event_broker: EventBroker | None = None,
+        approval_registry: ApprovalRegistry | None = None,
+        subscribe_idle_timeout_s: float = 30.0,
         max_payload: int = MAX_PAYLOAD,
     ) -> None:
         self._socket_path = Path(socket_path)
@@ -316,6 +338,13 @@ class LocalSessionServer:
         # surface — see module docstring for the controllability
         # boundary. Optional so unit tests can omit it.
         self._list_detected_sessions = list_detected_sessions
+        # Phase 3 Iter 2B: the broker drives `subscribe_events` and
+        # the registry drives `approve_action` / `get_pending_approvals`
+        # / `hook_*`. Both default to None so tests that exercise only
+        # the iter-2A surface don't need to wire them.
+        self._event_broker = event_broker
+        self._approval_registry = approval_registry
+        self._subscribe_idle_timeout_s = subscribe_idle_timeout_s
         self._max_payload = max_payload
 
         self._listener: socket.socket | None = None
@@ -429,9 +458,18 @@ class LocalSessionServer:
                     return
                 if body is None:
                     return  # clean EOF
-                reply = self._dispatch(body)
+                action = self._dispatch(body, conn=conn)
+                if isinstance(action, _StreamHandoff):
+                    # subscribe_events takes over the connection — we
+                    # write the initial ack frame, then loop pushing
+                    # event frames until the subscriber closes / the
+                    # peer disconnects / the broker tears us down. The
+                    # connection is dedicated to streaming after this
+                    # so we never read another request frame from it.
+                    self._stream_loop(conn, action)
+                    return
                 try:
-                    write_frame(conn, reply, max_payload=self._max_payload)
+                    write_frame(conn, action, max_payload=self._max_payload)
                 except FrameError as exc:
                     # Reply itself oversize — should never happen for
                     # iter 1 methods (their results are tiny). Log and
@@ -447,10 +485,104 @@ class LocalSessionServer:
             except OSError:
                 pass
 
-    def _dispatch(self, body: bytes) -> bytes:
-        """Decode + route one request frame. Always returns a complete
-        reply envelope as bytes — never raises out to the caller, so
-        the connection stays alive through transient logical errors.
+    # ── streaming loop ──────────────────────────────────────
+
+    def _stream_loop(self, conn: socket.socket, handoff: "_StreamHandoff") -> None:
+        """Drive a `subscribe_events` connection. Writes the initial
+        ack frame, then drains the subscription's queue, frame-encoding
+        each event. Returns (and the connection is closed by the
+        outer `finally`) when the subscriber sees a close sentinel,
+        the peer disconnects, or any frame write fails.
+        """
+        sub = handoff.subscription
+        try:
+            # Initial ack — gives the client a deterministic stream
+            # start it can use to switch into streaming mode without
+            # needing to wait for the first real event.
+            try:
+                write_frame(
+                    conn,
+                    _ok(handoff.req_id, handoff.initial_payload),
+                    max_payload=self._max_payload,
+                )
+            except (FrameError, OSError) as exc:
+                logger.debug("subscribe initial ack send failed: %s", exc)
+                return
+            # Listen on the connection for a clean close from the
+            # client side too (NWConnection cancel) — we use a
+            # separate thread to detect EOF without coupling it to
+            # the subscription's blocking get().
+            close_event = threading.Event()
+            reader = threading.Thread(
+                target=self._stream_eof_reader,
+                args=(conn, close_event),
+                name="cli-pulse-uds-stream-eof",
+                daemon=True,
+            )
+            reader.start()
+            while not self._stop_flag.is_set() and not close_event.is_set():
+                event = sub.next(timeout=self._subscribe_idle_timeout_s)
+                if event is None:
+                    # Subscription closed (overflow already emitted its
+                    # own error frame above, or broker shut down).
+                    return
+                # Inject a top-level "event_frame" so the Swift decoder
+                # has a stable wrapper to identify each frame as one
+                # streaming event vs the request/reply envelope used
+                # by every other method. Keeps the wire shape uniform
+                # without forcing the client to mode-switch by method
+                # name.
+                payload = json.dumps(event).encode("utf-8")
+                try:
+                    write_frame(conn, payload, max_payload=self._max_payload)
+                except FrameError as exc:
+                    logger.warning("stream frame oversize: %s", exc)
+                    return
+                except OSError as exc:
+                    logger.debug("stream peer disconnected: %s", exc)
+                    return
+        finally:
+            try:
+                if self._event_broker is not None:
+                    self._event_broker.unsubscribe(sub)
+            except Exception:  # noqa: BLE001
+                pass
+
+    @staticmethod
+    def _stream_eof_reader(conn: socket.socket, close_event: threading.Event) -> None:
+        """Background reader: blocks on recv() and signals on EOF.
+        We only ever expect EOF from a streaming peer (clients never
+        send another request after subscribe_events). Bytes received
+        unexpectedly are logged and treated as a protocol error.
+        """
+        try:
+            while not close_event.is_set():
+                try:
+                    data = conn.recv(4096)
+                except (OSError, ValueError):
+                    close_event.set()
+                    return
+                if not data:
+                    close_event.set()
+                    return
+                # A misbehaving client wrote into a streaming
+                # connection — we don't decode but flag so the loop
+                # can tear down cleanly.
+                logger.debug("subscribe peer wrote %d unexpected bytes", len(data))
+        finally:
+            close_event.set()
+
+    def _dispatch(
+        self,
+        body: bytes,
+        *,
+        conn: socket.socket | None = None,
+    ) -> "bytes | _StreamHandoff":
+        """Decode + route one request frame. Returns either the
+        encoded reply envelope (bytes) OR a `_StreamHandoff` if the
+        connection should be promoted to a long-lived stream
+        (`subscribe_events`). Never raises out to the caller — the
+        connection stays alive through transient logical errors.
         """
         # 1. JSON decode.
         try:
@@ -474,9 +606,63 @@ class LocalSessionServer:
         if method not in SUPPORTED_METHODS:
             return _err(req_id, "unknown_method", f"unknown method: {method!r}")
 
-        # 2. Auth gate. Hello / ping bypass; everything else requires a
-        #    matching token. Constant-time comparison via local_auth_token.
-        if method not in UNAUTHENTICATED_METHODS:
+        # 2. Auth gate. Three cases:
+        #
+        #   (a) hello bypasses every auth check (handshake).
+        #
+        #   (b) hook_create_approval / hook_wait_decision use the
+        #       per-session capability token, NOT the app auth token.
+        #       The hook subprocess Claude spawns reads
+        #       CLI_PULSE_LOCAL_HOOK_TOKEN from its env and presents
+        #       it here. Presenting the app auth token to a hook
+        #       method is a hard error — that would mean the app
+        #       auth token leaked into Claude's env.
+        #
+        #   (c) every other authenticated method uses the app auth
+        #       token (constant-time compared via local_auth_token).
+        #       Presenting a hook token to an app method is also a
+        #       hard error, for the symmetric reason.
+        if method == "hello":
+            pass  # no auth
+        elif method in HOOK_AUTH_METHODS:
+            # Hook auth: session_id + session_token, both required.
+            if "auth_token" in req:
+                return _err(
+                    req_id,
+                    "unauthenticated",
+                    "hook methods do not accept the app auth_token; "
+                    "use session_token instead",
+                )
+            session_id = params.get("session_id")
+            session_token = params.get("session_token")
+            if not isinstance(session_id, str) or not session_id:
+                return _err(
+                    req_id, "unauthenticated",
+                    "hook auth requires 'session_id'",
+                )
+            if not isinstance(session_token, str) or not session_token:
+                return _err(
+                    req_id, "unauthenticated",
+                    "hook auth requires 'session_token'",
+                )
+            if self._approval_registry is None:
+                return _err(
+                    req_id, "not_implemented",
+                    "approval registry not configured on this helper",
+                )
+            try:
+                self._approval_registry.authenticate_hook(
+                    session_id, session_token, peer_socket=conn,
+                )
+            except ApprovalError as exc:
+                return _err(req_id, exc.code, exc.message)
+        else:
+            # App auth.
+            if "session_token" in params:
+                return _err(
+                    req_id, "unauthenticated",
+                    "app methods do not accept session_token; use auth_token",
+                )
             supplied = req.get("auth_token")
             if not isinstance(supplied, str) or not supplied:
                 return _err(req_id, "unauthenticated", "auth_token required")
@@ -525,6 +711,14 @@ class LocalSessionServer:
         except Exception as exc:  # noqa: BLE001 — internal
             logger.warning("method %s raised: %s", method, exc)
             return _err(req_id, "internal", f"{type(exc).__name__}")
+        # Streaming handoff: caller (`_serve_connection`) detects the
+        # sentinel and switches into the stream loop. Do NOT wrap in
+        # _ok here — the streaming loop emits its own initial ack
+        # frame plus a sequence of event frames. We stamp the request
+        # id post-hoc so the ack echoes the client's correlation id.
+        if isinstance(result, _StreamHandoff):
+            result.req_id = req_id
+            return result
         # Light result logging for list_sessions so the user can see
         # managed/detected counts without needing to capture the
         # whole reply.
@@ -555,8 +749,14 @@ class LocalSessionServer:
                 # subscribe_events + approvals stay false until iter 2B.
                 "capabilities": {
                     "send_input": True,
-                    "subscribe_events": False,
-                    "approvals": False,
+                    # Iter 2B: subscribe_events + approvals light up
+                    # only when the helper actually wired the broker /
+                    # registry. A daemon that fails to construct them
+                    # (e.g. unsupported platform, init exception) keeps
+                    # the iter-2A surface and the macOS UI silently
+                    # falls back to snapshot polling.
+                    "subscribe_events": self._event_broker is not None,
+                    "approvals": self._approval_registry is not None,
                 },
             }
 
@@ -662,6 +862,170 @@ class LocalSessionServer:
                 )
             return result
 
+        if method == "subscribe_events":
+            if self._event_broker is None:
+                raise _RequestError(
+                    "not_implemented",
+                    "event broker not configured on this helper",
+                )
+            session_filter = params.get("session_id")
+            if session_filter is not None and not isinstance(session_filter, str):
+                raise _RequestError(
+                    "bad_request", "'session_id' must be a string when present",
+                )
+            sub = self._event_broker.subscribe(session_filter=session_filter)
+            # Initial snapshot — gives the macOS app a deterministic
+            # starting point for the row's preview state without a
+            # second round-trip. We include the most recent
+            # list_sessions managed rows + per-session pending
+            # approvals (when scoped, just that session's).
+            initial: dict[str, Any] = {
+                "subscribed": True,
+                "session_id": session_filter,
+            }
+            try:
+                managed_rows = list(self._list_sessions() or [])
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("snapshot list_sessions failed: %s", exc)
+                managed_rows = []
+            initial["managed_sessions"] = managed_rows
+            if self._approval_registry is not None:
+                try:
+                    initial["pending_approvals"] = self._approval_registry.list_pending(
+                        session_filter,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("snapshot list_pending failed: %s", exc)
+                    initial["pending_approvals"] = []
+            else:
+                initial["pending_approvals"] = []
+            # Returning the handoff bypasses the normal one-shot
+            # reply path; the caller (`_serve_connection`) detects
+            # this sentinel and switches into the streaming loop.
+            return _StreamHandoff(
+                req_id=None,    # _dispatch stamps this before returning
+                initial_payload=initial,
+                subscription=sub,
+            )
+
+        if method == "approve_action":
+            if self._approval_registry is None:
+                raise _RequestError(
+                    "not_implemented",
+                    "approval registry not configured on this helper",
+                )
+            session_id = params.get("session_id")
+            approval_id = params.get("approval_id")
+            decision = params.get("decision")
+            comment = params.get("comment")
+            if not isinstance(session_id, str) or not session_id:
+                raise _RequestError("bad_request", "'session_id' must be a string")
+            if not isinstance(approval_id, str) or not approval_id:
+                raise _RequestError("bad_request", "'approval_id' must be a string")
+            if decision not in ("approve", "reject"):
+                raise _RequestError(
+                    "bad_request",
+                    "'decision' must be 'approve' or 'reject'",
+                )
+            if comment is not None and not isinstance(comment, str):
+                raise _RequestError("bad_request", "'comment' must be a string when present")
+            comment_str = comment[:512] if isinstance(comment, str) else None
+            try:
+                resolved = self._approval_registry.decide(
+                    approval_id, decision,
+                    comment=comment_str,
+                    session_id_hint=session_id,
+                )
+            except ApprovalError as exc:
+                raise _RequestError(exc.code, exc.message) from exc
+            return resolved
+
+        if method == "get_pending_approvals":
+            if self._approval_registry is None:
+                raise _RequestError(
+                    "not_implemented",
+                    "approval registry not configured on this helper",
+                )
+            session_id = params.get("session_id")
+            if session_id is not None and not isinstance(session_id, str):
+                raise _RequestError(
+                    "bad_request", "'session_id' must be a string when present",
+                )
+            return {
+                "pending_approvals": self._approval_registry.list_pending(session_id),
+            }
+
+        if method == "hook_create_approval":
+            # Hook auth ran upstream in `_dispatch`; we're guaranteed
+            # the registry exists and the caller is descended from
+            # the right Claude PID + holds the right capability token.
+            assert self._approval_registry is not None
+            session_id = params["session_id"]   # hook auth validated presence
+            kind = params.get("type") or params.get("kind") or "PermissionRequest"
+            title = params.get("title") or kind
+            summary = params.get("summary") or ""
+            metadata = params.get("tool_metadata") or {}
+            if not isinstance(metadata, dict):
+                raise _RequestError(
+                    "bad_request", "'tool_metadata' must be an object when present",
+                )
+            timeout_s = params.get("timeout_s")
+            if timeout_s is None:
+                timeout_value = 60.0
+            else:
+                try:
+                    timeout_value = float(timeout_s)
+                except (TypeError, ValueError):
+                    raise _RequestError(
+                        "bad_request",
+                        "'timeout_s' must be a number",
+                    ) from None
+                timeout_value = max(1.0, min(timeout_value, 300.0))
+            try:
+                approval_id = self._approval_registry.create_pending(
+                    session_id,
+                    kind=str(kind),
+                    title=str(title),
+                    summary=str(summary),
+                    tool_metadata=metadata,
+                    timeout_s=timeout_value,
+                )
+            except ApprovalError as exc:
+                raise _RequestError(exc.code, exc.message) from exc
+            return {"approval_id": approval_id}
+
+        if method == "hook_wait_decision":
+            assert self._approval_registry is not None
+            session_id = params["session_id"]
+            approval_id = params.get("approval_id")
+            if not isinstance(approval_id, str) or not approval_id:
+                raise _RequestError(
+                    "bad_request", "'approval_id' must be a non-empty string",
+                )
+            timeout_s = params.get("timeout_s")
+            if timeout_s is None:
+                timeout_value = 120.0
+            else:
+                try:
+                    timeout_value = float(timeout_s)
+                except (TypeError, ValueError):
+                    raise _RequestError(
+                        "bad_request",
+                        "'timeout_s' must be a number",
+                    ) from None
+                timeout_value = max(1.0, min(timeout_value, 600.0))
+            # IMPORTANT: this call blocks for up to `timeout_value`s
+            # waiting on a Condition var. It runs on the per-
+            # connection thread (NOT the single-writer executor), so
+            # other sessions' send / list / stop continue to flow.
+            try:
+                resolved = self._approval_registry.wait_for_decision(
+                    session_id, approval_id, timeout_s=timeout_value,
+                )
+            except ApprovalError as exc:
+                raise _RequestError(exc.code, exc.message) from exc
+            return resolved
+
         if method == "send_input":
             session_id = params.get("session_id")
             payload = params.get("payload")
@@ -717,6 +1081,30 @@ class _RequestError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+class _StreamHandoff:
+    """Sentinel returned by `_handle_method` for `subscribe_events`.
+
+    Carries the request id (so the initial ack frame echoes it), the
+    snapshot payload to send as that ack, and the live `Subscription`
+    the streaming loop drains. The sentinel never crosses module
+    boundaries — `_serve_connection` consumes it and switches to the
+    streaming loop.
+    """
+
+    __slots__ = ("req_id", "initial_payload", "subscription")
+
+    def __init__(
+        self,
+        *,
+        req_id: Any,
+        initial_payload: dict[str, Any],
+        subscription: Subscription,
+    ) -> None:
+        self.req_id = req_id
+        self.initial_payload = initial_payload
+        self.subscription = subscription
 
 
 # ── standalone CLI for ad-hoc testing ──────────────────────────

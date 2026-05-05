@@ -366,5 +366,216 @@ extension AppState {
             return []
         }
     }
+
+    // MARK: - Iter 2B subscription lifecycle
+
+    /// Subscribe to live events for one helper-managed session.
+    /// Idempotent: a second call for the same id is a no-op (the
+    /// existing Task continues). The Task drains the stream and
+    /// updates `localOutputPreview` + `localPendingApprovals` on
+    /// the main actor.
+    ///
+    /// Failure modes (e.g. helper down mid-subscribe) result in the
+    /// Task quietly exiting and `localEventTasks[sessionId]` being
+    /// cleared so the next call can reconnect. The macOS UI
+    /// supplements with `refreshLocalPendingApprovals` for snapshot
+    /// recovery.
+    @MainActor
+    public func subscribeToLocalEvents(sessionId: String) {
+        guard localHelperReachable, localControlEnabled else { return }
+        guard localCapabilities?.subscribeEvents == true else { return }
+        if localEventTasks[sessionId] != nil { return }
+        let client = LocalSessionControlClient()
+        let task = Task { [weak self, sessionId] in
+            do {
+                let stream = client.subscribeEvents(sessionId: sessionId)
+                for try await event in stream {
+                    if Task.isCancelled { break }
+                    await self?.applyLocalSessionEvent(event, sessionId: sessionId)
+                    if case .error = event { break }
+                }
+            } catch let err as SessionControlError {
+                Self.localStateLogger.info(
+                    "local stream(\(sessionId, privacy: .public)) ended: \(String(describing: err), privacy: .public)"
+                )
+            } catch {
+                Self.localStateLogger.warning(
+                    "local stream(\(sessionId, privacy: .public)) crashed: \(String(describing: error), privacy: .public)"
+                )
+            }
+            await self?.clearLocalEventTask(sessionId: sessionId)
+        }
+        localEventTasks[sessionId] = task
+    }
+
+    /// Cancel the live subscription for one session. The Task
+    /// teardown (`onTermination` on the AsyncThrowingStream) closes
+    /// the UDS connection so the helper drops the broker
+    /// subscription. Idempotent.
+    @MainActor
+    public func unsubscribeFromLocalEvents(sessionId: String) {
+        if let t = localEventTasks.removeValue(forKey: sessionId) {
+            t.cancel()
+        }
+    }
+
+    /// Cancel every live subscription. Used on logout / sign-out
+    /// and when the user disables Local Session Control mid-session.
+    @MainActor
+    public func unsubscribeAllLocalEvents() {
+        let tasks = localEventTasks
+        localEventTasks.removeAll()
+        for (_, t) in tasks { t.cancel() }
+    }
+
+    @MainActor
+    private func clearLocalEventTask(sessionId: String) {
+        localEventTasks.removeValue(forKey: sessionId)
+    }
+
+    /// Update AppState in response to one event off the live
+    /// stream. Bracket UI mutations in @MainActor. Non-private so
+    /// XCTest can drive the function with synthetic events without
+    /// spinning up a real UDS server.
+    @MainActor
+    public func applyLocalSessionEvent(_ event: LocalSessionEvent, sessionId: String) {
+        switch event {
+        case .subscribed(_, let managed, let pending):
+            // Initial snapshot — replace any stale state for this
+            // session. Only this session's pending rows show up
+            // because we subscribed with a filter; cross-session
+            // approvals are recovered via
+            // `refreshLocalPendingApprovals(sessionId: nil)`.
+            self.localPendingApprovals[sessionId] = pending.filter { $0.sessionId == sessionId }
+            // Use the snapshot rows to refresh `localManagedSessions`
+            // for this session id. We don't replace the whole array
+            // because other sessions' rows came from `listSessions`
+            // and aren't in this snapshot.
+            if let row = managed.first(where: { $0.id == sessionId }) {
+                if let idx = localManagedSessions.firstIndex(where: { $0.id == sessionId }) {
+                    localManagedSessions[idx] = row
+                } else {
+                    localManagedSessions.append(row)
+                }
+            }
+        case .outputDelta(_, let payload, _):
+            var current = self.localOutputPreview[sessionId] ?? ""
+            current += payload
+            let cap = AppState.localOutputPreviewCap
+            if current.count > cap {
+                let trim = current.count - cap
+                let start = current.index(current.startIndex, offsetBy: trim)
+                current = String(current[start...])
+            }
+            self.localOutputPreview[sessionId] = current
+        case .approvalRequested(let approval):
+            var bucket = self.localPendingApprovals[sessionId] ?? []
+            if !bucket.contains(where: { $0.approvalId == approval.approvalId }) {
+                bucket.append(approval)
+                self.localPendingApprovals[sessionId] = bucket
+            }
+        case .approvalResolved(_, let approvalId, _, _):
+            if var bucket = self.localPendingApprovals[sessionId] {
+                bucket.removeAll { $0.approvalId == approvalId }
+                if bucket.isEmpty {
+                    self.localPendingApprovals.removeValue(forKey: sessionId)
+                } else {
+                    self.localPendingApprovals[sessionId] = bucket
+                }
+            }
+        case .sessionStopped:
+            // Clear local row state when the session ends so a
+            // freshly-spawned id with the same uuid (rare) doesn't
+            // inherit stale preview text.
+            self.localPendingApprovals.removeValue(forKey: sessionId)
+            self.localOutputPreview.removeValue(forKey: sessionId)
+        case .sessionStarted, .sessionStatus, .heartbeat, .other:
+            break
+        case .error(let code, let message):
+            Self.localStateLogger.info(
+                "local stream(\(sessionId, privacy: .public)) error code=\(code, privacy: .public) msg=\(message, privacy: .public)"
+            )
+        }
+    }
+
+    // MARK: - Iter 2B approval actions
+
+    /// Approve / reject a structured pending approval. Returns true
+    /// on success. Maps typed errors into `localHelperError` so the
+    /// row UI can surface them; UI MUST refresh
+    /// `localPendingApprovals` after a non-success to recover from
+    /// "already resolved" / "expired" races.
+    @MainActor
+    @discardableResult
+    public func approveLocalAction(
+        sessionId: String,
+        approvalId: String,
+        decision: ApprovalDecision,
+        comment: String? = nil
+    ) async -> Bool {
+        let client = LocalSessionControlClient()
+        do {
+            try await client.approveAction(
+                sessionId: sessionId,
+                approvalId: approvalId,
+                decision: decision,
+                comment: comment
+            )
+            // Optimistically drop the row so the UI snaps to the
+            // resolved state — the stream's approval_resolved frame
+            // will arrive shortly and re-confirm.
+            if var bucket = localPendingApprovals[sessionId] {
+                bucket.removeAll { $0.approvalId == approvalId }
+                if bucket.isEmpty {
+                    localPendingApprovals.removeValue(forKey: sessionId)
+                } else {
+                    localPendingApprovals[sessionId] = bucket
+                }
+            }
+            return true
+        } catch {
+            Self.localStateLogger.warning(
+                "local approve(\(approvalId, privacy: .public)) failed: \(String(describing: error), privacy: .public)"
+            )
+            self.localHelperError = String(describing: error)
+            // On any error refresh from snapshot so the UI is
+            // consistent with the helper's view.
+            await refreshLocalPendingApprovals(sessionId: sessionId)
+            return false
+        }
+    }
+
+    /// Pull a fresh snapshot of pending approvals from the helper.
+    /// Used as the recovery path when a stream disconnects or the
+    /// app first opens the Sessions tab. Scoped to one session if
+    /// the caller knows which row they care about.
+    @MainActor
+    public func refreshLocalPendingApprovals(sessionId: String? = nil) async {
+        guard localHelperReachable, localControlEnabled else { return }
+        guard localCapabilities?.approvals == true else { return }
+        let client = LocalSessionControlClient()
+        do {
+            let pending = try await client.getPendingApprovals(sessionId: sessionId)
+            if let sessionId {
+                let scoped = pending.filter { $0.sessionId == sessionId }
+                if scoped.isEmpty {
+                    localPendingApprovals.removeValue(forKey: sessionId)
+                } else {
+                    localPendingApprovals[sessionId] = scoped
+                }
+            } else {
+                // Rebuild the whole map from the snapshot.
+                var grouped: [String: [PendingApproval]] = [:]
+                for row in pending {
+                    grouped[row.sessionId, default: []].append(row)
+                }
+                localPendingApprovals = grouped
+            }
+        } catch {
+            Self.localStateLogger.warning(
+                "local get_pending_approvals failed: \(String(describing: error), privacy: .public)"
+            )
+        }
+    }
 }
 #endif

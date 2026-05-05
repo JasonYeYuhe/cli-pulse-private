@@ -421,8 +421,11 @@ def test_start_session_rejects_non_claude_provider_with_not_implemented(short_so
 def test_unknown_method_returns_unknown_method(short_sock_dir):
     server, _mgr, _state = _make_server(short_sock_dir, token="T", enabled=True)
     try:
+        # Use a method name that's not in SUPPORTED_METHODS at all.
+        # `subscribe_events` graduated to a real method in iter 2B,
+        # so we pick something that will never collide.
         reply = _client_call(server._socket_path, {
-            "id": "x", "method": "subscribe_events",
+            "id": "x", "method": "totally_made_up_method_xyz",
             "auth_token": "T", "params": {},
         })
         assert reply["error"]["code"] == "unknown_method"

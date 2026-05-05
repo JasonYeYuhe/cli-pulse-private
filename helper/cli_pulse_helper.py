@@ -355,17 +355,37 @@ def daemon(args: argparse.Namespace) -> None:
     local_executor = None
     local_uds_server = None
     local_auth_token: str | None = None
+    local_event_broker = None
+    local_approval_registry = None
     try:
+        from local_approvals import ApprovalRegistry  # type: ignore
+        from local_events import EventBroker  # type: ignore
         from local_executor import LocalExecutor  # type: ignore
+        from local_session_server import default_socket_path  # type: ignore
         from remote_agent import RemoteAgentManager  # type: ignore
         config_for_manager = load_config()
         local_executor = LocalExecutor()
+        # Phase 3 Iter 2B: broker + registry are constructed BEFORE
+        # the manager so the manager can publish session_started /
+        # output_delta on its own initiative. The registry's
+        # `on_event` taps into the broker so approval lifecycle
+        # events show up on subscribed streams without the manager
+        # having to forward them by hand.
+        local_event_broker = EventBroker()
+        local_approval_registry = ApprovalRegistry(
+            on_event=local_event_broker.publish,
+        )
         remote_agent_manager = RemoteAgentManager(
             helper_config=config_for_manager,
             rpc_caller=supabase_rpc,
             executor=local_executor,
+            event_broker=local_event_broker,
+            approval_registry=local_approval_registry,
+            local_helper_socket_path=str(default_socket_path()),
         )
-        logger.info("remote agent manager initialised (executor=on)")
+        logger.info(
+            "remote agent manager initialised (executor=on, broker=on, approvals=on)",
+        )
     except ConfigError:
         # Helper not paired yet — daemon will likely fail in heartbeat
         # too. Don't synthesise a manager; the next iteration's
@@ -460,6 +480,12 @@ def daemon(args: argparse.Namespace) -> None:
                 stop_session=_stop_local,
                 send_input=_send_input_local,
                 list_detected_sessions=_list_detected_local,
+                # Iter 2B: broker drives subscribe_events; registry
+                # backs approve_action / get_pending_approvals plus
+                # the hook-side hook_create_approval / wait_decision
+                # path.
+                event_broker=local_event_broker,
+                approval_registry=local_approval_registry,
             )
             local_uds_server.start()
             logger.info(
@@ -578,6 +604,11 @@ def daemon(args: argparse.Namespace) -> None:
                 local_executor.shutdown(wait=True, timeout=5.0)
             except Exception as exc:
                 logger.warning("local executor shutdown failed: %s", exc)
+        if local_event_broker is not None:
+            try:
+                local_event_broker.close()
+            except Exception as exc:
+                logger.warning("local event broker shutdown failed: %s", exc)
     logger.info("daemon stopped")
 
 

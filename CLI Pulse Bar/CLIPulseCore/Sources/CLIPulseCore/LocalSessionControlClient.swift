@@ -20,6 +20,209 @@ public struct LocalControlStatus: Sendable, Equatable {
     }
 }
 
+/// Phase 3 Iter 2B: structured local approval row. Backed by the
+/// helper's `ApprovalRegistry` and surfaced to the UI through both
+/// `subscribe_events` (push) and `get_pending_approvals` (snapshot).
+///
+/// **Security state.** This row drives the inline Approve / Reject
+/// controls in the macOS Sessions tab. It is created exclusively by
+/// `hook_create_approval` on the helper's UDS surface (which requires
+/// the per-session capability token); PTY output text NEVER produces
+/// one. The macOS UI MUST gate the Approve / Reject buttons on the
+/// presence of a `PendingApproval` for the row's session — never on a
+/// regex / string match against `output_delta` payloads.
+public struct PendingApproval: Sendable, Equatable, Codable, Identifiable {
+    public let approvalId: String
+    public let sessionId: String
+    public let type: String
+    public let title: String
+    public let summary: String
+    public let toolMetadata: [String: String]   // simplified: stringified scalars
+    public let status: String                   // pending | approved | rejected | expired | cancelled
+    public let createdAt: Date
+    public let expiresAt: Date?
+
+    public var id: String { approvalId }
+
+    public init(
+        approvalId: String,
+        sessionId: String,
+        type: String,
+        title: String,
+        summary: String,
+        toolMetadata: [String: String],
+        status: String,
+        createdAt: Date,
+        expiresAt: Date?
+    ) {
+        self.approvalId = approvalId
+        self.sessionId = sessionId
+        self.type = type
+        self.title = title
+        self.summary = summary
+        self.toolMetadata = toolMetadata
+        self.status = status
+        self.createdAt = createdAt
+        self.expiresAt = expiresAt
+    }
+
+    /// Decode from the helper's wire-level dict (`PendingApproval.to_dict_safe`).
+    /// Returns nil on missing required fields rather than throwing — the
+    /// caller treats the row as unparseable and falls through to a
+    /// snapshot refresh.
+    public static func decode(from raw: [String: Any]) -> PendingApproval? {
+        guard
+            let approvalId = raw["approval_id"] as? String,
+            let sessionId = raw["session_id"] as? String,
+            let status = raw["status"] as? String,
+            let createdAtRaw = raw["created_at"] as? Double
+        else { return nil }
+        let type = (raw["type"] as? String) ?? "PermissionRequest"
+        let title = (raw["title"] as? String) ?? type
+        let summary = (raw["summary"] as? String) ?? ""
+        var meta: [String: String] = [:]
+        if let m = raw["tool_metadata"] as? [String: Any] {
+            for (k, v) in m {
+                if let sv = v as? String {
+                    meta[k] = sv
+                } else if let nv = v as? NSNumber {
+                    meta[k] = nv.stringValue
+                } else if let bv = v as? Bool {
+                    meta[k] = bv ? "true" : "false"
+                }
+            }
+        }
+        let expiresAt: Date? = (raw["expires_at"] as? Double).map {
+            Date(timeIntervalSince1970: $0)
+        }
+        return PendingApproval(
+            approvalId: approvalId,
+            sessionId: sessionId,
+            type: type,
+            title: title,
+            summary: summary,
+            toolMetadata: meta,
+            status: status,
+            createdAt: Date(timeIntervalSince1970: createdAtRaw),
+            expiresAt: expiresAt
+        )
+    }
+}
+
+/// Decision the user picked. Mirrors the helper's `decide` argument.
+public enum ApprovalDecision: String, Sendable, Equatable, Codable {
+    case approve
+    case reject
+}
+
+/// Wire-level event coming off the helper's `subscribe_events` stream.
+/// Decoded by `LocalSessionControlClient.subscribeEvents`. The macOS
+/// app's per-row task drains the stream and updates AppState.
+///
+/// Unknown event types decode as `.other(name, raw)` so a future
+/// helper that adds a new event kind doesn't crash old apps.
+public enum LocalSessionEvent: Sendable, Equatable {
+    /// Initial snapshot frame the helper sends as the streaming ack
+    /// before any live event. Lets the app catch up without a second
+    /// round-trip.
+    case subscribed(sessionId: String?, managedSessions: [SessionControlSummary], pendingApprovals: [PendingApproval])
+    case sessionStarted(sessionId: String, provider: String, clientLabel: String?)
+    case outputDelta(sessionId: String, payload: String, ts: TimeInterval)
+    case sessionStatus(sessionId: String, status: String)
+    case sessionStopped(sessionId: String, exitCode: Int?)
+    case approvalRequested(approval: PendingApproval)
+    case approvalResolved(sessionId: String, approvalId: String, decision: String, status: String)
+    case heartbeat(ts: TimeInterval)
+    case error(code: String, message: String)
+    case other(name: String, raw: [String: Any])
+
+    public static func == (lhs: LocalSessionEvent, rhs: LocalSessionEvent) -> Bool {
+        switch (lhs, rhs) {
+        case (.subscribed(let a, let b, let c), .subscribed(let d, let e, let f)):
+            return a == d && b == e && c == f
+        case (.sessionStarted(let a, let b, let c), .sessionStarted(let d, let e, let f)):
+            return a == d && b == e && c == f
+        case (.outputDelta(let a, let b, _), .outputDelta(let d, let e, _)):
+            return a == d && b == e
+        case (.sessionStatus(let a, let b), .sessionStatus(let c, let d)):
+            return a == c && b == d
+        case (.sessionStopped(let a, let b), .sessionStopped(let c, let d)):
+            return a == c && b == d
+        case (.approvalRequested(let a), .approvalRequested(let b)):
+            return a == b
+        case (.approvalResolved(let a, let b, let c, let d),
+              .approvalResolved(let e, let f, let g, let h)):
+            return a == e && b == f && c == g && d == h
+        case (.heartbeat, .heartbeat):
+            return true
+        case (.error(let a, let b), .error(let c, let d)):
+            return a == c && b == d
+        case (.other(let a, _), .other(let b, _)):
+            return a == b
+        default:
+            return false
+        }
+    }
+
+    /// Decode from a helper-side event dict. Returns nil for the
+    /// initial-ack ok envelope shape (which is decoded separately
+    /// by the streaming consumer because it's wrapped in {"ok": true,
+    /// "result": {...}} rather than being a bare event).
+    public static func decode(from raw: [String: Any]) -> LocalSessionEvent? {
+        let name = (raw["event"] as? String) ?? ""
+        let ts = (raw["ts"] as? Double) ?? Date().timeIntervalSince1970
+        let sessionId = (raw["session_id"] as? String) ?? ""
+        switch name {
+        case "session_started":
+            return .sessionStarted(
+                sessionId: sessionId,
+                provider: (raw["provider"] as? String) ?? "claude",
+                clientLabel: raw["client_label"] as? String
+            )
+        case "output_delta":
+            return .outputDelta(
+                sessionId: sessionId,
+                payload: (raw["payload"] as? String) ?? "",
+                ts: ts
+            )
+        case "session_status":
+            return .sessionStatus(
+                sessionId: sessionId,
+                status: (raw["status"] as? String) ?? ""
+            )
+        case "session_stopped":
+            return .sessionStopped(
+                sessionId: sessionId,
+                exitCode: raw["exit_code"] as? Int
+            )
+        case "approval_requested":
+            guard let inner = raw["approval"] as? [String: Any],
+                  let approval = PendingApproval.decode(from: inner) else {
+                return .other(name: name, raw: raw)
+            }
+            return .approvalRequested(approval: approval)
+        case "approval_resolved":
+            return .approvalResolved(
+                sessionId: sessionId,
+                approvalId: (raw["approval_id"] as? String) ?? "",
+                decision: (raw["decision"] as? String) ?? "",
+                status: (raw["status"] as? String) ?? ""
+            )
+        case "heartbeat":
+            return .heartbeat(ts: ts)
+        case "error":
+            return .error(
+                code: (raw["code"] as? String) ?? "",
+                message: (raw["message"] as? String) ?? ""
+            )
+        case "":
+            return nil
+        default:
+            return .other(name: name, raw: raw)
+        }
+    }
+}
+
 /// macOS-only `SessionControlClient` that talks to the helper's UDS
 /// server inside the app group container.
 ///
@@ -213,6 +416,156 @@ public final class LocalSessionControlClient: SessionControlClient {
             params: ["session_id": sessionId, "payload": payload]
         )
     }
+
+    // MARK: - Iter 2B: streaming + approvals
+
+    /// Open a long-lived `subscribe_events` stream. The returned
+    /// AsyncThrowingStream yields one `LocalSessionEvent` per event
+    /// frame the helper sends. The first non-snapshot value is
+    /// `.subscribed(...)` carrying the initial snapshot.
+    ///
+    /// Cancellation: cancelling the consuming Task tears the
+    /// connection down via `onTermination`. The helper's broker
+    /// detects the EOF and unsubscribes.
+    ///
+    /// Failure modes that throw on the stream:
+    ///   - SessionControlError.helperNotRunning if the socket isn't
+    ///     reachable
+    ///   - SessionControlError.unauthenticated if the auth token
+    ///     file is missing / the helper rejects it
+    ///   - SessionControlError.localControlOff if the gate is off
+    ///   - SessionControlError.disconnected on a mid-stream
+    ///     transport failure
+    public func subscribeEvents(sessionId: String? = nil) -> AsyncThrowingStream<LocalSessionEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task { [self] in
+                do {
+                    var params: [String: Any] = [:]
+                    if let sessionId { params["session_id"] = sessionId }
+                    guard let token = readToken(), !token.isEmpty else {
+                        throw SessionControlError.unauthenticated
+                    }
+                    let envelope: [String: Any] = [
+                        "id": UUID().uuidString,
+                        "method": "subscribe_events",
+                        "auth_token": token,
+                        "params": params,
+                    ]
+                    let body = try JSONSerialization.data(
+                        withJSONObject: envelope, options: [.sortedKeys]
+                    )
+                    let conn = try await connect()
+                    // Stamp the connection on the continuation so
+                    // onTermination can yank it.
+                    continuation.onTermination = { _ in
+                        conn.cancel()
+                    }
+                    try await sendFrame(conn, body: body)
+                    // First frame is the ack envelope: {"ok":true,
+                    // "result":{...initial snapshot...}} OR an error
+                    // envelope. We map ok=true → emit .subscribed,
+                    // ok=false → throw the typed SessionControlError.
+                    let ackBytes = try await receiveFrame(conn)
+                    let ackResult = try parseReply(ackBytes)
+                    let initialSessions = (ackResult["managed_sessions"] as? [[String: Any]]) ?? []
+                    let initialApprovals = (ackResult["pending_approvals"] as? [[String: Any]]) ?? []
+                    var sessionRows: [SessionControlSummary] = []
+                    for row in initialSessions {
+                        guard let id = row["session_id"] as? String else { continue }
+                        sessionRows.append(.init(
+                            id: id,
+                            provider: (row["provider"] as? String) ?? "claude",
+                            clientLabel: row["client_label"] as? String,
+                            status: (row["status"] as? String) ?? "running",
+                            controllable: (row["controllable"] as? Bool) ?? true,
+                            source: .managed
+                        ))
+                    }
+                    let approvals = initialApprovals.compactMap { PendingApproval.decode(from: $0) }
+                    continuation.yield(.subscribed(
+                        sessionId: sessionId,
+                        managedSessions: sessionRows,
+                        pendingApprovals: approvals
+                    ))
+                    // Streaming loop. Each frame is a bare event
+                    // dict (NOT wrapped in {"ok":..., "result":...}).
+                    while !Task.isCancelled {
+                        let frameBytes: Data
+                        do {
+                            frameBytes = try await receiveFrame(conn)
+                        } catch SessionControlError.timeout {
+                            // Idle — keep waiting. The helper sends
+                            // heartbeats periodically, so we should
+                            // rarely actually time out here. Loop.
+                            continue
+                        } catch let err as SessionControlError where err == .disconnected {
+                            throw err
+                        }
+                        guard let raw = try? JSONSerialization.jsonObject(with: frameBytes) as? [String: Any] else {
+                            throw SessionControlError.invalidResponse("event frame not a JSON object")
+                        }
+                        guard let event = LocalSessionEvent.decode(from: raw) else {
+                            // Empty or malformed frame; drop and keep
+                            // going. The macOS UI tolerates gaps in
+                            // the live stream by falling back to
+                            // snapshot polls.
+                            continue
+                        }
+                        continuation.yield(event)
+                        // If the helper's overflow path emitted an
+                        // error event, we're effectively done — the
+                        // helper detached us. Surface as a stream
+                        // termination so AppState can re-subscribe.
+                        if case .error = event {
+                            break
+                        }
+                    }
+                    conn.cancel()
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            // If the consumer cancels its Task, we cancel ours.
+            continuation.onTermination = { @Sendable [task] _ in
+                task.cancel()
+            }
+        }
+    }
+
+    /// Decide a structured pending approval. Throws typed errors per
+    /// `SessionControlErrorMapping` — the macOS UI maps each to a
+    /// row-specific user message (e.g. `approvalAlreadyResolved`
+    /// → "Already approved on another device").
+    public func approveAction(
+        sessionId: String,
+        approvalId: String,
+        decision: ApprovalDecision,
+        comment: String? = nil
+    ) async throws {
+        var params: [String: Any] = [
+            "session_id": sessionId,
+            "approval_id": approvalId,
+            "decision": decision.rawValue,
+        ]
+        if let comment, !comment.isEmpty {
+            params["comment"] = comment
+        }
+        _ = try await send(method: "approve_action", params: params)
+    }
+
+    /// Snapshot of pending approvals — used by the macOS UI on row
+    /// expand and as the recovery path when a stream disconnects.
+    /// `sessionId == nil` returns every session's pending rows.
+    public func getPendingApprovals(sessionId: String? = nil) async throws -> [PendingApproval] {
+        var params: [String: Any] = [:]
+        if let sessionId { params["session_id"] = sessionId }
+        let result = try await send(method: "get_pending_approvals", params: params)
+        let raw = (result["pending_approvals"] as? [[String: Any]]) ?? []
+        return raw.compactMap { PendingApproval.decode(from: $0) }
+    }
+
+    // MARK: - Existing Iter 2A surface
 
     /// Read the helper's persisted `local_control_enabled` value.
     /// Used on app launch to hydrate `AppState.localControlEnabled`

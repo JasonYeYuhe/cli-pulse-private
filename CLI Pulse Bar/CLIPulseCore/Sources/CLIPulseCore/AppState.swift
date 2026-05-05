@@ -385,6 +385,41 @@ public final class AppState: ObservableObject {
     /// Cleared to nil on logout / sign-out, otherwise refreshed
     /// every tick the Sessions tab is on screen.
     @Published public var localDiagnostics: LocalSessionControlClient.Diagnostics?
+
+    // MARK: - Local Session Control (Phase 3 Iter 2B, macOS-only)
+
+    /// Iter 2B: structured pending approvals per managed session,
+    /// keyed by session id. Populated from `subscribe_events`
+    /// approval_requested frames AND from `get_pending_approvals`
+    /// snapshots (the latter is the recovery path after a stream
+    /// reconnect or app launch).
+    ///
+    /// **The Approve / Reject controls in SessionsTab MUST be gated
+    /// on `localPendingApprovals[sessionId]?.isEmpty == false`.**
+    /// This is the only correct way to determine whether a session
+    /// has an outstanding approval — never infer from PTY output
+    /// text.
+    @Published public var localPendingApprovals: [String: [PendingApproval]] = [:]
+
+    /// Iter 2B: rolling output preview per session, fed by
+    /// `output_delta` events on the live stream. The macOS
+    /// expanded-row view tails this string. Capped at
+    /// `localOutputPreviewCap` chars per session so a chatty
+    /// Claude session can't grow app memory unbounded.
+    @Published public var localOutputPreview: [String: String] = [:]
+
+    /// Per-session preview buffer cap. ~32 KB per session is plenty
+    /// for the last few seconds of tail output without becoming a
+    /// memory hog. The user reads this to decide when to send the
+    /// next prompt; stale tail bytes don't add value.
+    public static let localOutputPreviewCap: Int = 32 * 1024
+
+    /// In-flight `subscribe_events` Tasks keyed by session id.
+    /// `subscribeToLocalEvents(sessionId:)` populates this; the
+    /// matching `unsubscribeFromLocalEvents` cancels the Task.
+    /// Internal because the UI binds via @Published — only AppState
+    /// itself reads/writes this map.
+    internal var localEventTasks: [String: Task<Void, Never>] = [:]
     #endif
 
     /// Aggregated per-provider summaries over the currently-selected range.
