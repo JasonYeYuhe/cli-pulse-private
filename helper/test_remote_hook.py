@@ -154,6 +154,160 @@ def _capture_stdout(monkeypatch):
     return buf
 
 
+# ── Iter 2B: local-first hook + fallback policy ──────────────
+
+
+def test_local_first_envvars_unset_bypasses_local_path(monkeypatch):
+    """Without the three CLI_PULSE_LOCAL_* env vars set, the local
+    UDS path is a no-op and the hook proceeds straight to Supabase.
+    """
+    for var in (
+        "CLI_PULSE_LOCAL_HELPER_SOCK",
+        "CLI_PULSE_LOCAL_SESSION_ID",
+        "CLI_PULSE_LOCAL_HOOK_TOKEN",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    parsed_obj = type("P", (), {})()
+    parsed_obj.payload = {}
+    parsed_obj.provider = "claude"
+    parsed_obj.risk = "low"
+    parsed_obj.cwd_basename = ""
+    parsed_obj.tool_name = "Read"
+    parsed_obj.summary = ""
+    out = remote_hook._try_local_uds_hook(parsed_obj, ClaudeAdapter())
+    assert out is None
+
+
+def test_local_first_helper_unreachable_falls_through_to_supabase(monkeypatch, tmp_path):
+    """Connection-time failure (socket file missing) returns None so
+    the caller falls through to Supabase. This is the ONLY path the
+    function returns None — once create_pending succeeds it must
+    return AdapterDecision or the local-fallback sentinel.
+    """
+    sock = tmp_path / "definitely-not-bound.sock"
+    monkeypatch.setenv("CLI_PULSE_LOCAL_HELPER_SOCK", str(sock))
+    monkeypatch.setenv("CLI_PULSE_LOCAL_SESSION_ID", "11111111-1111-1111-1111-111111111111")
+    monkeypatch.setenv("CLI_PULSE_LOCAL_HOOK_TOKEN", "deadbeef")
+    parsed_obj = type("P", (), {})()
+    parsed_obj.payload = {}
+    parsed_obj.provider = "claude"
+    parsed_obj.risk = "low"
+    parsed_obj.cwd_basename = ""
+    parsed_obj.tool_name = "Read"
+    parsed_obj.summary = ""
+    out = remote_hook._try_local_uds_hook(parsed_obj, ClaudeAdapter())
+    assert out is None
+
+
+def test_local_first_resolved_local_fallback_emits_local_not_supabase(monkeypatch):
+    """When `_try_local_uds_hook` returns the local-fallback sentinel
+    (pending row was created but didn't resolve to approve/reject),
+    `run_hook` must emit `adapter.emit_local_fallback` and NOT call
+    any Supabase RPC. Otherwise the iPhone gets a duplicate pending
+    request after the user already saw the local one.
+    """
+    buf = _capture_stdout(monkeypatch)
+    monkeypatch.setattr(
+        remote_hook, "_try_local_uds_hook",
+        lambda *args, **kwargs: remote_hook._LOCAL_FALLBACK_SENTINEL,
+    )
+    rpc_calls = []
+
+    def fake_rpc(name, _params):
+        rpc_calls.append(name)
+        return {}
+
+    payload = {
+        "tool_name": "Read",
+        "tool_input": {"file_path": "/etc/hosts"},
+        "cwd": "/Users/dev/x",
+    }
+    rc = remote_hook.run_hook(
+        "claude",
+        config=remote_hook.HookConfig(timeout_s=0.05, poll_interval_s=0.01),
+        stdin_payload=payload,
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        user_secret_loader=lambda: "user-hmac-secret",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    # Critical: no Supabase RPC was issued. The local fallback
+    # path is authoritative once the pending row was created.
+    assert rpc_calls == []
+    out = json.loads(buf.getvalue())
+    assert out["hookSpecificOutput"]["decision"]["behavior"] == "deny"
+    assert "Local approval did not resolve" in out["hookSpecificOutput"]["decision"]["message"]
+
+
+def test_local_first_approve_skips_supabase(monkeypatch):
+    """An AdapterDecision returned from the local UDS path is emitted
+    directly; Supabase is never touched.
+    """
+    buf = _capture_stdout(monkeypatch)
+    monkeypatch.setattr(
+        remote_hook, "_try_local_uds_hook",
+        lambda *args, **kwargs: AdapterDecision(decision="approve", scope="once", reason=""),
+    )
+    rpc_calls = []
+    rc = remote_hook.run_hook(
+        "claude",
+        config=remote_hook.HookConfig(timeout_s=0.05, poll_interval_s=0.01),
+        stdin_payload={
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/etc/hosts"},
+            "cwd": "/Users/dev/x",
+        },
+        helper_config=_StubHelperConfig(),
+        rpc_caller=lambda name, _params: rpc_calls.append(name) or {},
+        user_secret_loader=lambda: "user-hmac-secret",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    assert rpc_calls == []
+    out = json.loads(buf.getvalue())
+    assert out["hookSpecificOutput"]["decision"]["behavior"] == "allow"
+
+
+def test_local_first_none_falls_through_to_supabase(monkeypatch):
+    """When the local UDS path returns None (helper down / not
+    started locally), run_hook falls through to Supabase exactly as
+    the iter-2A behaviour did.
+    """
+    buf = _capture_stdout(monkeypatch)
+    monkeypatch.setattr(
+        remote_hook, "_try_local_uds_hook",
+        lambda *args, **kwargs: None,
+    )
+    rpc_calls = []
+
+    def fake_rpc(name, _params):
+        rpc_calls.append(name)
+        if name == "remote_helper_create_permission_request":
+            return {"request_id": "x", "status": "pending"}
+        if name == "remote_helper_poll_permission_decision":
+            return {"status": "approved", "decision": "approve", "scope": "once"}
+        return {}
+
+    rc = remote_hook.run_hook(
+        "claude",
+        config=remote_hook.HookConfig(timeout_s=1.0, poll_interval_s=0.01),
+        stdin_payload={
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/etc/hosts"},
+            "cwd": "/Users/dev/x",
+        },
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        user_secret_loader=lambda: "user-hmac-secret",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    assert "remote_helper_create_permission_request" in rpc_calls
+    out = json.loads(buf.getvalue())
+    assert out["hookSpecificOutput"]["decision"]["behavior"] == "allow"
+
+
 def test_run_hook_high_risk_short_circuits_to_local_fallback(monkeypatch):
     buf = _capture_stdout(monkeypatch)
     rpc_called = []

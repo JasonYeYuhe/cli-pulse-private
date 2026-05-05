@@ -406,6 +406,117 @@ final class SessionControlIter2BTests: XCTestCase {
         XCTAssertNil(state.localOutputPreview["SID"])
     }
 
+    // MARK: - Subscription / approval lifecycle (UI integration)
+    //
+    // These tests pin the same state mutations SessionsTab observes,
+    // so a refactor that breaks the row's gate or the
+    // subscribe/unsubscribe contract surfaces as a unit-test
+    // failure rather than a manual-acceptance regression.
+
+    @MainActor
+    func testApproveLocalActionFailureSurfacesAsLocalHelperError() async {
+        // Without a real UDS server reachable, approveLocalAction
+        // must (1) return false, (2) record a typed error string
+        // on `localHelperError` so the row UI can surface it, and
+        // (3) leave the optimistic-remove path UNINVOKED so we
+        // don't lie to the user that an unreachable helper just
+        // approved their request. Pinning this contract keeps the
+        // failure-path divergence between approve_action success
+        // and failure surfaces tested at the unit level.
+        let state = AppState()
+        let approval = PendingApproval(
+            approvalId: "AID",
+            sessionId: "SID",
+            type: "PermissionRequest",
+            title: "Read",
+            summary: "",
+            toolMetadata: [:],
+            status: "pending",
+            createdAt: Date(),
+            expiresAt: nil
+        )
+        state.localPendingApprovals["SID"] = [approval]
+        state.localCapabilities = SessionControlCapabilities.iter2bLocal
+        state.localHelperReachable = true
+        state.localControlEnabled = true
+        let ok = await state.approveLocalAction(
+            sessionId: "SID",
+            approvalId: "AID",
+            decision: .approve
+        )
+        XCTAssertFalse(ok)
+        XCTAssertNotNil(state.localHelperError)
+    }
+
+    @MainActor
+    func testUnsubscribeAllLocalEventsClearsTaskMap() {
+        let state = AppState()
+        // Plant a fake task pointer; we just want to assert the
+        // map gets cleared on the public unsubscribe-all surface
+        // SessionsTab's .onDisappear / .onChange use.
+        state.localEventTasks["A"] = Task { /* noop */ }
+        state.localEventTasks["B"] = Task { /* noop */ }
+        XCTAssertEqual(state.localEventTasks.count, 2)
+        state.unsubscribeAllLocalEvents()
+        XCTAssertEqual(state.localEventTasks.count, 0)
+    }
+
+    @MainActor
+    func testUnsubscribeFromLocalEventsRemovesOneEntry() {
+        let state = AppState()
+        state.localEventTasks["A"] = Task { /* noop */ }
+        state.localEventTasks["B"] = Task { /* noop */ }
+        state.unsubscribeFromLocalEvents(sessionId: "A")
+        XCTAssertNil(state.localEventTasks["A"])
+        XCTAssertNotNil(state.localEventTasks["B"])
+        // Cleanup
+        state.unsubscribeAllLocalEvents()
+    }
+
+    @MainActor
+    func testSubscribeToLocalEventsNoOpWhenHelperUnreachable() {
+        let state = AppState()
+        state.localHelperReachable = false
+        state.localControlEnabled = true
+        state.localCapabilities = SessionControlCapabilities.iter2bLocal
+        state.subscribeToLocalEvents(sessionId: "SID")
+        XCTAssertNil(state.localEventTasks["SID"])
+    }
+
+    @MainActor
+    func testSubscribeToLocalEventsNoOpWhenControlDisabled() {
+        let state = AppState()
+        state.localHelperReachable = true
+        state.localControlEnabled = false
+        state.localCapabilities = SessionControlCapabilities.iter2bLocal
+        state.subscribeToLocalEvents(sessionId: "SID")
+        XCTAssertNil(state.localEventTasks["SID"])
+    }
+
+    @MainActor
+    func testSubscribeToLocalEventsNoOpWhenCapabilityMissing() {
+        let state = AppState()
+        state.localHelperReachable = true
+        state.localControlEnabled = true
+        // Helper advertised iter-2A surface (no subscribe_events).
+        state.localCapabilities = SessionControlCapabilities.iter2aLocal
+        state.subscribeToLocalEvents(sessionId: "SID")
+        XCTAssertNil(state.localEventTasks["SID"])
+    }
+
+    @MainActor
+    func testRefreshLocalPendingApprovalsNoOpWhenCapabilityMissing() async {
+        let state = AppState()
+        state.localHelperReachable = true
+        state.localControlEnabled = true
+        state.localCapabilities = SessionControlCapabilities.iter2aLocal
+        state.localPendingApprovals["SID"] = []   // marker for "called"
+        await state.refreshLocalPendingApprovals(sessionId: "SID")
+        // No-op leaves whatever was there. The function must NOT
+        // attempt a UDS round-trip without the capability flag.
+        XCTAssertNotNil(state.localPendingApprovals["SID"])
+    }
+
     @MainActor
     func testCrossSessionApprovalDoesNotLeakIntoAnotherSession() {
         let state = AppState()

@@ -99,9 +99,16 @@ def _make_server(
     state = {"enabled": enabled}
     mgr = manager or _FakeManager()
     br = broker or EventBroker(heartbeat_interval_s=None)
-    reg = registry or ApprovalRegistry(on_event=br.publish)
-    # Disable real peer-pid resolution in tests; descent happens via
-    # the registry's own resolver hooks per test.
+    # `allow_descent_skip=True` because these end-to-end tests don't
+    # spawn a real Claude PTY; the registry has no claude_pid to
+    # compare against and would fail closed under the production
+    # posture. The token + auth-table enforcement still get full
+    # coverage. Production daemon constructs without this flag — see
+    # `cli_pulse_helper.py daemon()`.
+    reg = registry or ApprovalRegistry(
+        on_event=br.publish,
+        allow_descent_skip=True,
+    )
     reg.peer_pid_resolver = None
     sock_path = sock_dir / "clipulse-helper.sock"
     server = LocalSessionServer(

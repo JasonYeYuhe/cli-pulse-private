@@ -53,7 +53,22 @@ struct SessionsTab: View {
                 async let _approvals: () = state.refreshRemoteApprovals()
                 async let _local: () = state.refreshLocalSessionControlState()
                 _ = await (_sessions, _approvals, _local)
+                // Iter 2B: snapshot poll of local pending approvals
+                // is the recovery path when a stream disconnects or
+                // the user wakes the app with the Sessions tab
+                // already on screen. Stream events override / amend
+                // this map; the poll just guarantees freshness on
+                // a deterministic cadence.
+                if state.canStartLocalManagedSession,
+                   state.localCapabilities?.approvals == true {
+                    await state.refreshLocalPendingApprovals(sessionId: nil)
+                }
                 if showOutput, let sid = selectedManagedSessionId {
+                    // Remote-routed rows still pull events from the
+                    // Supabase tail. Local-routed rows are driven
+                    // by `subscribeToLocalEvents` (kicked off in
+                    // .onChange(of: showOutput) below) — no per-tick
+                    // poll needed.
                     await state.refreshRemoteSessionEvents(sessionId: sid)
                 }
                 if !state.remoteControlEnabled {
@@ -63,14 +78,55 @@ struct SessionsTab: View {
                 }
             }
         }
-        .onChange(of: selectedManagedSessionId) { _ in
+        .onChange(of: selectedManagedSessionId) { newId in
             // Selection changed — reset the per-detail toggle so the
             // user has to opt in again for the new session. Avoids
             // surprise-rendering output for a session they didn't
             // explicitly enable. (Single-arg `.onChange` form because
             // the bar target deploys to macOS 13; the two-arg variant
             // is macOS 14+.)
+            //
+            // Iter 2B: also tear down any active local stream
+            // subscription. We can't know the previous selection from
+            // this single-arg API, so we cancel ALL local streams
+            // (cheap, idempotent). The outer view re-subscribes when
+            // showOutput flips back on for the newly-selected row.
             showOutput = false
+            state.unsubscribeAllLocalEvents()
+            // When a row gets newly selected and there's already a
+            // pending local approval cached, refresh it from
+            // snapshot so the user sees Approve/Reject immediately
+            // without waiting for the next .task tick.
+            if let id = newId,
+               state.canStartLocalManagedSession,
+               state.localCapabilities?.approvals == true {
+                Task { await state.refreshLocalPendingApprovals(sessionId: id) }
+            }
+        }
+        .onChange(of: showOutput) { newValue in
+            // Iter 2B: subscribe to the live event stream for the
+            // currently-selected local-routed row when the user opts
+            // into "Show output", and unsubscribe on hide.
+            // Subscription is idempotent.
+            guard let sid = selectedManagedSessionId else { return }
+            // Resolve the row's local-routing decision. If it's a
+            // remote-routed row, the existing event-tail polling
+            // handles output and we don't subscribe.
+            guard let row = state.displayedManagedSessions.first(where: { $0.id == sid }),
+                  state.shouldRouteSessionLocally(row) else { return }
+            if newValue {
+                state.subscribeToLocalEvents(sessionId: sid)
+            } else {
+                state.unsubscribeFromLocalEvents(sessionId: sid)
+            }
+        }
+        .onDisappear {
+            // Tab leaves the screen → drop every live local
+            // subscription so the helper doesn't keep streaming
+            // events to a hidden subscriber. The macOS app's other
+            // tabs don't render Sessions output; subscriptions only
+            // matter while this view is visible.
+            state.unsubscribeAllLocalEvents()
         }
     }
 
@@ -467,33 +523,32 @@ struct SessionsTab: View {
 
     private func commandBar(for session: RemoteSession) -> some View {
         let pending = pendingApproval(for: session)
+        let localPending = localPendingApproval(for: session)
         let isHighRisk = pending.flatMap { RemotePermissionRisk(rawValue: $0.risk) } == .high
-        let canApprove = pending != nil && !isHighRisk
+        let canApproveRemote = pending != nil && !isHighRisk
         let isRunning = session.status.caseInsensitiveCompare("running") == .orderedSame
         let isPending = session.status.caseInsensitiveCompare("pending") == .orderedSame
         let routesLocally = state.shouldRouteSessionLocally(session)
         let localSendUnsupported = routesLocally && (state.localCapabilities?.sendInput == false)
         let promptDisabled = !isRunning || localSendUnsupported
-        // Codex review on PR #17 wrap-up: hide the disabled Approve
-        // button + ⌘↩ hint when the row is locally routed AND the
-        // helper's advertised capabilities don't include
-        // `approvals`. Local approvals (hook restructure +
-        // per-session capability token) are explicitly out of scope
-        // for this PR — they ship in Iter 2B from a fresh branch
-        // off main. Showing a permanently-disabled Approve button
-        // implies "the feature exists but isn't actionable here";
-        // the iter-2A surface is "the feature isn't here yet". Hide
-        // entirely on local-routed rows + replace the hint copy.
-        let approvalsAvailable: Bool = {
-            if routesLocally {
-                return state.localCapabilities?.approvals == true
-            }
-            // Remote / Supabase row: existing approval flow ships
-            // via RemoteApprovalsSheet — keep the Approve button
-            // visible regardless of pending state so the user can
-            // reach the existing surface.
-            return true
-        }()
+        // Iter 2B: approval-button visibility per row.
+        //
+        //   routesLocally + helper supports approvals + structured
+        //   pending row exists → render Approve + Reject calling
+        //   approveLocalAction. Hidden when no structured pending —
+        //   the spec is clear: never light up an inactive button
+        //   off PTY text matching, never bind ⌘↩ when there's
+        //   nothing to confirm.
+        //
+        //   routesLocally + helper does NOT advertise approvals →
+        //   keep the iter-2A "feature isn't here yet" UX (no
+        //   button, hint copy explains).
+        //
+        //   !routesLocally → existing remote / Supabase Approve
+        //   button surface (gated on remote pending).
+        let localApprovalsAvailable = routesLocally
+            && state.localCapabilities?.approvals == true
+        let remoteApprovalsAvailable = !routesLocally
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 TextField(
@@ -516,13 +571,40 @@ struct SessionsTab: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .disabled(promptDisabled || promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                if approvalsAvailable {
-                    Button(canApprove ? "Approve pending" : (pending != nil ? "Approve (high-risk)" : "Approve")) {
+                if localApprovalsAvailable, let pendingApproval = localPending {
+                    Button("Approve") {
+                        Task {
+                            await state.approveLocalAction(
+                                sessionId: session.id,
+                                approvalId: pendingApproval.approvalId,
+                                decision: .approve
+                            )
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .help("Approve the pending Claude permission request bound to this local session (⌘↩).")
+                    Button("Reject") {
+                        Task {
+                            await state.approveLocalAction(
+                                sessionId: session.id,
+                                approvalId: pendingApproval.approvalId,
+                                decision: .reject
+                            )
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Reject the pending Claude permission request. Claude will continue waiting for a different decision or fall back to its own prompt.")
+                }
+                if remoteApprovalsAvailable {
+                    Button(canApproveRemote ? "Approve pending" : (pending != nil ? "Approve (high-risk)" : "Approve")) {
                         Task { await approveMatchingPending(for: session) }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .disabled(!canApprove)
+                    .disabled(!canApproveRemote)
                     .keyboardShortcut(.return, modifiers: .command)
                     .help(approveTooltip(pending: pending, isHighRisk: isHighRisk))
                 }
@@ -530,17 +612,24 @@ struct SessionsTab: View {
             HStack(spacing: 8) {
                 Text(commandBarHintText(
                     isPending: isPending,
-                    approvalsAvailable: approvalsAvailable
+                    routesLocally: routesLocally,
+                    localApprovalsAvailable: localApprovalsAvailable,
+                    hasLocalPending: localPending != nil,
+                    remoteApprovalsAvailable: remoteApprovalsAvailable
                 ))
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                 Spacer()
                 Button {
                     if showOutput {
-                        // Collapsing — drop the cache so the next
+                        // Collapsing — drop both caches so the next
                         // reveal pulls fresh rather than from the
-                        // previous run's tail.
+                        // previous run's tail. Local subscription
+                        // teardown happens in `.onChange(of:
+                        // showOutput)` above so toggling is the
+                        // single point of truth.
                         state.clearRemoteSessionEventsCache(sessionId: session.id)
+                        state.localOutputPreview.removeValue(forKey: session.id)
                     }
                     showOutput.toggle()
                 } label: {
@@ -572,7 +661,14 @@ struct SessionsTab: View {
                         // device-id equality for fresh rows the local
                         // list hasn't seen yet.
                         if state.shouldRouteSessionLocally(session) {
+                            // Iter 2B: tear down the live stream
+                            // BEFORE the helper kills the PTY so we
+                            // don't leave a hanging UDS connection
+                            // waiting for events that will never come.
+                            state.unsubscribeFromLocalEvents(sessionId: session.id)
                             _ = await state.stopLocalSession(sessionId: session.id)
+                            state.localOutputPreview.removeValue(forKey: session.id)
+                            state.localPendingApprovals.removeValue(forKey: session.id)
                         } else {
                             await state.stopRemoteSession(sessionId: session.id)
                         }
@@ -608,18 +704,34 @@ struct SessionsTab: View {
 
     @ViewBuilder
     private func outputPanel(for session: RemoteSession) -> some View {
-        let events = state.remoteSessionEvents[session.id] ?? []
-        // Claude TUI scatters output across event boundaries
-        // (cursor repaints, CSI sequences split mid-byte, words
-        // overwritten in place). We aggregate the entire event tail
-        // and run a Claude-specific filter that emits only ❯ user
-        // echoes, ⏺ Claude replies, and error / login surfaces. The
-        // raw DB events stay intact for any future Phase 3 renderer.
+        let routesLocally = state.shouldRouteSessionLocally(session)
+        // Iter 2B: local-routed rows take their preview from the
+        // live UDS stream (subscribeToLocalEvents). Remote-routed
+        // rows continue to use the existing remoteSessionEvents
+        // tail which the helper uploads to Supabase.
+        let localPreviewRaw = state.localOutputPreview[session.id] ?? ""
+        let events = routesLocally ? [] : (state.remoteSessionEvents[session.id] ?? [])
         let stdoutPayloads = events
             .filter { $0.kind == "stdout" || $0.kind == "stderr" }
             .map { $0.payload }
-        let transcript = ClaudeConversationPreviewFormatter
-            .format(eventPayloads: stdoutPayloads)
+        // Both paths funnel through the same Claude-aware formatter
+        // so ANSI / CSI / TUI chrome are stripped and the user sees
+        // the same ❯ / ⏺ rendering whether the row came from local
+        // UDS or Supabase. Local previews come from the broker's
+        // already-redacted output_delta payloads. IIFE because the
+        // outer function is `@ViewBuilder` and an if-else assignment
+        // statement would be misinterpreted as a View-producing
+        // branch.
+        let transcript: String = {
+            if routesLocally {
+                return localPreviewRaw.isEmpty
+                    ? ClaudeConversationPreviewFormatter.emptyFallback
+                    : ClaudeConversationPreviewFormatter.format(eventPayloads: [localPreviewRaw])
+            }
+            return ClaudeConversationPreviewFormatter
+                .format(eventPayloads: stdoutPayloads)
+        }()
+        let hasContent = routesLocally ? !localPreviewRaw.isEmpty : !events.isEmpty
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 9))
@@ -635,15 +747,11 @@ struct SessionsTab: View {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: true) {
                     VStack(alignment: .leading, spacing: 0) {
-                        if events.isEmpty {
-                            Text(
-                                state.remoteControlEnabled
-                                    ? "No output yet…"
-                                    : "Remote Control is off — output won't stream."
-                            )
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                            .padding(6)
+                        if !hasContent {
+                            Text(emptyOutputText(routesLocally: routesLocally))
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                                .padding(6)
                         } else {
                             Text(transcript)
                                 .font(.system(size: 11, design: .monospaced))
@@ -653,19 +761,24 @@ struct SessionsTab: View {
                                 )
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
-                                .id("claude-transcript-\(events.count)")
+                                .id(routesLocally
+                                    ? "claude-transcript-local-\(localPreviewRaw.count)"
+                                    : "claude-transcript-\(events.count)")
                                 .padding(6)
                         }
                     }
                 }
                 .frame(maxHeight: 200)
-                .onChange(of: events.count) { _ in
-                    // Auto-scroll to the latest content as new events
-                    // arrive. We anchor on the transcript view's
-                    // count-derived id since the transcript is now a
-                    // single Text view rather than per-event rows.
+                .onChange(of: routesLocally ? localPreviewRaw.count : events.count) { _ in
+                    // Auto-scroll to the latest content. Anchor key
+                    // depends on which transport produced the content
+                    // (local-stream byte-count vs remote-event count)
+                    // so a route flip doesn't trip an animation.
+                    let anchor = routesLocally
+                        ? "claude-transcript-local-\(localPreviewRaw.count)"
+                        : "claude-transcript-\(events.count)"
                     withAnimation(.linear(duration: 0.1)) {
-                        proxy.scrollTo("claude-transcript-\(events.count)", anchor: .bottom)
+                        proxy.scrollTo(anchor, anchor: .bottom)
                     }
                 }
             }
@@ -751,20 +864,52 @@ struct SessionsTab: View {
     /// Status-line text under the prompt input. Branches on:
     ///   * pending: the session hasn't started yet (helper hasn't
     ///     consumed the start command).
-    ///   * approvals available (remote rows or local helper that
-    ///     advertised `approvals: true`): show the ⌘↩ shortcut.
-    ///   * approvals NOT available (local-routed + helper hasn't
-    ///     shipped local approvals yet): replace the ⌘↩ hint with
-    ///     a clear "out-of-scope for now" sentence so the user
-    ///     understands they're not missing a button.
-    private func commandBarHintText(isPending: Bool, approvalsAvailable: Bool) -> String {
+    ///   * Iter 2B: local-routed row + local approvals capability +
+    ///     a structured pending exists → show ⌘↩ hint for Approve.
+    ///   * local-routed row + capability but no pending → "no
+    ///     active approval; ⌘↩ inactive" so the user knows the
+    ///     button absence is correct, not a bug.
+    ///   * local-routed row + helper does NOT advertise approvals →
+    ///     keep the iter-2A "next iteration" copy.
+    ///   * remote-routed rows → existing ⌘↩ approve hint.
+    private func commandBarHintText(
+        isPending: Bool,
+        routesLocally: Bool,
+        localApprovalsAvailable: Bool,
+        hasLocalPending: Bool,
+        remoteApprovalsAvailable: Bool
+    ) -> String {
         if isPending {
             return "Waiting for helper to consume the start command. Cancel to remove this session."
         }
-        if approvalsAvailable {
+        if localApprovalsAvailable {
+            return hasLocalPending
+                ? "Enter to send · ⌘↩ to approve pending"
+                : "Enter to send · no pending approval"
+        }
+        if routesLocally {
+            // Local-routed but helper doesn't advertise the
+            // approvals capability — older daemon, transport
+            // missing broker / registry, etc.
+            return "Enter to send · approvals not advertised by this helper"
+        }
+        if remoteApprovalsAvailable {
             return "Enter to send · ⌘↩ to approve pending"
         }
-        return "Enter to send · approvals arrive in the next iteration"
+        return "Enter to send"
+    }
+
+    /// Empty-state copy for the output panel. Branches on whether
+    /// the row pulls output from local UDS or remote Supabase.
+    private func emptyOutputText(routesLocally: Bool) -> String {
+        if routesLocally {
+            return state.localCapabilities?.subscribeEvents == true
+                ? "No output yet…"
+                : "This helper doesn't advertise streaming output."
+        }
+        return state.remoteControlEnabled
+            ? "No output yet…"
+            : "Remote Control is off — output won't stream."
     }
 
     private func approveMatchingPending(for session: RemoteSession) async {
@@ -777,6 +922,15 @@ struct SessionsTab: View {
 
     private func pendingApproval(for session: RemoteSession) -> RemotePermissionRequest? {
         state.remotePendingApprovals.first { $0.session_id == session.id }
+    }
+
+    /// Iter 2B: structured local pending approval bound to this
+    /// row's session id. Always nil for remote-routed rows. The
+    /// macOS UI ONLY renders Approve / Reject when this returns
+    /// non-nil — never on PTY output text. Pinned by tests in
+    /// SessionControlIter2BTests.
+    private func localPendingApproval(for session: RemoteSession) -> PendingApproval? {
+        state.localPendingApprovals[session.id]?.first
     }
 
     private func approveTooltip(pending: RemotePermissionRequest?, isHighRisk: Bool) -> String {

@@ -241,17 +241,31 @@ def _run_hook_inner(
     #   CLI_PULSE_LOCAL_HOOK_TOKEN   — per-session capability token
     #
     # If all three are set we try the local UDS approval path before
-    # touching Supabase. On any failure (helper down, gate off, the
-    # user has multiple managed sessions and this Claude isn't one of
-    # them) we fall through to the existing Supabase flow — same
-    # remote-approval UX users already have.
+    # touching Supabase. The function returns one of:
     #
-    # The local path is faster, doesn't need internet, and lets the
-    # hook continue to work while Remote Control is off (the user
-    # opted in by enabling Local Session Control on this Mac).
-    local_decision = _try_local_uds_hook(parsed, adapter)
-    if local_decision is not None:
-        _emit(adapter.emit_hook_output(local_decision, parsed))
+    #   AdapterDecision  — user approved or rejected; emit it.
+    #   "local_fallback" — local pending row was created (user saw it
+    #                      on the macOS app) but the wait timed out /
+    #                      expired / cancelled / mid-flow connection
+    #                      drop. We MUST NOT fall through to Supabase
+    #                      here — that would create a duplicate
+    #                      pending approval on iPhone after the user
+    #                      already saw the local one. Emit the local
+    #                      fallback so Claude prompts again.
+    #   None             — local helper never accepted the request
+    #                      (helper down, gate off, capability rejected,
+    #                      session not registered). Local path was
+    #                      never started → fall through to Supabase
+    #                      remote-approval flow as before.
+    local_outcome = _try_local_uds_hook(parsed, adapter)
+    if isinstance(local_outcome, str) and local_outcome == _LOCAL_FALLBACK_SENTINEL:
+        _emit(adapter.emit_local_fallback(
+            parsed,
+            "Local approval did not resolve — please retry locally",
+        ))
+        return 0
+    if local_outcome is not None:
+        _emit(adapter.emit_hook_output(local_outcome, parsed))
         return 0
 
     try:
@@ -402,24 +416,31 @@ _UDS_MAX_PAYLOAD = 1 << 20
 _UDS_CONNECT_TIMEOUT_S = 1.5
 _UDS_REPLY_TIMEOUT_S = 5.0
 
+# Sentinel returned by `_try_local_uds_hook` when the helper accepted
+# the request (a pending row exists / existed) but the wait did not
+# resolve to approve / reject. The caller emits a local fallback
+# rather than falling through to Supabase, so we never end up with
+# both a local AND a remote pending row for the same Claude tool call.
+_LOCAL_FALLBACK_SENTINEL = "local_fallback"
+
 
 def _try_local_uds_hook(parsed: Any, adapter: Any) -> Any | None:
     """Attempt to resolve this hook invocation through the same-Mac
-    UDS approval surface. Returns an `AdapterDecision` if the local
-    path resolved, None otherwise (caller falls through to Supabase).
+    UDS approval surface. Return values:
 
-    Failure modes that return None (caller falls through):
-      - any of the env vars missing / empty
-      - socket file missing (helper not running)
-      - connect / read / write OSError
-      - JSON decode error
-      - helper rejected with `local_control_off` / `not_implemented` /
-        `session_not_found` / `approval_capability_invalid`
-      - decision was `expired` / `cancelled` / timed out
-
-    Failure modes that DO resolve here:
-      - decision was `approved` → AdapterDecision(approve, once)
-      - decision was `rejected` → AdapterDecision(deny, once)
+      AdapterDecision           — user approved or rejected.
+      _LOCAL_FALLBACK_SENTINEL  — pending row was created; wait did
+                                  not resolve to a user decision
+                                  (timed out, expired, cancelled,
+                                  mid-flow connection drop). Caller
+                                  emits adapter.emit_local_fallback
+                                  rather than falling through to
+                                  Supabase, so we never duplicate the
+                                  pending row.
+      None                      — pending row was NEVER created on
+                                  this helper. Caller may fall through
+                                  to the existing Supabase remote
+                                  approval path.
     """
     sock_path = os.environ.get(_LOCAL_SOCK_ENV) or ""
     session_id = os.environ.get(_LOCAL_SESSION_ENV) or ""
@@ -518,6 +539,13 @@ def _try_local_uds_hook(parsed: Any, adapter: Any) -> Any | None:
         # 2. hook_wait_decision — blocks until the user (or a TTL)
         #    resolves the approval. timeout aligns with the typical
         #    Claude tool-call grace (60 s) plus a connection slack.
+        #
+        #    POINT OF NO RETURN: at this stage a pending row exists in
+        #    the helper's registry (and the macOS app may have already
+        #    rendered it). Any non-approve / non-reject outcome from
+        #    here on returns the local-fallback sentinel rather than
+        #    None, so the hook never falls through to Supabase and
+        #    creates a duplicate pending request on the iPhone.
         wait_envelope = {
             "id": str(uuid.uuid4()),
             "method": "hook_wait_decision",
@@ -530,18 +558,23 @@ def _try_local_uds_hook(parsed: Any, adapter: Any) -> Any | None:
         }
         wait_reply = send_recv(wait_envelope, 70.0)
         if not isinstance(wait_reply, dict) or not wait_reply.get("ok"):
-            return None
+            # Mid-flow connection drop or helper-side error AFTER
+            # the row was created. Local helper still owns the
+            # decision; emit local fallback so Claude re-prompts.
+            return _LOCAL_FALLBACK_SENTINEL
         result = wait_reply.get("result")
         if not isinstance(result, dict):
-            return None
+            return _LOCAL_FALLBACK_SENTINEL
         if result.get("timed_out"):
-            return None
+            return _LOCAL_FALLBACK_SENTINEL
         status = result.get("status")
         if status == "approved":
             return AdapterDecision(decision="approve", scope="once", reason="")
         if status == "rejected":
             return AdapterDecision(decision="deny", scope="once", reason="")
-        return None
+        # `expired` / `cancelled` — the helper already detached the
+        # row; we still don't escalate to Supabase.
+        return _LOCAL_FALLBACK_SENTINEL
     finally:
         try:
             s.close()

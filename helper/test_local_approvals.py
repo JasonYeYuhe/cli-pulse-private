@@ -41,14 +41,23 @@ from local_approvals import (  # noqa: E402
 
 
 def _registry_with_descent(
-    *, ppid_chain: dict[int, int] | None = None
+    *, ppid_chain: dict[int, int] | None = None,
+    allow_descent_skip: bool = True,
 ) -> ApprovalRegistry:
     """Build a registry whose ppid resolver follows a deterministic
     chain. Disables the peer_pid_resolver since unit tests pass
     `peer_pid` directly.
+
+    Defaults to `allow_descent_skip=True` because most unit tests
+    here exercise the token + cancel + decide paths without setting
+    a real Claude PID. Tests that specifically validate descent
+    fail-closed behaviour pass `allow_descent_skip=False`.
     """
     events: list[dict] = []
-    reg = ApprovalRegistry(on_event=events.append)
+    reg = ApprovalRegistry(
+        on_event=events.append,
+        allow_descent_skip=allow_descent_skip,
+    )
     reg.peer_pid_resolver = None
     if ppid_chain is not None:
         reg.ppid_resolver = ppid_chain.get
@@ -121,17 +130,46 @@ def test_authenticate_hook_descent_rejects_unrelated_pid():
     assert exc.value.code == ApprovalError.CAPABILITY_INVALID
 
 
-def test_authenticate_hook_descent_skipped_without_root_pid():
-    """When register_session was called with claude_pid=None and
-    update_session_pid was never invoked (e.g. transport failed to
-    expose pid), descent verification falls back to token-only.
+def test_authenticate_hook_descent_skipped_when_test_opt_in_and_no_root_pid():
+    """When the registry was constructed with allow_descent_skip=True
+    (test mode) AND claude_pid wasn't recorded, the registry permits
+    a token-only authentication. This path is intentionally test-only;
+    the fail-closed equivalent is covered by the next test.
     """
-    reg = _registry_with_descent()
+    reg = _registry_with_descent(allow_descent_skip=True)
     token = reg.register_session("S1", claude_pid=None)
-    # Even with a clearly-wrong peer_pid, the registry permits — the
-    # capability-token check did its job and the helper has no pid
-    # to compare against.
     reg.authenticate_hook("S1", token, peer_pid=99999)
+
+
+def test_authenticate_hook_descent_fail_closed_when_no_root_pid_in_strict_mode():
+    """Production posture: registry constructed without
+    `allow_descent_skip` MUST refuse a hook whose session lacks a
+    recorded claude_pid. The dual-defense (token + descent) is
+    explicitly NOT degradable to token-only by accident.
+    """
+    reg = _registry_with_descent(allow_descent_skip=False)
+    token = reg.register_session("S1", claude_pid=None)
+    with pytest.raises(ApprovalError) as exc:
+        reg.authenticate_hook("S1", token, peer_pid=99999)
+    assert exc.value.code == ApprovalError.CAPABILITY_INVALID
+    assert "claude_pid" in exc.value.message
+
+
+def test_authenticate_hook_descent_fail_closed_when_peer_pid_unresolvable():
+    """Strict-mode: if claude_pid IS recorded but the peer pid can't
+    be resolved (no resolver, OS error, returned None), the registry
+    must reject. Otherwise an attacker who has the token (e.g. read
+    it from /proc/<pid>/environ on a sibling process) could bypass
+    the descent check by causing the resolver to fail.
+    """
+    reg = _registry_with_descent(allow_descent_skip=False)
+    token = reg.register_session("S1", claude_pid=100)
+    # No peer_pid passed AND no peer_pid_resolver wired (the helper
+    # disabled it in the fixture). Strict mode must refuse.
+    with pytest.raises(ApprovalError) as exc:
+        reg.authenticate_hook("S1", token)
+    assert exc.value.code == ApprovalError.CAPABILITY_INVALID
+    assert "peer pid" in exc.value.message
 
 
 def test_descent_walk_bounded():

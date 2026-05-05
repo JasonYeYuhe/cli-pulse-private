@@ -194,6 +194,7 @@ class ApprovalRegistry:
         on_event: Callable[[dict[str, Any]], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
+        allow_descent_skip: bool = False,
     ) -> None:
         self._lock = threading.Lock()
         self._sessions: dict[str, _ManagedSessionRecord] = {}
@@ -209,6 +210,22 @@ class ApprovalRegistry:
         self._on_event = on_event
         self._clock = clock
         self._wall = wall_clock
+        # ── descent (process-ancestry) verification ────────────
+        # Production helpers MUST run with `allow_descent_skip=False`
+        # (the default). When True, `authenticate_hook` falls back to
+        # token-only verification if either the recorded `claude_pid`
+        # is missing OR the peer pid can't be resolved. That path is
+        # an explicit OPT-IN for unit tests that don't spawn a real
+        # Claude PTY.
+        #
+        # The dual-defense the PR depends on requires BOTH the per-
+        # session token AND the kernel-level descent check. Failing
+        # open silently when the descent half can't run would degrade
+        # the model to token-only — which the same env vars Claude
+        # itself can read make weaker than the threat model assumed
+        # in the PR description. Codex review on PR #18 caught the
+        # initial fail-open posture; this constructor flag is the fix.
+        self._allow_descent_skip = allow_descent_skip
         # Test seam: pluggable peer-pid + ppid-walk so unit tests can
         # simulate descent verification without spawning real Claude.
         self.peer_pid_resolver: Callable[[socket.socket], int | None] | None = (
@@ -312,12 +329,24 @@ class ApprovalRegistry:
                 ApprovalError.CAPABILITY_INVALID,
                 "session capability token mismatch",
             )
-        # Descent check — best-effort: if we have neither a recorded
-        # claude_pid (test stub) nor a peer-pid resolver (unsupported
-        # platform) we skip with a logged warning. Production helper
-        # always supplies both.
+        # Descent check. Production must FAIL CLOSED if we don't have
+        # both a recorded claude_pid AND a resolvable peer pid — the
+        # capability token alone lives inside Claude's env (visible
+        # to the same Claude tools that produced the request) so
+        # without the kernel-level descent proof we'd be relying on
+        # a single half of the dual defense. Tests opt out via
+        # `allow_descent_skip=True` on the constructor.
         if rec.claude_pid is None:
-            return
+            if self._allow_descent_skip:
+                return
+            logger.warning(
+                "approvals: descent gate fail-closed (no claude_pid) session=%s",
+                session_id,
+            )
+            raise ApprovalError(
+                ApprovalError.CAPABILITY_INVALID,
+                "managed session has no recorded claude_pid; cannot verify descent",
+            )
         actual_pid = peer_pid
         if actual_pid is None and peer_socket is not None and self.peer_pid_resolver is not None:
             try:
@@ -326,15 +355,20 @@ class ApprovalRegistry:
                 logger.warning("approvals: peer_pid resolve raised: %s", exc)
                 actual_pid = None
         if actual_pid is None:
+            if self._allow_descent_skip:
+                logger.warning(
+                    "approvals: descent skipped (test mode) session=%s",
+                    session_id,
+                )
+                return
             logger.warning(
-                "approvals: descent check skipped (no peer pid) session=%s",
+                "approvals: descent gate fail-closed (peer pid unresolvable) session=%s",
                 session_id,
             )
-            # Don't fail closed here — environments where peer-pid
-            # extraction isn't available (older OS releases, exotic
-            # FS layouts) still benefit from the capability check.
-            # The PR description calls this gap out explicitly.
-            return
+            raise ApprovalError(
+                ApprovalError.CAPABILITY_INVALID,
+                "could not resolve hook peer pid; cannot verify descent",
+            )
         if not self._verify_descent(actual_pid, rec.claude_pid):
             logger.warning(
                 "approvals: descent rejected peer_pid=%s session=%s expected_root=%s",
