@@ -148,6 +148,61 @@ final class CostUsageCacheIOTests: XCTestCase {
         XCTAssertTrue(loaded.files.isEmpty)
     }
 
+    // MARK: - pricing version invalidation (May 2026)
+
+    func testLoadStalePricingVersionReturnsDefaultEvenWhenStructureVersionMatches() {
+        // Forge an on-disk cache with a real `version: 1` (current
+        // structure version) but `pricingVersion: 1` — i.e. one
+        // generation behind whatever this build was compiled with.
+        // load() must reject it so the next scan re-parses every
+        // JSONL with the current pricing rules.
+        let url = CostUsageCacheIO.cacheFileURL(provider: "claude", cacheRoot: tempDir)
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let payload: [String: Any] = [
+            "version": 1,
+            "pricingVersion": 1,        // <-- one behind costUsageCachePricingVersion (=2)
+            "lastScanUnixMs": 1_700_000_000,
+            "files": [:],
+            "days": [
+                "2026-04-20": ["claude-opus-4-7": [0, 1_000_000, 0, 1_000, 0, 1] as [Int]]
+            ]
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: payload, options: [])
+        try! data.write(to: url)
+
+        let loaded = CostUsageCacheIO.load(provider: "claude", cacheRoot: tempDir)
+        XCTAssertEqual(loaded.lastScanUnixMs, 0, "stale pricingVersion must wipe to default")
+        XCTAssertTrue(loaded.days.isEmpty, "stale pricingVersion must wipe day buckets")
+    }
+
+    func testSaveStampsPricingVersionEvenWhenCallerOmitsIt() {
+        // The dataclass default for pricingVersion is 0 (so legacy
+        // on-disk files without the field invalidate themselves).
+        // save() must overwrite that with the build-time current
+        // value, otherwise a freshly-saved cache would look stale
+        // on its very next load.
+        var cache = CostUsageCache()
+        cache.lastScanUnixMs = 42
+        // Note: deliberately leave cache.pricingVersion at 0.
+        XCTAssertEqual(cache.pricingVersion, 0)
+        CostUsageCacheIO.save(provider: "codex", cache: cache, cacheRoot: tempDir)
+
+        let url = CostUsageCacheIO.cacheFileURL(provider: "codex", cacheRoot: tempDir)
+        let raw = try! JSONSerialization.jsonObject(with: try! Data(contentsOf: url)) as! [String: Any]
+        XCTAssertEqual(raw["pricingVersion"] as? Int, costUsageCachePricingVersion)
+
+        let loaded = CostUsageCacheIO.load(provider: "codex", cacheRoot: tempDir)
+        XCTAssertEqual(loaded.lastScanUnixMs, 42, "save→load roundtrip should not be invalidated by the stamping policy")
+    }
+
+    func testCurrentPricingVersionIsTwo() {
+        // Pin the constant so future bumps land in this test as a
+        // grep-able diff. When you change pricing, bump the constant
+        // AND this expectation in the same commit so the diff makes
+        // the cache-invalidation intent obvious in code review.
+        XCTAssertEqual(costUsageCachePricingVersion, 2)
+    }
+
     // MARK: - wipeAll
 
     func testWipeAllRemovesCacheDirectory() {
