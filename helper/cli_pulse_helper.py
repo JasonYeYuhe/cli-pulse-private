@@ -44,6 +44,12 @@ class HelperConfig:
     device_name: str
     helper_version: str
     helper_secret: str = ""
+    # Phase 3 Iter 1: gate for the local UDS control surface. Independent
+    # from `remote_control_enabled` (which lives server-side and gates
+    # Supabase RPCs) — different threat model, different consent
+    # decision. Defaults to False so an existing config without this
+    # key loads as opted-out.
+    local_control_enabled: bool = False
 
 
 def now_iso() -> str:
@@ -72,6 +78,22 @@ def load_config() -> HelperConfig:
 def save_config(config: HelperConfig) -> None:
     CONFIG_PATH.write_text(json.dumps(asdict(config), indent=2))
     CONFIG_PATH.chmod(0o600)
+
+
+def set_local_control_enabled(enabled: bool) -> bool:
+    """Flip the `local_control_enabled` gate in the on-disk helper
+    config. Idempotent. Returns the post-update value so the caller
+    can echo it back to the UDS client.
+
+    The function reads + writes the live config file, so a daemon
+    that's already running picks up the change at the start of the
+    next mutation that goes through the executor (the UDS server
+    hands the getter a closure that re-reads the file each call).
+    """
+    config = load_config()
+    config.local_control_enabled = bool(enabled)
+    save_config(config)
+    return config.local_control_enabled
 
 
 class ConfigError(Exception):
@@ -323,15 +345,27 @@ def daemon(args: argparse.Namespace) -> None:
     # Tauri desktop track will eventually call this same module) doesn't
     # crash on `import pty` from the POSIX transport. POSIX transport is
     # the default; ConPtyTransport is a stub for the desktop track.
+    #
+    # Phase 3 Iter 1: a `LocalExecutor` is constructed alongside the
+    # manager and shared with the UDS server below, so the daemon poll
+    # loop and the local-app fast path serialize all mutations onto a
+    # single writer thread. The executor stays alive for the daemon's
+    # full lifetime; the `finally` block below shuts it down cleanly.
     remote_agent_manager = None
+    local_executor = None
+    local_uds_server = None
+    local_auth_token: str | None = None
     try:
+        from local_executor import LocalExecutor  # type: ignore
         from remote_agent import RemoteAgentManager  # type: ignore
         config_for_manager = load_config()
+        local_executor = LocalExecutor()
         remote_agent_manager = RemoteAgentManager(
             helper_config=config_for_manager,
             rpc_caller=supabase_rpc,
+            executor=local_executor,
         )
-        logger.info("remote agent manager initialised")
+        logger.info("remote agent manager initialised (executor=on)")
     except ConfigError:
         # Helper not paired yet — daemon will likely fail in heartbeat
         # too. Don't synthesise a manager; the next iteration's
@@ -344,6 +378,60 @@ def daemon(args: argparse.Namespace) -> None:
         logger.warning("remote agent manager unavailable on this platform: %s", exc)
     except Exception as exc:
         logger.warning("remote agent manager init failed: %s", exc)
+
+    # Phase 3 Iter 1: local UDS control surface. Only stood up when we
+    # have a manager — without it there's nothing for the local server
+    # to dispatch to. Failures here are non-fatal: the daemon still
+    # services Supabase-routed sessions even if the local socket can't
+    # bind (e.g. another helper is already listening, missing app
+    # group container).
+    if remote_agent_manager is not None:
+        try:
+            from local_auth_token import rotate_token, token_path
+            from local_session_server import LocalSessionServer, default_socket_path
+            local_auth_token = rotate_token()
+
+            def _get_token() -> str:
+                # Re-read from disk on each request so a manual rotation
+                # takes effect without restarting the daemon. The
+                # in-process `local_auth_token` is the fallback.
+                from local_auth_token import load_token
+                return load_token() or local_auth_token or ""
+
+            def _get_local_enabled() -> bool:
+                try:
+                    return bool(load_config().local_control_enabled)
+                except ConfigError:
+                    return False
+
+            def _set_local_enabled(value: bool) -> None:
+                set_local_control_enabled(bool(value))
+
+            def _start_local(payload: dict[str, Any]) -> dict[str, Any]:
+                return remote_agent_manager.local_start_claude_session(payload)
+
+            def _list_local() -> list[dict[str, Any]]:
+                return remote_agent_manager.local_list_sessions()
+
+            def _stop_local(session_id: str) -> dict[str, Any]:
+                return remote_agent_manager.local_stop_session(session_id)
+
+            local_uds_server = LocalSessionServer(
+                socket_path=default_socket_path(),
+                get_auth_token=_get_token,
+                get_local_control_enabled=_get_local_enabled,
+                set_local_control_enabled=_set_local_enabled,
+                start_session=_start_local,
+                list_sessions=_list_local,
+                stop_session=_stop_local,
+            )
+            local_uds_server.start()
+            logger.info(
+                "local UDS server started; auth token at %s", token_path()
+            )
+        except Exception as exc:
+            logger.warning("local UDS server init failed: %s", exc)
+            local_uds_server = None
 
     def _handle_shutdown(signum, _frame):
         nonlocal stopping
@@ -433,12 +521,27 @@ def daemon(args: argparse.Namespace) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        # Drain managed sessions so a SIGTERM doesn't orphan child PTYs.
+        # Phase 3 Iter 1 ordering: stop the UDS server first so no new
+        # local jobs land on the executor while we're draining; then
+        # let the manager terminate child PTYs (which itself goes
+        # through the executor); then shut the executor down. Each
+        # step is best-effort — we want the daemon's exit to be clean
+        # even if any one of them throws.
+        if local_uds_server is not None:
+            try:
+                local_uds_server.stop()
+            except Exception as exc:
+                logger.warning("local UDS server stop failed: %s", exc)
         if remote_agent_manager is not None:
             try:
                 remote_agent_manager.shutdown()
             except Exception as exc:
                 logger.warning("remote agent shutdown failed: %s", exc)
+        if local_executor is not None:
+            try:
+                local_executor.shutdown(wait=True, timeout=5.0)
+            except Exception as exc:
+                logger.warning("local executor shutdown failed: %s", exc)
     logger.info("daemon stopped")
 
 
