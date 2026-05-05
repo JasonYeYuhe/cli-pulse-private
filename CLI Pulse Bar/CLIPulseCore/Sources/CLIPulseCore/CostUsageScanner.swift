@@ -527,6 +527,15 @@ public enum CostUsageScanner {
             "claude-opus-4-5": .init(inputCostPerToken: 5e-6, outputCostPerToken: 2.5e-5, cacheCreationCostPerToken: 6.25e-6, cacheReadCostPerToken: 5e-7, thresholdTokens: nil, inputAbove: nil, outputAbove: nil, cacheCreationAbove: nil, cacheReadAbove: nil),
             "claude-opus-4-6-20260205": .init(inputCostPerToken: 5e-6, outputCostPerToken: 2.5e-5, cacheCreationCostPerToken: 6.25e-6, cacheReadCostPerToken: 5e-7, thresholdTokens: nil, inputAbove: nil, outputAbove: nil, cacheCreationAbove: nil, cacheReadAbove: nil),
             "claude-opus-4-6": .init(inputCostPerToken: 5e-6, outputCostPerToken: 2.5e-5, cacheCreationCostPerToken: 6.25e-6, cacheReadCostPerToken: 5e-7, thresholdTokens: nil, inputAbove: nil, outputAbove: nil, cacheCreationAbove: nil, cacheReadAbove: nil),
+            // Opus 4.7 — Anthropic kept the headline rate identical to 4.6:
+            // $5 input / $25 output / $0.50 cache_read (10% of input) / $6.25
+            // cache_create (1.25× input). Source: Anthropic API pricing docs +
+            // multiple independent third-party trackers, April 2026.
+            // Without these entries every Opus 4.7 assistant event was
+            // contributing $0 to the Today/Week cost totals — all current
+            // Claude Code (Max 20x) traffic uses opus-4-7, so the user's
+            // card showed `<$0.01` despite hundreds of M cache_read tokens.
+            "claude-opus-4-7": .init(inputCostPerToken: 5e-6, outputCostPerToken: 2.5e-5, cacheCreationCostPerToken: 6.25e-6, cacheReadCostPerToken: 5e-7, thresholdTokens: nil, inputAbove: nil, outputAbove: nil, cacheCreationAbove: nil, cacheReadAbove: nil),
             "claude-sonnet-4-5": .init(inputCostPerToken: 3e-6, outputCostPerToken: 1.5e-5, cacheCreationCostPerToken: 3.75e-6, cacheReadCostPerToken: 3e-7, thresholdTokens: 200_000, inputAbove: 6e-6, outputAbove: 2.25e-5, cacheCreationAbove: 7.5e-6, cacheReadAbove: 6e-7),
             "claude-sonnet-4-5-20250929": .init(inputCostPerToken: 3e-6, outputCostPerToken: 1.5e-5, cacheCreationCostPerToken: 3.75e-6, cacheReadCostPerToken: 3e-7, thresholdTokens: 200_000, inputAbove: 6e-6, outputAbove: 2.25e-5, cacheCreationAbove: 7.5e-6, cacheReadAbove: 6e-7),
             "claude-sonnet-4-6": .init(inputCostPerToken: 3e-6, outputCostPerToken: 1.5e-5, cacheCreationCostPerToken: 3.75e-6, cacheReadCostPerToken: 3e-7, thresholdTokens: 200_000, inputAbove: 6e-6, outputAbove: 2.25e-5, cacheCreationAbove: 7.5e-6, cacheReadAbove: 6e-7),
@@ -560,7 +569,52 @@ public enum CostUsageScanner {
                 let base = String(trimmed[..<baseRange.lowerBound])
                 if claudeModels[base] != nil { return base }
             }
+            if claudeModels[trimmed] != nil { return trimmed }
+            // Family fallback: when the exact version isn't priced (e.g.
+            // a freshly-released `claude-opus-4-8`), fall back to the
+            // highest-numbered known version of the same `claude-(opus|
+            // sonnet|haiku)-N-M` family. Without this, the next minor
+            // release silently regresses Today/Week cost to $0 the day
+            // it ships — exactly how iter1 of this fix discovered the
+            // missing `claude-opus-4-7` entry. Family pricing within an
+            // Anthropic generation is stable enough that the
+            // last-known-version's rate is a sane default until a
+            // dedicated entry can be added.
+            if let fallback = familyFallback(trimmed) {
+                return fallback
+            }
             return trimmed
+        }
+
+        /// Return the latest known `claude-(opus|sonnet|haiku)-N-X` key
+        /// for an unknown `claude-(opus|sonnet|haiku)-N-Y` input where
+        /// X is the highest priced sibling. Returns nil if the family
+        /// stem can't be parsed or has no priced siblings.
+        static func familyFallback(_ model: String) -> String? {
+            // Match `claude-(opus|sonnet|haiku)-<gen>-<minor>` (no date
+            // suffix here — caller already stripped 8-digit dates). The
+            // major+minor form is what Claude Code emits today.
+            guard let match = model.range(
+                of: #"^claude-(opus|sonnet|haiku)-(\d+)-(\d+)$"#,
+                options: .regularExpression
+            ), match == model.startIndex..<model.endIndex else { return nil }
+            // Cheap parse: split on '-', expect exactly 4 components.
+            let parts = model.split(separator: "-")
+            guard parts.count == 4 else { return nil }
+            let family = "claude-\(parts[1])-\(parts[2])-"
+            // Pick the highest-numbered sibling that's actually priced.
+            // Cap minor < 100 so a legacy `claude-sonnet-4-20250514` row
+            // (where `20250514` is a date masquerading as a minor) does
+            // NOT win the comparison against real minors like 5, 6, 7.
+            var best: (key: String, minor: Int)?
+            for key in claudeModels.keys where key.hasPrefix(family) {
+                let tail = String(key.dropFirst(family.count))
+                guard let minor = Int(tail), minor < 100 else { continue }
+                if best == nil || minor > best!.minor {
+                    best = (key, minor)
+                }
+            }
+            return best?.key
         }
 
         static func codexCostUSD(model: String, inputTokens: Int, cachedInputTokens: Int, outputTokens: Int) -> Double? {
