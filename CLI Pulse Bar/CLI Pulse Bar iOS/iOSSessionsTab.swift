@@ -1053,7 +1053,7 @@ struct iOSSessionRow: View {
                 Image(systemName: session.providerKind?.iconName ?? "terminal")
                     .foregroundStyle(PulseTheme.providerColor(session.provider))
 
-                Text(session.name)
+                Text(session.displayName)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
 
@@ -1094,12 +1094,17 @@ struct iOSSessionRow: View {
             .lineLimit(1)
 
             HStack(spacing: 18) {
-                metricItem(label: L10n.detail.usage, value: CostFormatter.formatUsage(session.total_usage))
-                if showCost {
-                    metricItem(label: L10n.detail.cost, value: CostFormatter.format(session.estimated_cost), color: .green)
-                }
-                if session.hasMeaningfulRequestCount {
-                    metricItem(label: L10n.detail.requests, value: "\(session.requests)")
+                // Same gate as macOS: proc-* rows have heuristic
+                // metrics that mislead at long uptimes. Hide the
+                // trio for those rows; tier badge tells the story.
+                if !session.hasProcessHeuristicMetrics {
+                    metricItem(label: L10n.detail.usage, value: CostFormatter.formatUsage(session.total_usage))
+                    if showCost {
+                        metricItem(label: L10n.detail.cost, value: CostFormatter.format(session.estimated_cost), color: .green)
+                    }
+                    if session.hasMeaningfulRequestCount {
+                        metricItem(label: L10n.detail.requests, value: "\(session.requests)")
+                    }
                 }
                 if session.error_count > 0 {
                     metricItem(label: L10n.detail.errors, value: "\(session.error_count)", color: .red)

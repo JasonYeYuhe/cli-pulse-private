@@ -79,6 +79,16 @@ IGNORED_COMMAND_PATTERNS: list[str] = [
     # the macOS Sessions panel then correctly hides as an artifact,
     # leaving the user with no proc-confirmed Claude row at all.
     r"contents/helpers/disclaimer",
+    # Codex support / infrastructure processes — these are NOT user
+    # CLI sessions but were getting classified as Codex via the
+    # `\bcodex\b` substring match and surfacing as green "running"
+    # rows in the Sessions panel. Drop them at the helper level so
+    # only real user-driven Codex invocations (codex CLI binary)
+    # reach dedup.
+    r"codex computer use\.app",   # Codex Computer Use.app MCP server + workers
+    r"skycomputeruseclient",      # variant naming used by some builds
+    r"app-server-broker",         # node-based Codex app-server broker
+    r"app-server-launcher",       # codex.app launcher subprocess
 ]
 
 # Confidence ranking for deduplication: higher is better

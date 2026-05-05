@@ -543,7 +543,43 @@ public struct SessionRecord: Codable, Identifiable, Sendable, Hashable {
     /// that requires extending the parser's CodexParseResult and the
     /// per-file cache schema.
     public var hasMeaningfulRequestCount: Bool {
-        !(id.hasPrefix("jsonl-codex-") && requests <= 1)
+        if hasProcessHeuristicMetrics { return false }
+        return !(id.hasPrefix("jsonl-codex-") && requests <= 1)
+    }
+
+    /// Whether the row's `total_usage` / `estimated_cost` / `requests`
+    /// fields are derived from heuristics rather than parsed usage.
+    /// True for helper-emitted `proc-{pid}` rows, where:
+    ///   total_usage = max(500, elapsed_seconds * (1.5 + cpu))
+    ///   requests    = max(1, elapsed_seconds // 45)
+    /// Both grow monotonically with how long the process has been
+    /// alive, with no relationship to actual API/token usage. Showing
+    /// "86038 requests" next to a Claude Code session that's been
+    /// running 8+ hours is technically what the formula produces, but
+    /// it's noise to the user.
+    ///
+    /// The UI uses this flag to suppress the `usage / cost / requests`
+    /// trio for proc-* rows; the green "running" status pill plus the
+    /// row's provider/project label is enough to convey "this is alive."
+    public var hasProcessHeuristicMetrics: Bool {
+        id.hasPrefix("proc-")
+    }
+
+    /// Display name for the Sessions panel row. Helper-emitted proc-*
+    /// rows have `name = command line truncated to 48 chars`, which
+    /// surfaces unfriendly strings like `/Users/jason/Library/Application Support/C...`
+    /// or `./Codex Computer Use.app/Contents/Shar...`. Replace with
+    /// "{provider} · {project}" when we have provider info, falling
+    /// back to "{provider} process" if project is empty/generic.
+    /// JSONL-synthesized rows already carry friendly names like
+    /// "Claude session" — leave those alone.
+    public var displayName: String {
+        guard hasProcessHeuristicMetrics else { return name }
+        let cleanProject = project.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanProject.isEmpty {
+            return "\(provider) · \(cleanProject)"
+        }
+        return "\(provider) process"
     }
 
     public init(

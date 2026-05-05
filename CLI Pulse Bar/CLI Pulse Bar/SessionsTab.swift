@@ -644,7 +644,7 @@ struct SessionRow: View {
                     .font(.system(size: 10))
                     .foregroundStyle(PulseTheme.providerColor(session.provider))
 
-                Text(session.name)
+                Text(session.displayName)
                     .font(.system(size: 11, weight: .semibold))
                     .lineLimit(1)
 
@@ -694,14 +694,22 @@ struct SessionRow: View {
             .foregroundStyle(.secondary)
             .lineLimit(1)
 
-            // Metrics
+            // Metrics. Proc-* rows have heuristic-derived metrics
+            // (total_usage / cost / requests are all functions of
+            // elapsed_seconds and CPU), so showing "86038 requests"
+            // next to an 8-hour Claude Code process is misleading.
+            // Hide the entire trio for those rows; the row label and
+            // green "running" badge already convey "this is alive."
+            // JSONL-synthesized + cloud rows show metrics as before.
             HStack(spacing: 16) {
-                metricItem(label: L10n.detail.usage, value: CostFormatter.formatUsage(session.total_usage))
-                if showCost {
-                    metricItem(label: L10n.detail.cost, value: CostFormatter.format(session.estimated_cost), color: .green)
-                }
-                if session.hasMeaningfulRequestCount {
-                    metricItem(label: L10n.detail.requests, value: "\(session.requests)")
+                if !session.hasProcessHeuristicMetrics {
+                    metricItem(label: L10n.detail.usage, value: CostFormatter.formatUsage(session.total_usage))
+                    if showCost {
+                        metricItem(label: L10n.detail.cost, value: CostFormatter.format(session.estimated_cost), color: .green)
+                    }
+                    if session.hasMeaningfulRequestCount {
+                        metricItem(label: L10n.detail.requests, value: "\(session.requests)")
+                    }
                 }
                 if session.error_count > 0 {
                     metricItem(label: L10n.detail.errors, value: "\(session.error_count)", color: .red)

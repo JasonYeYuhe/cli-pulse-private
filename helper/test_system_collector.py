@@ -404,6 +404,42 @@ class TestDetectProviderClassification(unittest.TestCase):
         # the macOS Sessions panel then hides as artifact.
         self.assertTrue(_should_ignore_command(self.DISCLAIMER_WRAPPER))
 
+    def test_codex_computer_use_app_is_ignored(self):
+        # Codex Computer Use.app is a long-running MCP server, not a
+        # user CLI session. Pre-fix it surfaced as a green "running"
+        # Codex row in the Sessions panel.
+        commands = [
+            "/Users/jason/.codex/installations/Codex Computer Use.app/Contents/MacOS/SkyComputerUseClient",
+            "./Codex Computer Use.app/Contents/SharedSupport/...",
+            "/Applications/Codex.app/Contents/Resources/.../Codex Computer Use.app/...",
+        ]
+        for cmd in commands:
+            self.assertTrue(
+                _should_ignore_command(cmd),
+                f"must drop Codex Computer Use support process: {cmd}",
+            )
+
+    def test_app_server_broker_is_ignored(self):
+        # Codex app-server runs as node-based broker / launcher.
+        # Both are infrastructure, not user sessions.
+        commands = [
+            "/opt/homebrew/Cellar/node/25.9.0_2/bin/node /Applications/Codex.app/Contents/Resources/app-server-broker.mjs --some-flag",
+            "node /path/to/app-server-launcher.mjs",
+        ]
+        for cmd in commands:
+            self.assertTrue(
+                _should_ignore_command(cmd),
+                f"must drop Codex app-server: {cmd}",
+            )
+
+    def test_real_codex_cli_still_surfaces(self):
+        # Defensive: don't over-filter the user's actual codex CLI.
+        for cmd in ["codex", "/usr/local/bin/codex --some-flag", "/Users/jason/.local/bin/codex"]:
+            self.assertFalse(
+                _should_ignore_command(cmd),
+                f"must NOT drop real codex CLI: {cmd}",
+            )
+
     def test_disclaimer_wrapper_classification_when_not_ignored_is_still_claude(self):
         # Defensive: even if the ignore guard ever regresses, the
         # executable-only matcher must NOT classify the disclaimer
