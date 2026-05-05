@@ -785,24 +785,32 @@ struct SessionsTab: View {
     }
 
     private func openManagedClaudeSession() async {
-        // Decision tree (Codex-reviewed):
-        //   1. Same-Mac + local fast path available → UDS start.
-        //      Works even when Remote Control is OFF (local consent
-        //      is independent from cloud consent).
-        //   2. Otherwise, if a remote target exists AND Remote Control
-        //      is on → Supabase start.
-        //   3. Otherwise: nothing to do (the Open button shouldn't
-        //      have been visible).
+        // Decision tree (Codex-reviewed twice):
+        //   1. Local fast path available → UDS start. The local
+        //      transport ALWAYS targets THIS Mac; `targetDevice
+        //      ForStart` (which auto-picks the most recently-online
+        //      paired Mac from Supabase) is irrelevant for local
+        //      start — and *checking it* is what regressed start
+        //      routing in the previous commit. Same-class bug as
+        //      Stop: `state.isSelfDevice(targetDeviceForStart.id)`
+        //      does strict device-id equality and silently fails
+        //      when the helper's recorded `device_id` (from
+        //      `~/.cli-pulse-helper.json`) and the macOS app's
+        //      `helper_config.deviceId` (from app-group
+        //      UserDefaults) drifted, even though the helper is
+        //      reachable + gate is on.
+        //   2. Else, if Remote Control is on AND a target exists
+        //      → Supabase start.
+        //   3. Else: nothing (Open button shouldn't have been
+        //      visible).
         let newSessionId: String?
-        if state.canStartLocalManagedSession,
-           targetDeviceForStart.map({ state.isSelfDevice($0.id) }) ?? true {
+        if state.canStartLocalManagedSession {
             // Local start path: implicitly targets THIS Mac.
-            // Codex review: do NOT set client_label to the device
-            // name (the row already renders device name as a
-            // secondary column — duplicating it produced the
-            // "CLI Pulse Helper · CLI Pulse Helper" UX wart).
-            // Use a label that describes what the session IS,
-            // not where it lives.
+            // Trust `canStartLocalManagedSession` (which already
+            // checks `selfDeviceId != nil && localHelperReachable
+            // && localControlEnabled`); don't add a redundant
+            // device-id-equality gate that re-introduces the
+            // store-drift bug.
             let label = "Local Claude session"
             newSessionId = await state.requestLocalClaudeSessionStart(
                 clientLabel: label
