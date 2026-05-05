@@ -44,10 +44,10 @@ extension AppState {
     /// True iff `deviceId` matches this Mac's paired helper. Used by
     /// `openManagedClaudeSession` and the helper-not-running banner.
     public func isSelfDevice(_ deviceId: String?) -> Bool {
-        guard let deviceId, let self_ = selfDeviceId, !self_.isEmpty else {
+        guard let deviceId, let mine = selfDeviceId, !mine.isEmpty else {
             return false
         }
-        return deviceId == self_
+        return deviceId == mine
     }
 
     /// Re-probe the helper UDS surface. Cheap (one round trip) and

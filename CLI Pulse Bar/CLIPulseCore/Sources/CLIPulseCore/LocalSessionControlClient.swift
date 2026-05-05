@@ -196,8 +196,8 @@ public final class LocalSessionControlClient: SessionControlClient {
                 guard !resumed else { return }
                 resumed = true
                 switch result {
-                case .success:        cont.resume()
-                case .failure(let e): cont.resume(throwing: e)
+                case .success:                cont.resume()
+                case .failure(let err):       cont.resume(throwing: err)
                 }
             }
             connection.stateUpdateHandler = { state in
@@ -280,8 +280,8 @@ public final class LocalSessionControlClient: SessionControlClient {
                 guard !resumed else { return }
                 resumed = true
                 switch result {
-                case .success(let d): cont.resume(returning: d)
-                case .failure(let e): cont.resume(throwing: e)
+                case .success(let payload): cont.resume(returning: payload)
+                case .failure(let err):     cont.resume(throwing: err)
                 }
             }
             conn.receive(minimumIncompleteLength: count, maximumLength: count) { data, _, _, err in
