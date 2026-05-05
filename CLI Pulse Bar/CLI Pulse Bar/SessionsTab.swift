@@ -469,28 +469,31 @@ struct SessionsTab: View {
         let pending = pendingApproval(for: session)
         let isHighRisk = pending.flatMap { RemotePermissionRisk(rawValue: $0.risk) } == .high
         let canApprove = pending != nil && !isHighRisk
-        // v0.41 UX: a managed session sits at status='pending' until
-        // the helper consumes its 'start' command. While pending, the
-        // PTY does not exist yet, so prompt input, Send, and live
-        // output tail can't do anything. Gate those affordances on
-        // the running state and relabel Stop → Cancel so the user
-        // sees an actionable control instead of an immortal queued
-        // command. v0.41's `remote_app_send_command` cancel branch
-        // makes the round-trip work without any helper.
         let isRunning = session.status.caseInsensitiveCompare("running") == .orderedSame
         let isPending = session.status.caseInsensitiveCompare("pending") == .orderedSame
-        // Capability gate (Codex review on PR #17): when this row
-        // routes through the local UDS path AND the helper says it
-        // can't accept stdin (`send_input: false`), DISABLE the
-        // prompt input rather than silently falling back to the
-        // Supabase queue. A silent fallback would let an old helper
-        // that doesn't support send_input quietly reroute typed
-        // text to the cloud, defeating both the user's "local fast
-        // path" expectation and the Codex review's posture that
-        // capabilities must be honoured.
         let routesLocally = state.shouldRouteSessionLocally(session)
         let localSendUnsupported = routesLocally && (state.localCapabilities?.sendInput == false)
         let promptDisabled = !isRunning || localSendUnsupported
+        // Codex review on PR #17 wrap-up: hide the disabled Approve
+        // button + ⌘↩ hint when the row is locally routed AND the
+        // helper's advertised capabilities don't include
+        // `approvals`. Local approvals (hook restructure +
+        // per-session capability token) are explicitly out of scope
+        // for this PR — they ship in Iter 2B from a fresh branch
+        // off main. Showing a permanently-disabled Approve button
+        // implies "the feature exists but isn't actionable here";
+        // the iter-2A surface is "the feature isn't here yet". Hide
+        // entirely on local-routed rows + replace the hint copy.
+        let approvalsAvailable: Bool = {
+            if routesLocally {
+                return state.localCapabilities?.approvals == true
+            }
+            // Remote / Supabase row: existing approval flow ships
+            // via RemoteApprovalsSheet — keep the Approve button
+            // visible regardless of pending state so the user can
+            // reach the existing surface.
+            return true
+        }()
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 TextField(
@@ -507,34 +510,28 @@ struct SessionsTab: View {
                     guard !promptDisabled else { return }
                     Task { await sendPrompt(for: session) }
                 }
-                // No `.keyboardShortcut(.return, modifiers: [])` here on
-                // purpose. SwiftUI on macOS routes a plain Return to BOTH
-                // the focused TextField (firing `.onSubmit`) AND any
-                // button that claims `.return` as its default-action
-                // shortcut, which double-sends the prompt. Enter is
-                // already handled exclusively by the TextField above.
-                // The button stays clickable for users who tab away
-                // from the field. ⌘↩ on the Approve button keeps its
-                // distinct command-modifier shortcut.
                 Button("Send") {
                     Task { await sendPrompt(for: session) }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .disabled(promptDisabled || promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button(canApprove ? "Approve pending" : (pending != nil ? "Approve (high-risk)" : "Approve")) {
-                    Task { await approveMatchingPending(for: session) }
+                if approvalsAvailable {
+                    Button(canApprove ? "Approve pending" : (pending != nil ? "Approve (high-risk)" : "Approve")) {
+                        Task { await approveMatchingPending(for: session) }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!canApprove)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .help(approveTooltip(pending: pending, isHighRisk: isHighRisk))
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(!canApprove)
-                .keyboardShortcut(.return, modifiers: .command)
-                .help(approveTooltip(pending: pending, isHighRisk: isHighRisk))
             }
             HStack(spacing: 8) {
-                Text(isPending
-                     ? "Waiting for helper to consume the start command. Cancel to remove this session."
-                     : "Enter to send · ⌘↩ to approve pending")
+                Text(commandBarHintText(
+                    isPending: isPending,
+                    approvalsAvailable: approvalsAvailable
+                ))
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                 Spacer()
@@ -749,6 +746,25 @@ struct SessionsTab: View {
             return "This local helper doesn't support send_input — update the helper to type prompts."
         }
         return "Prompt for Claude…"
+    }
+
+    /// Status-line text under the prompt input. Branches on:
+    ///   * pending: the session hasn't started yet (helper hasn't
+    ///     consumed the start command).
+    ///   * approvals available (remote rows or local helper that
+    ///     advertised `approvals: true`): show the ⌘↩ shortcut.
+    ///   * approvals NOT available (local-routed + helper hasn't
+    ///     shipped local approvals yet): replace the ⌘↩ hint with
+    ///     a clear "out-of-scope for now" sentence so the user
+    ///     understands they're not missing a button.
+    private func commandBarHintText(isPending: Bool, approvalsAvailable: Bool) -> String {
+        if isPending {
+            return "Waiting for helper to consume the start command. Cancel to remove this session."
+        }
+        if approvalsAvailable {
+            return "Enter to send · ⌘↩ to approve pending"
+        }
+        return "Enter to send · approvals arrive in the next iteration"
     }
 
     private func approveMatchingPending(for session: RemoteSession) async {
