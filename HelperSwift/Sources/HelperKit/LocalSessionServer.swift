@@ -221,7 +221,11 @@ public final class LocalSessionServer: @unchecked Sendable {
                 return
             }
             guard let payload = body else { return }   // clean EOF
-            let resp = handleFrame(payload: payload)
+            // Pass the connection fd into the dispatcher so hook-
+            // ingress methods can perform descent verification
+            // (peer pid via getsockopt requires the connected
+            // socket).
+            let resp = handleFrame(payload: payload, peerFD: fd)
             do {
                 try sendResponse(fd: fd, response: resp)
             } catch {
@@ -230,7 +234,7 @@ public final class LocalSessionServer: @unchecked Sendable {
         }
     }
 
-    private func handleFrame(payload: Data) -> WireResponse {
+    private func handleFrame(payload: Data, peerFD: Int32 = -1) -> WireResponse {
         let raw: Any
         do {
             raw = try JSONSerialization.jsonObject(with: payload, options: [])
@@ -248,10 +252,10 @@ public final class LocalSessionServer: @unchecked Sendable {
         } catch {
             return .err(id: "", code: .badRequest, message: "request decode failed")
         }
-        return dispatch(request: request)
+        return dispatch(request: request, peerFD: peerFD)
     }
 
-    private func dispatch(request: WireRequest) -> WireResponse {
+    private func dispatch(request: WireRequest, peerFD: Int32 = -1) -> WireResponse {
         guard let method = SupportedMethod(rawValue: request.method) else {
             return .err(id: request.id, code: .unknownMethod, message: "method not supported: \(request.method)")
         }
@@ -261,9 +265,7 @@ public final class LocalSessionServer: @unchecked Sendable {
             if request.authToken != nil {
                 return .err(id: request.id, code: .badRequest, message: "hook methods do not accept the app auth_token; use session_token + session_id")
             }
-            // The actual capability-token check goes to the
-            // approval registry. Iter1 stub: not implemented yet.
-            return .err(id: request.id, code: .notImplemented, message: "hook ingress lands in a later iter of the Swift port")
+            return handleHookIngress(method: method, request: request, peerFD: peerFD)
         }
         if !method.bypassesAuth {
             // App methods reject the per-session token.
@@ -450,11 +452,110 @@ public final class LocalSessionServer: @unchecked Sendable {
     }
 
     private func handleInstallClaudeHook(request: WireRequest) -> WireResponse {
-        // Iter 4 (next) wires `ClaudeSettingsInstaller` here. For
-        // now surface notImplemented so the macOS app falls back
-        // to the Copy command path during the parity-build window.
+        // Iter 5 wires `ClaudeSettingsInstaller` here. For now
+        // surface notImplemented so the macOS app falls back to
+        // the Copy command path during the parity-build window.
         return .err(id: request.id, code: .notImplemented,
-                    message: "install_claude_hook lands in iter 4 of the Swift port")
+                    message: "install_claude_hook lands in iter 5 of the Swift port")
+    }
+
+    // MARK: - iter4 hook ingress
+
+    private func handleHookIngress(
+        method: SupportedMethod,
+        request: WireRequest,
+        peerFD: Int32
+    ) -> WireResponse {
+        guard let registry = hooks.approvalRegistry else {
+            return .err(id: request.id, code: .notImplemented, message: "approval registry not configured")
+        }
+        guard let sessionId = request.sessionId, !sessionId.isEmpty else {
+            return .err(id: request.id, code: .badRequest, message: "'session_id' required for hook methods")
+        }
+        guard let sessionToken = request.sessionToken, !sessionToken.isEmpty else {
+            return .err(id: request.id, code: .badRequest, message: "'session_token' required for hook methods")
+        }
+        do {
+            try registry.authenticateHook(
+                sessionId: sessionId,
+                capabilityToken: sessionToken,
+                peerFD: peerFD < 0 ? nil : peerFD
+            )
+        } catch ApprovalRegistry.RegistryError.sessionNotFound {
+            return .err(id: request.id, code: .sessionNotFound, message: "session not found")
+        } catch ApprovalRegistry.RegistryError.capabilityInvalid {
+            return .err(id: request.id, code: .approvalCapabilityInvalid, message: "capability token mismatch")
+        } catch ApprovalRegistry.RegistryError.descentMismatch {
+            return .err(id: request.id, code: .approvalNotAllowed, message: "peer is not a descendant of the recorded Claude pid")
+        } catch {
+            return .err(id: request.id, code: .internalError, message: "authenticate_hook: \(error)")
+        }
+
+        switch method {
+        case .hookCreateApproval:
+            return handleHookCreateApproval(registry: registry, sessionId: sessionId, request: request)
+        case .hookWaitDecision:
+            return handleHookWaitDecision(registry: registry, sessionId: sessionId, request: request)
+        default:
+            return .err(id: request.id, code: .notImplemented, message: "method \(request.method) not implemented")
+        }
+    }
+
+    private func handleHookCreateApproval(
+        registry: ApprovalRegistry,
+        sessionId: String,
+        request: WireRequest
+    ) -> WireResponse {
+        let kind = (request.params["type"] as? String) ?? "PermissionRequest"
+        let title = (request.params["title"] as? String) ?? "Permission request"
+        let summary = (request.params["summary"] as? String) ?? ""
+        let toolMetadata = (request.params["tool_metadata"] as? [String: Any]) ?? [:]
+        let ttl = request.params["ttl_seconds"] as? Double
+        do {
+            let row = try registry.createPending(
+                sessionId: sessionId,
+                kind: kind,
+                title: title,
+                summary: summary,
+                toolMetadata: toolMetadata,
+                ttlSeconds: ttl
+            )
+            return .ok(id: request.id, result: row.toDictSafe())
+        } catch ApprovalRegistry.RegistryError.sessionNotFound {
+            return .err(id: request.id, code: .sessionNotFound, message: "session not found")
+        } catch ApprovalRegistry.RegistryError.approvalLimitReached {
+            return .err(id: request.id, code: .approvalLimitReached, message: "approval limit reached")
+        } catch {
+            return .err(id: request.id, code: .internalError, message: "hook_create_approval: \(error)")
+        }
+    }
+
+    private func handleHookWaitDecision(
+        registry: ApprovalRegistry,
+        sessionId: String,
+        request: WireRequest
+    ) -> WireResponse {
+        guard let approvalId = request.params["approval_id"] as? String,
+              !approvalId.isEmpty else {
+            return .err(id: request.id, code: .badRequest, message: "'approval_id' required")
+        }
+        let timeout = (request.params["timeout_s"] as? Double) ?? 60.0
+        do {
+            let resolved = try registry.waitForDecision(
+                sessionId: sessionId,
+                approvalId: approvalId,
+                timeout: timeout
+            )
+            return .ok(id: request.id, result: resolved.toDictSafe())
+        } catch ApprovalRegistry.RegistryError.approvalNotFound {
+            return .err(id: request.id, code: .approvalNotFound, message: "approval not found")
+        } catch ApprovalRegistry.RegistryError.approvalNotAllowed {
+            return .err(id: request.id, code: .approvalNotAllowed, message: "approval id does not belong to this session")
+        } catch ApprovalRegistry.RegistryError.waitTimeout {
+            return .err(id: request.id, code: .approvalExpired, message: "wait timed out before decision")
+        } catch {
+            return .err(id: request.id, code: .internalError, message: "hook_wait_decision: \(error)")
+        }
     }
 
     private func sendResponse(fd: Int32, response: WireResponse) throws {

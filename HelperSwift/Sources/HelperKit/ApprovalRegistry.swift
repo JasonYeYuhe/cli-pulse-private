@@ -32,6 +32,21 @@ public final class ApprovalRegistry: @unchecked Sendable {
     private var managedSessions: [String: ManagedSessionRecord] = [:]
     private var pendingBySession: [String: [String: PendingApproval]] = [:]
     private var approvalIdToSession: [String: String] = [:]
+    /// Per-approval condition variable. `waitForDecision` blocks on
+    /// the matching condition; `decide` / cancel paths broadcast
+    /// to wake every waiter. We index by approvalId so unrelated
+    /// approvals don't wake each other.
+    private var approvalConditions: [String: NSCondition] = [:]
+
+    /// Test seam: pluggable peer-pid + ppid resolver so unit tests
+    /// can simulate descent verification without spawning a real
+    /// Claude. Production sets these to the libproc-backed
+    /// implementations from `DescentVerification`.
+    public var peerPidResolver: ((Int32) -> Int32?)? = nil
+    public var parentPidResolver: ((Int32) -> Int32?)? = nil
+    /// Iter 4 default: descent skip is OFF in production. Tests
+    /// flip this when they don't spawn a real Claude PTY.
+    public var allowDescentSkip: Bool = false
 
     public init(broker: EventBroker? = nil, limits: Limits = Limits()) {
         self.broker = broker
@@ -108,6 +123,142 @@ public final class ApprovalRegistry: @unchecked Sendable {
         return managedSessions[sessionId]?.capabilityToken
     }
 
+    /// Verify the hook is allowed to interact on behalf of
+    /// `sessionId`. Two checks (matching the Python helper):
+    ///
+    ///   1. **Capability token** equals the one stored at register
+    ///      time. Constant-time comparison.
+    ///   2. **Descent verification** — peer pid (from
+    ///      `getsockopt(LOCAL_PEERPID)`) is in the process tree
+    ///      rooted at the recorded Claude pid. Defends against a
+    ///      leaked token from outside the Claude process.
+    ///
+    /// Either check failing throws — never falls through to
+    /// token-only without `allowDescentSkip = true` (test seam).
+    public func authenticateHook(
+        sessionId: String,
+        capabilityToken: String,
+        peerFD: Int32?
+    ) throws {
+        lock.lock()
+        guard let rec = managedSessions[sessionId] else {
+            lock.unlock()
+            throw RegistryError.sessionNotFound
+        }
+        let storedToken = rec.capabilityToken
+        let claudePid = rec.claudePid
+        lock.unlock()
+
+        if !AuthToken.compare(expected: storedToken, supplied: capabilityToken) {
+            throw RegistryError.capabilityInvalid
+        }
+        // Descent verification.
+        guard let claudePid else {
+            // No claude pid recorded yet — register-then-update
+            // race; fail closed unless explicitly skipped.
+            if allowDescentSkip { return }
+            throw RegistryError.descentMismatch
+        }
+        guard let peerFD else {
+            if allowDescentSkip { return }
+            throw RegistryError.descentMismatch
+        }
+        // Use the test-seam resolvers if set, otherwise fall back
+        // to libproc. The default lookup is via
+        // `DescentVerification`'s production resolvers.
+        let peerResolver = peerPidResolver ?? DescentVerification.peerPid(forFD:)
+        let parentResolver = parentPidResolver ?? DescentVerification.parentPid(of:)
+        guard let peerPid = peerResolver(peerFD) else {
+            if allowDescentSkip { return }
+            throw RegistryError.descentMismatch
+        }
+        if !DescentVerification.descentChainContains(
+            claudePid: Int32(claudePid),
+            peerPid: peerPid,
+            parentResolver: parentResolver
+        ) {
+            throw RegistryError.descentMismatch
+        }
+    }
+
+    /// Block the calling thread until the approval at `approvalId`
+    /// is decided / cancelled / expired, OR `timeout` elapses.
+    /// Returns the resolved row on decision; throws `waitTimeout`
+    /// on timeout, `approvalNotFound` if the id never existed,
+    /// `approvalNotAllowed` on session mismatch.
+    ///
+    /// Uses NSCondition for the wait — broadcast from the decide
+    /// / cancel paths wakes every waiter for the row.
+    public func waitForDecision(
+        sessionId: String,
+        approvalId: String,
+        timeout: TimeInterval
+    ) throws -> PendingApproval {
+        // Reach into the store under lock to fetch / create the
+        // condition variable + take an initial snapshot of the
+        // row's status.
+        lock.lock()
+        guard let bucketSessionId = approvalIdToSession[approvalId] else {
+            lock.unlock()
+            throw RegistryError.approvalNotFound
+        }
+        if bucketSessionId != sessionId {
+            lock.unlock()
+            throw RegistryError.approvalNotAllowed
+        }
+        guard let bucket = pendingBySession[sessionId],
+              let initialRow = bucket[approvalId] else {
+            lock.unlock()
+            throw RegistryError.approvalNotFound
+        }
+        if initialRow.status != .pending {
+            // Already resolved; return immediately.
+            lock.unlock()
+            return initialRow
+        }
+        var condition: NSCondition
+        if let existing = approvalConditions[approvalId] {
+            condition = existing
+        } else {
+            condition = NSCondition()
+            approvalConditions[approvalId] = condition
+        }
+        lock.unlock()
+
+        // Wait on the condition. NSCondition's `wait(until:)` is
+        // the right primitive: spurious wakeups loop back, real
+        // signals fall through to the recheck. We use a deadline
+        // rather than relative timeout so the loop is safe across
+        // wakeups.
+        let deadline = Date().addingTimeInterval(timeout)
+        condition.lock()
+        defer { condition.unlock() }
+        while true {
+            // Recheck status under the registry lock.
+            lock.lock()
+            let bucket = pendingBySession[sessionId] ?? [:]
+            if let row = bucket[approvalId], row.status != .pending {
+                lock.unlock()
+                return row
+            }
+            // Was the row removed entirely (cancel-on-stop deletes
+            // from the map after publishing)? Treat as "wait
+            // failed" — caller should fall back to a deny.
+            if bucket[approvalId] == nil {
+                lock.unlock()
+                throw RegistryError.approvalNotFound
+            }
+            lock.unlock()
+
+            let now = Date()
+            if now >= deadline { throw RegistryError.waitTimeout }
+            // condition.wait(until:) returns false on timeout.
+            if !condition.wait(until: deadline) {
+                throw RegistryError.waitTimeout
+            }
+        }
+    }
+
     // MARK: - pending approval lifecycle
 
     public enum RegistryError: Error, Equatable {
@@ -116,6 +267,17 @@ public final class ApprovalRegistry: @unchecked Sendable {
         case approvalNotFound
         case approvalAlreadyResolved(currentStatus: String)
         case approvalNotAllowed
+        /// Hook auth: capability token doesn't match the recorded
+        /// one for the session. Maps to `approval_capability_invalid`
+        /// on the wire.
+        case capabilityInvalid
+        /// Hook auth: descent verification refused — peer is not
+        /// in the recorded Claude pid's process tree.
+        case descentMismatch
+        /// Wait timed out without a decision. Returned by
+        /// `waitForDecision` so the hook subprocess can fall back
+        /// to its local prompt.
+        case waitTimeout
     }
 
     /// Create a new pending approval for `sessionId`. Caller is
@@ -216,7 +378,17 @@ public final class ApprovalRegistry: @unchecked Sendable {
         bucket[approvalId] = row
         pendingBySession[sessionId] = bucket
         let resolved = row
+        let waitCondition = approvalConditions[approvalId]
         lock.unlock()
+
+        // Wake any blocked waitForDecision callers. Broadcast so
+        // every waiter (the design allows multiple) sees the
+        // resolution under their own condition.lock().
+        if let waitCondition {
+            waitCondition.lock()
+            waitCondition.broadcast()
+            waitCondition.unlock()
+        }
 
         broker?.publish([
             "event": "approval_resolved",
@@ -290,6 +462,7 @@ public final class ApprovalRegistry: @unchecked Sendable {
         var cancelled = 0
         let now = Date().timeIntervalSince1970
         var resolvedRows: [PendingApproval] = []
+        var conditionsToWake: [NSCondition] = []
         for (aid, row) in bucket {
             if row.status != .pending { continue }
             var updated = row
@@ -298,16 +471,25 @@ public final class ApprovalRegistry: @unchecked Sendable {
             updated.decidedAtWall = now
             updated.decidedComment = reason
             approvalIdToSession.removeValue(forKey: aid)
+            // Capture condition so we can wake blocked
+            // waitForDecision callers after dropping lock.
+            if let cv = approvalConditions[aid] {
+                conditionsToWake.append(cv)
+            }
             resolvedRows.append(updated)
             cancelled += 1
         }
-        // Drop lock before publishing — but cancelSessionLocked is
-        // called from inside the lock. Defer the publish to the
-        // caller in iter 3 when wait-for-decision needs the
-        // notification timing precise. iter 2: best-effort emit
-        // from inside the lock — broker.publish takes its own
-        // lock, but the broker's lock is independent of this
-        // registry's lock so there's no nested-lock hazard.
+        // Wake any blocked waiters. Each broadcast is a no-op for
+        // unrelated waiters (their condition.wait(until:) loop
+        // re-checks status and goes back to sleep).
+        for cv in conditionsToWake {
+            cv.lock()
+            cv.broadcast()
+            cv.unlock()
+        }
+        // broker.publish takes its own lock, but the broker's
+        // lock is independent of this registry's lock so there's
+        // no nested-lock hazard.
         for row in resolvedRows {
             broker?.publish([
                 "event": "approval_resolved",
