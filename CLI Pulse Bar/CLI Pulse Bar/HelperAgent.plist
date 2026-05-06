@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LaunchAgent plist for the embedded CLI Pulse helper daemon.
+
+  Phase 4 helper-bundling work: this template ships inside the .app
+  bundle at `Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist`
+  and is registered with launchd via `SMAppService.agent(plistName:)`
+  on first app launch.
+
+  The agent runs OUTSIDE the macOS app sandbox (LaunchAgents under
+  user-level launchd are not sandboxed by default), which is the
+  whole point of this approach — the helper needs to:
+
+    * spawn `claude` PTY children (sandboxed apps can't do that
+      with full functionality preserved)
+    * read `~/.claude/settings.json` (outside group container)
+    * walk the user's git project directories for the activity
+      collector
+
+  Communication with the sandboxed app stays via the existing app-
+  group container UDS socket at
+  `~/Library/Group Containers/group.yyh.CLI-Pulse/clipulse-helper.sock`,
+  which is a regular filesystem path both processes can access.
+
+  Bundle identifier scheme:
+    * The agent's Label MUST match the plist filename minus `.plist`,
+      so `yyh.CLI-Pulse.helper.plist` → label `yyh.CLI-Pulse.helper`.
+    * SMAppService.agent(plistName:) resolves the plist relative to
+      the calling app's Contents/Library/LaunchAgents/ — no absolute
+      path needed.
+
+  Supabase credentials: the EnvironmentVariables block below is a
+  template; the macOS app's build phase ("Copy Files: LaunchAgents")
+  rewrites the placeholder strings via `plutil -replace …` at build
+  time, baking in the same SUPABASE_URL / SUPABASE_ANON_KEY values
+  from the app's Info.plist. The anon key is already shipped in
+  Info.plist (Bundle.main.object(forInfoDictionaryKey: "SUPABASE_…"))
+  so no new secret leaks here.
+
+  Lifecycle:
+    * `RunAtLoad`: false — we don't auto-start on machine boot;
+      registration happens lazily when the user opens the macOS app
+      and the Sessions feature actually needs the helper.
+    * `KeepAlive`: true — if the helper crashes, launchd restarts it
+      so the UDS socket comes back and the app's poll loop reconnects.
+    * `ProcessType`: Background — lower CPU/memory priority; we're a
+      polling daemon, not a foreground UI process.
+
+  Logs land at the StandardOut/StandardErrorPath below; the macOS
+  app's diagnostics surface (Settings → Helper status) tails the
+  last N lines for user-visible troubleshooting.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>yyh.CLI-Pulse.helper</string>
+
+    <!--
+      Path is rewritten at install time by `HelperLifecycleManager.swift`
+      to point at `${HOST_APP_BUNDLE}/Contents/Helpers/cli_pulse_helper`.
+      Template uses a placeholder so this file remains stable across
+      Xcode build outputs (different DerivedData paths).
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>__CLI_PULSE_HELPER_BIN__</string>
+        <string>daemon</string>
+        <string>--interval</string>
+        <string>120</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CLI_PULSE_SUPABASE_URL</key>
+        <string>__CLI_PULSE_SUPABASE_URL__</string>
+        <key>CLI_PULSE_SUPABASE_ANON_KEY</key>
+        <string>__CLI_PULSE_SUPABASE_ANON_KEY__</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!--
+      Throttle restart loop on repeated crash. Default 10s is fine
+      for a healthy helper but pathological crash loops would log-
+      spam without this. 30s gives the user enough time to see the
+      Sessions tab go red before the next attempt.
+    -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <!--
+      Logs to the user's Library/Logs (visible in Console.app under
+      "user reports"). Path uses $HOME so launchd resolves at start
+      time, not at plist-write time, so user re-installs work
+      regardless of the original install path.
+    -->
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/CLI Pulse/helper.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/CLI Pulse/helper.err.log</string>
+</dict>
+</plist>
