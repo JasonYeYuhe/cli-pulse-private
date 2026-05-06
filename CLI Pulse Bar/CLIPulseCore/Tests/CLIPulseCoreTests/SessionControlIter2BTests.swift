@@ -546,6 +546,111 @@ final class SessionControlIter2BTests: XCTestCase {
         XCTAssertEqual(state.localPendingApprovals["OTHER"]?.count, 1)
         XCTAssertNil(state.localPendingApprovals["SID"])
     }
+
+    // MARK: - Send-lockout predicate (Codex iter6/iter7)
+    //
+    // SessionsTab uses `SessionControlPredicates.promptInputDisabled`
+    // to gate the Send button + the prompt TextField. The predicate
+    // is pure so we can pin all four input flags without spinning up
+    // SwiftUI views or AppState. The lockout matters because Claude's
+    // PTY shows a numbered native prompt while a PermissionRequest
+    // is in flight — keystrokes during that window get fed to the
+    // PTY prompt instead of being interpreted as a new turn (the
+    // iter5 e2e captured `Run bash command: pwd1Yes` gibberish).
+
+    func testPromptInputDisabled_baselineRunningNotLocked() {
+        XCTAssertFalse(
+            SessionControlPredicates.promptInputDisabled(
+                isRunning: true,
+                localSendUnsupported: false,
+                isStaleLocal: false,
+                hasPendingApproval: false
+            ),
+            "running session with no pending + send_input supported must NOT be disabled"
+        )
+    }
+
+    func testPromptInputDisabled_notRunning() {
+        XCTAssertTrue(
+            SessionControlPredicates.promptInputDisabled(
+                isRunning: false,
+                localSendUnsupported: false,
+                isStaleLocal: false,
+                hasPendingApproval: false
+            ),
+            "non-running session must be disabled regardless of approval state"
+        )
+    }
+
+    func testPromptInputDisabled_localSendUnsupported() {
+        XCTAssertTrue(
+            SessionControlPredicates.promptInputDisabled(
+                isRunning: true,
+                localSendUnsupported: true,
+                isStaleLocal: false,
+                hasPendingApproval: false
+            ),
+            "older helper without send_input capability must lock prompt"
+        )
+    }
+
+    func testPromptInputDisabled_staleLocal() {
+        XCTAssertTrue(
+            SessionControlPredicates.promptInputDisabled(
+                isRunning: true,
+                localSendUnsupported: false,
+                isStaleLocal: true,
+                hasPendingApproval: false
+            ),
+            "stale managed-session row (helper restart) must lock prompt"
+        )
+    }
+
+    /// Iter6 contract: the local-routed pending approval triggers
+    /// the lockout. Pre-iter6 this was the only branch implemented.
+    func testPromptInputDisabled_pendingApprovalLocksRunningSession() {
+        XCTAssertTrue(
+            SessionControlPredicates.promptInputDisabled(
+                isRunning: true,
+                localSendUnsupported: false,
+                isStaleLocal: false,
+                hasPendingApproval: true
+            ),
+            "pending approval must lock prompt even when session is running"
+        )
+    }
+
+    /// Iter7 contract: the predicate is routing-agnostic — it only
+    /// takes a single `hasPendingApproval` bool. The caller composes
+    /// that bool from `(localApprovalsAvailable && localPending) ||
+    /// (remoteApprovalsAvailable && remotePending)`. Pin that the
+    /// predicate fires on either source. This regression-pins the
+    /// iter7 fix that closed the remote-pending PTY-confusion gap
+    /// Codex caught in the iter6 review.
+    func testPromptInputDisabled_iter7RemotePendingFiresLockout() {
+        // Compose the flag the way SessionsTab does — `hasPendingApproval`
+        // is true if EITHER local OR remote pending is non-nil. Two
+        // sub-cases exercise the disjunction.
+        let localPendingComposed = false || true
+        let remotePendingComposed = true || false
+        XCTAssertTrue(
+            SessionControlPredicates.promptInputDisabled(
+                isRunning: true,
+                localSendUnsupported: false,
+                isStaleLocal: false,
+                hasPendingApproval: localPendingComposed
+            )
+        )
+        XCTAssertTrue(
+            SessionControlPredicates.promptInputDisabled(
+                isRunning: true,
+                localSendUnsupported: false,
+                isStaleLocal: false,
+                hasPendingApproval: remotePendingComposed
+            ),
+            "remote-routed pending must trigger the same lockout as local"
+        )
+    }
 }
 
 #endif

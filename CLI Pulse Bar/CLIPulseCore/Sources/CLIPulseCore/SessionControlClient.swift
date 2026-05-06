@@ -349,3 +349,38 @@ public enum SessionControlErrorMapping {
         }
     }
 }
+
+/// Pure predicates that drive Sessions-tab gating on the macOS app.
+/// Extracted into the core module so they can be tested without
+/// instantiating SwiftUI views or AppState.
+public enum SessionControlPredicates {
+    /// Codex iter6/iter7 send-lockout. While Claude is parked waiting
+    /// on a PermissionRequest decision (either through the local fast
+    /// path or the remote Supabase routing), its PTY shows the native
+    /// `1. Yes / 2. Yes, allow / 3. No` numbered prompt. Any keystroke
+    /// the user sends during that wait window gets fed to THAT prompt
+    /// instead of being interpreted as a new turn — the iter5 e2e
+    /// captured this as `Run bash command: pwd1Yes`-style gibberish.
+    /// SessionsTab uses this predicate to disable Send + the prompt
+    /// field until the user resolves the pending approval (Approve
+    /// / Reject), regardless of whether the routing is local or
+    /// remote.
+    ///
+    /// Pure function — no SwiftUI state, no AppState reference. The
+    /// caller composes the four flags from `RemoteSession.status`,
+    /// `state.localCapabilities`, `state.isStaleLocalSession(...)`,
+    /// and the `local pending != nil || remote pending != nil` view
+    /// of the approval registries.
+    public static func promptInputDisabled(
+        isRunning: Bool,
+        localSendUnsupported: Bool,
+        isStaleLocal: Bool,
+        hasPendingApproval: Bool
+    ) -> Bool {
+        if !isRunning { return true }
+        if localSendUnsupported { return true }
+        if isStaleLocal { return true }
+        if hasPendingApproval { return true }
+        return false
+    }
+}
