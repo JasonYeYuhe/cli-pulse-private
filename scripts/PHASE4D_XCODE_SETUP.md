@@ -1,11 +1,37 @@
 # Phase 4D Xcode setup — swapping PyInstaller for the Swift helper
 
 Phase 4 (PR #19) embedded the Python helper via PyInstaller (12 MB
-binary). Phase 4D ships a native Swift port (~480 KB binary, 30x
+binary). Phase 4D ships a native Swift port (~552 KB binary, 22x
 smaller, ~13x faster cold start) using the existing LaunchAgent
 architecture from PR #19. The macOS app's Sandbox / Group Container
 contracts don't change; the only difference is the binary inside
 `Contents/Helpers/`.
+
+**P1.5 update (Codex review iter8)**: instead of editing Xcode
+build phases by hand, the canonical build path is now
+`scripts/build_signed_app.sh`. A clean checkout + that script
+produces a fully-signed .app with the helper at
+`Contents/Helpers/cli_pulse_helper` and the LaunchAgent plist at
+`Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist`. CI
+runs the same script — green CI proves the embedded helper is
+present + signed.
+
+```
+$ ./scripts/build_signed_app.sh Debug
+==> [1/7] Building Swift helper (release) ...
+==> [2/7] Building CLI Pulse Bar.app (Debug) ...
+==> [3/7] Embedding helper at Contents/Helpers/ ...
+==> [4/7] Embedding LaunchAgent plist ...
+==> [5/7] Resolving signing identity ...
+==> [6/7] Codesigning helper + re-signing .app ...
+==> [7/7] Verifying bundle ...
+    OK: ...CLI Pulse Bar.app is signed + has helper + has plist
+```
+
+For `Release` / notarisation, set `CODE_SIGN_IDENTITY` env to
+your Developer ID Application identity before invoking the
+script. The script handles `--deep --options runtime` so the
+helper inherits Hardened Runtime.
 
 ## What changed vs PR #19
 
@@ -117,27 +143,50 @@ need to change at all between the two backends.
 
 ## Cloud sync (heartbeat / sync subcommands) deferral
 
-Phase 4D iter 1-6 covers the **local UDS surface only** — every
-method the macOS app's `LocalSessionControlClient` calls (hello,
-ping, get_local_control_status, set_local_control_enabled,
-start_session, list_sessions, stop_session, send_input,
-subscribe_events, hook_create_approval, hook_wait_decision,
-get_pending_approvals, approve_action, install_claude_hook).
+Phase 4D iter 1-8 covers the **local UDS surface only** + the
+Claude hook CLI adapter — every method the macOS app's
+`LocalSessionControlClient` calls AND the
+`remote-approval-hook --provider claude` subcommand Claude itself
+spawns:
+
+  hello, ping, get_local_control_status, set_local_control_enabled,
+  start_session, list_sessions, stop_session, send_input,
+  subscribe_events, hook_create_approval, hook_wait_decision,
+  get_pending_approvals, approve_action, install_claude_hook,
+  remote-approval-hook --provider claude (CLI subcommand)
 
 The cloud-side subcommands (`pair`, `heartbeat`, `sync`,
-`run-demo`, `inspect`, `remote-approval-hook`,
-`remote-approvals`) still live in the Python helper at
-`helper/cli_pulse_helper.py`. Two ways to ship v1.13:
+`run-demo`, `inspect`) still live in the Python helper at
+`helper/cli_pulse_helper.py`.
 
-  - **Recommended for v1.13**: ship Swift helper as the
-    LaunchAgent (handles UDS — the user-facing Sessions feature),
-    AND keep the Python helper as an optional sidecar the user
-    runs from Terminal for cloud sync. v1.14 finishes the port.
-  - **Aggressive**: revert this iteration and ship the
-    PyInstaller-frozen Python helper from PR #19 for v1.13.
-    Wait until the Swift port covers cloud sync (Phase 4D iter
-    7-10 — 1-2 weeks of additional work) before ship.
+### v1.13 release modes (mutually exclusive)
 
-The PR will recommend the first option in its description so
-v1.13 ships on time + benefits from the lighter Swift binary +
-cleaner native macOS integration.
+**Pick exactly one.** The two helpers MUST NOT coexist — both
+contend for the same `~/Library/Group Containers/group.yyh.CLI-Pulse/`
+auth token + `clipulse-helper.sock`, and a `set_local_control_enabled`
+flip would land on whichever helper happened to win the race. P1.3
+in PR #20's Codex review pinned this as a release blocker.
+
+**Option A — Swift-only v1.13 (this PR, recommended)**:
+   * Ship the Swift LaunchAgent.
+   * Drop cloud-side device tracking (`heartbeat`, `sync`,
+     `system_collector`) for ONE release. The macOS app reads
+     heartbeat data via direct Supabase queries
+     (`HelperAPIClient`) so the Overview tab keeps working.
+   * v1.14 finishes the Swift port (cloud sync + system
+     collector); the Python helper retires after that.
+
+**Option B — Python-only v1.13 (PR #19's PyInstaller path)**:
+   * Ship the Python LaunchAgent embedded via PyInstaller (12 MB).
+   * The Swift port (this PR) continues as a non-blocking spike
+     for v1.14.
+   * Notarisation needs `cs.allow-jit` etc. (PyInstaller
+     bootloader); Option A doesn't.
+
+### What about a sidecar?
+
+The "Swift LaunchAgent + Python sidecar for cloud sync" model the
+earlier PR description proposed has been **retracted**. Both
+helpers would race the auth token + UDS socket, leaving the
+Sessions toggle ambiguous and the structured-approval flow
+nondeterministic. There is no valid coexistence story; pick one.
