@@ -562,11 +562,40 @@ class RemoteAgentManager:
             elif kind == "prompt":
                 ok, err = self._handle_prompt(session_id, payload)
             elif kind == "stop":
-                self._stop_session_impl(session_id)
-                ok, err = True, ""
+                # Iter 2B fix (Codex review on PR #18 manual test):
+                # previously the dispatcher called the impl
+                # unconditionally and stamped (True, "") regardless
+                # of whether the session was actually owned by this
+                # helper process. After a helper restart the macOS
+                # app still saw the old session in remoteSessions
+                # (its Supabase row outlived the previous helper
+                # process), the row's device_id matched, and the
+                # remote-queue path repeatedly stopped a session
+                # that didn't exist — with `complete_command` rows
+                # marked `delivered`, telling the app the no-op
+                # succeeded and obscuring the stale-row bug. Now
+                # the dispatcher checks ownership and reports
+                # `failed` when the helper has no PTY for the
+                # supplied session_id. The matching client-side fix
+                # in `shouldRouteSessionLocally` no longer routes
+                # these stale rows to the local UDS path either, so
+                # a stale stop falls through to here and is
+                # honestly surfaced as a failure.
+                if session_id not in self._sessions:
+                    ok, err = False, "session not running on this helper"
+                else:
+                    self._stop_session_impl(session_id)
+                    ok, err = True, ""
             elif kind == "interrupt":
-                self._interrupt_session_impl(session_id)
-                ok, err = True, ""
+                # Same fail-closed posture as stop above. An
+                # interrupt for a session this helper doesn't own
+                # is a user-visible no-op; reporting it as
+                # `delivered` would mask the stale row.
+                if session_id not in self._sessions:
+                    ok, err = False, "session not running on this helper"
+                else:
+                    self._interrupt_session_impl(session_id)
+                    ok, err = True, ""
             else:
                 ok, err = False, f"unknown command kind: {kind!r}"
         except Exception as exc:

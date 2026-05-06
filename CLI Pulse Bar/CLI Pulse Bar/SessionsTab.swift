@@ -892,9 +892,17 @@ struct SessionsTab: View {
             return "Waiting for helper to consume the start command. Cancel to remove this session."
         }
         if localApprovalsAvailable {
+            // Distinguish "no structured pending" from a generic
+            // "no approval" so the user understands that PTY chat
+            // text like `1. Yes, continue` is not a permission
+            // request — Approve / Reject only render for real
+            // Claude PermissionRequest hook events. PR #18 explicit
+            // invariant: never parse PTY text to derive an
+            // approval gate (would re-open the security hole this
+            // iteration closed).
             return hasLocalPending
                 ? "Enter to send · ⌘↩ to approve pending"
-                : "Enter to send · no pending approval"
+                : "Enter to send · no structured permission request pending"
         }
         if routesLocally {
             // Local-routed but helper doesn't advertise the

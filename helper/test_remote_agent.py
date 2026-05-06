@@ -302,6 +302,70 @@ def test_dispatch_prompt_for_unknown_session_fails():
     assert "not running" in (completes[0]["p_error"] or "")
 
 
+def test_dispatch_stop_for_unknown_session_completes_failed():
+    """PR #18 manual-test surface: previously remote-queue stop on
+    a session this helper doesn't own returned (True, "") and
+    complete_command was marked `delivered`. The macOS app then saw
+    the no-op as a successful stop, the stale Supabase row stayed
+    running, and the user couldn't tell the operation hadn't
+    happened. Now the dispatcher checks ownership before invoking
+    `_stop_session_impl`.
+    """
+    cmd_id = str(uuid.uuid4())
+
+    def pull_commands(_params):
+        return [{
+            "id": cmd_id,
+            "session_id": str(uuid.uuid4()),
+            "kind": "stop",
+            "payload": "",
+        }]
+
+    mgr, transport, log = _make_manager({
+        "remote_helper_pull_commands": pull_commands,
+    })
+    mgr.tick()
+
+    # Transport.terminate / .close must NOT have been invoked — the
+    # session was never owned, so the old code path's silent no-op
+    # would have visited terminate(handle=None) and crashed at the
+    # type check. Check the explicit fail-closed signal instead.
+    terminates = [c for c in transport.calls if c[0] == "terminate"]
+    assert terminates == [], "stop on unknown session must not signal a transport"
+    completes = [p for n, p in log if n == "remote_helper_complete_command"]
+    assert len(completes) == 1
+    assert completes[0]["p_status"] == "failed", (
+        "stop on unknown session must mark `failed` — `delivered` would "
+        "let the macOS app think a stale row was successfully stopped"
+    )
+    assert "not running" in (completes[0]["p_error"] or "")
+
+
+def test_dispatch_interrupt_for_unknown_session_completes_failed():
+    """Same fail-closed posture as stop above. Interrupt for a
+    session this helper doesn't own is a no-op; reporting it as
+    `delivered` would mask stale Supabase rows the same way.
+    """
+    cmd_id = str(uuid.uuid4())
+
+    def pull_commands(_params):
+        return [{
+            "id": cmd_id,
+            "session_id": str(uuid.uuid4()),
+            "kind": "interrupt",
+            "payload": "",
+        }]
+
+    mgr, transport, log = _make_manager({
+        "remote_helper_pull_commands": pull_commands,
+    })
+    mgr.tick()
+
+    completes = [p for n, p in log if n == "remote_helper_complete_command"]
+    assert completes and completes[0]["p_status"] == "failed"
+    assert "not running" in (completes[0]["p_error"] or "")
+
+
 def test_dispatch_unknown_kind_marks_failed():
     cmd_id = str(uuid.uuid4())
 

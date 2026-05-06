@@ -132,6 +132,13 @@ extension AppState {
                 let rows = try await client.listSessions()
                 self.localManagedSessions = rows.filter { $0.source == .managed }
                 self.localDetectedSessions = rows.filter { $0.source == .detected }
+                // After updating the authoritative ownership list,
+                // reconcile any per-session UI / streaming state for
+                // ids the current helper no longer owns. Without
+                // this step a helper restart leaves zombie subs +
+                // pending-approval polls hammering get_pending_
+                // approvals(session=stale) every refresh tick.
+                reconcileLocalStaleSessionState()
             } catch let err as SessionControlError where err == .localControlOff {
                 // Race between the gate hydration and a flip — leave
                 // the snapshots as-is for the next tick.
@@ -144,6 +151,40 @@ extension AppState {
         } else {
             self.localManagedSessions = []
             self.localDetectedSessions = []
+            // Gate flipped off (or it was never on): drop every per-
+            // session local stream + pending approval. Same
+            // reconciliation reasoning as above; the difference is
+            // the trigger.
+            reconcileLocalStaleSessionState()
+        }
+    }
+
+    /// Cancel subscriptions, drop pending approval rows, and clear
+    /// preview buffers for any session id no longer in
+    /// `localManagedSessions`. Called after each
+    /// `refreshLocalSessionControlState` updates the authoritative
+    /// list. Idempotent + cheap when nothing's stale.
+    ///
+    /// Public for XCTest — the unit tests for the helper-restart
+    /// scenario need to drive this directly without standing up a
+    /// real UDS server.
+    @MainActor
+    public func reconcileLocalStaleSessionState() {
+        let owned: Set<String> = Set(localManagedSessions.map(\.id))
+
+        // Cancel + remove subscriptions for stale ids.
+        for sid in localEventTasks.keys where !owned.contains(sid) {
+            unsubscribeFromLocalEvents(sessionId: sid)
+        }
+        // Drop pending approvals for stale ids.
+        let pendingKeys = localPendingApprovals.keys
+        for sid in pendingKeys where !owned.contains(sid) {
+            localPendingApprovals.removeValue(forKey: sid)
+        }
+        // Drop output preview for stale ids.
+        let previewKeys = localOutputPreview.keys
+        for sid in previewKeys where !owned.contains(sid) {
+            localOutputPreview.removeValue(forKey: sid)
         }
     }
 
@@ -196,33 +237,51 @@ extension AppState {
     /// transport-badge decisions, not `shouldUseLocalSession
     /// Control(forDeviceId:)`.**
     ///
-    /// Why a second predicate: Codex review on PR #17 manual
-    /// verification caught a stop-routing regression. After the
-    /// helper's `register_session` Supabase RPC commits, the row in
-    /// `remoteSessions` carries the helper's recorded `device_id`
-    /// (from `~/.cli-pulse-helper.json`). The macOS app's
-    /// `selfDeviceId` reads from the app-group UserDefaults
-    /// `helper_config` key. If those two stores ever drift (Python
-    /// `pair` ran separately from the macOS pairing flow, or one
-    /// was repaired without the other), the id-equality check
-    /// silently fails → stop falls back to Supabase even for
-    /// helper-owned sessions.
+    /// Routing rule: **strict ownership-by-id**. If `session.id`
+    /// appears in `localManagedSessions` (the authoritative list
+    /// the helper returned on the most recent `list_sessions` RPC,
+    /// optimistically supplemented by `requestLocalClaudeSessionStart`
+    /// at start time so the fresh-start window is covered), the
+    /// helper owns its PTY and the local fast path is the right
+    /// transport.
     ///
-    /// The robust signal is **ownership by id**: if the session
-    /// appears in `localManagedSessions`, the helper owns its PTY
-    /// regardless of what `device_id` the Supabase row records.
-    /// Use this predicate everywhere the UI dispatches an action
-    /// against a known row.
+    /// History — why we no longer fall back on `device_id` match:
+    ///
+    ///   - PR #17 introduced `device_id` fallback to cover brief
+    ///     fresh-start windows where the new session was registered
+    ///     in Supabase but the helper's `list_sessions` hadn't been
+    ///     re-polled yet.
+    ///
+    ///   - PR #18 manual test (helper restart scenario) exposed the
+    ///     downside: a Supabase row with `device_id == selfDeviceId`
+    ///     can outlive the helper that spawned it. After helper
+    ///     restart the new helper has no PTY for that session, so
+    ///     `localManagedSessions` does NOT contain it, but the
+    ///     Supabase row is still status='running' with the original
+    ///     device_id. The fallback then made the app:
+    ///       * subscribe to events for an id the helper doesn't own
+    ///       * repeatedly poll get_pending_approvals for that id
+    ///       * dispatch local Stop calls that 404 silently
+    ///     and the helper's remote-queue Stop dispatcher likewise
+    ///     reported `delivered` for a no-op (separate fix).
+    ///
+    ///   - Iter 2B+ replaces the device_id fallback with optimistic
+    ///     local-list supplementation: `requestLocalClaudeSessionStart`
+    ///     appends the freshly-returned session id to
+    ///     `localManagedSessions` BEFORE returning. The next
+    ///     `refreshLocalSessionControlState` tick replaces the
+    ///     synthesised row with the helper's authoritative entry.
+    ///     Either way the fresh-start window is covered without the
+    ///     stale-row hazard.
+    ///
+    /// `device_id` drift between `~/.cli-pulse-helper.json` and the
+    /// app-group `helper_config` (the original PR #17 motivation for
+    /// the fallback) is now a non-issue precisely because we no
+    /// longer rely on `device_id` to make routing decisions for
+    /// helper-owned actions.
     public func shouldRouteSessionLocally(_ session: RemoteSession) -> Bool {
         guard localHelperReachable, localControlEnabled else { return false }
-        // Path 1: helper definitively owns this id.
-        if localManagedSessions.contains(where: { $0.id == session.id }) {
-            return true
-        }
-        // Path 2: device_id match — covers brief windows where the
-        // local list hasn't caught up yet (still important for
-        // freshly-started rows).
-        return isSelfDevice(session.device_id)
+        return localManagedSessions.contains(where: { $0.id == session.id })
     }
 
     /// **The fix for the integration gap Codex flagged on PR #17**:
@@ -296,6 +355,30 @@ extension AppState {
                 cwdBasename: nil,
                 cwdHmac: nil
             )
+            // Optimistically reflect the new session in our local
+            // managed list so `shouldRouteSessionLocally(_:)` and
+            // every other ownership-by-id consumer treats it as
+            // helper-owned during the fresh-start window — the
+            // interval between this RPC's reply and the next
+            // `refreshLocalSessionControlState` tick. The next
+            // refresh replaces this synthesised row with the
+            // helper's authoritative entry.
+            //
+            // Pre-iter2b we relied on `device_id` matching to cover
+            // this window, but that fallback also let stale Supabase
+            // rows from a previous helper process masquerade as
+            // locally controllable after a helper restart. Optimistic
+            // append closes the gap without the stale-row hazard.
+            if !localManagedSessions.contains(where: { $0.id == result.sessionId }) {
+                localManagedSessions.append(.init(
+                    id: result.sessionId,
+                    provider: "claude",
+                    clientLabel: clientLabel,
+                    status: "running",
+                    controllable: true,
+                    source: .managed
+                ))
+            }
             // Refresh the remote list so iOS / Watch viewers see the
             // session as soon as the helper's register_session RPC
             // lands. Best effort — failure here doesn't change the
@@ -384,6 +467,19 @@ extension AppState {
     public func subscribeToLocalEvents(sessionId: String) {
         guard localHelperReachable, localControlEnabled else { return }
         guard localCapabilities?.subscribeEvents == true else { return }
+        // Refuse to open a stream for a session id the helper
+        // doesn't currently own. Without this guard the SessionsTab
+        // polling loop kept resubscribing to ids that survived a
+        // helper restart (PR #18 manual test): the helper has no
+        // events to publish for those ids, so the connection just
+        // sits idle hammering nothing useful. The reverse — a
+        // freshly-started session whose id is in localManagedSessions
+        // via the optimistic append in
+        // `requestLocalClaudeSessionStart` — passes this gate
+        // immediately, so the fresh-start path is unaffected.
+        guard localManagedSessions.contains(where: { $0.id == sessionId }) else {
+            return
+        }
         if localEventTasks[sessionId] != nil { return }
         let client = LocalSessionControlClient()
         let task = Task { [weak self, sessionId] in
@@ -513,6 +609,17 @@ extension AppState {
         decision: ApprovalDecision,
         comment: String? = nil
     ) async -> Bool {
+        // Refuse to dispatch decisions on sessions the helper
+        // doesn't own. The button shouldn't even render in this
+        // state (the SessionsTab gate is `localPendingApprovals
+        // [session.id]` which is also cleared by
+        // `reconcileLocalStaleSessionState`), but defence in depth:
+        // even if the UI somehow plumbed a stale id in, we don't
+        // surface it as a typed error from the helper.
+        guard localManagedSessions.contains(where: { $0.id == sessionId }) else {
+            self.localHelperError = "approveLocalAction: session not owned by current helper"
+            return false
+        }
         let client = LocalSessionControlClient()
         do {
             try await client.approveAction(
@@ -553,6 +660,23 @@ extension AppState {
     public func refreshLocalPendingApprovals(sessionId: String? = nil) async {
         guard localHelperReachable, localControlEnabled else { return }
         guard localCapabilities?.approvals == true else { return }
+        // Per-session refresh: skip if the helper doesn't own this
+        // id. Without this guard a stale Supabase row from before a
+        // helper restart kept the polling loop calling
+        // `get_pending_approvals(session=stale)` every tick, which
+        // showed up clearly in the helper log on Jason's manual
+        // test. A `nil` (global) snapshot is always fine — it
+        // returns the full pending-by-session map and the caller
+        // decides which buckets to display.
+        if let sessionId,
+           !localManagedSessions.contains(where: { $0.id == sessionId }) {
+            // Ensure no stale per-session bucket is left behind for
+            // an id the helper no longer owns. Same reconciliation
+            // signal `reconcileLocalStaleSessionState` does on bulk
+            // updates, but applied here for single-id polls too.
+            localPendingApprovals.removeValue(forKey: sessionId)
+            return
+        }
         let client = LocalSessionControlClient()
         do {
             let pending = try await client.getPendingApprovals(sessionId: sessionId)
