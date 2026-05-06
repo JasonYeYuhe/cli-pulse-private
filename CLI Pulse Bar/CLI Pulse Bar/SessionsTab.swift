@@ -560,13 +560,6 @@ struct SessionsTab: View {
         let routesLocally = state.shouldRouteSessionLocally(session)
         let isStaleLocal = state.isStaleLocalSession(session)
         let localSendUnsupported = routesLocally && (state.localCapabilities?.sendInput == false)
-        // PR #18 follow-up: stale same-Mac rows (helper restart) have
-        // no PTY in the current helper. Send / Stop / Approve all
-        // have to fail closed against this id. Disable inputs in the
-        // expanded bar so the user gets a passive "this row is
-        // orphaned" UX rather than clicking buttons that no-op.
-        let promptDisabled = !isRunning || localSendUnsupported || isStaleLocal
-        let stopDisabled = isStaleLocal
         // Iter 2B: approval-button visibility per row.
         //
         //   routesLocally + helper supports approvals + structured
@@ -585,12 +578,33 @@ struct SessionsTab: View {
         let localApprovalsAvailable = routesLocally
             && state.localCapabilities?.approvals == true
         let remoteApprovalsAvailable = !routesLocally
+        // Codex iter6 finding: while a structured local approval is
+        // in flight, sending more input would land mid-PTY-state
+        // and turn into the "1Yes" gibberish Codex caught in the
+        // e2e (Claude is showing its native `1. Yes / 2. Yes,
+        // allow / 3. No` prompt while the hook is parked waiting
+        // on our decision; user-typed chars get fed to that
+        // prompt instead of being interpreted as a new turn).
+        // Lock Send + the prompt field until the user resolves the
+        // pending approval. ⌘↩ binding on Approve still works.
+        let hasLocalPendingApproval = localApprovalsAvailable && localPending != nil
+        // PR #18 follow-up: stale same-Mac rows (helper restart) have
+        // no PTY in the current helper. Send / Stop / Approve all
+        // have to fail closed against this id. Disable inputs in the
+        // expanded bar so the user gets a passive "this row is
+        // orphaned" UX rather than clicking buttons that no-op.
+        let promptDisabled = !isRunning
+            || localSendUnsupported
+            || isStaleLocal
+            || hasLocalPendingApproval
+        let stopDisabled = isStaleLocal
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 TextField(
                     promptPlaceholder(
                         isRunning: isRunning,
-                        localSendUnsupported: localSendUnsupported
+                        localSendUnsupported: localSendUnsupported,
+                        hasLocalPendingApproval: hasLocalPendingApproval
                     ),
                     text: $promptText
                 )
@@ -892,10 +906,22 @@ struct SessionsTab: View {
         if ok { promptText = "" }
     }
 
-    private func promptPlaceholder(isRunning: Bool, localSendUnsupported: Bool) -> String {
+    private func promptPlaceholder(
+        isRunning: Bool,
+        localSendUnsupported: Bool,
+        hasLocalPendingApproval: Bool
+    ) -> String {
         if !isRunning { return "Waiting for helper to start session…" }
         if localSendUnsupported {
             return "This local helper doesn't support send_input — update the helper to type prompts."
+        }
+        if hasLocalPendingApproval {
+            // Codex iter6 lockout. Approve / Reject the pending
+            // request before sending more — keystrokes during
+            // Claude's PTY-side `1. Yes …` prompt would be
+            // interpreted as a reply to that prompt, not as a new
+            // turn ("1Yes"-style gibberish).
+            return "Resolve the pending permission request first (Approve or Reject)."
         }
         return "Prompt for Claude…"
     }
@@ -948,8 +974,12 @@ struct SessionsTab: View {
             // invariant: never parse PTY text to derive an
             // approval gate (would re-open the security hole this
             // iteration closed).
+            //
+            // Codex iter6: when a structured pending exists, Send
+            // is disabled so the "Enter to send" prefix would be
+            // misleading — surface the lockout instead.
             return hasLocalPending
-                ? "Enter to send · ⌘↩ to approve pending"
+                ? "Resolve approval first · ⌘↩ to approve"
                 : "Enter to send · no structured permission request pending"
         }
         if routesLocally {

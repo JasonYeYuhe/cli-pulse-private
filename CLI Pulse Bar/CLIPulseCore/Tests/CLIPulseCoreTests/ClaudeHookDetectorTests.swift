@@ -123,6 +123,70 @@ final class ClaudeHookDetectorTests: XCTestCase {
         XCTAssertEqual(ClaudeHookDetector.currentStatus(at: url), .wired)
     }
 
+    /// Codex iter6 finding: even when the inner command matches
+    /// our marker, an entry whose outer `matcher` is narrower than
+    /// the canonical `""` (match-all) only fires for that tool
+    /// family — Read/Write/etc. PermissionRequests fall through to
+    /// Claude's native PTY prompt and the structured approval
+    /// flow stays broken for everything except Bash. Detector
+    /// must report `.notWired` so the install CLI nudge surfaces;
+    /// re-running install auto-heals the narrower matcher.
+    func testReturnsNotWiredWhenMatcherIsNarrower() throws {
+        let url = tmpSettingsURL()
+        let json = #"""
+        {
+          "hooks": {
+            "PermissionRequest": [
+              {
+                "matcher": "Bash",
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "python3 /path/to/cli_pulse_helper.py remote-approval-hook --provider claude"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """#
+        try json.write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertEqual(
+            ClaudeHookDetector.currentStatus(at: url), .notWired,
+            "narrower matcher with our marker must NOT count as wired; re-install must auto-heal to match-all"
+        )
+    }
+
+    /// Defence-in-depth: if `matcher` key is absent entirely, the
+    /// entry is non-canonical even though Claude Code may still
+    /// accept it (treating absent matcher as match-all in some
+    /// versions). We refuse to bless any shape but the explicit
+    /// canonical one to keep the install-vs-detect contract tight.
+    func testReturnsNotWiredWhenMatcherKeyMissing() throws {
+        let url = tmpSettingsURL()
+        let json = #"""
+        {
+          "hooks": {
+            "PermissionRequest": [
+              {
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "python3 /path/to/cli_pulse_helper.py remote-approval-hook --provider claude"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """#
+        try json.write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertEqual(
+            ClaudeHookDetector.currentStatus(at: url), .notWired,
+            "missing matcher key is non-canonical and must NOT count as wired"
+        )
+    }
+
     /// Codex iter5 finding: the legacy flat schema is silently
     /// rejected by Claude Code's runtime validator (`/doctor`
     /// reports `Expected array, but received undefined`). The

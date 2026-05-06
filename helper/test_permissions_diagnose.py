@@ -10,6 +10,7 @@ copy of `~/.claude/settings.json`, never the real one).
 from __future__ import annotations
 
 import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -516,6 +517,213 @@ def test_install_claude_hook_appends_when_user_has_other_hooks(tmp_path):
     # Our entry is present.
     cli_pulse_present = any(_cli_pulse_command_in(e) is not None for e in entries)
     assert cli_pulse_present
+
+
+# ── iter6: matcher canonicality + mixed-nested-hooks preservation ──
+# Codex review on b3d36a7 surfaced two schema-hardening edges the
+# iter5 noop check missed:
+#   1. matcher must be canonical match-all (`""`) — narrower
+#      matchers (`"Bash"`, `"Read"`) only fire for one tool family
+#      and silently break structured approvals for the rest, so
+#      they must auto-heal to canonical even when the inner
+#      command matches.
+#   2. when a matcher entry's nested `hooks` array contains BOTH
+#      our hook AND a user-owned hook (audit / telemetry / etc.),
+#      replacing the whole entry would silently drop the user's
+#      hook. Auto-heal must surgically remove only our nested hook
+#      and preserve the rest.
+
+
+def test_install_claude_hook_replaces_narrower_matcher_entry(tmp_path):
+    """Existing CLI Pulse hook is in a matcher-shape entry but the
+    matcher is `"Bash"` instead of canonical match-all `""`. That
+    hook only fires for Bash permission prompts — Read/Write/etc.
+    fall through to Claude's native PTY prompt, breaking the whole
+    point of structured approvals. Installer must replace with the
+    canonical match-all entry, NOT report noop.
+    """
+    helper, settings = _install_paths(tmp_path)
+    target = (
+        f"python3 {shlex.quote(str(helper))} remote-approval-hook --provider claude"
+    )
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({
+        "hooks": {"PermissionRequest": [
+            {"matcher": "Bash", "hooks": [{"type": "command", "command": target}]}
+        ]}
+    }), encoding="utf-8")
+
+    result = pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    assert result["action"] == "replaced", (
+        "narrower matcher must be replaced even when inner command matches "
+        f"target — got action={result['action']!r}"
+    )
+    written = json.loads(settings.read_text())
+    entries = written["hooks"]["PermissionRequest"]
+    # Exactly one CLI Pulse entry, in canonical match-all shape.
+    assert len(entries) == 1
+    assert entries[0]["matcher"] == "", (
+        "auto-heal must produce match-all matcher (empty string), "
+        f"got {entries[0].get('matcher')!r}"
+    )
+
+
+def test_install_claude_hook_replaces_missing_matcher_key(tmp_path):
+    """Matcher-shape-ish entry where the `matcher` key is omitted
+    entirely. Defensive: any non-canonical shape must auto-heal to
+    canonical, regardless of how it became non-canonical.
+    """
+    helper, settings = _install_paths(tmp_path)
+    target = (
+        f"python3 {shlex.quote(str(helper))} remote-approval-hook --provider claude"
+    )
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({
+        "hooks": {"PermissionRequest": [
+            # No `matcher` field at all.
+            {"hooks": [{"type": "command", "command": target}]}
+        ]}
+    }), encoding="utf-8")
+
+    result = pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    assert result["action"] == "replaced"
+    written = json.loads(settings.read_text())
+    entries = written["hooks"]["PermissionRequest"]
+    assert len(entries) == 1
+    assert entries[0].get("matcher") == ""
+
+
+def test_install_claude_hook_preserves_mixed_nested_hooks(tmp_path):
+    """User has a single matcher-shape entry whose nested `hooks`
+    array contains BOTH an audit hook AND CLI Pulse's hook. Auto-
+    heal must surgically remove only our nested entry, preserving
+    the audit hook in the cleaned-up entry, then add a fresh
+    canonical CLI Pulse entry. Pre-iter6 the installer would
+    replace the whole parent entry and silently drop the audit
+    hook — Codex iter6 hardening pin.
+    """
+    helper, settings = _install_paths(tmp_path)
+    cli_pulse_command = (
+        f"python3 {shlex.quote(str(helper))} remote-approval-hook --provider claude"
+    )
+    audit_command = "/usr/local/bin/security-audit-hook --emit jsonl"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({
+        "hooks": {"PermissionRequest": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {"type": "command", "command": audit_command},
+                    {"type": "command", "command": cli_pulse_command},
+                ],
+            }
+        ]}
+    }), encoding="utf-8")
+
+    result = pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    assert result["action"] == "replaced"
+    written = json.loads(settings.read_text())
+    entries = written["hooks"]["PermissionRequest"]
+    # Two entries: the cleaned-up parent (audit-only) + canonical
+    # CLI Pulse.
+    audit_present = any(
+        any(
+            h.get("command") == audit_command
+            for h in e.get("hooks", [])
+            if isinstance(h, dict)
+        )
+        for e in entries
+    )
+    assert audit_present, (
+        "user's audit-hook must survive surgical CLI Pulse removal — "
+        f"entries={entries!r}"
+    )
+    # And exactly one canonical CLI Pulse entry.
+    cli_pulse_entries = [
+        e for e in entries if _cli_pulse_command_in(e) is not None
+    ]
+    assert len(cli_pulse_entries) == 1
+    assert cli_pulse_entries[0].get("matcher") == ""
+    # The parent entry that ORIGINALLY held both hooks should no
+    # longer have the CLI Pulse command in its nested array.
+    for e in entries:
+        nested_cmds = [
+            h.get("command")
+            for h in e.get("hooks", [])
+            if isinstance(h, dict)
+        ]
+        if audit_command in nested_cmds:
+            assert all(
+                "remote-approval-hook --provider claude" not in (cmd or "")
+                for cmd in nested_cmds
+            ), (
+                "the audit-only entry must NOT still contain our hook "
+                f"after surgical removal: nested_cmds={nested_cmds!r}"
+            )
+
+
+def test_install_claude_hook_drops_entry_with_only_cli_pulse_in_mixed_dedup(tmp_path):
+    """Settings has TWO entries: a canonical pure CLI Pulse entry
+    AND a mixed entry where CLI Pulse is the sole nested hook
+    (i.e. a stale duplicate from an earlier install). Auto-heal
+    must converge to exactly one canonical CLI Pulse entry; the
+    duplicate stale entry must be dropped wholesale.
+    """
+    helper, settings = _install_paths(tmp_path)
+    cli_pulse_command = (
+        f"python3 {shlex.quote(str(helper))} remote-approval-hook --provider claude"
+    )
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({
+        "hooks": {"PermissionRequest": [
+            {"matcher": "", "hooks": [
+                {"type": "command", "command": cli_pulse_command}
+            ]},
+            {"matcher": "", "hooks": [
+                {"type": "command", "command": cli_pulse_command}
+            ]},
+        ]}
+    }), encoding="utf-8")
+
+    result = pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    assert result["action"] == "replaced"
+    written = json.loads(settings.read_text())
+    entries = written["hooks"]["PermissionRequest"]
+    cli_pulse_entries = [
+        e for e in entries if _cli_pulse_command_in(e) is not None
+    ]
+    assert len(cli_pulse_entries) == 1, (
+        f"duplicate CLI Pulse entries must collapse to one: {entries!r}"
+    )
+
+
+def test_install_claude_hook_noop_only_when_canonical_pure_single(tmp_path):
+    """Sanity-check the strengthened noop criterion: noop fires iff
+    there is EXACTLY ONE PermissionRequest entry, it is the
+    canonical pure shape (matcher="" + nested hooks of length 1
+    containing our marker), AND the inner command matches the
+    target exactly. This re-pins the iter6 stricter contract — the
+    iter5 noop check accepted narrower-matcher entries with the
+    correct command, which is wrong.
+    """
+    helper, settings = _install_paths(tmp_path)
+    pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    # Re-running on the freshly-written file is the noop case.
+    again = pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    assert again["action"] == "noop"
+
+    # Now poison the just-written file with a narrower matcher and
+    # the SAME command. Re-running must NOT noop — it must replace.
+    written = json.loads(settings.read_text())
+    written["hooks"]["PermissionRequest"][0]["matcher"] = "Bash"
+    settings.write_text(json.dumps(written), encoding="utf-8")
+
+    poisoned = pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    assert poisoned["action"] == "replaced", (
+        "narrower matcher with correct command must NOT be noop"
+    )
+    final = json.loads(settings.read_text())
+    assert final["hooks"]["PermissionRequest"][0]["matcher"] == ""
 
 
 def test_install_claude_hook_preserves_unrelated_keys(tmp_path):

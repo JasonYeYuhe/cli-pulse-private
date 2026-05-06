@@ -85,26 +85,46 @@ public enum ClaudeHookDetector {
         guard let pr = hooks["PermissionRequest"] as? [[String: Any]] else {
             return .notWired
         }
-        // Probe both schema shapes (mirrors the helper-side
-        // `permissions_diagnose.install_claude_hook` detection):
+        // Probe both schema shapes AND check matcher canonicality
+        // (mirrors the helper-side `install_claude_hook` detection):
         //
-        //   - **Current (matcher + nested hooks)**: each entry is
-        //     `{"matcher": "...", "hooks": [{"type":"command",
-        //     "command":"..."}]}`. Walk the inner `hooks` array.
-        //   - **Legacy (flat command)**: each entry is
-        //     `{"type":"command","command":"..."}`. Older versions
-        //     of this codebase wrote this shape; Claude Code's
-        //     current `/doctor` rejects it. The Sessions banner
-        //     should still report it as `notWired` so the user
-        //     re-runs `install-claude-hook` and gets the legacy
-        //     entry auto-replaced with the matcher shape — which
-        //     is what makes the hook actually invoke.
+        //   - **Current canonical (matcher: "" + nested hooks)**:
+        //     each entry is `{"matcher": "", "hooks":
+        //     [{"type":"command","command":"..."}]}`. The empty
+        //     matcher means "fire on every PermissionRequest" —
+        //     this is the only shape that lets CLI Pulse intercept
+        //     ALL tool permission prompts (Bash + Read + Write +
+        //     …). Walk the inner `hooks` array, and only count it
+        //     when the outer `matcher` is the canonical empty
+        //     string.
+        //   - **Narrower matcher (`matcher: "Bash"` etc.)**: same
+        //     nested-hooks structure but the matcher only fires
+        //     for one tool family, leaving the rest of structured
+        //     approvals broken. Codex iter6 finding: report this
+        //     as `.notWired` so the Sessions banner surfaces the
+        //     install-CLI nudge — re-running install auto-heals
+        //     the narrower matcher into canonical match-all.
+        //   - **Legacy flat command (no matcher wrapper)**: each
+        //     entry is `{"type":"command","command":"..."}`. Older
+        //     versions of this codebase wrote this shape; Claude
+        //     Code's current `/doctor` rejects it
+        //     (`hooks.PermissionRequest.0.hooks: Expected array,
+        //     but received undefined`). Reported as `.notWired`
+        //     for the same auto-heal nudge.
         //
-        // Detection rule: only the *current* matcher-shape counts
-        // as `wired`. A legacy flat entry is silently dead from
-        // Claude Code's point of view, so reporting it as wired
-        // would be misleading.
-        let hasCliPulseInMatcherShape = pr.contains { entry in
+        // Detection rule: only entries whose outer `matcher` is
+        // exactly the empty string AND whose nested `hooks` array
+        // contains our marker count as `.wired`. Anything else is
+        // silently dead from Claude Code's runtime point of view,
+        // so reporting it as wired would mislead the user.
+        let hasCanonicalCliPulseEntry = pr.contains { entry in
+            // Canonical match-all matcher is exactly `""`. A
+            // missing key, `nil`, or any non-empty string is
+            // non-canonical.
+            guard let matcher = entry["matcher"] as? String,
+                  matcher.isEmpty else {
+                return false
+            }
             guard let inner = entry["hooks"] as? [[String: Any]] else {
                 return false
             }
@@ -116,7 +136,7 @@ public enum ClaudeHookDetector {
                 return false
             }
         }
-        return hasCliPulseInMatcherShape ? .wired : .notWired
+        return hasCanonicalCliPulseEntry ? .wired : .notWired
     }
 
     /// CLI command the user runs once to install the hook. The

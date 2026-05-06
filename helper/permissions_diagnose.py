@@ -617,94 +617,187 @@ def install_claude_hook(
     # both that subcommand AND that argument shape, so matching on
     # this string alone is specific enough without false positives.
     #
-    # We probe BOTH schema shapes:
-    #   - **Current (matcher + nested hooks)**: each PermissionRequest
-    #     entry is `{"matcher": "...", "hooks": [{"type":"command",
-    #     "command":"..."}]}`. Walk the inner `hooks` array.
-    #   - **Legacy (flat command)**: each entry is
-    #     `{"type":"command","command":"..."}`. Older versions of
-    #     this codebase + older Claude Code docs used this; Claude
-    #     Code's current `/doctor` rejects it as malformed but the
-    #     entry may still sit in the user's settings.json. We need
-    #     to recognise it so the auto-heal path can replace it
-    #     with the matcher-shape.
+    # We probe BOTH schema shapes AND check matcher canonicality:
+    #
+    #   - **Current canonical (matcher: "" + nested hooks)**: each
+    #     PermissionRequest entry is `{"matcher": "", "hooks":
+    #     [{"type":"command","command":"..."}]}`. The empty-string
+    #     matcher means "fire on every PermissionRequest" — this is
+    #     the only shape that lets CLI Pulse intercept ALL tool
+    #     permission prompts (Bash + Read + Write + …). Anything
+    #     else is non-canonical even if the inner command matches
+    #     our marker.
+    #   - **Narrower matcher (matcher: "Bash" / "Read" / etc.)**:
+    #     same nested-hooks structure but the matcher would only
+    #     fire for one tool family, so the rest of the structured
+    #     approval routing stays broken. Codex iter6 finding: this
+    #     must be reported as `replaced`, NOT `noop`, even when the
+    #     inner command matches.
+    #   - **Legacy flat (no matcher, top-level command)**: each
+    #     entry is `{"type":"command","command":"..."}`. Older
+    #     versions of this codebase wrote this shape; Claude Code's
+    #     current `/doctor` rejects it as malformed (
+    #     `hooks.PermissionRequest.0.hooks: Expected array, but
+    #     received undefined`). Auto-heal lifts these into the
+    #     canonical matcher shape.
     helper_marker = "remote-approval-hook --provider claude"
 
+    def _hook_has_marker(h: object) -> bool:
+        return (
+            isinstance(h, dict)
+            and isinstance(h.get("command"), str)
+            and helper_marker in h["command"]
+        )
+
     def _is_cli_pulse_legacy_entry(entry: object) -> bool:
+        """Legacy flat shape: top-level `command` field, no nested
+        `hooks` array. The whole entry IS our hook (no other hooks
+        can be co-resident in this shape).
+        """
         return (
             isinstance(entry, dict)
+            and not isinstance(entry.get("hooks"), list)
             and isinstance(entry.get("command"), str)
             and helper_marker in entry["command"]
         )
 
-    def _is_cli_pulse_matcher_entry(entry: object) -> bool:
+    def _matcher_entry_has_our_hook(entry: object) -> bool:
+        """Matcher-shape entry whose nested `hooks` array contains
+        our marker. The entry MAY also contain other (non-CLI-Pulse)
+        nested hooks — the mixed-entry preservation path below
+        surgically removes only our nested hook in that case.
+        """
         if not isinstance(entry, dict):
             return False
         nested = entry.get("hooks")
         if not isinstance(nested, list):
             return False
-        return any(
-            isinstance(h, dict)
-            and isinstance(h.get("command"), str)
-            and helper_marker in h["command"]
-            for h in nested
-        )
+        return any(_hook_has_marker(h) for h in nested)
 
-    cli_pulse_indices = [
-        i for i, entry in enumerate(pr)
-        if _is_cli_pulse_legacy_entry(entry) or _is_cli_pulse_matcher_entry(entry)
-    ]
+    def _is_canonical_matcher(entry: object) -> bool:
+        """Match-all matcher: exactly the empty string `""`.
+        Missing key, `None`, or any non-empty value (`"Bash"`,
+        `"Read"`, regex-like strings, etc.) is non-canonical —
+        Codex iter6: those would only fire for a subset of
+        PermissionRequests and silently break structured approvals
+        for the rest, so installer must replace and detector must
+        report .notWired.
+        """
+        return isinstance(entry, dict) and entry.get("matcher") == ""
+
+    def _is_canonical_pure_cli_pulse_entry(entry: object) -> bool:
+        """Entry that is EXACTLY our canonical shape: matcher="",
+        hooks=[<single CLI Pulse hook>]. Used for the noop-eligibility
+        check — anything richer (extra nested hooks, narrower
+        matcher) needs auto-heal.
+        """
+        if not _is_canonical_matcher(entry):
+            return False
+        nested = entry.get("hooks")
+        if not isinstance(nested, list) or len(nested) != 1:
+            return False
+        return _hook_has_marker(nested[0])
 
     def _entry_command(entry: object) -> str | None:
-        """Pull the command string out of either schema shape."""
-        if not isinstance(entry, dict):
-            return None
-        if isinstance(entry.get("command"), str):
+        """Pull the helper command string out of either schema shape."""
+        if _is_cli_pulse_legacy_entry(entry):
             return entry["command"]
-        nested = entry.get("hooks")
-        if isinstance(nested, list):
-            for h in nested:
-                if isinstance(h, dict) and isinstance(h.get("command"), str):
-                    if helper_marker in h["command"]:
-                        return h["command"]
+        if _matcher_entry_has_our_hook(entry):
+            for h in entry["hooks"]:
+                if _hook_has_marker(h):
+                    return h["command"]
         return None
 
-    def _entry_uses_current_schema(entry: object) -> bool:
-        return isinstance(entry, dict) and isinstance(entry.get("hooks"), list)
-
+    # First-pass scan: count how many entries touch our marker
+    # (in either schema shape) and find the previous command (for
+    # the status-dict response).
+    cli_pulse_touched_count = sum(
+        1 for entry in pr
+        if _is_cli_pulse_legacy_entry(entry) or _matcher_entry_has_our_hook(entry)
+    )
     previous_command: str | None = None
-    previous_schema_correct = False
-    if cli_pulse_indices:
-        previous_command = _entry_command(pr[cli_pulse_indices[0]])
-        previous_schema_correct = _entry_uses_current_schema(pr[cli_pulse_indices[0]])
+    for entry in pr:
+        cmd = _entry_command(entry)
+        if cmd is not None:
+            previous_command = cmd
+            break
 
-    if (
-        previous_command == target_command
-        and previous_schema_correct
-        and len(cli_pulse_indices) == 1
-    ):
+    # Noop ONLY when the array contains exactly one CLI-Pulse-related
+    # entry AND that entry is the canonical pure shape with the
+    # exact target command. Anything else (narrower matcher, legacy
+    # shape, mixed nested hooks, duplicate entries, stale command)
+    # routes through the auto-heal rebuild path below.
+    canonical_pure_indices = [
+        i for i, entry in enumerate(pr)
+        if _is_canonical_pure_cli_pulse_entry(entry)
+        and entry["hooks"][0]["command"] == target_command
+    ]
+    is_noop = (
+        cli_pulse_touched_count == 1
+        and len(canonical_pure_indices) == 1
+    )
+
+    had_unrelated_entries = any(
+        not (_is_cli_pulse_legacy_entry(entry) or _matcher_entry_has_our_hook(entry))
+        for entry in pr
+    )
+
+    if is_noop:
         action = "noop"
-    elif cli_pulse_indices:
-        # Replace the existing CLI Pulse entry — covers three
-        # auto-heal cases:
-        #   1. user moved their helper checkout / changed python →
-        #      command path differs
-        #   2. legacy flat schema → we lift it into the
-        #      matcher-shape Claude Code's current /doctor accepts
-        #   3. duplicate CLI Pulse entries (multiple installs) →
-        #      collapse to one
-        pr[cli_pulse_indices[0]] = _cli_pulse_hook_entry(target_command)
-        for idx in cli_pulse_indices[1:][::-1]:
-            del pr[idx]
-        action = "replaced"
-    elif pr:
-        # User has other PermissionRequest hooks; append rather than
-        # replace so we never silently drop their configuration.
-        pr.append(_cli_pulse_hook_entry(target_command))
-        action = "added"
     else:
-        pr = [_cli_pulse_hook_entry(target_command)]
-        action = "added" if data else "created"
+        # Auto-heal rebuild path. Three guarantees:
+        #   1. **Drop legacy flat entries** — they have no nested
+        #      hooks list, the entire entry IS our hook, no user
+        #      data to preserve.
+        #   2. **Surgically remove our nested hook from mixed
+        #      matcher entries** — Codex iter6 finding: if the user
+        #      put another hook (e.g. an audit hook) in the SAME
+        #      matcher entry's nested hooks array as ours, replacing
+        #      the whole entry would silently delete their hook.
+        #      Instead we filter the nested array to exclude only
+        #      the marker-matching entries; if the cleaned array is
+        #      empty, the parent entry had nothing else and we drop
+        #      it; if non-empty, we preserve the parent entry with
+        #      the cleaned nested array (matcher key + any other
+        #      sibling keys preserved verbatim).
+        #   3. **Append exactly one canonical CLI Pulse entry** at
+        #      the end so detection lights up as `.wired` on the
+        #      next read.
+        new_pr: list[Any] = []
+        for entry in pr:
+            if _is_cli_pulse_legacy_entry(entry):
+                continue
+            if _matcher_entry_has_our_hook(entry):
+                cleaned_nested = [
+                    h for h in entry["hooks"] if not _hook_has_marker(h)
+                ]
+                if not cleaned_nested:
+                    # Whole nested array was CLI Pulse — drop entry.
+                    continue
+                # Mixed entry: preserve every key except `hooks`,
+                # which we replace with the cleaned (CLI-Pulse-free)
+                # array. `dict(entry)` shallow-copies so we don't
+                # mutate the caller's data.
+                preserved = dict(entry)
+                preserved["hooks"] = cleaned_nested
+                new_pr.append(preserved)
+            else:
+                # Entry doesn't touch our marker — leave verbatim.
+                new_pr.append(entry)
+        new_pr.append(_cli_pulse_hook_entry(target_command))
+        pr = new_pr
+
+        if previous_command is not None:
+            # Pre-existing CLI Pulse hook found in non-canonical
+            # form — covers narrower matcher, legacy flat schema,
+            # mixed nested, stale command, duplicate entries.
+            action = "replaced"
+        elif had_unrelated_entries or data:
+            # Existing settings file with other content but no
+            # CLI Pulse hook yet — we added alongside.
+            action = "added"
+        else:
+            action = "created"
 
     hooks["PermissionRequest"] = pr
     data["hooks"] = hooks
