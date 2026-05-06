@@ -452,11 +452,28 @@ public final class LocalSessionServer: @unchecked Sendable {
     }
 
     private func handleInstallClaudeHook(request: WireRequest) -> WireResponse {
-        // Iter 5 wires `ClaudeSettingsInstaller` here. For now
-        // surface notImplemented so the macOS app falls back to
-        // the Copy command path during the parity-build window.
-        return .err(id: request.id, code: .notImplemented,
-                    message: "install_claude_hook lands in iter 5 of the Swift port")
+        guard let argv0 = hooks.getHelperArgv0() else {
+            return .err(id: request.id, code: .notImplemented,
+                        message: "helper did not record its own argv[0] — install_claude_hook unavailable")
+        }
+        do {
+            let result = try ClaudeSettingsInstaller.install(helperPath: argv0)
+            var dict: [String: Any] = [
+                "settings_path": result.settingsPath,
+                "action": result.action.rawValue,
+                "new_command": result.newCommand,
+            ]
+            if let prev = result.previousCommand {
+                dict["previous_command"] = prev
+            } else {
+                dict["previous_command"] = NSNull()
+            }
+            return .ok(id: request.id, result: dict)
+        } catch ClaudeSettingsInstaller.InstallError.malformedSettings(let msg) {
+            return .err(id: request.id, code: .settingsMalformed, message: msg)
+        } catch {
+            return .err(id: request.id, code: .internalError, message: "install_claude_hook: \(error)")
+        }
     }
 
     // MARK: - iter4 hook ingress
