@@ -386,6 +386,20 @@ public final class AppState: ObservableObject {
     /// every tick the Sessions tab is on screen.
     @Published public var localDiagnostics: LocalSessionControlClient.Diagnostics?
 
+    /// PR #18 follow-up — most recent `~/.claude/settings.json` hook
+    /// wiring status. The Sessions tab uses this to show a banner
+    /// when the helper advertises `capabilities.approvals = true`
+    /// but Claude itself isn't routing PermissionRequest events to
+    /// the helper. Without that wiring, Claude shows its native
+    /// PTY prompt and the structured Approve/Reject controls in
+    /// CLI Pulse never light up — exactly the diagnosis the
+    /// previous manual test surfaced.
+    ///
+    /// Refreshed each `.task` tick of SessionsTab and on
+    /// `refreshLocalSessionControlState`. `nil` while we haven't
+    /// checked yet (suppresses banner during cold launch).
+    @Published public var claudeApprovalHookStatus: ClaudeHookDetector.Status?
+
     // MARK: - Local Session Control (Phase 3 Iter 2B, macOS-only)
 
     /// Iter 2B: structured pending approvals per managed session,

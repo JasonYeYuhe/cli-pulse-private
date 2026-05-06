@@ -2,13 +2,18 @@
 
 These tests construct fake `~/.claude/settings.json` and `.claude/settings.json`
 files in a tmp dir and verify each finding fires (or doesn't) on the right
-shape. No real user file is read; no mutation anywhere.
+shape. No real user file is read; no mutation anywhere — except for the
+`install_claude_hook` tests at the bottom of this file, which verify the
+ONE intentional mutation point added in PR #18 (writing into a tmp_path
+copy of `~/.claude/settings.json`, never the real one).
 """
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
+
+import pytest
 
 # Make `helper/` importable when pytest runs from the repo root.
 HELPER_DIR = Path(__file__).resolve().parent
@@ -342,3 +347,133 @@ def test_diagnose_to_json_serialises(tmp_path):
     serialised = json.dumps(payload)
     assert "settings" in payload
     assert isinstance(serialised, str)
+
+
+# ── install_claude_hook (PR #18 follow-up) ───────────────────
+
+
+def _install_paths(tmp_path):
+    """Helper-path stub + settings file path under a tmp HOME."""
+    helper = tmp_path / "fake_helper.py"
+    helper.write_text("# stub", encoding="utf-8")
+    settings = tmp_path / ".claude" / "settings.json"
+    return helper.resolve(), settings
+
+
+def test_install_claude_hook_creates_when_settings_missing(tmp_path):
+    helper, settings = _install_paths(tmp_path)
+    assert not settings.exists()
+
+    result = pd.install_claude_hook(helper_path=helper, settings_path=settings)
+
+    assert result["action"] == "created"
+    assert result["previous_command"] is None
+    written = json.loads(settings.read_text())
+    assert "PermissionRequest" in written["hooks"]
+    entries = written["hooks"]["PermissionRequest"]
+    assert len(entries) == 1
+    assert entries[0]["type"] == "command"
+    assert "remote-approval-hook --provider claude" in entries[0]["command"]
+    assert str(helper) in entries[0]["command"]
+
+
+def test_install_claude_hook_noop_when_already_wired(tmp_path):
+    helper, settings = _install_paths(tmp_path)
+    pd.install_claude_hook(helper_path=helper, settings_path=settings)
+
+    # Run again on the same file — should be a clean no-op.
+    result = pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    assert result["action"] == "noop"
+    # File untouched: still has exactly one entry.
+    written = json.loads(settings.read_text())
+    assert len(written["hooks"]["PermissionRequest"]) == 1
+
+
+def test_install_claude_hook_replaces_stale_entry(tmp_path):
+    helper, settings = _install_paths(tmp_path)
+    # Pre-existing CLI Pulse entry from an OLDER helper checkout.
+    stale = "python3 /old/path/cli_pulse_helper.py remote-approval-hook --provider claude"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({
+        "hooks": {"PermissionRequest": [{"type": "command", "command": stale}]}
+    }), encoding="utf-8")
+
+    result = pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    assert result["action"] == "replaced"
+    assert result["previous_command"] == stale
+    written = json.loads(settings.read_text())
+    entries = written["hooks"]["PermissionRequest"]
+    assert len(entries) == 1, "stale CLI Pulse entry must be replaced, not duplicated"
+    assert str(helper) in entries[0]["command"]
+
+
+def test_install_claude_hook_appends_when_user_has_other_hooks(tmp_path):
+    """User has unrelated PermissionRequest hooks — we must NOT
+    silently drop them, just add ours alongside.
+    """
+    helper, settings = _install_paths(tmp_path)
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({
+        "hooks": {"PermissionRequest": [
+            {"type": "command", "command": "/usr/local/bin/audit-hook"}
+        ]}
+    }), encoding="utf-8")
+
+    result = pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    assert result["action"] == "added"
+    written = json.loads(settings.read_text())
+    entries = written["hooks"]["PermissionRequest"]
+    assert len(entries) == 2
+    # User's pre-existing audit-hook survives.
+    assert any(e["command"] == "/usr/local/bin/audit-hook" for e in entries)
+    # Our entry is present.
+    assert any(str(helper) in e["command"] for e in entries)
+
+
+def test_install_claude_hook_preserves_unrelated_keys(tmp_path):
+    """Pre-existing `permissions` / `model` / etc. must be preserved
+    verbatim. We only touch `hooks.PermissionRequest`.
+    """
+    helper, settings = _install_paths(tmp_path)
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    pre = {
+        "permissions": {"allow": ["Bash(npm test:*)"], "deny": []},
+        "model": "claude-sonnet-4-5",
+        "extra": {"nested": {"deeply": True}},
+    }
+    settings.write_text(json.dumps(pre), encoding="utf-8")
+
+    pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    written = json.loads(settings.read_text())
+    assert written["permissions"] == pre["permissions"]
+    assert written["model"] == pre["model"]
+    assert written["extra"] == pre["extra"]
+    # And our hook landed.
+    assert "PermissionRequest" in written["hooks"]
+
+
+def test_install_claude_hook_refuses_malformed_json(tmp_path):
+    helper, settings = _install_paths(tmp_path)
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text("{not valid json", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="malformed JSON"):
+        pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    # File untouched.
+    assert settings.read_text() == "{not valid json"
+
+
+def test_install_claude_hook_refuses_non_object_root(tmp_path):
+    helper, settings = _install_paths(tmp_path)
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text("[\"not\", \"an\", \"object\"]", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="non-object JSON"):
+        pd.install_claude_hook(helper_path=helper, settings_path=settings)
+
+
+def test_install_claude_hook_no_leftover_tmp_files(tmp_path):
+    helper, settings = _install_paths(tmp_path)
+    pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    leftovers = list(settings.parent.glob("settings.json.tmp"))
+    assert leftovers == [], f"leftover tmp file: {leftovers}"

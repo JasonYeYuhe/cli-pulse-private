@@ -38,6 +38,7 @@ We surface these in `diagnose_permissions(...)` as labelled findings.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -500,3 +501,135 @@ def recommended_hook_config_snippet(helper_path: Path, python_path: str | None =
         }
     }
     return json.dumps(snippet, indent=2)
+
+
+def recommended_hook_command(helper_path: Path, python_path: str | None = None) -> str:
+    """Return JUST the `command` string the helper installs as a Claude
+    Code PermissionRequest hook. Used by both
+    `recommended_hook_config_snippet` (for the print path) and
+    `install_claude_hook` (for the merge path) so the two surfaces
+    can never drift.
+    """
+    py = python_path or "python3"
+    return f"{py} {helper_path} remote-approval-hook --provider claude"
+
+
+def install_claude_hook(
+    helper_path: Path,
+    *,
+    settings_path: Path | None = None,
+    python_path: str | None = None,
+) -> dict[str, object]:
+    """Idempotently merge the CLI Pulse PermissionRequest hook into
+    `~/.claude/settings.json`, preserving every other key the user
+    has set.
+
+    Behaviour:
+
+      - if the file is missing or empty → write a minimal settings
+        object containing just `hooks.PermissionRequest` with our
+        command.
+      - if the file is parse-broken JSON → raise `ValueError` (do
+        NOT clobber the user's data; the operator must fix the file
+        manually).
+      - if the file already contains `hooks.PermissionRequest` with
+        an entry whose `.command` resolves to our helper script →
+        no-op (idempotent).
+      - if the file contains `hooks.PermissionRequest` with OTHER
+        entries → append our entry (do not remove the user's other
+        hooks); this is documented as the unsupported case in the
+        original print-snippet flow but is the safe default here.
+      - otherwise create the missing keys and add our entry.
+
+    Returns a small status dict the CLI command renders for the user:
+    `{"settings_path", "action", "previous_command", "new_command"}`.
+    `action` is one of `"created" | "added" | "noop" | "replaced"`.
+    """
+    settings = settings_path or (Path.home() / ".claude" / "settings.json")
+    target_command = recommended_hook_command(
+        helper_path=helper_path, python_path=python_path,
+    )
+
+    # Load existing data if any.
+    if settings.exists() and settings.stat().st_size > 0:
+        try:
+            raw = settings.read_text(encoding="utf-8")
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"refusing to overwrite malformed JSON at {settings}: {exc.msg}. "
+                "Please fix the file by hand and rerun this command."
+            ) from exc
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"refusing to overwrite non-object JSON at {settings} "
+                f"(got {type(data).__name__}). The file must be a JSON object."
+            )
+    else:
+        data = {}
+
+    # Locate / create hooks.PermissionRequest.
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        hooks = {}
+    pr = hooks.get("PermissionRequest")
+    if not isinstance(pr, list):
+        pr = []
+
+    # Detect existing CLI Pulse hook entries. The marker
+    # `remote-approval-hook --provider claude` is unique to this
+    # codebase — no other Claude PermissionRequest hook would use
+    # both that subcommand AND that argument shape, so matching on
+    # this string alone is specific enough without false positives.
+    # Notably this also covers entries for codex / shell providers
+    # under different `--provider` values, but those are kept
+    # separate (they target different subcommands inside the same
+    # helper script).
+    helper_marker = "remote-approval-hook --provider claude"
+    cli_pulse_indices = [
+        i for i, entry in enumerate(pr)
+        if isinstance(entry, dict)
+        and isinstance(entry.get("command"), str)
+        and helper_marker in entry["command"]
+    ]
+
+    previous_command: str | None = None
+    if cli_pulse_indices:
+        previous_command = pr[cli_pulse_indices[0]].get("command")  # type: ignore[arg-type]
+
+    if previous_command == target_command:
+        action = "noop"
+    elif cli_pulse_indices:
+        # Replace the existing CLI Pulse entry (in place) so users
+        # who moved their helper checkout / changed python don't end
+        # up with a stale entry. Drop any duplicate CLI Pulse entries.
+        pr[cli_pulse_indices[0]] = {"type": "command", "command": target_command}
+        for idx in cli_pulse_indices[1:][::-1]:
+            del pr[idx]
+        action = "replaced"
+    elif pr:
+        # User has other PermissionRequest hooks; append rather than
+        # replace so we never silently drop their configuration.
+        pr.append({"type": "command", "command": target_command})
+        action = "added"
+    else:
+        pr = [{"type": "command", "command": target_command}]
+        action = "added" if data else "created"
+
+    hooks["PermissionRequest"] = pr
+    data["hooks"] = hooks
+
+    if action != "noop":
+        # Atomic write — temp file in same dir, then rename.
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        tmp = settings.with_suffix(settings.suffix + ".tmp")
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        os.chmod(tmp, 0o644)
+        tmp.replace(settings)
+
+    return {
+        "settings_path": str(settings),
+        "action": action,
+        "previous_command": previous_command,
+        "new_command": target_command,
+    }

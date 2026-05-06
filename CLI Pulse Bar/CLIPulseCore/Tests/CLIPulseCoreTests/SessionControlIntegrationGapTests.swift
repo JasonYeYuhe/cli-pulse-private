@@ -549,6 +549,67 @@ final class SessionControlIntegrationGapTests: XCTestCase {
         XCTAssertNotNil(state.localHelperError)
     }
 
+    // MARK: - isStaleLocalSession (Codex iter4 stale-row UX)
+
+    /// `isStaleLocalSession` must be true when:
+    ///   - helper reachable + local control on
+    ///   - row.device_id == selfDeviceId (in test rig: nil) → predicate
+    ///     short-circuits via isSelfDevice when neither side is nil
+    ///   - row.id NOT in localManagedSessions
+    /// We can't directly mock `selfDeviceId` (it reads HelperConfig
+    /// from disk), so the test rig pins the predicate's two
+    /// authority signals: `localManagedSessions` membership and the
+    /// helper-reachable / gate-on guards.
+    @MainActor
+    func testIsStaleLocalSession_falseWhenIdInLocalManagedSessions() {
+        let state = makeState()
+        state.localHelperReachable = true
+        state.localControlEnabled = true
+        state.localManagedSessions = [
+            .init(id: "S-OWN", provider: "claude", clientLabel: nil,
+                  status: "running", controllable: true, source: .managed)
+        ]
+        let row = makeRow(id: "S-OWN", deviceId: state.selfDeviceId ?? "")
+        XCTAssertFalse(state.isStaleLocalSession(row),
+                       "owned session must NOT be classified stale")
+    }
+
+    @MainActor
+    func testIsStaleLocalSession_falseWhenHelperUnreachable() {
+        let state = makeState()
+        state.localHelperReachable = false
+        state.localControlEnabled = true
+        state.localManagedSessions = []
+        let row = makeRow(id: "S-X", deviceId: state.selfDeviceId ?? "")
+        XCTAssertFalse(state.isStaleLocalSession(row),
+                       "no UDS reachability → can't claim 'helper restarted' meaningfully")
+    }
+
+    @MainActor
+    func testIsStaleLocalSession_falseWhenGateOff() {
+        let state = makeState()
+        state.localHelperReachable = true
+        state.localControlEnabled = false
+        state.localManagedSessions = []
+        let row = makeRow(id: "S-X", deviceId: state.selfDeviceId ?? "")
+        XCTAssertFalse(state.isStaleLocalSession(row),
+                       "gate off → row isn't 'stale local', it's just not under local control")
+    }
+
+    @MainActor
+    func testIsStaleLocalSession_falseForCrossDeviceRow() {
+        let state = makeState()
+        state.localHelperReachable = true
+        state.localControlEnabled = true
+        state.localManagedSessions = []
+        // device_id intentionally a different mac → cross-device row
+        // should never be flagged as "stale local" — it was never a
+        // local session in the first place.
+        let row = makeRow(id: "S-X", deviceId: "another-mac-uuid")
+        XCTAssertFalse(state.isStaleLocalSession(row),
+                       "cross-device row must NOT be classified stale local")
+    }
+
     /// Helper-restart simulation end-to-end: after the new helper's
     /// first list_sessions returns an empty managed list, a
     /// previously-live id MUST no longer route locally and MUST

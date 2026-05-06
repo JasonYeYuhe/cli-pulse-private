@@ -127,6 +127,12 @@ extension AppState {
         }
         // Hydrate the local managed/detected snapshots when the gate
         // is on; the list_sessions call requires it.
+        // PR #18 follow-up: Claude approval hook wiring status. Cheap
+        // local file read, runs once per refresh tick. The banner
+        // gating logic in SessionsTab uses this to decide whether
+        // to surface "approval hook not wired" when the helper
+        // advertises `capabilities.approvals = true`.
+        self.claudeApprovalHookStatus = ClaudeHookDetector.currentStatus()
         if self.localControlEnabled {
             do {
                 let rows = try await client.listSessions()
@@ -282,6 +288,44 @@ extension AppState {
     public func shouldRouteSessionLocally(_ session: RemoteSession) -> Bool {
         guard localHelperReachable, localControlEnabled else { return false }
         return localManagedSessions.contains(where: { $0.id == session.id })
+    }
+
+    /// True iff `session` is a same-Mac row whose original helper
+    /// process is no longer alive (or whose helper restarted and
+    /// dropped its PTY). The macOS UI uses this to render a
+    /// `helper restarted · not controllable` badge AND to disable
+    /// Send / Stop / Approve, so the user doesn't repeatedly try
+    /// actions that have to fail closed.
+    ///
+    /// Conditions (all must hold):
+    ///   1. helper is reachable AND local control is on — otherwise
+    ///      the row is not "stale" in our sense, it's just remote-
+    ///      routed for an unrelated reason
+    ///   2. row's `device_id` matches `selfDeviceId` — the row
+    ///      claims to belong to this Mac
+    ///   3. row's id is NOT in `localManagedSessions` — current
+    ///      helper doesn't actually own its PTY
+    ///
+    /// Avoiding fresh-start false-positives: condition (3) holds
+    /// transiently after `requestLocalClaudeSessionStart` returns
+    /// but before the next `refreshLocalSessionControlState` tick.
+    /// The fix uses optimistic supplementation — `requestLocal
+    /// ClaudeSessionStart` appends the new id to
+    /// `localManagedSessions` BEFORE returning, so freshly-started
+    /// sessions never enter the stale window even for a single
+    /// frame. (See `shouldRouteSessionLocally` doc for the same
+    /// rationale.)
+    ///
+    /// Why `selfDeviceId` matching matters here: a same-id session
+    /// with a DIFFERENT device_id is just "running on another
+    /// Mac" — the local UI would never have controlled it anyway,
+    /// and showing "helper restarted · not controllable" on it
+    /// would be misleading. Cross-device routing already disables
+    /// local controls via `shouldRouteSessionLocally`.
+    public func isStaleLocalSession(_ session: RemoteSession) -> Bool {
+        guard localHelperReachable, localControlEnabled else { return false }
+        guard isSelfDevice(session.device_id) else { return false }
+        return !localManagedSessions.contains(where: { $0.id == session.id })
     }
 
     /// **The fix for the integration gap Codex flagged on PR #17**:

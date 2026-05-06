@@ -245,6 +245,16 @@ struct SessionsTab: View {
             } else {
                 localFastPathToggle
             }
+            // PR #18 follow-up: surface "approval hook not wired"
+            // when the helper advertises structured approvals but
+            // ~/.claude/settings.json doesn't route PermissionRequest
+            // events through it. Without this banner the user sees
+            // Claude's native PTY prompt and assumes CLI Pulse is
+            // broken; the previous manual test produced exactly
+            // that confusion.
+            if shouldShowApprovalHookBanner {
+                approvalHookNotWiredBanner
+            }
         }
 
         if !remoteUsable && !localStartAvailable && displayed.isEmpty {
@@ -272,6 +282,7 @@ struct SessionsTab: View {
                             isSelected: selectedManagedSessionId == session.id,
                             pendingApproval: pendingApproval(for: session),
                             routesLocally: state.shouldRouteSessionLocally(session),
+                            isStaleLocal: state.isStaleLocalSession(session),
                             onSelect: {
                                 selectedManagedSessionId = (selectedManagedSessionId == session.id)
                                     ? nil : session.id
@@ -538,8 +549,15 @@ struct SessionsTab: View {
         let isRunning = session.status.caseInsensitiveCompare("running") == .orderedSame
         let isPending = session.status.caseInsensitiveCompare("pending") == .orderedSame
         let routesLocally = state.shouldRouteSessionLocally(session)
+        let isStaleLocal = state.isStaleLocalSession(session)
         let localSendUnsupported = routesLocally && (state.localCapabilities?.sendInput == false)
-        let promptDisabled = !isRunning || localSendUnsupported
+        // PR #18 follow-up: stale same-Mac rows (helper restart) have
+        // no PTY in the current helper. Send / Stop / Approve all
+        // have to fail closed against this id. Disable inputs in the
+        // expanded bar so the user gets a passive "this row is
+        // orphaned" UX rather than clicking buttons that no-op.
+        let promptDisabled = !isRunning || localSendUnsupported || isStaleLocal
+        let stopDisabled = isStaleLocal
         // Iter 2B: approval-button visibility per row.
         //
         //   routesLocally + helper supports approvals + structured
@@ -624,7 +642,8 @@ struct SessionsTab: View {
                     routesLocally: routesLocally,
                     localApprovalsAvailable: localApprovalsAvailable,
                     hasLocalPending: localPending != nil,
-                    remoteApprovalsAvailable: remoteApprovalsAvailable
+                    remoteApprovalsAvailable: remoteApprovalsAvailable,
+                    isStaleLocal: isStaleLocal
                 ))
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
@@ -693,9 +712,11 @@ struct SessionsTab: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
-                .help(isPending
-                      ? "Cancel this queued session. No helper running yet, so this just removes the row."
-                      : "Stop the running Claude session. Helper will terminate the PTY.")
+                .disabled(stopDisabled)
+                .help(stopHelpText(
+                    isPending: isPending,
+                    isStaleLocal: isStaleLocal
+                ))
             }
 
             if showOutput {
@@ -881,13 +902,31 @@ struct SessionsTab: View {
     ///   * local-routed row + helper does NOT advertise approvals →
     ///     keep the iter-2A "next iteration" copy.
     ///   * remote-routed rows → existing ⌘↩ approve hint.
+    /// Tooltip for the Stop / Cancel button. The stale-row case
+    /// matters for UX: if we just gave a generic "Stop the running
+    /// Claude session" hint while the button is disabled, the user
+    /// would have no idea why clicking does nothing.
+    private func stopHelpText(isPending: Bool, isStaleLocal: Bool) -> String {
+        if isStaleLocal {
+            return "This row was started by a previous helper process. The current helper does not own its PTY, so Stop here is disabled. Stop the underlying Claude process from your terminal directly."
+        }
+        if isPending {
+            return "Cancel this queued session. No helper running yet, so this just removes the row."
+        }
+        return "Stop the running Claude session. Helper will terminate the PTY."
+    }
+
     private func commandBarHintText(
         isPending: Bool,
         routesLocally: Bool,
         localApprovalsAvailable: Bool,
         hasLocalPending: Bool,
-        remoteApprovalsAvailable: Bool
+        remoteApprovalsAvailable: Bool,
+        isStaleLocal: Bool = false
     ) -> String {
+        if isStaleLocal {
+            return "Helper restarted — this row is no longer controllable from CLI Pulse. Stop the underlying Claude process from your terminal."
+        }
         if isPending {
             return "Waiting for helper to consume the start command. Cancel to remove this session."
         }
@@ -1093,6 +1132,66 @@ struct SessionsTab: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
+    /// Whether to render the "Approval hook not wired" banner.
+    /// Conditions:
+    ///   - helper reachable + gate on (without these the user
+    ///     can't act on structured approvals anyway)
+    ///   - helper advertised `capabilities.approvals = true` (no
+    ///     point telling the user to wire a hook for a feature
+    ///     this helper doesn't support)
+    ///   - hook detector says NOT wired (or settings missing)
+    /// Parse-error case is intentionally NOT shown via this banner —
+    /// the existing helper diagnostic flow surfaces broken
+    /// settings.json clearly enough.
+    private var shouldShowApprovalHookBanner: Bool {
+        guard state.localHelperReachable, state.localControlEnabled else { return false }
+        guard state.localCapabilities?.approvals == true else { return false }
+        switch state.claudeApprovalHookStatus {
+        case .notWired, .settingsMissing:
+            return true
+        case .wired, .parseError, .none:
+            return false
+        }
+    }
+
+    /// One-time setup nudge: helper supports approvals, but
+    /// `~/.claude/settings.json` isn't routing PermissionRequest
+    /// events through it. The banner has a "Copy command" button
+    /// that puts the install CLI on the clipboard — the user
+    /// pastes it into their terminal once and restarts Claude.
+    private var approvalHookNotWiredBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "link.badge.plus")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Approval hook not wired")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Claude isn't routing permission requests through CLI Pulse, so structured Approve / Reject controls in Sessions stay inactive. Run the install CLI once on this Mac and restart Claude.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button("Copy command") {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(
+                        ClaudeHookDetector.installCommandTemplate,
+                        forType: .string
+                    )
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Copies the install CLI onto your clipboard. Paste into a terminal where the helper checkout lives, then restart Claude Code.")
+            }
+        }
+        .padding(10)
+        .background(Color.accentColor.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
     private var localFastPathToggle: some View {
         HStack(alignment: .center, spacing: 8) {
             Image(systemName: "bolt.circle")
@@ -1136,6 +1235,13 @@ private struct ManagedSessionRow: View {
     /// badge so the user can see at a glance which transport they
     /// will hit. (Codex review on PR #17 manual verification.)
     let routesLocally: Bool
+    /// PR #18 follow-up (Codex iter4 manual test): same-Mac row
+    /// whose original helper process is no longer alive. Drives a
+    /// neutral "helper restarted · not controllable" pill instead
+    /// of the green "Local" pill, and the expanded command bar
+    /// disables Send / Stop / Approve so the user doesn't keep
+    /// clicking buttons that have to fail closed.
+    let isStaleLocal: Bool
     let onSelect: () -> Void
 
     /// Display label, with the duplicate-name workaround for
@@ -1184,6 +1290,14 @@ private struct ManagedSessionRow: View {
                         if routesLocally {
                             transportBadge(text: "Local", color: .green)
                                 .help("Prompt and Stop on this row use the local UDS fast path (helper-owned PTY).")
+                        } else if isStaleLocal {
+                            // Stale row: helper restarted, no PTY
+                            // for this id. Neutral grey pill plus
+                            // a hover-tooltip explaining what
+                            // happened — the user shouldn't think
+                            // this is normal "running" state.
+                            transportBadge(text: "Helper restarted", color: .secondary)
+                                .help("This row was started by a previous helper process. The current helper does not own its PTY, so Send / Stop / Approve here are disabled. Stop the underlying Claude process from the terminal directly.")
                         }
                     }
                     HStack(spacing: 6) {
@@ -1197,11 +1311,18 @@ private struct ManagedSessionRow: View {
                         }
                         // Affordance hint so the chevron isn't the
                         // only indication that a row expands into
-                        // controls.
+                        // controls. Stale rows replace the affordance
+                        // with an explanatory subtitle.
                         if !isSelected {
-                            Text("· tap to control")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.tertiary)
+                            if isStaleLocal {
+                                Text("· not controllable")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.tertiary)
+                            } else {
+                                Text("· tap to control")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.tertiary)
+                            }
                         }
                     }
                 }
