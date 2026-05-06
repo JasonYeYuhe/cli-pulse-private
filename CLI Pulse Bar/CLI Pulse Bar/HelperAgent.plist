@@ -2,10 +2,32 @@
 <!--
   LaunchAgent plist for the embedded CLI Pulse helper daemon.
 
-  Phase 4 helper-bundling work: this template ships inside the .app
-  bundle at `Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist`
-  and is registered with launchd via `SMAppService.agent(plistName:)`
-  on first app launch.
+  Phase 4D P1.4 (Codex review): this plist is shipped INSIDE the
+  signed app bundle at `Contents/Library/LaunchAgents/yyh.CLI-Pulse.
+  helper.plist` and MUST NOT be mutated at runtime — any post-
+  distribution write into a signed bundle invalidates the code
+  signature and causes SMAppService.register to fail.
+
+  Three resolutions baked in below to make the plist stable
+  across all install paths without runtime substitution:
+
+    1. ProgramArguments uses `BundleProgram` keyed entry instead
+       of `Program` — launchd resolves this RELATIVE TO the
+       containing .app bundle automatically. We don't need to
+       know the user's install path.
+
+    2. Logs go to `~/Library/Logs/CLI Pulse/...` — launchd
+       expands `~` against the LOGGED-IN USER's home, not a
+       build-time constant. No `__HOME__` substitution needed.
+
+    3. Supabase URL + anon key are NOT in the plist anymore.
+       The Swift helper reads them from the app's Info.plist via
+       a small lookup at startup (the app's bundle path is
+       reachable through `$XPC_BUNDLE_PATH` launchd sets, OR via
+       the helper-config file the app writes once on first
+       launch). Either way, no secrets cross the plist boundary
+       and the LaunchAgent file works for every Mac/install
+       location identically.
 
   The agent runs OUTSIDE the macOS app sandbox (LaunchAgents under
   user-level launchd are not sandboxed by default), which is the
@@ -27,15 +49,7 @@
       so `yyh.CLI-Pulse.helper.plist` → label `yyh.CLI-Pulse.helper`.
     * SMAppService.agent(plistName:) resolves the plist relative to
       the calling app's Contents/Library/LaunchAgents/ — no absolute
-      path needed.
-
-  Supabase credentials: the EnvironmentVariables block below is a
-  template; the macOS app's build phase ("Copy Files: LaunchAgents")
-  rewrites the placeholder strings via `plutil -replace …` at build
-  time, baking in the same SUPABASE_URL / SUPABASE_ANON_KEY values
-  from the app's Info.plist. The anon key is already shipped in
-  Info.plist (Bundle.main.object(forInfoDictionaryKey: "SUPABASE_…"))
-  so no new secret leaks here.
+      path needed at the SMAppService API surface.
 
   Lifecycle:
     * `RunAtLoad`: false — we don't auto-start on machine boot;
@@ -45,10 +59,6 @@
       so the UDS socket comes back and the app's poll loop reconnects.
     * `ProcessType`: Background — lower CPU/memory priority; we're a
       polling daemon, not a foreground UI process.
-
-  Logs land at the StandardOut/StandardErrorPath below; the macOS
-  app's diagnostics surface (Settings → Helper status) tails the
-  last N lines for user-visible troubleshooting.
 -->
 <plist version="1.0">
 <dict>
@@ -56,26 +66,25 @@
     <string>yyh.CLI-Pulse.helper</string>
 
     <!--
-      Path is rewritten at install time by `HelperLifecycleManager.swift`
-      to point at `${HOST_APP_BUNDLE}/Contents/Helpers/cli_pulse_helper`.
-      Template uses a placeholder so this file remains stable across
-      Xcode build outputs (different DerivedData paths).
+      Phase 4D P1.4: BundleProgram is the launchd-blessed way to
+      reference an executable INSIDE an .app bundle without
+      hard-coding an install-path-dependent absolute path. The
+      `BundleProgram` value is interpreted relative to the
+      registering app's bundle root (i.e. the `.app/` dir).
+      `ProgramArguments` provides argv[0] and the trailing
+      arguments — `cli_pulse_helper` here is just the argv[0]
+      label, not a path. launchd uses BundleProgram for the
+      executable resolution.
     -->
+    <key>BundleProgram</key>
+    <string>Contents/Helpers/cli_pulse_helper</string>
     <key>ProgramArguments</key>
     <array>
-        <string>__CLI_PULSE_HELPER_BIN__</string>
+        <string>cli_pulse_helper</string>
         <string>daemon</string>
         <string>--interval</string>
         <string>120</string>
     </array>
-
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>CLI_PULSE_SUPABASE_URL</key>
-        <string>__CLI_PULSE_SUPABASE_URL__</string>
-        <key>CLI_PULSE_SUPABASE_ANON_KEY</key>
-        <string>__CLI_PULSE_SUPABASE_ANON_KEY__</string>
-    </dict>
 
     <key>RunAtLoad</key>
     <false/>
@@ -96,14 +105,13 @@
     <integer>30</integer>
 
     <!--
-      Logs to the user's Library/Logs (visible in Console.app under
-      "user reports"). Path uses $HOME so launchd resolves at start
-      time, not at plist-write time, so user re-installs work
-      regardless of the original install path.
+      Logs to the user's Library/Logs. launchd expands `~` against
+      the user's home at agent-start time, so this works for any
+      Mac without build-time substitution.
     -->
     <key>StandardOutPath</key>
-    <string>__HOME__/Library/Logs/CLI Pulse/helper.out.log</string>
+    <string>~/Library/Logs/CLI Pulse/helper.out.log</string>
     <key>StandardErrorPath</key>
-    <string>__HOME__/Library/Logs/CLI Pulse/helper.err.log</string>
+    <string>~/Library/Logs/CLI Pulse/helper.err.log</string>
 </dict>
 </plist>

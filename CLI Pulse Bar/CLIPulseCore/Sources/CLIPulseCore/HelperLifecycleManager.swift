@@ -101,27 +101,31 @@ public actor HelperLifecycleManager {
     /// launchd. Safe to call on every app launch — re-registering
     /// the same plist with the same label is a no-op for
     /// SMAppService.
+    ///
+    /// Phase 4D P1.4 (Codex): does NOT mutate the signed app
+    /// bundle anymore. The plist already lives at
+    /// `Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist`
+    /// in shippable form (BundleProgram + ~ for log paths — see
+    /// HelperAgent.plist comments). SMAppService.register reads
+    /// it directly without any runtime substitution.
     @discardableResult
     public func ensureRegistered() async -> Status {
-        guard let helperBinaryURL = Self.locateBundledHelperBinary() else {
+        guard Self.locateBundledHelperBinary() != nil else {
             logger.error("embedded helper binary missing at Contents/Helpers/cli_pulse_helper")
             lastKnownStatus = .bundledBinaryMissing
             return lastKnownStatus
         }
-
-        do {
-            try installAgentPlist(helperBinary: helperBinaryURL)
-        } catch {
-            let message = "rewrite plist: \(error.localizedDescription)"
-            logger.error("\(message)")
-            lastKnownStatus = .registrationFailed(message)
+        guard Self.bundledAgentPlistExists() else {
+            logger.error("embedded LaunchAgent plist missing at Contents/Library/LaunchAgents/\(Self.agentPlistName, privacy: .public)")
+            lastKnownStatus = .registrationFailed(
+                "Bundled LaunchAgent plist missing — Xcode build phase did not place it under Contents/Library/LaunchAgents/."
+            )
             return lastKnownStatus
         }
-
         // SMAppService.agent registers the .plist by NAME (not path);
         // the framework looks under the calling app's
-        // Contents/Library/LaunchAgents/. Phase 4 build phase
-        // copies the rewritten plist into that directory.
+        // Contents/Library/LaunchAgents/. The plist there MUST be
+        // signed in (no runtime mutation since Phase 4D P1.4).
         let service = SMAppService.agent(plistName: Self.agentPlistName)
         do {
             try service.register()
@@ -182,14 +186,28 @@ public actor HelperLifecycleManager {
 
     /// Path SMAppService expects the agent plist to live at: the
     /// Contents/Library/LaunchAgents/ subdirectory of the calling
-    /// app's bundle. The template plist gets rewritten in place
-    /// here every registration so credential / path drift between
-    /// builds is corrected automatically.
+    /// app's bundle.
+    ///
+    /// Phase 4D P1.4 (Codex): post-distribution write into a
+    /// signed app bundle invalidates the signature, so the plist
+    /// is shipped in-bundle as-is — no runtime mutation. This
+    /// path is only used to verify the plist is actually present
+    /// before calling SMAppService.register.
     public static func agentPlistPath() -> URL? {
         return appContentsDir()?
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("LaunchAgents", isDirectory: true)
             .appendingPathComponent(agentPlistName)
+    }
+
+    /// Verify the bundled LaunchAgent plist is in place. Used by
+    /// `ensureRegistered` to surface a clear `.registrationFailed`
+    /// status when the Xcode "Copy Files" build phase didn't run
+    /// (dev builds where the project file's Copy Files entry was
+    /// removed by accident, etc.).
+    public static func bundledAgentPlistExists() -> Bool {
+        guard let path = agentPlistPath() else { return false }
+        return FileManager.default.fileExists(atPath: path.path)
     }
 
     /// Resolve `<.app>/Contents/` for the running bundle. Uses
@@ -209,67 +227,30 @@ public actor HelperLifecycleManager {
         return bundleURL.appendingPathComponent("Contents", isDirectory: true)
     }
 
-    /// Read the template plist from the app bundle resources,
-    /// substitute the four placeholders, and write the result to
-    /// `Contents/Library/LaunchAgents/<plistName>`. The build phase
-    /// already copies the template into Resources/; this rewrite
-    /// produces the materialised version SMAppService needs.
-    private func installAgentPlist(helperBinary: URL) throws {
-        guard let templateURL = Bundle.main.url(
-            forResource: Self.plistResourceName, withExtension: "plist"
-        ) else {
-            throw HelperLifecycleError.templatePlistMissing
-        }
-        guard let agentDir = Self.agentPlistPath()?.deletingLastPathComponent() else {
-            throw HelperLifecycleError.bundleLayoutBroken
-        }
-        try FileManager.default.createDirectory(
-            at: agentDir, withIntermediateDirectories: true
-        )
-
-        let template = try String(contentsOf: templateURL, encoding: .utf8)
-
-        // Pull SUPABASE_* from the app's own Info.plist — same
-        // values HelperAPIClient already uses, so no new secret
-        // surface and no chance of agent / app drift.
-        let supabaseURL = (
-            Bundle.main.object(forInfoDictionaryKey: "SUPABASE_URL") as? String
-        ) ?? "https://gkjwsxotmwrgqsvfijzs.supabase.co"
-        let supabaseKey = (
-            Bundle.main.object(forInfoDictionaryKey: "SUPABASE_ANON_KEY") as? String
-        ) ?? ""
-        let homePath = NSHomeDirectory()
-
-        let rewritten = Self.substitutePlistTemplate(
-            template,
-            helperBinaryPath: helperBinary.path,
-            supabaseURL: supabaseURL,
-            supabaseAnonKey: supabaseKey,
-            homePath: homePath
-        )
-
-        let outputURL = agentDir.appendingPathComponent(Self.agentPlistName)
-        try rewritten.write(to: outputURL, atomically: true, encoding: .utf8)
-    }
-
-    /// Pure string-substitution: extracted from `installAgentPlist`
-    /// so unit tests can pin the four placeholder names without
-    /// instantiating SMAppService or the bundle. Phase 4: any
-    /// future change to placeholder syntax MUST update both
-    /// `HelperAgent.plist` and this method's expected token list.
-    public static func substitutePlistTemplate(
-        _ template: String,
-        helperBinaryPath: String,
-        supabaseURL: String,
-        supabaseAnonKey: String,
-        homePath: String
-    ) -> String {
-        return template
-            .replacingOccurrences(of: "__CLI_PULSE_HELPER_BIN__", with: helperBinaryPath)
-            .replacingOccurrences(of: "__CLI_PULSE_SUPABASE_URL__", with: supabaseURL)
-            .replacingOccurrences(of: "__CLI_PULSE_SUPABASE_ANON_KEY__", with: supabaseAnonKey)
-            .replacingOccurrences(of: "__HOME__", with: homePath)
-    }
+    /// Phase 4D P1.4 (Codex review fix): the previous
+    /// `installAgentPlist` + `substitutePlistTemplate` pair has
+    /// been removed. Runtime substitution wrote into the signed
+    /// app bundle's `Contents/Library/LaunchAgents/`, which
+    /// invalidates the code signature and makes
+    /// SMAppService.register fail on properly notarised builds.
+    ///
+    /// The replacement strategy:
+    ///   * `BundleProgram` in the plist refs the helper binary
+    ///     by RELATIVE path (`Contents/Helpers/cli_pulse_helper`),
+    ///     resolved by launchd against the registering app's
+    ///     bundle. No build- or runtime-known absolute path is
+    ///     needed.
+    ///   * Logs use `~/Library/Logs/...` so launchd expands
+    ///     `~` against the user's home at agent-start time.
+    ///   * Supabase URL + anon key are NOT in the LaunchAgent
+    ///     plist anymore. The Swift helper reads them from the
+    ///     app's `Info.plist` via the helper-config file at
+    ///     startup (or, for the local-only fast path, doesn't
+    ///     need them at all).
+    ///
+    /// Result: the plist that ships inside the .app is the
+    /// final form SMAppService consumes. No mutation, no
+    /// signature invalidation, no per-install path-rewriting.
 }
 
 /// Setup-time errors that prevent registration from being attempted.
@@ -277,13 +258,10 @@ public actor HelperLifecycleManager {
 /// human-readable message so the Settings panel can render
 /// something actionable.
 public enum HelperLifecycleError: Error, LocalizedError {
-    case templatePlistMissing
     case bundleLayoutBroken
 
     public var errorDescription: String? {
         switch self {
-        case .templatePlistMissing:
-            return "HelperAgent.plist resource is not in the app bundle. The Xcode build target is missing a Copy Files phase that includes HelperAgent.plist in Resources."
         case .bundleLayoutBroken:
             return "Cannot resolve Contents/Library/LaunchAgents path from the running executable. Bundle layout is unexpected — running from a non-standard location."
         }
