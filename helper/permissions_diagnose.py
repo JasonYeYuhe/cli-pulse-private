@@ -488,19 +488,41 @@ def recommended_hook_config_snippet(helper_path: Path, python_path: str | None =
     `helper_path` should be the absolute path to cli_pulse_helper.py.
     `python_path` defaults to whatever the user's python3 is on PATH;
     callers can pass a specific interpreter if they want.
+
+    Schema: each PermissionRequest entry is a matcher object with
+    a nested `hooks` array (per Claude Code's current contract,
+    surfaced by `claude /doctor`). The flat
+    `[{"type":"command","command":"..."}]` shape used by older
+    docs is rejected at runtime — Claude Code logs
+    `hooks.PermissionRequest.0.hooks: Expected array, but
+    received undefined` and silently never invokes the hook.
+    Empty matcher matches every tool name.
     """
     cmd = recommended_hook_command(helper_path=helper_path, python_path=python_path)
     snippet = {
         "hooks": {
             "PermissionRequest": [
-                {
-                    "type": "command",
-                    "command": cmd,
-                }
+                _cli_pulse_hook_entry(cmd)
             ]
         }
     }
     return json.dumps(snippet, indent=2)
+
+
+def _cli_pulse_hook_entry(command: str) -> dict[str, Any]:
+    """Build the matcher-shape hook entry for `~/.claude/settings.json`.
+
+    Single source of truth used by both
+    `recommended_hook_config_snippet` (print path) and
+    `install_claude_hook` (merge path) so the two can never drift
+    on schema details.
+    """
+    return {
+        "matcher": "",
+        "hooks": [
+            {"type": "command", "command": command}
+        ],
+    }
 
 
 def recommended_hook_command(helper_path: Path, python_path: str | None = None) -> str:
@@ -594,39 +616,94 @@ def install_claude_hook(
     # codebase — no other Claude PermissionRequest hook would use
     # both that subcommand AND that argument shape, so matching on
     # this string alone is specific enough without false positives.
-    # Notably this also covers entries for codex / shell providers
-    # under different `--provider` values, but those are kept
-    # separate (they target different subcommands inside the same
-    # helper script).
+    #
+    # We probe BOTH schema shapes:
+    #   - **Current (matcher + nested hooks)**: each PermissionRequest
+    #     entry is `{"matcher": "...", "hooks": [{"type":"command",
+    #     "command":"..."}]}`. Walk the inner `hooks` array.
+    #   - **Legacy (flat command)**: each entry is
+    #     `{"type":"command","command":"..."}`. Older versions of
+    #     this codebase + older Claude Code docs used this; Claude
+    #     Code's current `/doctor` rejects it as malformed but the
+    #     entry may still sit in the user's settings.json. We need
+    #     to recognise it so the auto-heal path can replace it
+    #     with the matcher-shape.
     helper_marker = "remote-approval-hook --provider claude"
+
+    def _is_cli_pulse_legacy_entry(entry: object) -> bool:
+        return (
+            isinstance(entry, dict)
+            and isinstance(entry.get("command"), str)
+            and helper_marker in entry["command"]
+        )
+
+    def _is_cli_pulse_matcher_entry(entry: object) -> bool:
+        if not isinstance(entry, dict):
+            return False
+        nested = entry.get("hooks")
+        if not isinstance(nested, list):
+            return False
+        return any(
+            isinstance(h, dict)
+            and isinstance(h.get("command"), str)
+            and helper_marker in h["command"]
+            for h in nested
+        )
+
     cli_pulse_indices = [
         i for i, entry in enumerate(pr)
-        if isinstance(entry, dict)
-        and isinstance(entry.get("command"), str)
-        and helper_marker in entry["command"]
+        if _is_cli_pulse_legacy_entry(entry) or _is_cli_pulse_matcher_entry(entry)
     ]
 
-    previous_command: str | None = None
-    if cli_pulse_indices:
-        previous_command = pr[cli_pulse_indices[0]].get("command")  # type: ignore[arg-type]
+    def _entry_command(entry: object) -> str | None:
+        """Pull the command string out of either schema shape."""
+        if not isinstance(entry, dict):
+            return None
+        if isinstance(entry.get("command"), str):
+            return entry["command"]
+        nested = entry.get("hooks")
+        if isinstance(nested, list):
+            for h in nested:
+                if isinstance(h, dict) and isinstance(h.get("command"), str):
+                    if helper_marker in h["command"]:
+                        return h["command"]
+        return None
 
-    if previous_command == target_command:
+    def _entry_uses_current_schema(entry: object) -> bool:
+        return isinstance(entry, dict) and isinstance(entry.get("hooks"), list)
+
+    previous_command: str | None = None
+    previous_schema_correct = False
+    if cli_pulse_indices:
+        previous_command = _entry_command(pr[cli_pulse_indices[0]])
+        previous_schema_correct = _entry_uses_current_schema(pr[cli_pulse_indices[0]])
+
+    if (
+        previous_command == target_command
+        and previous_schema_correct
+        and len(cli_pulse_indices) == 1
+    ):
         action = "noop"
     elif cli_pulse_indices:
-        # Replace the existing CLI Pulse entry (in place) so users
-        # who moved their helper checkout / changed python don't end
-        # up with a stale entry. Drop any duplicate CLI Pulse entries.
-        pr[cli_pulse_indices[0]] = {"type": "command", "command": target_command}
+        # Replace the existing CLI Pulse entry — covers three
+        # auto-heal cases:
+        #   1. user moved their helper checkout / changed python →
+        #      command path differs
+        #   2. legacy flat schema → we lift it into the
+        #      matcher-shape Claude Code's current /doctor accepts
+        #   3. duplicate CLI Pulse entries (multiple installs) →
+        #      collapse to one
+        pr[cli_pulse_indices[0]] = _cli_pulse_hook_entry(target_command)
         for idx in cli_pulse_indices[1:][::-1]:
             del pr[idx]
         action = "replaced"
     elif pr:
         # User has other PermissionRequest hooks; append rather than
         # replace so we never silently drop their configuration.
-        pr.append({"type": "command", "command": target_command})
+        pr.append(_cli_pulse_hook_entry(target_command))
         action = "added"
     else:
-        pr = [{"type": "command", "command": target_command}]
+        pr = [_cli_pulse_hook_entry(target_command)]
         action = "added" if data else "created"
 
     hooks["PermissionRequest"] = pr

@@ -85,14 +85,38 @@ public enum ClaudeHookDetector {
         guard let pr = hooks["PermissionRequest"] as? [[String: Any]] else {
             return .notWired
         }
-        let hasCliPulse = pr.contains { entry in
-            if let command = entry["command"] as? String,
-               command.contains(Self.helperHookMarker) {
-                return true
+        // Probe both schema shapes (mirrors the helper-side
+        // `permissions_diagnose.install_claude_hook` detection):
+        //
+        //   - **Current (matcher + nested hooks)**: each entry is
+        //     `{"matcher": "...", "hooks": [{"type":"command",
+        //     "command":"..."}]}`. Walk the inner `hooks` array.
+        //   - **Legacy (flat command)**: each entry is
+        //     `{"type":"command","command":"..."}`. Older versions
+        //     of this codebase wrote this shape; Claude Code's
+        //     current `/doctor` rejects it. The Sessions banner
+        //     should still report it as `notWired` so the user
+        //     re-runs `install-claude-hook` and gets the legacy
+        //     entry auto-replaced with the matcher shape — which
+        //     is what makes the hook actually invoke.
+        //
+        // Detection rule: only the *current* matcher-shape counts
+        // as `wired`. A legacy flat entry is silently dead from
+        // Claude Code's point of view, so reporting it as wired
+        // would be misleading.
+        let hasCliPulseInMatcherShape = pr.contains { entry in
+            guard let inner = entry["hooks"] as? [[String: Any]] else {
+                return false
             }
-            return false
+            return inner.contains { h in
+                if let command = h["command"] as? String,
+                   command.contains(Self.helperHookMarker) {
+                    return true
+                }
+                return false
+            }
         }
-        return hasCliPulse ? .wired : .notWired
+        return hasCliPulseInMatcherShape ? .wired : .notWired
     }
 
     /// CLI command the user runs once to install the hook. The

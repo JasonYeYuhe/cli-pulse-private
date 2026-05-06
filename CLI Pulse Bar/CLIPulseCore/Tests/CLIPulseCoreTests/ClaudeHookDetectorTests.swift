@@ -65,15 +65,26 @@ final class ClaudeHookDetectorTests: XCTestCase {
         XCTAssertEqual(ClaudeHookDetector.currentStatus(at: url), .notWired)
     }
 
-    func testReturnsWiredWhenCliPulseHookPresent() throws {
+    func testReturnsWiredWhenCliPulseHookPresentInMatcherShape() throws {
+        // Current schema: outer entry has matcher + nested hooks
+        // array. This is what `claude /doctor` validates against
+        // and what `install_claude_hook` writes. Pre-fix the
+        // detector matched the legacy flat shape; that surface
+        // is now correctly reported as `.notWired` (see
+        // `testReturnsNotWiredForLegacyFlatSchemaEntry` below).
         let url = tmpSettingsURL()
         let json = #"""
         {
           "hooks": {
             "PermissionRequest": [
               {
-                "type": "command",
-                "command": "python3 /path/to/cli_pulse_helper.py remote-approval-hook --provider claude"
+                "matcher": "",
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "python3 /path/to/cli_pulse_helper.py remote-approval-hook --provider claude"
+                  }
+                ]
               }
             ]
           }
@@ -89,10 +100,20 @@ final class ClaudeHookDetectorTests: XCTestCase {
         {
           "hooks": {
             "PermissionRequest": [
-              { "type": "command", "command": "/usr/local/bin/audit-hook" },
               {
-                "type": "command",
-                "command": "python3 /Users/me/repo/helper/cli_pulse_helper.py remote-approval-hook --provider claude"
+                "matcher": "Read",
+                "hooks": [
+                  { "type": "command", "command": "/usr/local/bin/audit-hook" }
+                ]
+              },
+              {
+                "matcher": "",
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "python3 /Users/me/repo/helper/cli_pulse_helper.py remote-approval-hook --provider claude"
+                  }
+                ]
               }
             ]
           }
@@ -100,6 +121,33 @@ final class ClaudeHookDetectorTests: XCTestCase {
         """#
         try json.write(to: url, atomically: true, encoding: .utf8)
         XCTAssertEqual(ClaudeHookDetector.currentStatus(at: url), .wired)
+    }
+
+    /// Codex iter5 finding: the legacy flat schema is silently
+    /// rejected by Claude Code's runtime validator (`/doctor`
+    /// reports `Expected array, but received undefined`). The
+    /// detector must report this as `.notWired` so the Sessions
+    /// banner surfaces the install nudge — re-running install
+    /// auto-heals legacy entries into the matcher-shape.
+    func testReturnsNotWiredForLegacyFlatSchemaEntry() throws {
+        let url = tmpSettingsURL()
+        let json = #"""
+        {
+          "hooks": {
+            "PermissionRequest": [
+              {
+                "type": "command",
+                "command": "python3 /path/to/cli_pulse_helper.py remote-approval-hook --provider claude"
+              }
+            ]
+          }
+        }
+        """#
+        try json.write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertEqual(
+            ClaudeHookDetector.currentStatus(at: url), .notWired,
+            "legacy flat schema is rejected by Claude Code at runtime; detector must NOT report it as wired"
+        )
     }
 
     func testReturnsParseErrorOnInvalidJSON() throws {

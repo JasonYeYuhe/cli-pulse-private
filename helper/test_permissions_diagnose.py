@@ -275,7 +275,12 @@ def test_recommended_hook_config_snippet_default_python():
         helper_path=Path("/abs/path/helper.py"),
     )
     parsed = json.loads(snippet)
-    cmd = parsed["hooks"]["PermissionRequest"][0]["command"]
+    # Snippet uses the matcher-shape Claude Code's `/doctor`
+    # accepts. Walk the nested array to get the command.
+    entry = parsed["hooks"]["PermissionRequest"][0]
+    assert entry.get("matcher") == "", "matcher must be empty (matches any tool)"
+    assert isinstance(entry.get("hooks"), list)
+    cmd = entry["hooks"][0]["command"]
     assert cmd.startswith("python3 ")
     assert "/abs/path/helper.py" in cmd
     assert "remote-approval-hook --provider claude" in cmd
@@ -287,7 +292,7 @@ def test_recommended_hook_config_snippet_custom_python():
         python_path="/opt/homebrew/bin/python3.12",
     )
     parsed = json.loads(snippet)
-    cmd = parsed["hooks"]["PermissionRequest"][0]["command"]
+    cmd = parsed["hooks"]["PermissionRequest"][0]["hooks"][0]["command"]
     assert cmd.startswith("/opt/homebrew/bin/python3.12 ")
 
 
@@ -360,6 +365,23 @@ def _install_paths(tmp_path):
     return helper.resolve(), settings
 
 
+def _cli_pulse_command_in(entry: dict) -> str | None:
+    """Extract the CLI Pulse command from a PermissionRequest entry,
+    handling both schemas. Mirrors the install detection logic so
+    tests can assert on the resulting command without caring about
+    matcher-shape vs legacy-shape.
+    """
+    if isinstance(entry.get("command"), str):
+        return entry["command"]
+    inner = entry.get("hooks")
+    if isinstance(inner, list):
+        for h in inner:
+            if isinstance(h, dict) and isinstance(h.get("command"), str):
+                if "remote-approval-hook --provider claude" in h["command"]:
+                    return h["command"]
+    return None
+
+
 def test_install_claude_hook_creates_when_settings_missing(tmp_path):
     helper, settings = _install_paths(tmp_path)
     assert not settings.exists()
@@ -372,9 +394,19 @@ def test_install_claude_hook_creates_when_settings_missing(tmp_path):
     assert "PermissionRequest" in written["hooks"]
     entries = written["hooks"]["PermissionRequest"]
     assert len(entries) == 1
-    assert entries[0]["type"] == "command"
-    assert "remote-approval-hook --provider claude" in entries[0]["command"]
-    assert str(helper) in entries[0]["command"]
+    # PR #18 follow-up (Codex iter5): current schema requires
+    # `matcher` + nested `hooks` array. Claude Code's `/doctor`
+    # rejects the legacy flat `{"type":"command","command":"..."}`
+    # shape with "Expected array, but received undefined" and
+    # silently never invokes the hook. Pin the matcher-shape so a
+    # future regression that drops it lights the test up.
+    assert entries[0]["matcher"] == "", "matcher must be empty string (matches any tool)"
+    assert isinstance(entries[0]["hooks"], list)
+    assert len(entries[0]["hooks"]) == 1
+    inner = entries[0]["hooks"][0]
+    assert inner["type"] == "command"
+    assert "remote-approval-hook --provider claude" in inner["command"]
+    assert str(helper) in inner["command"]
 
 
 def test_install_claude_hook_noop_when_already_wired(tmp_path):
@@ -390,12 +422,17 @@ def test_install_claude_hook_noop_when_already_wired(tmp_path):
 
 
 def test_install_claude_hook_replaces_stale_entry(tmp_path):
+    """Pre-existing CLI Pulse entry from an OLDER helper checkout
+    AND in the current matcher-shape schema. Replaced in place,
+    not duplicated.
+    """
     helper, settings = _install_paths(tmp_path)
-    # Pre-existing CLI Pulse entry from an OLDER helper checkout.
     stale = "python3 /old/path/cli_pulse_helper.py remote-approval-hook --provider claude"
     settings.parent.mkdir(parents=True, exist_ok=True)
     settings.write_text(json.dumps({
-        "hooks": {"PermissionRequest": [{"type": "command", "command": stale}]}
+        "hooks": {"PermissionRequest": [
+            {"matcher": "", "hooks": [{"type": "command", "command": stale}]}
+        ]}
     }), encoding="utf-8")
 
     result = pd.install_claude_hook(helper_path=helper, settings_path=settings)
@@ -404,18 +441,63 @@ def test_install_claude_hook_replaces_stale_entry(tmp_path):
     written = json.loads(settings.read_text())
     entries = written["hooks"]["PermissionRequest"]
     assert len(entries) == 1, "stale CLI Pulse entry must be replaced, not duplicated"
-    assert str(helper) in entries[0]["command"]
+    cmd = _cli_pulse_command_in(entries[0])
+    assert cmd is not None and str(helper) in cmd
+
+
+def test_install_claude_hook_replaces_legacy_flat_schema_entry(tmp_path):
+    """Pre-existing CLI Pulse entry in the LEGACY flat schema
+    (`{"type":"command","command":"..."}` directly under
+    PermissionRequest, no matcher wrapper) gets auto-healed into
+    the matcher-shape Claude Code's `/doctor` accepts.
+
+    This is the bug Codex caught on f0e08be: the install path was
+    writing the legacy shape (because old docs had it), Claude
+    Code rejected it at runtime with `hooks.PermissionRequest.0.hooks:
+    Expected array, but received undefined`, and the hook never
+    invoked even though install reported success. The fix is the
+    matcher-shape on write AND auto-heal on re-install.
+    """
+    helper, settings = _install_paths(tmp_path)
+    legacy_command = (
+        f"python3 {helper} remote-approval-hook --provider claude"
+    )
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({
+        "hooks": {"PermissionRequest": [
+            {"type": "command", "command": legacy_command}
+        ]}
+    }), encoding="utf-8")
+
+    result = pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    assert result["action"] == "replaced"
+    assert result["previous_command"] == legacy_command
+    written = json.loads(settings.read_text())
+    entries = written["hooks"]["PermissionRequest"]
+    assert len(entries) == 1
+    # Legacy flat shape gone, matcher-shape in its place.
+    assert "matcher" in entries[0], (
+        "legacy flat schema must be lifted into matcher-shape"
+    )
+    assert isinstance(entries[0]["hooks"], list)
+    assert "type" not in entries[0], (
+        "matcher-shape entries do NOT have a top-level `type` field"
+    )
 
 
 def test_install_claude_hook_appends_when_user_has_other_hooks(tmp_path):
     """User has unrelated PermissionRequest hooks — we must NOT
-    silently drop them, just add ours alongside.
+    silently drop them, just add ours alongside. The user's
+    entries can be in either schema; we don't touch them.
     """
     helper, settings = _install_paths(tmp_path)
     settings.parent.mkdir(parents=True, exist_ok=True)
+    # User has an audit hook in the matcher-shape (current schema).
     settings.write_text(json.dumps({
         "hooks": {"PermissionRequest": [
-            {"type": "command", "command": "/usr/local/bin/audit-hook"}
+            {"matcher": "", "hooks": [
+                {"type": "command", "command": "/usr/local/bin/audit-hook"}
+            ]}
         ]}
     }), encoding="utf-8")
 
@@ -425,9 +507,15 @@ def test_install_claude_hook_appends_when_user_has_other_hooks(tmp_path):
     entries = written["hooks"]["PermissionRequest"]
     assert len(entries) == 2
     # User's pre-existing audit-hook survives.
-    assert any(e["command"] == "/usr/local/bin/audit-hook" for e in entries)
+    audit_present = any(
+        any(h.get("command") == "/usr/local/bin/audit-hook"
+            for h in e.get("hooks", []) if isinstance(h, dict))
+        for e in entries
+    )
+    assert audit_present, "user's pre-existing audit hook must survive"
     # Our entry is present.
-    assert any(str(helper) in e["command"] for e in entries)
+    cli_pulse_present = any(_cli_pulse_command_in(e) is not None for e in entries)
+    assert cli_pulse_present
 
 
 def test_install_claude_hook_preserves_unrelated_keys(tmp_path):
@@ -500,7 +588,8 @@ def test_install_claude_hook_quotes_paths_with_spaces(tmp_path):
     pd.install_claude_hook(helper_path=helper.resolve(), settings_path=settings)
 
     written = json.loads(settings.read_text())
-    cmd = written["hooks"]["PermissionRequest"][0]["command"]
+    cmd = _cli_pulse_command_in(written["hooks"]["PermissionRequest"][0])
+    assert cmd is not None
     # The whole helper path (with embedded space) MUST be quoted —
     # shlex.quote wraps the entire path containing the space, not
     # just the path component, so we check for the quoted form of
@@ -546,7 +635,8 @@ def test_install_claude_hook_quotes_custom_python_path_with_spaces(tmp_path):
     )
 
     written = json.loads(settings.read_text())
-    cmd = written["hooks"]["PermissionRequest"][0]["command"]
+    cmd = _cli_pulse_command_in(written["hooks"]["PermissionRequest"][0])
+    assert cmd is not None
     import shlex
     argv = shlex.split(cmd)
     # Python interpreter MUST be the first argv, intact.
@@ -568,7 +658,8 @@ def test_install_claude_hook_replaces_unquoted_legacy_entry(tmp_path):
     helper = repo / "cli_pulse_helper.py"
     helper.write_text("# stub", encoding="utf-8")
 
-    # Plant the OLD broken format directly.
+    # Plant the OLD broken format directly (legacy flat schema +
+    # unquoted path — the worst case from before either fix).
     legacy_unquoted = (
         f"python3 {helper.resolve()} remote-approval-hook --provider claude"
     )
@@ -584,7 +675,8 @@ def test_install_claude_hook_replaces_unquoted_legacy_entry(tmp_path):
     assert result["action"] == "replaced"
     assert result["previous_command"] == legacy_unquoted
     written = json.loads(settings.read_text())
-    cmd = written["hooks"]["PermissionRequest"][0]["command"]
+    cmd = _cli_pulse_command_in(written["hooks"]["PermissionRequest"][0])
+    assert cmd is not None
     assert "'" in cmd or '"' in cmd, (
         f"new command must shell-quote the helper path: {cmd}"
     )
