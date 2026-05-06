@@ -41,6 +41,13 @@ case "daemon":
         exit(1)
     }
     let socketPath = AuthToken.containerPath().appendingPathComponent("clipulse-helper.sock")
+    let broker = EventBroker()
+    let registry = ApprovalRegistry(broker: broker)
+    let sessionManager = ManagedSessionManager(
+        transport: PtyTransport(),
+        registry: registry,
+        broker: broker
+    )
     let server = LocalSessionServer(
         config: LocalSessionServer.Configuration(socketPath: socketPath),
         hooks: LocalSessionServer.Hooks(
@@ -49,7 +56,10 @@ case "daemon":
             setLocalControlEnabled: { _ in /* persist later */ },
             getHelperArgv0: { CommandLine.arguments.first.map {
                 URL(fileURLWithPath: $0).path
-            } }
+            } },
+            sessionManager: sessionManager,
+            listDetectedSessions: { [] },
+            approvalRegistry: registry
         )
     )
     do {

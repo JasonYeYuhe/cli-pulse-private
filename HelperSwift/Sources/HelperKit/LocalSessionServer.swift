@@ -52,17 +52,35 @@ public final class LocalSessionServer: @unchecked Sendable {
         /// `notImplemented` in that case so the macOS app can
         /// fall back to "Copy command".
         public var getHelperArgv0: @Sendable () -> String?
+        /// Iter 3: managed session lifecycle. The daemon supplies
+        /// a `ManagedSessionManager`; the server forwards
+        /// start/list/stop/send_input to it.
+        public var sessionManager: ManagedSessionManager?
+        /// Iter 3: list of read-only Claude sessions detected on
+        /// the same Mac (psutil-equivalent process scan). Iter 7
+        /// wires this in; iter 3 stub returns empty.
+        public var listDetectedSessions: @Sendable () -> [[String: Any]]
+        /// Iter 4: approval registry for hook ingress + the
+        /// `approve_action` / `get_pending_approvals` methods.
+        /// Optional so iter 1-3 unit tests can omit it.
+        public var approvalRegistry: ApprovalRegistry?
 
         public init(
             getAuthToken: @escaping @Sendable () -> String,
             isLocalControlEnabled: @escaping @Sendable () -> Bool = { true },
             setLocalControlEnabled: @escaping @Sendable (Bool) -> Void = { _ in },
-            getHelperArgv0: @escaping @Sendable () -> String? = { nil }
+            getHelperArgv0: @escaping @Sendable () -> String? = { nil },
+            sessionManager: ManagedSessionManager? = nil,
+            listDetectedSessions: @escaping @Sendable () -> [[String: Any]] = { [] },
+            approvalRegistry: ApprovalRegistry? = nil
         ) {
             self.getAuthToken = getAuthToken
             self.isLocalControlEnabled = isLocalControlEnabled
             self.setLocalControlEnabled = setLocalControlEnabled
             self.getHelperArgv0 = getHelperArgv0
+            self.sessionManager = sessionManager
+            self.listDetectedSessions = listDetectedSessions
+            self.approvalRegistry = approvalRegistry
         }
     }
 
@@ -292,9 +310,151 @@ public final class LocalSessionServer: @unchecked Sendable {
             }
             hooks.setLocalControlEnabled(enabled)
             return .ok(id: request.id, result: ["local_control_enabled": hooks.isLocalControlEnabled()])
+        case .startSession:
+            return handleStartSession(request: request)
+        case .listSessions:
+            return handleListSessions(request: request)
+        case .stopSession:
+            return handleStopSession(request: request)
+        case .sendInput:
+            return handleSendInput(request: request)
+        case .getPendingApprovals:
+            return handleGetPendingApprovals(request: request)
+        case .approveAction:
+            return handleApproveAction(request: request)
+        case .installClaudeHook:
+            return handleInstallClaudeHook(request: request)
         default:
             return .err(id: request.id, code: .notImplemented, message: "method \(request.method) lands in a later iter of the Swift port")
         }
+    }
+
+    // MARK: - iter3 method handlers
+
+    private func handleStartSession(request: WireRequest) -> WireResponse {
+        guard let mgr = hooks.sessionManager else {
+            return .err(id: request.id, code: .notImplemented, message: "session manager not configured on this helper")
+        }
+        let provider = (request.params["provider"] as? String) ?? "claude"
+        let clientLabel = request.params["client_label"] as? String
+        let cwd = request.params["cwd"] as? String
+        do {
+            let summary = try mgr.startSession(provider: provider, clientLabel: clientLabel, cwd: cwd)
+            return .ok(id: request.id, result: [
+                "session_id": summary.sessionId,
+                "ok": true,
+            ])
+        } catch ManagedSessionManager.ManagerError.unsupportedProvider(let p) {
+            return .err(id: request.id, code: .badRequest, message: "unsupported provider: \(p)")
+        } catch ManagedSessionManager.ManagerError.spawnFailed(let m) {
+            return .err(id: request.id, code: .internalError, message: "spawn failed: \(m)")
+        } catch {
+            return .err(id: request.id, code: .internalError, message: "start_session: \(error)")
+        }
+    }
+
+    private func handleListSessions(request: WireRequest) -> WireResponse {
+        let managed: [[String: Any]] = hooks.sessionManager?.listSessions().map { s in
+            return [
+                "session_id": s.sessionId,
+                "provider": s.provider,
+                "client_label": s.clientLabel ?? NSNull(),
+                "spawned_at_monotonic": s.spawnedAtMono,
+                "status": s.status,
+                "controllable": true,
+                "source": "managed",
+            ]
+        } ?? []
+        let detected = hooks.listDetectedSessions()
+        return .ok(id: request.id, result: [
+            "managed": managed,
+            "detected": detected,
+            "sessions": managed,   // legacy alias the macOS app still reads
+        ])
+    }
+
+    private func handleStopSession(request: WireRequest) -> WireResponse {
+        guard let sid = request.params["session_id"] as? String, !sid.isEmpty else {
+            return .err(id: request.id, code: .badRequest, message: "'session_id' required")
+        }
+        guard let mgr = hooks.sessionManager else {
+            return .err(id: request.id, code: .notImplemented, message: "session manager not configured")
+        }
+        let stopped = mgr.stopSession(sid)
+        if !stopped {
+            // Match Python: detected-only sessions return
+            // not_controllable; missing managed sessions return
+            // session_not_found.
+            return .err(id: request.id, code: .sessionNotFound, message: "no managed session with id '\(sid)'")
+        }
+        return .ok(id: request.id, result: ["session_id": sid, "stopped": true])
+    }
+
+    private func handleSendInput(request: WireRequest) -> WireResponse {
+        guard let sid = request.params["session_id"] as? String, !sid.isEmpty else {
+            return .err(id: request.id, code: .badRequest, message: "'session_id' must be a non-empty string")
+        }
+        guard let payload = request.params["payload"] as? String else {
+            return .err(id: request.id, code: .badRequest, message: "'payload' must be a string")
+        }
+        guard let mgr = hooks.sessionManager else {
+            return .err(id: request.id, code: .notImplemented, message: "session manager not configured")
+        }
+        do {
+            let written = try mgr.sendInput(sessionId: sid, payload: payload)
+            if !written {
+                return .err(id: request.id, code: .sessionNotFound, message: "no managed session with id '\(sid)'")
+            }
+            return .ok(id: request.id, result: [
+                "session_id": sid,
+                "written": true,
+            ])
+        } catch {
+            return .err(id: request.id, code: .internalError, message: "send_input failed: \(error)")
+        }
+    }
+
+    private func handleGetPendingApprovals(request: WireRequest) -> WireResponse {
+        let sid = request.params["session_id"] as? String
+        let pending = hooks.approvalRegistry?.listPending(sessionId: sid) ?? []
+        return .ok(id: request.id, result: [
+            "pending_approvals": pending.map { $0.toDictSafe() },
+        ])
+    }
+
+    private func handleApproveAction(request: WireRequest) -> WireResponse {
+        guard let sid = request.params["session_id"] as? String,
+              let approvalId = request.params["approval_id"] as? String,
+              let decision = request.params["decision"] as? String else {
+            return .err(id: request.id, code: .badRequest, message: "'session_id', 'approval_id', 'decision' required")
+        }
+        let comment = request.params["comment"] as? String
+        guard let registry = hooks.approvalRegistry else {
+            return .err(id: request.id, code: .notImplemented, message: "approval registry not configured")
+        }
+        do {
+            let resolved = try registry.decide(
+                sessionId: sid, approvalId: approvalId,
+                decision: decision, comment: comment
+            )
+            return .ok(id: request.id, result: resolved.toDictSafe())
+        } catch ApprovalRegistry.RegistryError.approvalNotFound {
+            return .err(id: request.id, code: .approvalNotFound, message: "approval not found")
+        } catch ApprovalRegistry.RegistryError.approvalNotAllowed {
+            return .err(id: request.id, code: .approvalNotAllowed, message: "approval id does not belong to this session")
+        } catch ApprovalRegistry.RegistryError.approvalAlreadyResolved(let s) {
+            return .err(id: request.id, code: .approvalAlreadyResolved, message: "already resolved (status=\(s))")
+        } catch {
+            return .err(id: request.id, code: .internalError, message: "approve_action: \(error)")
+        }
+    }
+
+    private func handleInstallClaudeHook(request: WireRequest) -> WireResponse {
+        // Iter 4 (next) wires `ClaudeSettingsInstaller` here. For
+        // now surface notImplemented so the macOS app falls back
+        // to the Copy command path during the parity-build window.
+        return .err(id: request.id, code: .notImplemented,
+                    message: "install_claude_hook lands in iter 4 of the Swift port")
     }
 
     private func sendResponse(fd: Int32, response: WireResponse) throws {
