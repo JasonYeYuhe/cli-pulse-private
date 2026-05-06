@@ -59,7 +59,8 @@ case "daemon":
             } },
             sessionManager: sessionManager,
             listDetectedSessions: { [] },
-            approvalRegistry: registry
+            approvalRegistry: registry,
+            eventBroker: broker
         )
     )
     do {

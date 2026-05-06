@@ -64,6 +64,10 @@ public final class LocalSessionServer: @unchecked Sendable {
         /// `approve_action` / `get_pending_approvals` methods.
         /// Optional so iter 1-3 unit tests can omit it.
         public var approvalRegistry: ApprovalRegistry?
+        /// Iter 6: event broker that drives `subscribe_events`.
+        /// When nil, the server returns notImplemented for that
+        /// method.
+        public var eventBroker: EventBroker?
 
         public init(
             getAuthToken: @escaping @Sendable () -> String,
@@ -72,7 +76,8 @@ public final class LocalSessionServer: @unchecked Sendable {
             getHelperArgv0: @escaping @Sendable () -> String? = { nil },
             sessionManager: ManagedSessionManager? = nil,
             listDetectedSessions: @escaping @Sendable () -> [[String: Any]] = { [] },
-            approvalRegistry: ApprovalRegistry? = nil
+            approvalRegistry: ApprovalRegistry? = nil,
+            eventBroker: EventBroker? = nil
         ) {
             self.getAuthToken = getAuthToken
             self.isLocalControlEnabled = isLocalControlEnabled
@@ -81,6 +86,7 @@ public final class LocalSessionServer: @unchecked Sendable {
             self.sessionManager = sessionManager
             self.listDetectedSessions = listDetectedSessions
             self.approvalRegistry = approvalRegistry
+            self.eventBroker = eventBroker
         }
     }
 
@@ -221,14 +227,139 @@ public final class LocalSessionServer: @unchecked Sendable {
                 return
             }
             guard let payload = body else { return }   // clean EOF
-            // Pass the connection fd into the dispatcher so hook-
-            // ingress methods can perform descent verification
-            // (peer pid via getsockopt requires the connected
-            // socket).
-            let resp = handleFrame(payload: payload, peerFD: fd)
+            // Inspect the request first so we can branch on
+            // subscribe_events (which takes over the connection).
+            let raw: Any
+            do {
+                raw = try JSONSerialization.jsonObject(with: payload, options: [])
+            } catch {
+                let r = WireResponse.err(id: "", code: .badRequest, message: "invalid JSON")
+                try? sendResponse(fd: fd, response: r)
+                return
+            }
+            guard let dict = raw as? [String: Any],
+                  let request = try? WireRequest.decode(from: dict) else {
+                let r = WireResponse.err(id: "", code: .badRequest, message: "request decode failed")
+                try? sendResponse(fd: fd, response: r)
+                return
+            }
+            if request.method == SupportedMethod.subscribeEvents.rawValue {
+                runStreamingLoop(fd: fd, request: request)
+                return
+            }
+            let resp = dispatch(request: request, peerFD: fd)
             do {
                 try sendResponse(fd: fd, response: resp)
             } catch {
+                return
+            }
+        }
+    }
+
+    /// Drive a `subscribe_events` connection. Writes the initial
+    /// snapshot ack frame, then frame-encodes each event published
+    /// to the broker subscription until the peer closes or the
+    /// server stops. Connection is cleaned up by the outer
+    /// `serveConnection` defer block.
+    private func runStreamingLoop(fd: Int32, request: WireRequest) {
+        // Auth check — same as the non-streaming dispatch path.
+        if let token = request.authToken {
+            if !AuthToken.compare(expected: hooks.getAuthToken(), supplied: token) {
+                let r = WireResponse.err(id: request.id, code: .unauthenticated, message: "invalid auth_token")
+                try? sendResponse(fd: fd, response: r)
+                return
+            }
+        } else {
+            let r = WireResponse.err(id: request.id, code: .unauthenticated, message: "auth_token required")
+            try? sendResponse(fd: fd, response: r)
+            return
+        }
+        if !hooks.isLocalControlEnabled() {
+            let r = WireResponse.err(id: request.id, code: .localControlOff, message: "local_control_enabled is false")
+            try? sendResponse(fd: fd, response: r)
+            return
+        }
+        guard let broker = hooks.eventBroker else {
+            let r = WireResponse.err(id: request.id, code: .notImplemented, message: "event broker not configured")
+            try? sendResponse(fd: fd, response: r)
+            return
+        }
+        let sessionFilter = request.params["session_id"] as? String
+
+        // Build the initial snapshot frame — gives the macOS
+        // app a deterministic catch-up state without a second
+        // round-trip.
+        let managed: [[String: Any]] = hooks.sessionManager?.listSessions().map { s in
+            return [
+                "session_id": s.sessionId,
+                "provider": s.provider,
+                "client_label": s.clientLabel ?? NSNull(),
+                "spawned_at_monotonic": s.spawnedAtMono,
+                "status": s.status,
+            ]
+        } ?? []
+        let initialPending = (hooks.approvalRegistry?.listPending(sessionId: sessionFilter) ?? [])
+            .map { $0.toDictSafe() }
+        var initial: [String: Any] = [
+            "subscribed": true,
+            "session_id": sessionFilter ?? NSNull(),
+            "managed_sessions": managed,
+            "pending_approvals": initialPending,
+        ]
+
+        // Subscribe BEFORE writing the ack so we don't miss any
+        // event published in the gap between the two writes.
+        // Concurrent publishes are buffered into the subscription's
+        // internal queue.
+        let queue = StreamQueue()
+        let subscription = broker.subscribe(sessionFilter: sessionFilter) { event in
+            queue.put(event)
+        }
+        _ = initial    // (initial used below, separate so the
+        // subscribe site comes before)
+        defer { broker.unsubscribe(subscription) }
+
+        let ackResponse = WireResponse.ok(id: request.id, result: initial)
+        do {
+            try sendResponse(fd: fd, response: ackResponse)
+        } catch {
+            return
+        }
+
+        // Background reader: detects peer EOF without coupling to
+        // the queue.get() blocking call on the publish thread.
+        let closeFlag = AtomicBool()
+        let reader = Thread { [closeFlag] in
+            let bufSize = 4096
+            var buf = [UInt8](repeating: 0, count: bufSize)
+            while !closeFlag.get() {
+                let n = buf.withUnsafeMutableBufferPointer { ptr -> Int in
+                    return Darwin.read(fd, ptr.baseAddress, bufSize)
+                }
+                if n <= 0 {
+                    closeFlag.set(true)
+                    return
+                }
+                // Spurious bytes from a misbehaving client; ignore.
+            }
+        }
+        reader.name = "cli-pulse-uds-stream-eof"
+        reader.start()
+
+        // Drain the queue + write each frame. Idle timeout
+        // matches Python (30s) — without one the queue.get
+        // blocks forever even if the peer goes away.
+        let idleTimeout = config.subscribeIdleTimeoutSeconds
+        while !stopFlag.get() && !closeFlag.get() {
+            guard let event = queue.poll(timeout: idleTimeout) else {
+                continue
+            }
+            // Frame-encode the event dict and write.
+            do {
+                let data = try JSONSerialization.data(withJSONObject: event)
+                try Framing.writeFrame(to: fd, body: data)
+            } catch {
+                // Write error usually = peer disconnect; stop.
                 return
             }
         }
@@ -622,5 +753,48 @@ final class AtomicBool: @unchecked Sendable {
     func set(_ v: Bool) {
         lock.lock(); defer { lock.unlock() }
         value = v
+    }
+}
+
+/// Bounded thread-safe FIFO that drives the streaming subscription's
+/// drain loop. Mirrors `queue.Queue.get(timeout=...)` semantics from
+/// the Python helper. Dropping the bound matches Python's "evict-
+/// oldest" overflow policy — events lost in overflow are signalled
+/// via a separate error frame the dispatcher sends.
+final class StreamQueue: @unchecked Sendable {
+    private let cond = NSCondition()
+    private var buffer: [[String: Any]] = []
+    private let cap: Int
+    private(set) var dropped: Int = 0
+
+    init(cap: Int = 4096) { self.cap = cap }
+
+    func put(_ event: [String: Any]) {
+        cond.lock()
+        if buffer.count >= cap {
+            // Drop the oldest item to make room — bounded queue
+            // protects against a slow subscriber blocking the
+            // publish thread.
+            buffer.removeFirst()
+            dropped += 1
+        }
+        buffer.append(event)
+        cond.signal()
+        cond.unlock()
+    }
+
+    /// Block up to `timeout` seconds for the next event. Returns
+    /// nil on timeout. The streaming loop polls with a short
+    /// timeout so it can periodically check the close flag.
+    func poll(timeout: TimeInterval) -> [String: Any]? {
+        cond.lock()
+        defer { cond.unlock() }
+        if buffer.isEmpty {
+            let deadline = Date().addingTimeInterval(timeout)
+            // wait(until:) returns false on timeout.
+            if !cond.wait(until: deadline) { return nil }
+        }
+        if buffer.isEmpty { return nil }
+        return buffer.removeFirst()
     }
 }
