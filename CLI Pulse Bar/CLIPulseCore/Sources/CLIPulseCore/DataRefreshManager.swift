@@ -1072,9 +1072,10 @@ internal final class DataRefreshManager {
         // tier is `.resolvedConfirmed`. `.unresolved` (singleton init
         // race / pre-auth state) and `.resolvedDegraded` (server /
         // receipt validator returned an error) both suppress.
-        // Otherwise a Pro user with a transient receipt-validator
-        // hiccup gets accused of being over the free plan limit
-        // (the actual bug Jason hit on PR #18 manual test).
+        // Otherwise a Pro-entitled user whose receipt-validator
+        // round-trip transiently fails would be accused of being
+        // over the free plan limit on every refresh tick until the
+        // next successful tier resolution.
         guard tierResolutionState == .resolvedConfirmed else {
             return nil
         }
@@ -1087,12 +1088,15 @@ internal final class DataRefreshManager {
         }
         guard !warnings.isEmpty else { return nil }
         // Copy explicitly says "CLI Pulse" + the localized tier name
-        // ("Free", "Pro", "Team"). Pre-fix the lowercase rawValue
-        // produced "Over free plan limits" which read identically to
-        // a Claude/Codex Pro banner from another app — Jason's
-        // account is Claude Pro but NOT CLI Pulse Pro and the
-        // banner gave him no way to tell which app's plan was being
-        // gated.
+        // ("Free", "Pro", "Team"). The pre-fix copy used the
+        // lowercase rawValue ("Over free plan limits"), which is
+        // visually indistinguishable from a Claude / Codex / other
+        // provider Pro banner. CLI Pulse users frequently hold a
+        // separate provider-side subscription (Claude Pro, Codex
+        // Pro, etc.) that is unrelated to the CLI Pulse app
+        // subscription tier — the banner must make clear that this
+        // limit refers to the **CLI Pulse app** plan, not whatever
+        // provider plan the user is enrolled in for code generation.
         return "Over CLI Pulse \(currentTierName) plan limits — \(warnings.joined(separator: ", ")). Upgrade or reduce usage."
     }
 

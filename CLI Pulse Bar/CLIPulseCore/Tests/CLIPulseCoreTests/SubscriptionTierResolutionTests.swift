@@ -5,9 +5,9 @@ import XCTest
 
 /// PR #18 follow-up — pin the tier-resolution / banner-gate fix.
 ///
-/// Background: Jason's account is Claude Pro AND CLI Pulse Pro, but
-/// after sign-in he was seeing `Over free plan limits — Devices: 4/1`
-/// at the top of the popover. The root cause was a singleton
+/// Background: a CLI Pulse Pro-entitled account was seeing the
+/// `Over free plan limits — Devices: 4/1` banner at the top of the
+/// popover after sign-in. Root cause was a singleton
 /// `SubscriptionManager.shared` init race + active sign-in paths
 /// that didn't `await subscriptionManager.updateCurrentEntitlements()`
 /// before kicking off `refreshAll()`. The fix lives in three places:
@@ -73,7 +73,10 @@ final class SubscriptionTierResolutionTests: XCTestCase {
     }
 
     /// Confirmed Pro with 4 devices and maxDevices=5 → no banner.
-    /// This is the explicit scenario Jason hit.
+    /// Pin the bug surface that motivated the PR — a CLI Pulse Pro
+    /// account at 4/5 devices was being told it was over the free
+    /// plan limit because the upstream tier resolution hadn't
+    /// finished by the time the warning was computed.
     func testTierLimitWarningNoBannerForProTierUnderLimit() {
         let warning = DataRefreshManager.tierLimitWarning(
             deviceCount: 4,
