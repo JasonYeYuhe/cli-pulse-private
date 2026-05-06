@@ -73,3 +73,8 @@ helper/__pycache__/
 
 # Room schema exports (generated, tracked for migration testing)
 # android/app/schemas/
+
+# Phase 4D: Swift helper port build artifacts
+HelperSwift/.build/
+HelperSwift/.swiftpm/
+HelperSwift/Package.resolved
