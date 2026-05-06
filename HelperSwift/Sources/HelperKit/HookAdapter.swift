@@ -68,6 +68,46 @@ public enum HookAdapter {
     /// Run the hook. Reads stdin, writes the decision to stdout,
     /// and returns the exit code (always 0 — Claude needs the
     /// stdout JSON regardless of decision).
+    ///
+    /// Codex P1.A review fix: the hook is installed globally in
+    /// `~/.claude/settings.json`, so it runs for EVERY Claude
+    /// session — including ones the user opened from Terminal
+    /// without the CLI Pulse helper spawning them. Those sessions
+    /// have no CLI_PULSE_LOCAL_* env vars and thus can't reach
+    /// the structured-approval flow. Pre-fix, those sessions had
+    /// every Bash/Read/Write/etc denied with "Remote approval
+    /// unavailable", which globally broke `claude` from the
+    /// terminal once the user had installed CLI Pulse.
+    ///
+    /// New behaviour:
+    ///   - **Managed session** (env vars present, UDS reachable,
+    ///     hook_create_approval succeeds) → block on
+    ///     hook_wait_decision, return user's approve/reject.
+    ///   - **Managed session, mid-flow failure** (pending row
+    ///     created but wait_decision drops) → deny with
+    ///     "Local approval did not resolve" — preserves the
+    ///     point-of-no-return semantic the Python helper uses
+    ///     (no Supabase duplicate).
+    ///   - **Non-managed session** (no env vars / not reachable)
+    ///     → fail-open with `behavior: "allow"`. Claude's
+    ///     `settings.json` allow/deny rules decide the outcome
+    ///     directly. The hook becomes a no-op for any session
+    ///     CLI Pulse didn't itself spawn.
+    ///
+    /// Why fail-open is safe here: the hook is opt-in
+    /// instrumentation for CLI Pulse's structured-approval flow.
+    /// Users who haven't routed a session through CLI Pulse
+    /// expect Claude to behave exactly as it did before they
+    /// installed CLI Pulse — i.e. their `permissions.allow` /
+    /// `permissions.deny` decide. Returning `deny` from the hook
+    /// would invert that expectation and effectively quarantine
+    /// every terminal-launched Claude session.
+    ///
+    /// Note: the structured-approval flow's security boundary is
+    /// in the helper-spawned Claude — capability token + descent
+    /// verification means a non-managed Claude CANNOT impersonate
+    /// a managed one and forge the env vars to reach the local
+    /// fast path.
     @discardableResult
     public static func run(provider: String) -> Int32 {
         let stdinData = readAllStdin()
@@ -79,15 +119,11 @@ public enum HookAdapter {
             return 0
         }
 
-        // No local helper / env vars missing / connection
-        // failed BEFORE the pending row was created. Defer to
-        // Claude's native prompt by emitting deny with a
-        // human-readable message — same fallback the Python
-        // helper uses (`Remote approval unavailable…`).
-        emit(Decision(
-            behavior: .deny,
-            message: "Remote approval unavailable; please retry locally"
-        ))
+        // Codex P1.A: non-managed session path — fail OPEN, not
+        // closed. Claude's settings.json decides via its own
+        // allow/deny rules; the hook is a no-op. See run() docs
+        // above for the safety argument.
+        emit(Decision(behavior: .allow, message: nil))
         return 0
     }
 
@@ -236,6 +272,37 @@ public enum HookAdapter {
         return String(prefix) + "…"
     }
 
+    /// Codex P1.B: minimised + redacted version of Claude's raw
+    /// `tool_input` dict. Mirrors the Python adapter's
+    /// `redacted_input` construction in `provider_adapters/
+    /// claude.py:127-141`. Caps each string at 1024 chars after
+    /// running through `redact()`; collapses lists/dicts to a
+    /// length hint so the payload stays bounded.
+    ///
+    /// This is what gets sent to the macOS app's approval row.
+    /// Anything secret-looking in the raw values must NOT survive
+    /// this transform.
+    public static func redactedToolInput(_ toolInput: [String: Any]) -> [String: Any] {
+        var out: [String: Any] = [:]
+        for (key, value) in toolInput {
+            if key.hasPrefix("_") { continue }
+            if let s = value as? String {
+                out[key] = truncate(redact(s), limit: 1024)
+            } else if value is Int || value is Double || value is Bool || value is NSNumber {
+                out[key] = value
+            } else if value is NSNull {
+                out[key] = NSNull()
+            } else if let array = value as? [Any] {
+                out[key] = "<list len=\(array.count)>"
+            } else if let dict = value as? [String: Any] {
+                out[key] = "<dict len=\(dict.count)>"
+            } else {
+                out[key] = "<\(type(of: value))>"
+            }
+        }
+        return out
+    }
+
     // MARK: - local UDS hook path
 
     private static let localSockEnv = "CLI_PULSE_LOCAL_HELPER_SOCK"
@@ -244,26 +311,42 @@ public enum HookAdapter {
     private static let connectTimeoutSec: Double = 1.5
     private static let waitTimeoutSec: Double = 60.0
 
-    /// Returns nil when the local UDS path was not attempted
-    /// (env vars missing, helper unreachable, hook_create_approval
-    /// rejected). Returns a Decision when a definitive
-    /// approve/reject came back, OR when create succeeded but
-    /// wait_decision did not reach a verdict (in which case
-    /// returns deny with a "retry locally" message — same
-    /// `_LOCAL_FALLBACK_SENTINEL` semantics as Python).
+    /// Returns:
+    ///   - **nil**: this is NOT a managed session (no
+    ///     `CLI_PULSE_LOCAL_*` env vars). Caller fails OPEN —
+    ///     emit allow so Claude's settings.json rules decide.
+    ///   - **Decision(deny)**: this IS a managed session (env
+    ///     vars present) but the UDS path failed at any stage
+    ///     after env detection. Treat as `_LOCAL_FALLBACK_SENTINEL`
+    ///     (matches Python): the user explicitly opted into
+    ///     CLI Pulse's structured-approval routing, so a transient
+    ///     helper crash should fail CLOSED, not silently succeed.
+    ///   - **Decision(allow|deny)** with concrete reason: definitive
+    ///     resolution from the user via the macOS app.
     static func tryLocalUdsHook(parsed: ClaudeHookInput) -> Decision? {
         let env = ProcessInfo.processInfo.environment
         let sockPath = env[localSockEnv] ?? ""
         let sessionId = env[localSessionEnv] ?? ""
         let sessionToken = env[localTokenEnv] ?? ""
         if sockPath.isEmpty || sessionId.isEmpty || sessionToken.isEmpty {
+            // Not a managed session — fail-open path. See `run()`
+            // for the safety argument.
             return nil
         }
+        // From here on we KNOW the session was spawned by the
+        // helper (env vars are set by ManagedSessionManager). Any
+        // failure past this point fails CLOSED: deny with a
+        // helpful message so the user knows the helper crashed.
         if !FileManager.default.fileExists(atPath: sockPath) {
-            return nil
+            return Decision(
+                behavior: .deny,
+                message: "CLI Pulse helper not reachable; please restart it and retry."
+            )
         }
         let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
-        if fd < 0 { return nil }
+        if fd < 0 {
+            return Decision(behavior: .deny, message: "CLI Pulse helper unreachable (socket() failed); please retry.")
+        }
         defer {
             Darwin.shutdown(fd, SHUT_RDWR)
             Darwin.close(fd)
@@ -273,7 +356,7 @@ public enum HookAdapter {
         let cPath = (sockPath as NSString).fileSystemRepresentation
         let pathLen = strlen(cPath)
         if pathLen >= MemoryLayout.size(ofValue: addr.sun_path) {
-            return nil
+            return Decision(behavior: .deny, message: "CLI Pulse helper socket path too long; this should not happen, please file a bug.")
         }
         withUnsafeMutableBytes(of: &addr.sun_path) { rawPtr in
             memcpy(rawPtr.baseAddress!, cPath, pathLen)
@@ -293,13 +376,24 @@ public enum HookAdapter {
                 Darwin.connect(fd, saPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        if connectResult != 0 { return nil }
+        if connectResult != 0 {
+            return Decision(behavior: .deny, message: "CLI Pulse helper not running; please start it and retry.")
+        }
 
-        // Build payload metadata. Mirrors Python's `meta = dict(...)`.
-        var meta: [String: Any] = parsed.toolInput
-        meta["provider"] = "claude"
-        meta["risk"] = parsed.risk
-        meta["tool_name"] = parsed.toolName
+        // Build payload metadata. Codex P1.B review: must mirror
+        // Python adapter's redacted_input logic — raw toolInput
+        // contains command bodies / file paths / URL query
+        // strings that frequently include secrets. Direct
+        // assignment would push api keys / passwords / tokens
+        // straight into the macOS app's approval row UI.
+        let redactedToolInput = Self.redactedToolInput(parsed.toolInput)
+        var meta: [String: Any] = [
+            "tool_input": redactedToolInput,
+            "provider": "claude",
+            "risk": parsed.risk,
+            "tool_name": parsed.toolName,
+            "permission_suggestions_count": 0,
+        ]
         if !parsed.cwdBasename.isEmpty {
             meta["cwd_basename"] = parsed.cwdBasename
         }
@@ -322,7 +416,10 @@ public enum HookAdapter {
               let okFlag = createReply["ok"] as? Bool, okFlag,
               let result = createReply["result"] as? [String: Any],
               let approvalId = result["approval_id"] as? String, !approvalId.isEmpty else {
-            return nil
+            return Decision(
+                behavior: .deny,
+                message: "CLI Pulse helper rejected hook_create_approval; please retry."
+            )
         }
 
         // Step 2: hook_wait_decision (POINT OF NO RETURN — pending

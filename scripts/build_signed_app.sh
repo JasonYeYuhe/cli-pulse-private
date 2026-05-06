@@ -53,6 +53,8 @@ APP_PROJECT="$PROJECT_ROOT/CLI Pulse Bar/CLI Pulse Bar.xcodeproj"
 APP_SCHEME="CLI Pulse Bar"
 PLIST_TEMPLATE="$PROJECT_ROOT/CLI Pulse Bar/CLI Pulse Bar/HelperAgent.plist"
 DERIVED_DATA="$OUTPUT_DIR/DerivedData"
+HELPER_ENTITLEMENTS="$SWIFT_PKG_DIR/cli_pulse_helper.entitlements"
+APP_ENTITLEMENTS_SAVED="$OUTPUT_DIR/app_entitlements.plist"
 
 # 1. Build the Swift helper.
 echo "==> [1/7] Building Swift helper (release) ..."
@@ -66,12 +68,21 @@ echo "    built: $HELPER_BIN ($HELPER_SIZE)"
 # 2. Build the macOS app.
 echo "==> [2/7] Building CLI Pulse Bar.app ($CONFIGURATION) ..."
 cd "$PROJECT_ROOT/CLI Pulse Bar"
+# Strip lingering .DS_Store xattrs that codesign rejects on
+# nested helper targets ("resource fork, Finder information, or
+# similar detritus not allowed"). xattr returns 0 even when nothing
+# matches, so the `|| true` is defensive.
+find . -name ".DS_Store" -exec rm -f {} + 2>/dev/null || true
 xcodebuild \
     -project "$APP_PROJECT" \
     -scheme "$APP_SCHEME" \
     -configuration "$CONFIGURATION" \
     -derivedDataPath "$DERIVED_DATA" \
-    build CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO
+    build \
+    CODE_SIGNING_ALLOWED=NO \
+    CODE_SIGN_IDENTITY="" \
+    CODE_SIGN_STYLE=Manual \
+    DEVELOPMENT_TEAM=""
 
 APP_PATH="$DERIVED_DATA/Build/Products/$CONFIGURATION/CLI Pulse Bar.app"
 [[ -d "$APP_PATH" ]] || { echo "error: built .app not found at $APP_PATH" >&2; exit 1; }
@@ -88,23 +99,86 @@ echo "==> [4/7] Embedding LaunchAgent plist at Contents/Library/LaunchAgents/ ..
 mkdir -p "$APP_PATH/Contents/Library/LaunchAgents"
 cp "$PLIST_TEMPLATE" "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
 
-# 5. Resolve signing identity (skipped for ad-hoc / Debug builds).
-echo "==> [5/7] Resolving signing identity ..."
+# 5. Resolve signing identity + capture original app entitlements
+#    BEFORE we touch the bundle. Codex P1.C review: the previous
+#    `--force --deep` re-sign stripped sandbox / app-group
+#    entitlements that Xcode's signing applied. The fix is to:
+#      (a) extract the existing app entitlements plist,
+#      (b) sign the helper with its OWN entitlements (no sandbox,
+#          minimal Hardened Runtime),
+#      (c) re-sign the app explicitly preserving its entitlements
+#          via `--preserve-metadata=entitlements,requirements,flags`.
+echo "==> [5/7] Resolving signing identity + entitlements source ..."
 SIGN_IDENTITY="-"   # ad-hoc by default
 if [[ -n "${CODE_SIGN_IDENTITY:-}" ]]; then
     SIGN_IDENTITY="$CODE_SIGN_IDENTITY"
 fi
+# Use the source entitlements file Xcode reads from
+# CODE_SIGN_ENTITLEMENTS. With CODE_SIGNING_ALLOWED=NO Xcode
+# doesn't emit a per-build .xcent, so we sign with the source
+# file directly. This is the EXACT same input Xcode would have
+# used had signing been on, so sandbox + app-group entitlements
+# survive intact.
+APP_ENTITLEMENTS_SOURCE="$PROJECT_ROOT/CLI Pulse Bar/CLI Pulse Bar/CLI_Pulse_Bar.entitlements"
+if [[ ! -f "$APP_ENTITLEMENTS_SOURCE" ]]; then
+    echo "error: app entitlements source missing at $APP_ENTITLEMENTS_SOURCE" >&2
+    exit 2
+fi
+cp "$APP_ENTITLEMENTS_SOURCE" "$APP_ENTITLEMENTS_SAVED"
+echo "    using: $APP_ENTITLEMENTS_SAVED"
 
-# 6. Sign the helper binary first (must happen BEFORE the app
-#    re-sign so the helper is part of the parent's signature
-#    closure).
+# 6. Sign the embedded helper with its own minimal entitlements,
+#    then re-sign the app preserving its sandbox / app-group
+#    entitlements. Re-sign nested frameworks first because they
+#    have their own _CodeSignature/CodeResources that get
+#    invalidated by xattr -c on the parent.
 echo "==> [6/7] Codesigning helper + re-signing .app (identity=$SIGN_IDENTITY) ..."
+# Strip xattrs recursively. Source files under macOS dev
+# workflows pick up `com.apple.provenance` / `com.apple.FinderInfo`
+# xattrs from Finder / curl, and Xcode propagates them into the
+# bundle on copy. We hit EVERYTHING — frameworks too — because
+# the bottom-up re-sign below regenerates each framework's
+# _CodeSignature/CodeResources.
+xattr -cr "$APP_PATH" 2>/dev/null || true
+
+# Bottom-up re-sign of every nested signed bundle inside the
+# app. Order matters: deepest frameworks first, then login-item
+# .apps, then the parent app on top. We do NOT use `codesign
+# --deep` because that would apply the parent's entitlements to
+# every nested binary (helper would inherit sandbox, frameworks
+# would get group-container). The bottom-up walk lets each
+# bundle keep its own entitlements.
+echo "    re-signing nested bundles bottom-up ..."
+python3 - <<PYEOF "$APP_PATH" "$SIGN_IDENTITY"
+import os, sys, subprocess
+app_path, sign_identity = sys.argv[1], sys.argv[2]
+matches = []
+for root, dirs, _files in os.walk(app_path):
+    for d in list(dirs):
+        if d.endswith((".framework", ".app", ".xpc", ".dylib")):
+            matches.append(os.path.join(root, d))
+# Sort by path length descending → deepest first.
+matches.sort(key=lambda p: -len(p))
+for p in matches:
+    subprocess.call([
+        "codesign", "--force", "--options", "runtime", "--timestamp=none",
+        "--sign", sign_identity, p,
+    ])
+PYEOF
+# Helper: NOT sandboxed (it's a LaunchAgent), but Hardened Runtime
+# is on (--options runtime) for notarisation. Entitlements file is
+# intentionally minimal.
 codesign --force --options runtime --timestamp=none \
+    --entitlements "$HELPER_ENTITLEMENTS" \
     --sign "$SIGN_IDENTITY" \
     "$APP_PATH/Contents/Helpers/cli_pulse_helper"
 
-# Re-sign the app bundle deeply to seal the new files.
-codesign --force --deep --options runtime --timestamp=none \
+# Re-sign the app with the original Xcode-emitted entitlements
+# (.xcent file we located above). NOT --deep — that would re-sign
+# every nested binary with our top-level entitlements (overwriting
+# the helper's just-applied minimal set).
+codesign --force --options runtime --timestamp=none \
+    --entitlements "$APP_ENTITLEMENTS_SAVED" \
     --sign "$SIGN_IDENTITY" \
     "$APP_PATH"
 
@@ -113,7 +187,26 @@ echo "==> [7/7] Verifying bundle ..."
 test -x "$APP_PATH/Contents/Helpers/cli_pulse_helper"
 test -f "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
 codesign --verify --deep --strict "$APP_PATH"
-echo "    OK: $APP_PATH is signed + has helper + has LaunchAgent plist"
+
+# Codex P1.C: explicitly prove app entitlements survived re-sign.
+# Pin sandbox + app-group are still in the live signature.
+APP_ENT_AFTER="$(codesign -d --entitlements :- "$APP_PATH" 2>/dev/null || true)"
+if ! grep -q "com.apple.security.app-sandbox" <<< "$APP_ENT_AFTER"; then
+    echo "error: app sandbox entitlement was stripped by re-sign — abort" >&2
+    exit 2
+fi
+if ! grep -q "group.yyh.CLI-Pulse" <<< "$APP_ENT_AFTER"; then
+    echo "error: app-group entitlement was stripped by re-sign — abort" >&2
+    exit 2
+fi
+# And the helper MUST NOT have the app's sandbox entitlement (it's
+# a LaunchAgent, not a sandbox child).
+HELPER_ENT_AFTER="$(codesign -d --entitlements :- "$APP_PATH/Contents/Helpers/cli_pulse_helper" 2>/dev/null || true)"
+if grep -q "com.apple.security.app-sandbox" <<< "$HELPER_ENT_AFTER"; then
+    echo "error: helper accidentally inherited app-sandbox entitlement — abort" >&2
+    exit 2
+fi
+echo "    OK: $APP_PATH is signed; entitlements verified (sandbox + group preserved on app, helper unsandboxed)"
 
 echo ""
 echo "Final layout:"

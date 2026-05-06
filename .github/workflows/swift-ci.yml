@@ -17,6 +17,9 @@ on:
       - '!CLI Pulse Bar/scripts/**'
       - '!CLI Pulse Bar/codexbar/**'
       - '!CLI Pulse Bar/**/*.md'
+      - 'HelperSwift/**'
+      - 'scripts/build_signed_app.sh'
+      - 'scripts/PHASE4D_XCODE_SETUP.md'
       - '.github/workflows/swift-ci.yml'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -27,6 +30,9 @@ on:
       - '!CLI Pulse Bar/scripts/**'
       - '!CLI Pulse Bar/codexbar/**'
       - '!CLI Pulse Bar/**/*.md'
+      - 'HelperSwift/**'
+      - 'scripts/build_signed_app.sh'
+      - 'scripts/PHASE4D_XCODE_SETUP.md'
       - '.github/workflows/swift-ci.yml'
   workflow_dispatch:
 
@@ -138,3 +144,92 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM=""
+
+  test-helper-swift:
+    # Phase 4D: Swift port of cli_pulse_helper. The HelperSwift/
+    # Package contains its own test suite (UDS framing + auth +
+    # session manager + hook adapter + descent + settings
+    # installer + streaming). Runs on every push that touches
+    # the package or this workflow.
+    name: HelperSwift Package tests
+    needs: decide
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: xcodebuild -version
+
+      - name: Swift test (HelperSwift)
+        working-directory: HelperSwift
+        run: swift test
+
+  build-signed-app:
+    # Phase 4D P1.D (Codex review): a green CI build only proves
+    # something IF it produces the same artifact users will
+    # install. `xcodebuild build CODE_SIGNING_ALLOWED=NO` above
+    # leaves the helper unembedded + unsigned, so it doesn't
+    # validate the actual shippable .app. This job runs the
+    # canonical `scripts/build_signed_app.sh` and verifies that
+    # the embedded helper + LaunchAgent plist land at the right
+    # paths AND the app's sandbox / app-group entitlements
+    # survive the manual re-sign.
+    name: Signed-app reproducible build (Phase 4D)
+    needs: [decide, test-helper-swift]
+    runs-on: macos-15
+    timeout-minutes: 30
+    if: needs.decide.outputs.run_full == 'true' || github.event.pull_request.head.ref == 'phase4d-swift-helper'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: xcodebuild -version
+
+      - name: Run build_signed_app.sh (Debug, ad-hoc signing)
+        run: |
+          set -o pipefail
+          ./scripts/build_signed_app.sh Debug
+
+      - name: Verify embedded helper at Contents/Helpers/
+        run: |
+          set -o pipefail
+          APP="build_app_output/DerivedData/Build/Products/Debug/CLI Pulse Bar.app"
+          test -x "$APP/Contents/Helpers/cli_pulse_helper" \
+            || (echo "::error::helper binary missing at $APP/Contents/Helpers/" && exit 1)
+          file "$APP/Contents/Helpers/cli_pulse_helper" | grep -q "Mach-O" \
+            || (echo "::error::helper is not a Mach-O binary" && exit 1)
+          echo "OK: helper Mach-O present + executable"
+
+      - name: Verify embedded LaunchAgent plist
+        run: |
+          set -o pipefail
+          PLIST="build_app_output/DerivedData/Build/Products/Debug/CLI Pulse Bar.app/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+          test -f "$PLIST" \
+            || (echo "::error::LaunchAgent plist missing" && exit 1)
+          # BundleProgram MUST be present (P1.4 contract) — relative
+          # path eliminates runtime mutation.
+          plutil -extract BundleProgram raw "$PLIST" \
+            || (echo "::error::plist missing BundleProgram key" && exit 1)
+          echo "OK: LaunchAgent plist present + BundleProgram set"
+
+      - name: Verify entitlements survived re-sign
+        run: |
+          set -o pipefail
+          APP="build_app_output/DerivedData/Build/Products/Debug/CLI Pulse Bar.app"
+          ENT_BLOB="$(codesign -d --entitlements :- "$APP" 2>/dev/null)"
+          # App must keep sandbox + app-group (would have been
+          # stripped by a naive --force --deep re-sign — Codex P1.C).
+          if ! grep -q "com.apple.security.app-sandbox" <<< "$ENT_BLOB"; then
+            echo "::error::app sandbox entitlement was stripped" >&2; exit 2
+          fi
+          if ! grep -q "group.yyh.CLI-Pulse" <<< "$ENT_BLOB"; then
+            echo "::error::app-group entitlement was stripped" >&2; exit 2
+          fi
+          # Helper must NOT have inherited the app's sandbox
+          # entitlement (it's an unsandboxed LaunchAgent).
+          HELPER_ENT="$(codesign -d --entitlements :- "$APP/Contents/Helpers/cli_pulse_helper" 2>/dev/null)"
+          if grep -q "com.apple.security.app-sandbox" <<< "$HELPER_ENT"; then
+            echo "::error::helper accidentally has app-sandbox entitlement" >&2; exit 2
+          fi
+          echo "OK: app sandbox + group preserved; helper unsandboxed"

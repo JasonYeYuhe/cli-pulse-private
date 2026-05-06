@@ -81,9 +81,10 @@ final class HookAdapterTests: XCTestCase {
     }
 
     func testTryLocalUdsHookNoEnvReturnsNil() {
-        // No CLI_PULSE_LOCAL_* env vars set → caller falls back
-        // to "Remote approval unavailable" deny. Pin the
-        // shortcut behaviour.
+        // No CLI_PULSE_LOCAL_* env vars set → tryLocalUdsHook
+        // returns nil → run() emits `behavior: allow` (fail-open
+        // path; lets non-managed terminal Claude sessions
+        // continue using their settings.json rules).
         let parsed = HookAdapter.ClaudeHookInput(
             toolName: "Bash",
             toolInput: [:],
@@ -91,10 +92,102 @@ final class HookAdapterTests: XCTestCase {
             cwdBasename: "tmp",
             risk: "medium"
         )
-        // Run with the env vars unset (this test process won't
-        // have the helper-spawn env). Expect nil.
         let outcome = HookAdapter.tryLocalUdsHook(parsed: parsed)
         XCTAssertNil(outcome,
-                     "missing env vars must cause local UDS path to be skipped (caller emits fallback)")
+                     "missing env vars must return nil so run() can fail-open")
+    }
+
+    // MARK: - Codex P1.B redaction
+
+    func testRedactedToolInputStripsApiKeyFromString() {
+        let raw: [String: Any] = [
+            "command": "curl https://api.example.com/?api_key=sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456",
+            "description": "fetch with key",
+        ]
+        let out = HookAdapter.redactedToolInput(raw)
+        let cmd = out["command"] as? String ?? ""
+        XCTAssertFalse(cmd.contains("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+                       "api key must be stripped from redacted command")
+        XCTAssertTrue(cmd.contains("sk-…"))
+    }
+
+    func testRedactedToolInputTruncatesLongStrings() {
+        let huge = String(repeating: "x", count: 5000)
+        let out = HookAdapter.redactedToolInput(["payload": huge])
+        let s = out["payload"] as? String ?? ""
+        XCTAssertLessThanOrEqual(s.count, 1024,
+                                  "string fields must be truncated to 1024 chars")
+    }
+
+    func testRedactedToolInputCollapsesNestedStructures() {
+        // Nested dict / array are flattened to length hints.
+        // Preserves payload size + avoids exposing full sub-tree.
+        let raw: [String: Any] = [
+            "stack": ["a", "b", "c", "d"],
+            "config": ["secret": "do not include", "x": 1],
+        ]
+        let out = HookAdapter.redactedToolInput(raw)
+        XCTAssertEqual(out["stack"] as? String, "<list len=4>")
+        XCTAssertEqual(out["config"] as? String, "<dict len=2>")
+    }
+
+    func testRedactedToolInputDropsUnderscoreKeys() {
+        let raw: [String: Any] = [
+            "command": "ls",
+            "_internal": "should not leak",
+        ]
+        let out = HookAdapter.redactedToolInput(raw)
+        XCTAssertNil(out["_internal"])
+        XCTAssertEqual(out["command"] as? String, "ls")
+    }
+
+    func testRedactedToolInputPreservesScalars() {
+        let raw: [String: Any] = [
+            "count": 42,
+            "ratio": 1.5,
+            "ok": true,
+        ]
+        let out = HookAdapter.redactedToolInput(raw)
+        XCTAssertEqual(out["count"] as? Int, 42)
+        XCTAssertEqual(out["ratio"] as? Double, 1.5)
+        XCTAssertEqual(out["ok"] as? Bool, true)
+    }
+
+    // MARK: - Codex P1.A fail-open semantics
+
+    /// The `run()` function emits a JSON decision to stdout. We
+    /// can't easily capture stdout in a unit test without a fork,
+    /// but we CAN pin the in-memory Decision branches by checking
+    /// `tryLocalUdsHook(parsed:)` returns:
+    ///   * nil when env vars missing (run emits allow)
+    ///   * Decision(deny) when env vars present but UDS broken
+    func testTryLocalUdsHookDenyWhenManagedSessionButSocketMissing() {
+        // Set env vars to a guaranteed-missing socket path.
+        let bogusSocket = "/tmp/clipulse-helper-does-not-exist-\(UUID().uuidString).sock"
+        setenv("CLI_PULSE_LOCAL_HELPER_SOCK", bogusSocket, 1)
+        setenv("CLI_PULSE_LOCAL_SESSION_ID", "FAKE-SID", 1)
+        setenv("CLI_PULSE_LOCAL_HOOK_TOKEN", "FAKE-TOKEN", 1)
+        defer {
+            unsetenv("CLI_PULSE_LOCAL_HELPER_SOCK")
+            unsetenv("CLI_PULSE_LOCAL_SESSION_ID")
+            unsetenv("CLI_PULSE_LOCAL_HOOK_TOKEN")
+        }
+        let parsed = HookAdapter.ClaudeHookInput(
+            toolName: "Bash",
+            toolInput: [:],
+            summary: "$ x",
+            cwdBasename: "tmp",
+            risk: "medium"
+        )
+        let outcome = HookAdapter.tryLocalUdsHook(parsed: parsed)
+        guard let decision = outcome else {
+            XCTFail("env vars present but socket missing → must return Decision(deny), not nil")
+            return
+        }
+        XCTAssertEqual(decision.behavior, .deny,
+                       "managed session with broken helper must fail CLOSED")
+        XCTAssertNotNil(decision.message)
+        XCTAssertTrue((decision.message ?? "").contains("CLI Pulse helper"),
+                      "deny message must explain the helper is unreachable")
     }
 }
