@@ -14,6 +14,17 @@ struct SessionsTab: View {
     /// the UI so users (and Codex on review) can see resolved
     /// socket / token paths without opening Xcode logs.
     @State private var showLocalDiagnostics: Bool = false
+    /// Phase 4 helper-bundling: in-flight gate for the "Install
+    /// hook" button so a double-click can't race two parallel
+    /// install_claude_hook UDS calls (which would noop the second
+    /// one but still spin the spinner).
+    @State private var installHookInFlight: Bool = false
+    /// Phase 4: result from the most recent helper-driven install
+    /// call. When non-nil, the "Approval hook not wired" banner
+    /// renders a small "Last install: <action> — <path>" line so
+    /// the user sees that something actually changed instead of
+    /// only the banner disappearing.
+    @State private var lastInstallHookResult: InstallClaudeHookResult?
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
@@ -1285,9 +1296,15 @@ struct SessionsTab: View {
 
     /// One-time setup nudge: helper supports approvals, but
     /// `~/.claude/settings.json` isn't routing PermissionRequest
-    /// events through it. The banner has a "Copy command" button
-    /// that puts the install CLI on the clipboard — the user
-    /// pastes it into their terminal once and restarts Claude.
+    /// events through it. Phase 4 helper-bundling: the primary
+    /// affordance is now a one-click "Install hook" button that
+    /// asks the helper to write the file (it has filesystem
+    /// access; the sandboxed app does not). The legacy "Copy
+    /// command" path stays available as a fallback for users
+    /// running an older / manually-launched helper that doesn't
+    /// support the `install_claude_hook` UDS method (capability
+    /// flag missing OR the call returns
+    /// `not_implemented` / `bundled_binary_missing`).
     private var approvalHookNotWiredBanner: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 8) {
@@ -1297,28 +1314,64 @@ struct SessionsTab: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Approval hook not wired")
                         .font(.system(size: 11, weight: .semibold))
-                    Text("Claude isn't routing permission requests through CLI Pulse, so structured Approve / Reject controls in Sessions stay inactive. Run the install CLI once on this Mac and restart Claude.")
+                    Text("Claude isn't routing permission requests through CLI Pulse, so structured Approve / Reject controls in Sessions stay inactive. Click Install hook to wire it up and restart Claude.")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if let lastInstall = lastInstallHookResult {
+                        // Phase 4 inline confirmation: shows the
+                        // `action: <verb>` from the helper after a
+                        // successful click so the user sees that
+                        // something actually changed.
+                        Text("Last install: \(lastInstall.action) — \(lastInstall.settingsPath)")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Spacer()
-                Button("Copy command") {
-                    let pasteboard = NSPasteboard.general
-                    pasteboard.clearContents()
-                    pasteboard.setString(
-                        ClaudeHookDetector.installCommandTemplate,
-                        forType: .string
-                    )
+                VStack(spacing: 4) {
+                    Button("Install hook") {
+                        Task { await installClaudeHookFromBanner() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(installHookInFlight)
+                    .help("Asks the helper to wire up Claude's PermissionRequest hook in ~/.claude/settings.json. Idempotent — safe to click even if some other settings are already in place.")
+                    Button("Copy command") {
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        pasteboard.setString(
+                            ClaudeHookDetector.installCommandTemplate,
+                            forType: .string
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Fallback for users running an older helper that doesn't expose the install_claude_hook method. Paste into a terminal where the helper lives.")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Copies the install CLI onto your clipboard. Paste into a terminal where the helper checkout lives, then restart Claude Code.")
             }
         }
         .padding(10)
         .background(Color.accentColor.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    @MainActor
+    private func installClaudeHookFromBanner() async {
+        installHookInFlight = true
+        defer { installHookInFlight = false }
+        let result = await state.installClaudeHookViaHelper()
+        if let result {
+            lastInstallHookResult = result
+            // Force-refresh the detector status so the banner
+            // disappears immediately — without this the user
+            // would see the green-checked confirmation but the
+            // banner would stay until the next polling tick of
+            // `claudeApprovalHookStatus`.
+            await state.refreshClaudeApprovalHookStatus()
+        }
     }
 
     private var localFastPathToggle: some View {

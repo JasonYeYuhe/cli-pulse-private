@@ -487,6 +487,17 @@ def daemon(args: argparse.Namespace) -> None:
                 # path.
                 event_broker=local_event_broker,
                 approval_registry=local_approval_registry,
+                # Phase 4 helper-bundling: pass the helper's own
+                # entry-point path so `install_claude_hook` UDS
+                # method can write the right command into
+                # `~/.claude/settings.json`. Returns the absolute
+                # path of either the python source (`.py` dev path)
+                # or the PyInstaller frozen binary (`Contents/Helpers/
+                # cli_pulse_helper` in the bundled .app). `sys.argv[0]`
+                # is the conventional way to get this in Python and
+                # PyInstaller exposes the same value, so a single
+                # callable covers both paths.
+                get_helper_argv0=lambda: os.path.abspath(sys.argv[0]),
             )
             local_uds_server.start()
             logger.info(

@@ -115,6 +115,42 @@ public enum ApprovalDecision: String, Sendable, Equatable, Codable {
     case reject
 }
 
+/// Phase 4 helper-bundling: result of `LocalSessionControlClient.
+/// installClaudeHook()`. Mirrors the dict the Python helper's
+/// `permissions_diagnose.install_claude_hook` returns. The macOS UI
+/// surfaces these so the user knows whether anything actually changed
+/// (e.g. `action == "noop"` means the hook was already correctly
+/// wired and the user clicked "Install" redundantly).
+public struct InstallClaudeHookResult: Sendable, Equatable {
+    /// One of `"created" | "added" | "noop" | "replaced"`. Drives
+    /// the post-install copy in the SessionsTab banner ("Hook
+    /// installed", "Hook updated to point at this app", etc.).
+    public let action: String
+    /// The hook command that was previously in `~/.claude/settings.json`,
+    /// if any. `nil` for fresh installs. Used for diff-style copy
+    /// when the user renames their helper checkout.
+    public let previousCommand: String?
+    /// The hook command that's now in place. Always non-nil after a
+    /// successful call.
+    public let newCommand: String
+    /// Absolute path of the file the helper wrote to. Lets the UI
+    /// link to it via Finder for users who want to inspect the
+    /// settings post-install.
+    public let settingsPath: String
+
+    public init(
+        action: String,
+        previousCommand: String?,
+        newCommand: String,
+        settingsPath: String
+    ) {
+        self.action = action
+        self.previousCommand = previousCommand
+        self.newCommand = newCommand
+        self.settingsPath = settingsPath
+    }
+}
+
 /// Wire-level event coming off the helper's `subscribe_events` stream.
 /// Decoded by `LocalSessionControlClient.subscribeEvents`. The macOS
 /// app's per-row task drains the stream and updates AppState.
@@ -575,6 +611,41 @@ public final class LocalSessionControlClient: SessionControlClient {
             params["comment"] = comment
         }
         _ = try await send(method: "approve_action", params: params)
+    }
+
+    /// Phase 4 helper-bundling: ask the (unsandboxed) helper to
+    /// idempotently install the Claude PermissionRequest hook into
+    /// `~/.claude/settings.json`. Sandboxed macOS app can't write
+    /// that path itself; this wraps the new `install_claude_hook`
+    /// UDS method which delegates to the same
+    /// `permissions_diagnose.install_claude_hook` function the CLI
+    /// subcommand uses.
+    ///
+    /// The helper supplies its OWN argv[0] as the hook command's
+    /// `helper_path` — the app deliberately does NOT pass arbitrary
+    /// paths so a malicious socket peer can't reroute the hook
+    /// command at a third-party Python script.
+    ///
+    /// Returns the same status fields the CLI prints
+    /// (`action`, `previous_command`, `new_command`, `settings_path`)
+    /// for the UI to surface.
+    public func installClaudeHook() async throws -> InstallClaudeHookResult {
+        let result = try await send(method: "install_claude_hook", params: [:])
+        guard
+            let action = result["action"] as? String,
+            let newCommand = result["new_command"] as? String,
+            let settingsPath = result["settings_path"] as? String
+        else {
+            throw SessionControlError.invalidResponse(
+                "install_claude_hook: missing action / new_command / settings_path"
+            )
+        }
+        return InstallClaudeHookResult(
+            action: action,
+            previousCommand: result["previous_command"] as? String,
+            newCommand: newCommand,
+            settingsPath: settingsPath
+        )
     }
 
     /// Snapshot of pending approvals — used by the macOS UI on row

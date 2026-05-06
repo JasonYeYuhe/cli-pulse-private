@@ -745,5 +745,51 @@ extension AppState {
             )
         }
     }
+
+    /// Phase 4 helper-bundling: ask the helper to idempotently
+    /// install the Claude PermissionRequest hook into the user's
+    /// `~/.claude/settings.json`. Sandboxed macOS app cannot write
+    /// that file directly; this delegates to the unsandboxed
+    /// LaunchAgent helper via the new `install_claude_hook` UDS
+    /// method.
+    ///
+    /// Returns the install result on success, `nil` on failure.
+    /// Errors land in `localHelperError` for the SessionsTab banner
+    /// to surface. The UI's "Install Hook" button calls this and
+    /// re-runs `ClaudeHookDetector` on success to flip the banner
+    /// off without waiting for the polling loop.
+    @MainActor
+    @discardableResult
+    public func installClaudeHookViaHelper() async -> InstallClaudeHookResult? {
+        guard localHelperReachable, localControlEnabled else {
+            self.localHelperError = "installClaudeHookViaHelper: helper not reachable or local control disabled"
+            return nil
+        }
+        let client = LocalSessionControlClient()
+        do {
+            let result = try await client.installClaudeHook()
+            // Clear any prior error so the banner doesn't get
+            // stuck after a successful retry.
+            self.localHelperError = nil
+            return result
+        } catch {
+            Self.localStateLogger.warning(
+                "install_claude_hook failed: \(String(describing: error), privacy: .public)"
+            )
+            self.localHelperError = String(describing: error)
+            return nil
+        }
+    }
+
+    /// Phase 4 helper-bundling: re-read the on-disk
+    /// `~/.claude/settings.json` and update
+    /// `claudeApprovalHookStatus`. Called by the SessionsTab "Install
+    /// Hook" button right after a successful install so the banner
+    /// flips to `.wired` without waiting for the next polling tick
+    /// of `refreshLocalSessionControlState`.
+    @MainActor
+    public func refreshClaudeApprovalHookStatus() async {
+        self.claudeApprovalHookStatus = ClaudeHookDetector.currentStatus()
+    }
 }
 #endif

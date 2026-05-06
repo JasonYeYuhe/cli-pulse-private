@@ -198,7 +198,8 @@ def _client_call(sock_path: Path, body: dict, timeout: float = 1.0) -> dict:
 
 def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
                  manager: FakeManager | None = None,
-                 detected: list[dict] | None = None
+                 detected: list[dict] | None = None,
+                 helper_argv0: str | None = None,
                  ) -> tuple[LocalSessionServer, FakeManager, dict]:
     """Spin up a server bound to a tmp socket. Returns (server, manager,
     state-dict-for-toggle-introspection).
@@ -221,6 +222,7 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
         stop_session=mgr.local_stop_session,
         send_input=mgr.local_send_input,
         list_detected_sessions=lambda: list(detected_rows),
+        get_helper_argv0=(lambda: helper_argv0) if helper_argv0 else None,
     )
     server.start()
     return server, mgr, state
@@ -910,3 +912,97 @@ def test_send_input_routes_through_executor_no_duplicate_write(short_sock_dir):
     finally:
         server.stop()
         executor.shutdown(wait=True, timeout=2.0)
+
+
+# ── Phase 4: install_claude_hook UDS method ──────────────────
+#
+# Sandboxed macOS app cannot write to ~/.claude/settings.json
+# directly; it asks the unsandboxed helper (this UDS server) to
+# do the file write via the new `install_claude_hook` method.
+# The helper wraps `permissions_diagnose.install_claude_hook`
+# with its own argv[0] as the helper_path — the app deliberately
+# does NOT pass arbitrary paths so a malicious socket peer cannot
+# reroute the hook command at a third-party Python script.
+
+
+def test_install_claude_hook_round_trip(short_sock_dir, tmp_path, monkeypatch):
+    fake_helper = tmp_path / "cli_pulse_helper.py"
+    fake_helper.write_text("# stub")
+    fake_settings = tmp_path / "settings.json"
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T", enabled=True,
+        helper_argv0=str(fake_helper),
+    )
+    # Redirect the install path to a tmp file so we do NOT clobber
+    # the test runners actual settings.json.
+    import permissions_diagnose as pd
+    real_install = pd.install_claude_hook
+    def _install(helper_path, **kwargs):
+        kwargs.setdefault("settings_path", fake_settings)
+        return real_install(helper_path=helper_path, **kwargs)
+    monkeypatch.setattr(pd, "install_claude_hook", _install)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "install_claude_hook",
+            "auth_token": "T", "params": {},
+        })
+        assert reply["ok"] is True
+        assert reply["result"]["action"] in ("created", "added", "replaced", "noop")
+        # Helper supplied its own argv[0] as helper_path — the
+        # written command must reference it (defence-in-depth: the
+        # app never passes the path).
+        import json
+        written = json.loads(fake_settings.read_text())
+        entry = written["hooks"]["PermissionRequest"][0]
+        cmd = entry["hooks"][0]["command"]
+        assert str(fake_helper) in cmd
+    finally:
+        server.stop()
+
+
+def test_install_claude_hook_requires_auth(short_sock_dir):
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T", enabled=True,
+        helper_argv0="/dev/null",
+    )
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "x", "method": "install_claude_hook",
+            "params": {},  # no auth_token
+        })
+        assert reply["error"]["code"] == "unauthenticated"
+    finally:
+        server.stop()
+
+
+def test_install_claude_hook_no_argv0_returns_not_implemented(short_sock_dir):
+    # Older helper that did NOT wire `get_helper_argv0` should
+    # surface a typed error; the app needs to know not to retry
+    # silently.
+    server, _mgr, _state = _make_server(short_sock_dir, token="T", enabled=True)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "install_claude_hook",
+            "auth_token": "T", "params": {},
+        })
+        assert reply["error"]["code"] == "not_implemented"
+    finally:
+        server.stop()
+
+
+def test_install_claude_hook_blocked_when_gate_off(short_sock_dir, tmp_path):
+    fake_helper = tmp_path / "cli_pulse_helper.py"
+    fake_helper.write_text("# stub")
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T", enabled=False,
+        helper_argv0=str(fake_helper),
+    )
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "x", "method": "install_claude_hook",
+            "auth_token": "T", "params": {},
+        })
+        assert reply["error"]["code"] == "local_control_off"
+    finally:
+        server.stop()
+

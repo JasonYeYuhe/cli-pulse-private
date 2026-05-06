@@ -135,6 +135,14 @@ SUPPORTED_METHODS = (
     # `_dispatch` for the auth-table enforcement.
     "hook_create_approval",
     "hook_wait_decision",
+    # Phase 4 helper-bundling: idempotent install of the
+    # PermissionRequest hook into ~/.claude/settings.json. Sandboxed
+    # macOS app cannot write that path directly, so it asks the
+    # unsandboxed helper (this UDS server) to do it. Wraps the
+    # existing `permissions_diagnose.install_claude_hook` function
+    # and reports the action / previous_command / new_command back
+    # to the app for UI rendering.
+    "install_claude_hook",
 )
 
 # Methods whose body uses the per-session capability token (set by
@@ -323,6 +331,7 @@ class LocalSessionServer:
         approval_registry: ApprovalRegistry | None = None,
         subscribe_idle_timeout_s: float = 30.0,
         max_payload: int = MAX_PAYLOAD,
+        get_helper_argv0: Callable[[], str | None] | None = None,
     ) -> None:
         self._socket_path = Path(socket_path)
         self._get_auth_token = get_auth_token
@@ -332,6 +341,12 @@ class LocalSessionServer:
         self._list_sessions = list_sessions
         self._stop_session = stop_session
         self._send_input = send_input
+        # Phase 4 helper-bundling: `install_claude_hook` UDS method
+        # asks the helper to write its OWN argv[0] into the
+        # PermissionRequest hook command. Returning None signals
+        # the install method is unavailable (older helper, test
+        # harness without an argv0 source).
+        self._get_helper_argv0 = get_helper_argv0 or (lambda: None)
         # `list_detected_sessions` returns same-Mac Claude processes
         # the helper detected via PR #14's `_should_ignore_command` +
         # `_detect_provider`. These are read-only for the local UDS
@@ -1050,6 +1065,43 @@ class LocalSessionServer:
                     f"no managed session with id {session_id!r}",
                 )
             return result
+
+        if method == "install_claude_hook":
+            # Phase 4 helper-bundling: app asks helper to write the
+            # PermissionRequest hook into ~/.claude/settings.json.
+            # Sandboxed macOS app cannot touch that path; this
+            # method runs the file write inside the unsandboxed
+            # helper process (LaunchAgent). Wraps the same
+            # `permissions_diagnose.install_claude_hook` function
+            # the CLI subcommand calls, with identical
+            # idempotency / auto-heal semantics.
+            #
+            # The helper supplies its OWN argv[0] as helper_path —
+            # the app must NOT pass arbitrary paths. This protects
+            # against a malicious socket peer rerouting the hook
+            # command at a third-party Python script. Per-session
+            # auth still applies; only authenticated app peers
+            # reach this method.
+            try:
+                from permissions_diagnose import install_claude_hook  # type: ignore
+            except ImportError as exc:  # pragma: no cover — module always present
+                raise _RequestError(
+                    "internal_error",
+                    f"permissions_diagnose import failed: {exc}",
+                ) from exc
+            helper_argv0 = self._get_helper_argv0()
+            if helper_argv0 is None:
+                raise _RequestError(
+                    "not_implemented",
+                    "helper did not record its own argv[0] — install_claude_hook unavailable",
+                )
+            try:
+                result = install_claude_hook(helper_path=Path(helper_argv0))
+            except ValueError as exc:
+                # Malformed / non-object settings.json — surface so
+                # the app can show a "fix file by hand" banner.
+                raise _RequestError("settings_malformed", str(exc)) from exc
+            return dict(result)
 
         # Should be unreachable: SUPPORTED_METHODS / _handle_method
         # must stay in sync.
