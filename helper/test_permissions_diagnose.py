@@ -477,3 +477,197 @@ def test_install_claude_hook_no_leftover_tmp_files(tmp_path):
     pd.install_claude_hook(helper_path=helper, settings_path=settings)
     leftovers = list(settings.parent.glob("settings.json.tmp"))
     assert leftovers == [], f"leftover tmp file: {leftovers}"
+
+
+# ── P1: shell quoting (Codex review on 7528084) ──────────────
+
+
+def test_install_claude_hook_quotes_paths_with_spaces(tmp_path):
+    """Helper path containing spaces must produce a shell-safe
+    command. Without `shlex.quote`, Claude Code's shell-parse of
+    the command string would split a path like
+    `/Users/jason/Documents/cli pulse/helper/cli_pulse_helper.py`
+    on the space and try to execute the non-existent
+    `/Users/jason/Documents/cli` — silent hook failure that
+    Jason's dev layout exhibited verbatim.
+    """
+    settings = tmp_path / ".claude" / "settings.json"
+    repo = tmp_path / "cli pulse"
+    repo.mkdir()
+    helper = repo / "cli_pulse_helper.py"
+    helper.write_text("# stub", encoding="utf-8")
+
+    pd.install_claude_hook(helper_path=helper.resolve(), settings_path=settings)
+
+    written = json.loads(settings.read_text())
+    cmd = written["hooks"]["PermissionRequest"][0]["command"]
+    # The whole helper path (with embedded space) MUST be quoted —
+    # shlex.quote wraps the entire path containing the space, not
+    # just the path component, so we check for the quoted form of
+    # the absolute path appearing verbatim in the command.
+    quoted_helper = f"'{helper.resolve()}'"
+    assert quoted_helper in cmd, (
+        f"helper path with spaces must appear as a single quoted arg: cmd={cmd!r} expected substring {quoted_helper!r}"
+    )
+    # Round-trip through shlex.split — argv must contain the
+    # full helper path as ONE argument, not split into pieces.
+    import shlex
+    argv = shlex.split(cmd)
+    assert str(helper.resolve()) in argv, (
+        f"shlex-parsed argv must keep the helper path intact: {argv}"
+    )
+    assert "remote-approval-hook" in argv
+    assert "--provider" in argv
+    assert "claude" in argv
+    # Defensive: argv length must be exactly 5 (interpreter, helper,
+    # subcommand, flag, value). If shell-parse splits the helper
+    # path, argv would be 6+ — so this catches regression in
+    # shell-quoting even if the explicit path-substring check above
+    # is ever loosened.
+    assert len(argv) == 5, (
+        f"argv length must be 5 (interpreter + helper + 3 args), got {len(argv)}: {argv}"
+    )
+
+
+def test_install_claude_hook_quotes_custom_python_path_with_spaces(tmp_path):
+    """Custom `python_path` may also contain spaces (e.g. a python
+    binary inside a path-with-spaces virtualenv). Same shlex.quote
+    contract.
+    """
+    settings = tmp_path / ".claude" / "settings.json"
+    helper = tmp_path / "fake_helper.py"
+    helper.write_text("# stub", encoding="utf-8")
+    custom_python = "/Users/jason/Library/Application Support/python venv/bin/python3"
+
+    pd.install_claude_hook(
+        helper_path=helper.resolve(),
+        settings_path=settings,
+        python_path=custom_python,
+    )
+
+    written = json.loads(settings.read_text())
+    cmd = written["hooks"]["PermissionRequest"][0]["command"]
+    import shlex
+    argv = shlex.split(cmd)
+    # Python interpreter MUST be the first argv, intact.
+    assert argv[0] == custom_python, (
+        f"argv[0] must be the unsplit python path: {argv}"
+    )
+
+
+def test_install_claude_hook_replaces_unquoted_legacy_entry(tmp_path):
+    """Pre-existing CLI Pulse hook with the OLD unquoted format
+    (the bug Codex caught) must be detected as a stale entry and
+    auto-replaced with the new quoted form. This is the auto-heal
+    path: users who installed the hook before the shlex.quote fix
+    get their settings.json upgraded on next install.
+    """
+    settings = tmp_path / ".claude" / "settings.json"
+    repo = tmp_path / "cli pulse"
+    repo.mkdir()
+    helper = repo / "cli_pulse_helper.py"
+    helper.write_text("# stub", encoding="utf-8")
+
+    # Plant the OLD broken format directly.
+    legacy_unquoted = (
+        f"python3 {helper.resolve()} remote-approval-hook --provider claude"
+    )
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(
+        json.dumps({"hooks": {"PermissionRequest": [
+            {"type": "command", "command": legacy_unquoted}
+        ]}}),
+        encoding="utf-8",
+    )
+
+    result = pd.install_claude_hook(helper_path=helper.resolve(), settings_path=settings)
+    assert result["action"] == "replaced"
+    assert result["previous_command"] == legacy_unquoted
+    written = json.loads(settings.read_text())
+    cmd = written["hooks"]["PermissionRequest"][0]["command"]
+    assert "'" in cmd or '"' in cmd, (
+        f"new command must shell-quote the helper path: {cmd}"
+    )
+
+
+# ── P2: file mode preservation (Codex review on 7528084) ─────
+
+
+def test_install_claude_hook_preserves_existing_0600_mode(tmp_path):
+    """A user with `chmod 600 ~/.claude/settings.json` (sensible
+    for a config that may carry hook commands referencing paths
+    under $HOME) must NOT have that mode widened to 0644 by our
+    install. Mode preservation pin.
+    """
+    helper, settings = _install_paths(tmp_path)
+    # Pre-create the settings file with 0600 + non-trivial body
+    # so install hits the "added" path, not "created".
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({"model": "claude-opus-4-7"}), encoding="utf-8")
+    import os as _os
+    _os.chmod(settings, 0o600)
+    pre_mode = _os.stat(settings).st_mode & 0o777
+    assert pre_mode == 0o600  # sanity
+
+    pd.install_claude_hook(helper_path=helper, settings_path=settings)
+
+    post_mode = _os.stat(settings).st_mode & 0o777
+    assert post_mode == 0o600, (
+        f"install widened existing 0600 file to {oct(post_mode)} — "
+        "user-set restrictive permissions must be preserved"
+    )
+
+
+def test_install_claude_hook_preserves_existing_0644_mode(tmp_path):
+    """Inverse pin: an existing 0644 file must NOT be tightened to
+    0600 either. Preservation goes BOTH ways — the install must
+    be transparent to file-mode policy.
+    """
+    helper, settings = _install_paths(tmp_path)
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({"model": "claude-opus-4-7"}), encoding="utf-8")
+    import os as _os
+    _os.chmod(settings, 0o644)
+
+    pd.install_claude_hook(helper_path=helper, settings_path=settings)
+
+    post_mode = _os.stat(settings).st_mode & 0o777
+    assert post_mode == 0o644
+
+
+def test_install_claude_hook_new_file_defaults_to_0600(tmp_path):
+    """Newly-created settings file (no existing inode to inherit
+    from) defaults to 0600 — the safer mode for a config carrying
+    machine-specific paths. Conservatively narrow rather than
+    `umask`-default 0644.
+    """
+    helper, settings = _install_paths(tmp_path)
+    assert not settings.exists()
+
+    pd.install_claude_hook(helper_path=helper, settings_path=settings)
+
+    import os as _os
+    mode = _os.stat(settings).st_mode & 0o777
+    assert mode == 0o600, f"new settings file must default to 0600, got {oct(mode)}"
+
+
+def test_install_claude_hook_noop_does_not_touch_mode(tmp_path):
+    """Idempotent path: noop must NOT touch the file at all,
+    including mode. Pin via mtime + mode.
+    """
+    helper, settings = _install_paths(tmp_path)
+    pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    import os as _os
+    pre_stat = _os.stat(settings)
+
+    # Allow at least 1 ns gap so any unintended write is detectable.
+    import time
+    time.sleep(0.01)
+
+    result = pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    assert result["action"] == "noop"
+    post_stat = _os.stat(settings)
+    assert pre_stat.st_mtime_ns == post_stat.st_mtime_ns, (
+        "noop install path must NOT rewrite the file"
+    )
+    assert (pre_stat.st_mode & 0o777) == (post_stat.st_mode & 0o777)

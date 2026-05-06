@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -488,8 +489,7 @@ def recommended_hook_config_snippet(helper_path: Path, python_path: str | None =
     `python_path` defaults to whatever the user's python3 is on PATH;
     callers can pass a specific interpreter if they want.
     """
-    py = python_path or "python3"
-    cmd = f"{py} {helper_path} remote-approval-hook --provider claude"
+    cmd = recommended_hook_command(helper_path=helper_path, python_path=python_path)
     snippet = {
         "hooks": {
             "PermissionRequest": [
@@ -509,9 +509,22 @@ def recommended_hook_command(helper_path: Path, python_path: str | None = None) 
     `recommended_hook_config_snippet` (for the print path) and
     `install_claude_hook` (for the merge path) so the two surfaces
     can never drift.
+
+    Both `python_path` and `helper_path` are run through
+    `shlex.quote` because Claude Code shell-parses the command
+    string. Without quoting, a helper checkout living under a path
+    with spaces (e.g. `~/Documents/cli pulse/helper/cli_pulse_helper.py`,
+    which is the dev layout in this repo) would be split by the
+    shell into multiple argv entries — Python would then try to
+    run a non-existent path and the hook would silently fail.
+
+    The unquoted form was a real bug Codex caught after the
+    initial Stage 1 commit. Pinned by
+    `test_install_claude_hook_quotes_paths_with_spaces`.
     """
-    py = python_path or "python3"
-    return f"{py} {helper_path} remote-approval-hook --provider claude"
+    py = shlex.quote(python_path or "python3")
+    helper = shlex.quote(str(helper_path))
+    return f"{py} {helper} remote-approval-hook --provider claude"
 
 
 def install_claude_hook(
@@ -621,11 +634,31 @@ def install_claude_hook(
 
     if action != "noop":
         # Atomic write — temp file in same dir, then rename.
+        # Mode handling (P2 fix from Codex review on 7528084):
+        # preserve the existing file's mode if it was already on
+        # disk (a 0600 settings.json must NOT be widened to 0644
+        # by our install). New files default to 0600 — settings
+        # often contain machine-readable hook commands referencing
+        # paths under $HOME, and on multi-user systems the
+        # safer default is owner-only.
+        mode_to_set = 0o600
+        try:
+            existing_stat = settings.stat()
+            mode_to_set = existing_stat.st_mode & 0o777
+        except FileNotFoundError:
+            pass
         settings.parent.mkdir(parents=True, exist_ok=True)
         tmp = settings.with_suffix(settings.suffix + ".tmp")
         tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        os.chmod(tmp, 0o644)
+        os.chmod(tmp, mode_to_set)
         tmp.replace(settings)
+        # `replace` may preserve the destination's mode on some
+        # POSIX implementations (it's syscall-level rename, but
+        # mode is on the inode being-replaced, not the new one).
+        # Re-chmod the final path to be defensive — same
+        # idempotent-mode pattern `local_auth_token.rotate_token`
+        # uses for the same reason.
+        os.chmod(settings, mode_to_set)
 
     return {
         "settings_path": str(settings),

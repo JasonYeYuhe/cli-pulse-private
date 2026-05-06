@@ -252,8 +252,17 @@ struct SessionsTab: View {
             // Claude's native PTY prompt and assumes CLI Pulse is
             // broken; the previous manual test produced exactly
             // that confusion.
-            if shouldShowApprovalHookBanner {
+            //
+            // The banner has TWO variants depending on detector
+            // status (Codex review on 7528084 — `parseError` was
+            // initially hidden, but malformed settings.json blocks
+            // approvals just as fully as a missing hook, AND we
+            // can't safely run the install path against malformed
+            // JSON anyway).
+            if shouldShowApprovalHookInstallBanner {
                 approvalHookNotWiredBanner
+            } else if shouldShowApprovalHookFixSettingsBanner {
+                approvalHookFixSettingsBanner
             }
         }
 
@@ -1132,26 +1141,95 @@ struct SessionsTab: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    /// Whether to render the "Approval hook not wired" banner.
-    /// Conditions:
-    ///   - helper reachable + gate on (without these the user
-    ///     can't act on structured approvals anyway)
-    ///   - helper advertised `capabilities.approvals = true` (no
-    ///     point telling the user to wire a hook for a feature
-    ///     this helper doesn't support)
-    ///   - hook detector says NOT wired (or settings missing)
-    /// Parse-error case is intentionally NOT shown via this banner —
-    /// the existing helper diagnostic flow surfaces broken
-    /// settings.json clearly enough.
-    private var shouldShowApprovalHookBanner: Bool {
+    /// Common gate shared by both approval-hook banner variants.
+    /// Without these guards the banner is meaningless (helper not
+    /// reachable, gate off, or helper doesn't support approvals
+    /// at all → no point asking the user to wire a hook for a
+    /// feature they can't use).
+    private var approvalHookBannerBaseGate: Bool {
         guard state.localHelperReachable, state.localControlEnabled else { return false }
-        guard state.localCapabilities?.approvals == true else { return false }
+        return state.localCapabilities?.approvals == true
+    }
+
+    /// "Approval hook not wired" install banner — shown when
+    /// `~/.claude/settings.json` is well-formed but missing our
+    /// PermissionRequest hook (or is missing entirely). Carries
+    /// the `Copy command` button.
+    private var shouldShowApprovalHookInstallBanner: Bool {
+        guard approvalHookBannerBaseGate else { return false }
         switch state.claudeApprovalHookStatus {
         case .notWired, .settingsMissing:
             return true
         case .wired, .parseError, .none:
             return false
         }
+    }
+
+    /// "Settings malformed" fix-it banner — shown when the
+    /// detector couldn't parse `~/.claude/settings.json`. Distinct
+    /// from the install banner because:
+    ///   1. the install path itself refuses to overwrite
+    ///      malformed JSON (raises `ValueError`), so offering a
+    ///      `Copy command` install button would just lead the
+    ///      user into an error
+    ///   2. malformed settings.json blocks approvals AND most
+    ///      other Claude Code settings (permissions, model, etc.),
+    ///      so it's worth surfacing prominently
+    ///
+    /// Codex review on 7528084 caught the original mistake — pre-
+    /// fix, parseError was silently hidden and the user had no
+    /// in-app signal that anything was wrong.
+    private var shouldShowApprovalHookFixSettingsBanner: Bool {
+        guard approvalHookBannerBaseGate else { return false }
+        if case .parseError = state.claudeApprovalHookStatus {
+            return true
+        }
+        return false
+    }
+
+    /// "Settings malformed" fix-it banner. Shown when the detector
+    /// returned `.parseError`. Does NOT offer the install button —
+    /// running the install on malformed JSON would just raise
+    /// `ValueError` upstream, so we tell the user to repair the
+    /// file by hand first. The detector's parse-error message
+    /// (e.g. "settings.json is not valid JSON") gives the user
+    /// enough to find + fix the issue.
+    private var approvalHookFixSettingsBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Claude settings file can't be read")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(approvalHookParseErrorMessage)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                    Text("Approval routing depends on this file. Open ~/.claude/settings.json in a text editor, fix the JSON, and the banner will clear automatically. CLI Pulse won't try to install over a malformed file.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+            }
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    /// Detail string from the detector's `.parseError(...)` case.
+    /// Returns empty string for any non-parse-error state (the
+    /// surrounding view only renders this when the case actually
+    /// matches, but the helper is defensive).
+    private var approvalHookParseErrorMessage: String {
+        if case .parseError(let detail) = state.claudeApprovalHookStatus {
+            return detail
+        }
+        return ""
     }
 
     /// One-time setup nudge: helper supports approvals, but

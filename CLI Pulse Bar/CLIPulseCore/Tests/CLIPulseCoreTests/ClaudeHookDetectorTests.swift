@@ -147,6 +147,45 @@ final class ClaudeHookDetectorTests: XCTestCase {
             "install command must invoke the install-claude-hook subcommand"
         )
     }
+
+    /// Codex review on 7528084 P3: the Status enum needs a
+    /// distinct case for malformed settings.json. Regression-pin
+    /// the case identity (vs `.notWired`) so a future refactor
+    /// that conflates them gets caught in CI.
+    func testParseErrorIsDistinctStateNotConflatedWithNotWired() throws {
+        let url = tmpSettingsURL()
+        try "{ broken".write(to: url, atomically: true, encoding: .utf8)
+        let status = ClaudeHookDetector.currentStatus(at: url)
+        // Pre-fix, malformed JSON could have been silently
+        // mapped to `.notWired` (which would offer the install
+        // button — which would then fail upstream because the
+        // helper's install_claude_hook refuses to overwrite
+        // malformed files). The fix surfaces parse errors as a
+        // distinct UI state that drives a different banner
+        // variant in SessionsTab.
+        if case .parseError = status {
+            // ok
+        } else {
+            XCTFail(".parseError must be distinct from .notWired/.wired/.settingsMissing")
+        }
+        XCTAssertNotEqual(status, .notWired)
+        XCTAssertNotEqual(status, .wired)
+        XCTAssertNotEqual(status, .settingsMissing)
+    }
+
+    /// Pin the parse-error message non-empty so the SessionsTab
+    /// `approvalHookParseErrorMessage` always has something to
+    /// render. Empty detail string would produce a blank line in
+    /// the banner.
+    func testParseErrorMessageNonEmpty() throws {
+        let url = tmpSettingsURL()
+        try "[\"not\", \"object\"]".write(to: url, atomically: true, encoding: .utf8)
+        if case .parseError(let detail) = ClaudeHookDetector.currentStatus(at: url) {
+            XCTAssertFalse(detail.isEmpty, "parse-error detail must be non-empty for the banner to render usefully")
+        } else {
+            XCTFail("expected parseError for non-object root")
+        }
+    }
 }
 
 #endif
