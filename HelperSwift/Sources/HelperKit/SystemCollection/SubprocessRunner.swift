@@ -28,16 +28,40 @@ import Darwin
 /// hand-rolled subprocess code which had a `semaphore.wait()` /
 /// `Thread.sleep` polling loop that could deadlock the cooperative
 /// thread pool and ignored cancellation.
-enum SubprocessRunner {
+public enum SubprocessRunner {
 
-    /// Run `executable arguments...`, return UTF-8 stdout on success
-    /// (exit code 0), `nil` on any failure (spawn error, non-zero
-    /// exit, timeout, cancellation). Stderr is discarded.
-    static func run(
+    /// Granular result of a subprocess run. `KeychainReader` and other
+    /// callers need to distinguish "process exited with code 44 because
+    /// the Keychain item doesn't exist" from "watchdog tripped" — the
+    /// former should not trigger a 24 h denial cache, the latter
+    /// should. (Phase 4E Slice 2b Gemini P0.)
+    public enum RunResult: Sendable, Equatable {
+        /// `executable` exited 0. Returns its full stdout (may be empty).
+        case success(stdout: String)
+        /// `executable` exited non-zero. Returns the exit code AND
+        /// whatever stdout was captured before exit (often empty for
+        /// CLI tools that print errors to stderr only). Stderr is
+        /// always discarded by this runner.
+        case nonZeroExit(code: Int32, stdout: String)
+        /// `Process.run()` itself threw — usually `executable` doesn't
+        /// exist, or the spawn was denied by sandbox / SIP rules.
+        case spawnError
+        /// Hard `timeoutSeconds` deadline elapsed. The child is reaped
+        /// (SIGTERM + 1 s grace + SIGKILL).
+        case timedOut
+        /// Outer task was cancelled before the child exited. The child
+        /// is reaped as for `timedOut`.
+        case cancelled
+    }
+
+    /// Granular variant — returns the exit code so callers like
+    /// `KeychainReader` can disambiguate "service not found" (44)
+    /// from "user denied" / "watchdog tripped".
+    public static func runCapturingExit(
         executable: URL,
         arguments: [String],
         timeoutSeconds: TimeInterval
-    ) async -> String? {
+    ) async -> RunResult {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -45,8 +69,6 @@ enum SubprocessRunner {
         process.standardOutput = stdoutPipe
         process.standardError = Pipe()  // discard
 
-        // Drain concurrently — start BEFORE we begin polling for exit
-        // so a child that emits >64 KB doesn't block on a full pipe.
         let drainTask = Task<Data, Never>.detached(priority: .utility) {
             stdoutPipe.fileHandleForReading.readDataToEndOfFile()
         }
@@ -55,14 +77,15 @@ enum SubprocessRunner {
             try process.run()
         } catch {
             drainTask.cancel()
-            return nil
+            return .spawnError
         }
 
         let pid = process.processIdentifier
         let deadlineNs = DispatchTime.now().uptimeNanoseconds
             + UInt64(timeoutSeconds * 1_000_000_000)
 
-        let success: Bool
+        enum WaitOutcome { case exited, timedOut, cancelled }
+        var outcome: WaitOutcome = .exited
         do {
             try await withTaskCancellationHandler {
                 while process.isRunning {
@@ -72,9 +95,6 @@ enum SubprocessRunner {
                     try await Task.sleep(for: .milliseconds(50))
                 }
             } onCancel: {
-                // Synchronous reap on outer-task cancel. `Thread.sleep`
-                // is deliberate — `Task.sleep` would re-throw the
-                // cancellation immediately and skip the SIGTERM grace.
                 if process.isRunning {
                     process.terminate()
                     Thread.sleep(forTimeInterval: 1.0)
@@ -83,10 +103,8 @@ enum SubprocessRunner {
                     }
                 }
             }
-            success = true
-        } catch {
-            // Either timeout or cancellation re-thrown out of the
-            // polling loop. Reap the child if still alive.
+        } catch RunnerError.timedOut {
+            outcome = .timedOut
             if process.isRunning {
                 process.terminate()
                 Thread.sleep(forTimeInterval: 1.0)
@@ -94,14 +112,46 @@ enum SubprocessRunner {
                     kill(pid, SIGKILL)
                 }
             }
-            success = false
+        } catch {
+            outcome = .cancelled
+            if process.isRunning {
+                process.terminate()
+                Thread.sleep(forTimeInterval: 1.0)
+                if process.isRunning {
+                    kill(pid, SIGKILL)
+                }
+            }
         }
 
-        guard success, process.terminationStatus == 0 else {
-            return nil
+        switch outcome {
+        case .timedOut: return .timedOut
+        case .cancelled: return .cancelled
+        case .exited:
+            let data = await drainTask.value
+            let stdout = String(data: data, encoding: .utf8) ?? ""
+            let code = process.terminationStatus
+            if code == 0 { return .success(stdout: stdout) }
+            return .nonZeroExit(code: code, stdout: stdout)
         }
-        let data = await drainTask.value
-        return String(data: data, encoding: .utf8)
+    }
+
+    /// Convenience wrapper for callers that don't care about exit-code
+    /// distinctions: returns stdout on success, `nil` on any failure.
+    /// Existing 2a callers (`DeviceSnapshotCollector`, `SessionDetector`)
+    /// continue to use this; KeychainReader uses `runCapturingExit`.
+    public static func run(
+        executable: URL,
+        arguments: [String],
+        timeoutSeconds: TimeInterval
+    ) async -> String? {
+        switch await runCapturingExit(
+            executable: executable,
+            arguments: arguments,
+            timeoutSeconds: timeoutSeconds
+        ) {
+        case .success(let stdout): return stdout
+        case .nonZeroExit, .spawnError, .timedOut, .cancelled: return nil
+        }
     }
 
     private enum RunnerError: Error {
