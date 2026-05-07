@@ -130,7 +130,7 @@ build_macos() {
     local ARCHIVE="$BUILD_DIR/CLIPulseBar-macOS.xcarchive"
     local EXPORT="$BUILD_DIR/macos-export"
 
-    echo "[1/3] Archiving macOS target..."
+    echo "[1/4] Archiving macOS target..."
     xcodebuild archive \
         -project "$PROJECT" \
         -scheme "CLI Pulse Bar" \
@@ -143,7 +143,18 @@ build_macos() {
 
     echo "  ✓ Archive: $ARCHIVE"
 
-    echo "[2/3] Exporting for App Store..."
+    # Phase 4E Slice 4 follow-up (Codex P0 fix, 2026-05-07): the
+    # plain `xcodebuild archive` invocation above does NOT trigger
+    # any Run Script / Copy Files build phase that copies the Swift
+    # `cli_pulse_helper` binary or `HelperAgent.plist` into the
+    # archive's .app — those build phases were never wired into
+    # the .xcodeproj. Without this post-process the archive ships
+    # to ASC missing the LaunchAgent helper Phase 4D + 4E rely on.
+    echo "[2/4] Embedding Swift helper + LaunchAgent plist into archive..."
+    "$PROJECT_DIR/../scripts/embed_helper_in_archive.sh" "$ARCHIVE"
+    echo "  ✓ Helper embedded + signed"
+
+    echo "[3/4] Exporting for App Store..."
     cat > "$BUILD_DIR/ExportOptions-macOS.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -173,10 +184,10 @@ EOF
     upload_dsyms_to_sentry "$ARCHIVE" "apple-macos"
 
     if [[ "$UPLOAD" == true ]]; then
-        echo "[3/3] Uploading macOS to App Store Connect..."
+        echo "[4/4] Uploading macOS to App Store Connect..."
         upload_to_appstore "$ARCHIVE" "$EXPORT" "macos"
     else
-        echo "[3/3] Skipping upload (use --upload to enable)"
+        echo "[4/4] Skipping upload (use --upload to enable)"
     fi
     echo ""
 }
