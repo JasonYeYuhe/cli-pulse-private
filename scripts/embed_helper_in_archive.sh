@@ -219,6 +219,34 @@ if [[ "$BUNDLE_PROGRAM" != "Contents/Helpers/cli_pulse_helper" ]]; then
     exit 1
 fi
 
+# Phase 4E e2e fix (2026-05-07): the helper must carry the app-
+# group entitlement so the kernel allows it to access
+# ~/Library/Group Containers/group.yyh.CLI-Pulse/. Without this
+# AuthToken.rotateToken hangs forever in the open() syscall.
+# Phase 4D shipped the entitlements file empty; this assertion
+# makes a regression impossible to ship silently.
+HELPER_ENT="$(codesign -d --entitlements :- "$APP_PATH/Contents/Helpers/cli_pulse_helper" 2>/dev/null || true)"
+if ! grep -q "group.yyh.CLI-Pulse" <<< "$HELPER_ENT"; then
+    echo "error: helper missing application-groups entitlement (group.yyh.CLI-Pulse)" >&2
+    echo "  → kernel will block all access to the Group Container at runtime" >&2
+    echo "  → check HelperSwift/cli_pulse_helper.entitlements" >&2
+    exit 1
+fi
+
+# Phase 4E e2e fix (2026-05-07): launchd does NOT expand `~` in
+# StandardOutPath / StandardErrorPath. Tilde-prefixed paths cause
+# launchd to literally try `//~/Library/...` (in /, read-only) →
+# exit 78 (EX_CONFIG) before the helper's main runs. Reject any
+# tilde in the plist so the regression can't ship.
+if /usr/libexec/PlistBuddy -c "Print :StandardOutPath" "$PLIST" 2>/dev/null | grep -q "~"; then
+    echo "error: plist StandardOutPath contains '~' — launchd will not expand it" >&2
+    exit 1
+fi
+if /usr/libexec/PlistBuddy -c "Print :StandardErrorPath" "$PLIST" 2>/dev/null | grep -q "~"; then
+    echo "error: plist StandardErrorPath contains '~' — launchd will not expand it" >&2
+    exit 1
+fi
+
 echo "    OK: archive $ARCHIVE_PATH now contains:"
 echo "    - $APP_PATH/Contents/Helpers/cli_pulse_helper (signed)"
 echo "    - $APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"

@@ -2,5 +2,29 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!--
+      Phase 4E e2e fix (2026-05-07): the helper shares state with
+      the parent macOS app via the Group Container at
+      ~/Library/Group Containers/group.yyh.CLI-Pulse/ (UDS socket,
+      auth token, claude snapshot files). Without
+      `application-groups` listing the same group as the parent
+      app, the kernel blocks the helper's Data.write / bind() calls
+      against that path — process hangs forever in the open()
+      syscall. Phase 4D shipped this file empty; the helper has
+      been bundled-but-inert since then. Confirmed via
+      `sample <pid>` showing AuthToken.rotateToken hung in __open.
+
+      The team-identifier entry MUST match the parent app's team
+      so macOS can validate the embedded LaunchAgent's entitlements
+      against the parent's provisioning profile. The parent's
+      profile already lists the group capability, so the embedded
+      helper inherits the right via nested-binary signing.
+    -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.yyh.CLI-Pulse</string>
+    </array>
+    <key>com.apple.developer.team-identifier</key>
+    <string>KHMK6Q3L3K</string>
 </dict>
 </plist>
