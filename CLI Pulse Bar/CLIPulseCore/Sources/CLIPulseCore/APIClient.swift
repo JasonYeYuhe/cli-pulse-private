@@ -731,10 +731,41 @@ public actor APIClient {
     }
 
     /// Update user settings on the server.
+    ///
+    /// Uses PostgREST upsert (POST + `Prefer: resolution=merge-duplicates`)
+    /// rather than PATCH so that first-time togglers — whose `user_settings`
+    /// row doesn't yet exist — get an INSERT on the same code path. The old
+    /// `PATCH ?user_id=eq.<uid>` form returned HTTP 2xx with an empty body
+    /// when zero rows matched, which the UI mis-read as a successful toggle
+    /// while the server retained the default. The conflict target is the
+    /// `user_settings.user_id` PRIMARY KEY (no race on concurrent toggles).
     public func updateSettings(_ patch: SettingsPatch) async throws {
         guard let uid = userId, Self.isValidUUID(uid) else { throw APIError.invalidResponse }
-        let safeUid = Self.sanitizeParam(uid)
-        _ = try await restPatch("/rest/v1/user_settings?user_id=eq.\(safeUid)", body: patch)
+        let envelope = SettingsUpsertEnvelope(user_id: uid, patch: patch)
+        _ = try await restPost(
+            "/rest/v1/user_settings",
+            body: envelope,
+            extraHeaders: ["Prefer": "resolution=merge-duplicates"]
+        )
+    }
+
+    /// Wraps a `SettingsPatch` together with its `user_id` so the upsert
+    /// request body carries the conflict-target column. Custom `encode`
+    /// flattens the patch fields into the same JSON object as `user_id`,
+    /// matching what PostgREST expects (`{"user_id": "...", "<field>": ...}`).
+    private struct SettingsUpsertEnvelope: Encodable {
+        let user_id: String
+        let patch: SettingsPatch
+
+        private enum EnvelopeCodingKey: String, CodingKey {
+            case user_id
+        }
+
+        func encode(to encoder: Encoder) throws {
+            try patch.encode(to: encoder)
+            var container = encoder.container(keyedBy: EnvelopeCodingKey.self)
+            try container.encode(user_id, forKey: .user_id)
+        }
     }
 
     /// Encodable patch for user settings — only include fields you want to change.
@@ -1757,6 +1788,40 @@ public actor APIClient {
     ) async throws -> Response {
         let data = try await restPatch(path, body: body, retried: retried)
         return try decode(responseType, from: data)
+    }
+
+    /// POST to a PostgREST endpoint. `extraHeaders` lets callers attach
+    /// per-request headers like `Prefer: resolution=merge-duplicates` for
+    /// upsert. The default header set (`Content-Type`, `apikey`, `Authorization`)
+    /// is applied first via `applyHeaders`, then `extraHeaders` overlay so
+    /// callers can also override defaults if a future endpoint demands it.
+    @discardableResult
+    private func restPost<Body: Encodable>(
+        _ path: String,
+        body: Body,
+        extraHeaders: [String: String] = [:],
+        retried: Bool = false
+    ) async throws -> Data {
+        guard let url = URL(string: supabaseURL + path) else {
+            throw APIError.invalidResponse
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        applyHeaders(&request)
+        for (key, value) in extraHeaders {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        request.httpBody = try encoder.encode(body)
+        let (data, response) = try await dataWithRetry(for: request)
+        let http = response as? HTTPURLResponse
+        if http?.statusCode == 401, !retried {
+            let _ = try await refreshAccessToken()
+            return try await restPost(path, body: body, extraHeaders: extraHeaders, retried: true)
+        }
+        guard let httpOK = http, (200...299).contains(httpOK.statusCode) else {
+            throw APIError.httpError(status: http?.statusCode ?? 0, body: String(data: data, encoding: .utf8) ?? "")
+        }
+        return data
     }
 
     private func rpc<Response: Decodable>(_ function: String, retried: Bool = false) async throws -> Response {

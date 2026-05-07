@@ -319,6 +319,97 @@ def test_bare_aws_access_key_still_redacted():
     assert REDACTION_MARKER in out
 
 
+# ── 4b. Third-party service keys (M1 backport, 2026-05-07) ────
+#
+# Cross-team alignment with cli-pulse-desktop's Gemini 3.1 Pro
+# post-impl review flagged these as redaction gaps that the existing
+# token-shape set didn't cover. Stripe live-key leaks are
+# immediately exploitable; Slack / NPM / PyPI tokens have similar
+# blast radius. Each fixture splits the literal across string
+# concatenation to keep GitHub Push Protection from flagging the
+# test file itself, and uses bare-token context so Pass 2 (token
+# shape) is what fires (Pass 1 would also catch a `*_KEY=` envelope
+# and mask whether the new shape regex is wired up).
+
+
+def test_redacts_stripe_secret_key_live():
+    leaked = "sk_l" + "ive_" + "0123456789AbCdEfGh"
+    out = redact(f"info: caller passed {leaked} to Stripe API")
+    assert leaked not in out
+    assert REDACTION_MARKER in out
+
+
+def test_redacts_stripe_restricted_key_live():
+    leaked = "rk_l" + "ive_" + "0123456789AbCdEfGh"
+    out = redact(f"warn: handler logged {leaked}")
+    assert leaked not in out
+    assert REDACTION_MARKER in out
+
+
+def test_redacts_stripe_publishable_key_live():
+    leaked = "pk_l" + "ive_" + "0123456789AbCdEfGh"
+    out = redact(f"client init with {leaked}")
+    assert leaked not in out
+    assert REDACTION_MARKER in out
+
+
+def test_redacts_stripe_test_keys_all_three_prefixes():
+    sk = "sk_t" + "est_" + "0123456789AbCdEfGh"
+    rk = "rk_t" + "est_" + "0123456789AbCdEfGh"
+    pk = "pk_t" + "est_" + "0123456789AbCdEfGh"
+    out = redact(f"keys observed: {sk} {rk} {pk}")
+    for leaked in (sk, rk, pk):
+        assert leaked not in out
+    assert out.count(REDACTION_MARKER) == 3
+
+
+def test_redacts_slack_bot_token():
+    leaked = "xox" + "b-" + "1234567890AbCdEfGhIj"
+    out = redact(f"info: bot token {leaked} authenticated")
+    assert leaked not in out
+    assert REDACTION_MARKER in out
+
+
+def test_redacts_slack_user_token_with_dashes_in_body():
+    leaked = "xox" + "p-" + "1234-5678-9012-AbCdEfGh"
+    out = redact(f"info: user token {leaked} authenticated")
+    assert leaked not in out
+    assert REDACTION_MARKER in out
+
+
+def test_redacts_slack_other_prefixes_a_r_s():
+    a = "xox" + "a-" + "1234567890AbCdEfGhIj"
+    r = "xox" + "r-" + "1234567890AbCdEfGhIj"
+    s = "xox" + "s-" + "1234567890AbCdEfGhIj"
+    out = redact(f"tokens {a} {r} {s}")
+    for leaked in (a, r, s):
+        assert leaked not in out
+    assert out.count(REDACTION_MARKER) == 3
+
+
+def test_redacts_npm_access_token():
+    leaked = "npm" + "_" + "AbCdEfGhIjKlMnOp"
+    out = redact(f"info: publish auth used {leaked}")
+    assert leaked not in out
+    assert REDACTION_MARKER in out
+
+
+def test_redacts_pypi_upload_token():
+    leaked = "pypi" + "-" + "AgEIcGFja2FnZS50ZXN0"
+    out = redact(f"warn: log line included {leaked}")
+    assert leaked not in out
+    assert REDACTION_MARKER in out
+
+
+def test_third_party_keys_idempotent():
+    leaked = "sk_l" + "ive_" + "0123456789AbCdEfGh"
+    raw = f"caller {leaked} done"
+    once = redact(raw)
+    twice = redact(once)
+    assert once == twice
+    assert leaked not in once
+
+
 # ── 5. False-positive guards ───────────────────────────────────
 
 
