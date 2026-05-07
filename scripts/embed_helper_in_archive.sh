@@ -107,6 +107,49 @@ cp "$PLIST_TEMPLATE" "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.help
 # Strip xattrs that codesign rejects on nested helper targets.
 xattr -cr "$APP_PATH" 2>/dev/null || true
 
+# Detect whether the archive's parent app + nested bundles already
+# carry a signature. With `CODE_SIGNING_ALLOWED=NO` (CI's archive
+# path) the bundles are unsigned, so we cannot rely on
+# `--preserve-metadata=entitlements` — there's nothing to preserve.
+# Instead bottom-up sign every nested bundle first, then sign the
+# parent with the source entitlements file.
+# Detect whether the archive's parent app + nested bundles carry a
+# proper (non-linker) signature. Xcode-archived apps with real
+# signing have a Authority cert chain. Apps built with
+# CODE_SIGNING_ALLOWED=NO (CI's archive path) come out
+# linker-signed ad-hoc — codesign can read them but they don't
+# carry an Authority and the parent re-sign with
+# --preserve-metadata refuses because nested LoginItems are
+# linker-signed, not ad-hoc.
+APP_HAS_AUTHORITY_SIG=0
+if [[ -n "$AUTHORITY" ]]; then
+    APP_HAS_AUTHORITY_SIG=1
+fi
+
+if [[ "$APP_HAS_AUTHORITY_SIG" -eq 0 ]]; then
+    # Bottom-up: sign every nested .framework / .app / .xpc / .dylib
+    # FIRST (deepest first), so the parent re-sign sees signed
+    # subcomponents. Mirrors `scripts/build_signed_app.sh`'s pattern.
+    # We do NOT use --deep — that would re-apply parent entitlements
+    # to every nested binary.
+    echo "    archive has no Authority signature (linker-signed) → bottom-up sign nested bundles first"
+    python3 - "$APP_PATH" "$SIGN_IDENTITY" <<'PYEOF'
+import os, subprocess, sys
+app_path, sign_identity = sys.argv[1], sys.argv[2]
+matches = []
+for root, dirs, _files in os.walk(app_path):
+    for d in list(dirs):
+        if d.endswith((".framework", ".app", ".xpc", ".dylib")):
+            matches.append(os.path.join(root, d))
+matches.sort(key=lambda p: -len(p))
+for p in matches:
+    subprocess.call([
+        "codesign", "--force", "--options", "runtime", "--timestamp=none",
+        "--sign", sign_identity, p,
+    ])
+PYEOF
+fi
+
 # Sign the embedded helper with its own minimal entitlements
 # (Hardened Runtime on, no sandbox — it's a LaunchAgent).
 echo "==> [4/5] Codesigning helper + re-signing .app ..."
@@ -115,16 +158,29 @@ codesign --force --options runtime --timestamp=none \
     --sign "$SIGN_IDENTITY" \
     "$APP_PATH/Contents/Helpers/cli_pulse_helper"
 
-# Re-sign the .app preserving its existing entitlements + flags +
-# requirements. --preserve-metadata=entitlements means the .xcent
-# Xcode emitted at archive time (sandbox, app-group, etc.) survives
-# unchanged. We do NOT use --deep — that would re-apply the parent's
-# entitlements onto every nested binary, including overwriting the
-# helper's just-applied minimal set.
-codesign --force --options runtime --timestamp=none \
-    --preserve-metadata=entitlements,requirements,flags \
-    --sign "$SIGN_IDENTITY" \
-    "$APP_PATH"
+# Re-sign the .app. Two paths:
+#   - signed input (real Xcode archive): preserve the existing
+#     .xcent Xcode emitted via --preserve-metadata=entitlements,
+#     requirements,flags so sandbox + app-group survive untouched.
+#   - linker-signed input (CI with CODE_SIGNING_ALLOWED=NO): apply
+#     the source entitlements file directly. Xcode would've used
+#     the same source had signing been enabled.
+APP_ENT_SOURCE="$PROJECT_ROOT/CLI Pulse Bar/CLI Pulse Bar/CLI_Pulse_Bar.entitlements"
+if [[ "$APP_HAS_AUTHORITY_SIG" -eq 1 ]]; then
+    codesign --force --options runtime --timestamp=none \
+        --preserve-metadata=entitlements,requirements,flags \
+        --sign "$SIGN_IDENTITY" \
+        "$APP_PATH"
+else
+    if [[ ! -f "$APP_ENT_SOURCE" ]]; then
+        echo "error: app entitlements source missing at $APP_ENT_SOURCE" >&2
+        exit 2
+    fi
+    codesign --force --options runtime --timestamp=none \
+        --entitlements "$APP_ENT_SOURCE" \
+        --sign "$SIGN_IDENTITY" \
+        "$APP_PATH"
+fi
 
 # Verify.
 echo "==> [5/5] Verifying bundle ..."
