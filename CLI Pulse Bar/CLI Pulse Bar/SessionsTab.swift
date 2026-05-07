@@ -272,6 +272,19 @@ struct SessionsTab: View {
             // JSON anyway).
             if shouldShowApprovalHookInstallBanner {
                 approvalHookNotWiredBanner
+            } else if shouldShowApprovalHookStaleCleanupBanner {
+                // Phase 4D iter12 (Codex P2⑤): pre-iter10
+                // CLI Pulse versions wrote a global hook into
+                // ~/.claude/settings.json. iter10 retired global
+                // install in favour of spawn-time `--settings`
+                // injection, but a leftover entry from an older
+                // CLI Pulse will keep firing for terminal-launched
+                // Claude — and the new HookAdapter fail-closed
+                // path will deny every Bash/Read/etc with a
+                // diagnostic message, breaking the user's terminal
+                // workflow. The banner offers a one-click cleanup
+                // command they can paste into a terminal.
+                approvalHookStaleCleanupBanner
             } else if shouldShowApprovalHookFixSettingsBanner {
                 approvalHookFixSettingsBanner
             }
@@ -1318,6 +1331,109 @@ struct SessionsTab: View {
         .background(Color.orange.opacity(0.10))
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
+
+    /// Phase 4D iter12 (Codex P2⑤): cleanup banner shown when a
+    /// pre-iter10 CLI Pulse install left a global PermissionRequest
+    /// hook in `~/.claude/settings.json`. After iter10 the hook is
+    /// injected at managed-session spawn time only — a leftover
+    /// global entry will keep firing for terminal-launched Claude
+    /// and the iter10 fail-closed adapter will deny every tool
+    /// call with a diagnostic message. Bad UX. The banner gives
+    /// the user a copy-paste command that surgically removes the
+    /// stale entry.
+    private var approvalHookStaleCleanupBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Old CLI Pulse hook in your Claude settings")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Earlier versions of CLI Pulse wrote a PermissionRequest hook into ~/.claude/settings.json. Recent versions inject the hook at managed-session spawn time instead, so the old entry is no longer needed AND it breaks Claude when you launch it from Terminal (the hook fails closed without managed-session env vars).")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Click the button to copy a one-line jq command. Paste into a terminal to remove the stale entry. Your other Claude settings stay intact.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button("Copy cleanup command") {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(
+                        Self.staleHookCleanupCommand,
+                        forType: .string
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .help("Copies a `jq` filter to your clipboard. The filter strips every PermissionRequest entry containing CLI Pulse's marker (\"remote-approval-hook --provider claude\") and writes the result back to ~/.claude/settings.json atomically. Your model / permissions / other hooks survive verbatim.")
+            }
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    /// Cleanup command put on the clipboard by the stale-hook
+    /// banner. Uses bundled-on-macOS Python rather than jq because:
+    ///
+    ///   1. Atomic write semantics (tmp + os.rename + mode 0600)
+    ///      match the same care `permissions_diagnose.py` takes
+    ///      with the same file. jq's `>` redirect leaves a window
+    ///      where the file is partially written.
+    ///   2. Surgical removal — strips ONLY entries that contain
+    ///      our `remote-approval-hook --provider claude` marker.
+    ///      Top-level keys (model, permissions, other hook
+    ///      events) and unrelated PermissionRequest entries stay
+    ///      verbatim.
+    ///   3. Cleaner shell quoting — `Color.staleHookCleanupCommand`
+    ///      embeds in a clipboard, then a terminal paste; the
+    ///      multi-line Python heredoc survives a shell paste
+    ///      better than a one-line jq filter with nested quotes.
+    ///
+    /// Documented as a constant for testability — Codex review on
+    /// PR #18 hardened every settings.json write path against
+    /// accidental data loss; same care here.
+    static let staleHookCleanupCommand: String = {
+        return #"""
+        python3 - <<'PYEOF'
+        import json, os, tempfile
+        p = os.path.expanduser("~/.claude/settings.json")
+        data = json.loads(open(p).read())
+        hooks = data.get("hooks", {})
+        pr = hooks.get("PermissionRequest", [])
+        marker = "remote-approval-hook --provider claude"
+        new_pr = []
+        for entry in pr:
+            if isinstance(entry.get("command"), str) and marker in entry["command"]:
+                continue
+            if isinstance(entry.get("hooks"), list) and any(
+                isinstance(h.get("command"), str) and marker in h["command"]
+                for h in entry["hooks"]
+            ):
+                continue
+            new_pr.append(entry)
+        if new_pr:
+            hooks["PermissionRequest"] = new_pr
+        elif "PermissionRequest" in hooks:
+            del hooks["PermissionRequest"]
+        if hooks:
+            data["hooks"] = hooks
+        elif "hooks" in data:
+            del data["hooks"]
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p))
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(data, indent=2) + "\n")
+        os.chmod(tmp, 0o600)
+        os.rename(tmp, p)
+        print(f"cleaned {p}: PermissionRequest entries={len(new_pr)}")
+        PYEOF
+        """#
+    }()
 
     /// Detail string from the detector's `.parseError(...)` case.
     /// Returns empty string for any non-parse-error state (the
