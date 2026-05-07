@@ -13,9 +13,16 @@ func usage() -> Never {
 
     Usage:
       cli_pulse_helper daemon [--interval SECS]
+                              [--cloud-tick-seconds SECS]
+                              [--cloud-pull-max N]
+                              [--legacy-python]
       cli_pulse_helper version
       cli_pulse_helper remote-approval-hook --provider claude
       cli_pulse_helper remote-approvals install-claude-hook
+
+    Phase 4E Slice 4: `daemon` now drives RemoteAgentCloud cloud
+    sync alongside the local UDS server. `--legacy-python` opts
+    out for the cutover safety net (one release cycle).
 
     """.utf8))
     exit(2)
@@ -26,7 +33,7 @@ if args.isEmpty { usage() }
 
 switch args[0] {
 case "version":
-    print("cli_pulse_helper Swift port iter 11 — protocol \(kProtocolVersion)")
+    print("cli_pulse_helper Swift port phase4e-slice4 — protocol \(kProtocolVersion)")
 
 case "self-path":
     // Phase 4D iter11 (Codex P1④ smoke): print the path the
@@ -99,6 +106,30 @@ case "remote-approvals":
     }
 
 case "daemon":
+    // Phase 4E Slice 4: argv parsing lives in HelperKit so it can
+    // be unit-tested without spinning up signal sources / GCD
+    // queues. `--legacy-python` (cutover safety net) exits 0 with
+    // a diagnostic so the user can manually run the Python daemon
+    // instead.
+    let daemonConfig = DaemonConfig.parse(Array(args.dropFirst()))
+    if daemonConfig.legacyPython {
+        FileHandle.standardError.write(Data("""
+        cli_pulse_helper --legacy-python (opt-out of Swift daemon)
+
+        Phase 4E Slice 4 cutover safety net. The Swift LaunchAgent
+        binary will not start cloud sync this session. To run the
+        Python daemon directly:
+
+          launchctl unload ~/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist
+          python3 helper/cli_pulse_helper.py daemon --interval 120
+
+        Remove `--legacy-python` from the plist + reload to flip back.
+
+        \n
+        """.utf8))
+        exit(0)
+    }
+
     // Token rotation: every helper start invalidates the
     // previous session's token. The macOS app re-reads it on
     // every request via the group container, so the rotation is
@@ -171,12 +202,81 @@ case "daemon":
         "cli_pulse_helper (Swift): listening on \(socketPath.path) (pid=\(pid))\n".utf8
     ))
 
+    // Phase 4E Slice 4: cloud-sync wiring. Constructs
+    // RemoteAgentCloud + EventUploader + SupabaseRPCCaller and
+    // ticks every `cloudTickInterval` seconds (default 1 s) so
+    // remote-queued commands reach the spawned `claude` within
+    // ~1 s of being enqueued. Skipped silently if the helper is
+    // unpaired (no device_id / helper_secret) — matches the
+    // Python helper's behavior.
+    //
+    // Note: `helper_heartbeat` and `helper_sync` are NOT driven
+    // from this loop; the macOS app's `HelperDaemon` already
+    // owns those flows on the live runtime (see CLIPulseHelper/
+    // HelperDaemon.swift). Slice 4 is exclusively the cloud
+    // managed-session port — the cloud-sync layer of
+    // helper/remote_agent.py.
+    let cloudCfg = configStore.cloudConfigSnapshot()
+    let cloudTask: Task<Void, Never>?
+    if cloudCfg.isPaired {
+        let rpcCaller = SupabaseRPCCaller(
+            configProvider: { configStore.cloudConfigSnapshot() }
+        )
+        let eventUploader = EventUploader(
+            helperConfig: { configStore.cloudConfigSnapshot() },
+            rpcCaller: rpcCaller
+        )
+        let remoteCloud = RemoteAgentCloud(
+            helperConfig: { configStore.cloudConfigSnapshot() },
+            rpcCaller: rpcCaller,
+            sessionManager: sessionManager,
+            uploader: eventUploader,
+            broker: broker
+        )
+        let nanos = UInt64(daemonConfig.cloudTickSeconds * 1_000_000_000)
+        let pullMax = daemonConfig.cloudPullMax
+        cloudTask = Task { [remoteCloud, eventUploader] in
+            await remoteCloud.startObservingBroker()
+            while !Task.isCancelled {
+                _ = await remoteCloud.tick(maxCommands: pullMax)
+                try? await Task.sleep(nanoseconds: nanos)
+            }
+            // Best-effort flush on cancel — bounded by 5 s budget.
+            _ = await eventUploader.flush()
+            await remoteCloud.shutdown()
+        }
+        FileHandle.standardError.write(Data(
+            "cli_pulse_helper (Swift): cloud sync active (device=\(cloudCfg.deviceId.prefix(8))…, pull-max=\(daemonConfig.cloudPullMax), tick=\(daemonConfig.cloudTickSeconds)s)\n".utf8
+        ))
+    } else {
+        cloudTask = nil
+        FileHandle.standardError.write(Data(
+            "cli_pulse_helper (Swift): unpaired — cloud sync skipped\n".utf8
+        ))
+    }
+
     // Trap SIGINT / SIGTERM for graceful shutdown.
     let sigSrcInt = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
     let sigSrcTerm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
     let stopSemaphore = DispatchSemaphore(value: 0)
     let handleStop: @Sendable () -> Void = {
         FileHandle.standardError.write(Data("shutting down\n".utf8))
+        // Phase 4E Slice 4 (Gemini 2.5 Pro P0): cancellation alone
+        // doesn't wait for the in-flight flush + shutdown inside
+        // cloudTask. Without this synchronous wait the process can
+        // exit before the 5 s EventUploader.flush() budget runs,
+        // dropping the last batch of stdout / status events.
+        // Bound the wait at 4.5 s so launchd's 30 s
+        // ThrottleInterval doesn't decide we're hung.
+        if let task = cloudTask {
+            task.cancel()
+            let drainSem = DispatchSemaphore(value: 0)
+            Task {
+                _ = await task.value
+                drainSem.signal()
+            }
+            _ = drainSem.wait(timeout: .now() + 4.5)
+        }
         server.stop()
         stopSemaphore.signal()
     }
