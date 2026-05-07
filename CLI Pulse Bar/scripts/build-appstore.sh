@@ -130,6 +130,8 @@ build_macos() {
     local ARCHIVE="$BUILD_DIR/CLIPulseBar-macOS.xcarchive"
     local EXPORT="$BUILD_DIR/macos-export"
 
+    rm -rf "$ARCHIVE" "$EXPORT"
+
     echo "[1/4] Archiving macOS target..."
     xcodebuild archive \
         -project "$PROJECT" \
@@ -143,19 +145,21 @@ build_macos() {
 
     echo "  ✓ Archive: $ARCHIVE"
 
-    # Phase 4E Slice 4 follow-up (Codex P0 fix, 2026-05-07): the
-    # plain `xcodebuild archive` invocation above does NOT trigger
-    # any Run Script / Copy Files build phase that copies the Swift
-    # `cli_pulse_helper` binary or `HelperAgent.plist` into the
-    # archive's .app — those build phases were never wired into
-    # the .xcodeproj. Without this post-process the archive ships
-    # to ASC missing the LaunchAgent helper Phase 4D + 4E rely on.
-    echo "[2/4] Embedding Swift helper + LaunchAgent plist into archive..."
-    "$PROJECT_DIR/../scripts/embed_helper_in_archive.sh" "$ARCHIVE"
-    echo "  ✓ Helper embedded + signed"
+    # Mac App Store rule ITMS-90296 requires every nested executable
+    # inside a sandboxed app to also be sandboxed. The Swift
+    # `cli_pulse_helper` LaunchAgent intentionally runs unsandboxed
+    # for the future Developer ID distribution path, so it MUST NOT
+    # be present in the MAS-bound archive. Developer ID/debug helper
+    # embedding is still covered by `scripts/build_signed_app.sh`.
+    echo "[2/4] Verifying MAS archive excludes Swift LaunchAgent helper..."
+    verify_mas_archive_has_no_launchagent "$ARCHIVE"
+    echo "  ✓ MAS archive contains no unsandboxed LaunchAgent helper"
 
-    echo "[3/4] Exporting for App Store..."
-    cat > "$BUILD_DIR/ExportOptions-macOS.plist" << 'EOF'
+    if [[ "$UPLOAD" == true ]]; then
+        echo "[3/4] Skipping local export (upload path exports with ASC API key)"
+    else
+        echo "[3/4] Exporting for App Store..."
+        cat > "$BUILD_DIR/ExportOptions-macOS.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -172,14 +176,15 @@ build_macos() {
 </plist>
 EOF
 
-    xcodebuild -exportArchive \
-        -archivePath "$ARCHIVE" \
-        -exportOptionsPlist "$BUILD_DIR/ExportOptions-macOS.plist" \
-        -exportPath "$EXPORT" \
-        -allowProvisioningUpdates \
-        -quiet 2>&1 || true
+        xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE" \
+            -exportOptionsPlist "$BUILD_DIR/ExportOptions-macOS.plist" \
+            -exportPath "$EXPORT" \
+            -allowProvisioningUpdates \
+            -quiet
 
-    echo "  ✓ Export: $EXPORT"
+        echo "  ✓ Export: $EXPORT"
+    fi
 
     upload_dsyms_to_sentry "$ARCHIVE" "apple-macos"
 
@@ -192,6 +197,28 @@ EOF
     echo ""
 }
 
+verify_mas_archive_has_no_launchagent() {
+    local ARCHIVE_PATH="$1"
+    local APP_PATH="$ARCHIVE_PATH/Products/Applications/CLI Pulse Bar.app"
+
+    if [[ ! -d "$APP_PATH" ]]; then
+        echo "  ERROR: app not found in archive: $APP_PATH" >&2
+        return 1
+    fi
+
+    if [[ -e "$APP_PATH/Contents/Helpers/cli_pulse_helper" ]]; then
+        echo "  ERROR: MAS archive contains unsandboxed Swift helper at Contents/Helpers/cli_pulse_helper" >&2
+        echo "  Mac App Store rejects this with ITMS-90296. Use Developer ID distribution for the LaunchAgent runtime." >&2
+        return 1
+    fi
+
+    if [[ -e "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist" ]]; then
+        echo "  ERROR: MAS archive contains LaunchAgent plist at Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist" >&2
+        echo "  Mac App Store builds must ship without the unsandboxed LaunchAgent helper." >&2
+        return 1
+    fi
+}
+
 # --- iOS Build (includes Widgets) ---
 build_ios() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -200,6 +227,8 @@ build_ios() {
 
     local ARCHIVE="$BUILD_DIR/CLIPulse-iOS.xcarchive"
     local EXPORT="$BUILD_DIR/ios-export"
+
+    rm -rf "$ARCHIVE" "$EXPORT"
 
     echo "[1/3] Archiving iOS target..."
     xcodebuild archive \
@@ -215,8 +244,11 @@ build_ios() {
 
     echo "  ✓ Archive: $ARCHIVE"
 
-    echo "[2/3] Exporting for App Store..."
-    cat > "$BUILD_DIR/ExportOptions-iOS.plist" << 'EOF'
+    if [[ "$UPLOAD" == true ]]; then
+        echo "[2/3] Skipping local export (upload path exports with ASC API key)"
+    else
+        echo "[2/3] Exporting for App Store..."
+        cat > "$BUILD_DIR/ExportOptions-iOS.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -233,14 +265,15 @@ build_ios() {
 </plist>
 EOF
 
-    xcodebuild -exportArchive \
-        -archivePath "$ARCHIVE" \
-        -exportOptionsPlist "$BUILD_DIR/ExportOptions-iOS.plist" \
-        -exportPath "$EXPORT" \
-        -allowProvisioningUpdates \
-        -quiet 2>&1 || true
+        xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE" \
+            -exportOptionsPlist "$BUILD_DIR/ExportOptions-iOS.plist" \
+            -exportPath "$EXPORT" \
+            -allowProvisioningUpdates \
+            -quiet
 
-    echo "  ✓ Export: $EXPORT"
+        echo "  ✓ Export: $EXPORT"
+    fi
 
     upload_dsyms_to_sentry "$ARCHIVE" "apple-ios"
 
@@ -262,6 +295,8 @@ build_watchos() {
     local ARCHIVE="$BUILD_DIR/CLIPulse-watchOS.xcarchive"
     local EXPORT="$BUILD_DIR/watchos-export"
 
+    rm -rf "$ARCHIVE" "$EXPORT"
+
     echo "[1/3] Archiving watchOS target..."
     xcodebuild archive \
         -project "$PROJECT" \
@@ -276,8 +311,11 @@ build_watchos() {
 
     echo "  ✓ Archive: $ARCHIVE"
 
-    echo "[2/3] Exporting for App Store..."
-    cat > "$BUILD_DIR/ExportOptions-watchOS.plist" << 'EOF'
+    if [[ "$UPLOAD" == true ]]; then
+        echo "[2/3] Skipping local export (upload path exports with ASC API key)"
+    else
+        echo "[2/3] Exporting for App Store..."
+        cat > "$BUILD_DIR/ExportOptions-watchOS.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -294,14 +332,15 @@ build_watchos() {
 </plist>
 EOF
 
-    xcodebuild -exportArchive \
-        -archivePath "$ARCHIVE" \
-        -exportOptionsPlist "$BUILD_DIR/ExportOptions-watchOS.plist" \
-        -exportPath "$EXPORT" \
-        -allowProvisioningUpdates \
-        -quiet 2>&1 || true
+        xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE" \
+            -exportOptionsPlist "$BUILD_DIR/ExportOptions-watchOS.plist" \
+            -exportPath "$EXPORT" \
+            -allowProvisioningUpdates \
+            -quiet
 
-    echo "  ✓ Export: $EXPORT"
+        echo "  ✓ Export: $EXPORT"
+    fi
 
     # watchOS reuses the apple-ios Sentry project (per CLI Pulse memory:
     # iOS+Watch share DSN, distinguished by platform_family tag).
@@ -329,6 +368,10 @@ upload_to_appstore() {
     fi
 
     echo "  Uploading via xcodebuild -exportArchive (destination: upload)..."
+
+    if [[ "$PLATFORM" == "macos" ]]; then
+        verify_mas_archive_has_no_launchagent "$ARCHIVE_PATH"
+    fi
 
     local EXPORT_PLIST="$BUILD_DIR/ExportOptions-${PLATFORM}-upload.plist"
     cat > "$EXPORT_PLIST" << 'EOF'
