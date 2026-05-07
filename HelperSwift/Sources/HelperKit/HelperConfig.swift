@@ -10,15 +10,17 @@ import Foundation
 ///     start/list/stop/send_input/approve methods on this; iter 7
 ///     hardcoded `true` which regressed the iter-2A invariant.
 ///
-/// Fields the Swift port currently DOES NOT touch (cloud-side
-/// concerns; v1.14):
-///   * device_id, user_id, helper_secret — Supabase pairing
-///   * device_name, helper_version — heartbeat metadata
+/// Fields exposed in Phase 4E Slice 3 (cloud sync read-only):
+///   * `device_id`, `helper_secret` — passed to every Supabase RPC
+///     by `RemoteAgentCloud` / `EventUploader`.
+///   * `supabase_url`, `supabase_anon_key` — base URL + anon key
+///     used by `SupabaseRPCCaller` for `/rest/v1/rpc/<name>` calls.
 ///
-/// We read all keys (so we can rewrite the file without losing
-/// them) but only mutate `local_control_enabled` on the Swift
-/// side. The file format is plain JSON; the Python helper writes
-/// + reads the same shape.
+/// All four are read-only on the Swift side during Phase 4E (writes
+/// remain owned by the Python helper's `pair` / `migrate` paths
+/// until Slice 4 takes those over). We read all keys (so we can
+/// rewrite the file without losing them) but only mutate
+/// `local_control_enabled` here.
 public final class HelperConfigStore: @unchecked Sendable {
 
     /// Where the file lives. Same path Python uses
@@ -58,6 +60,70 @@ public final class HelperConfigStore: @unchecked Sendable {
     public var localControlEnabled: Bool {
         lock.lock(); defer { lock.unlock() }
         return (raw["local_control_enabled"] as? Bool) ?? false
+    }
+
+    /// Cloud pairing fields — Phase 4E Slice 3 read-only. Empty
+    /// string when the helper is unpaired (Python helper's `pair`
+    /// flow hasn't run); callers treat empty as "skip cloud RPCs"
+    /// rather than crashing.
+    public var deviceId: String {
+        lock.lock(); defer { lock.unlock() }
+        return (raw["device_id"] as? String) ?? ""
+    }
+
+    public var helperSecret: String {
+        lock.lock(); defer { lock.unlock() }
+        return (raw["helper_secret"] as? String) ?? ""
+    }
+
+    public var supabaseURL: String {
+        lock.lock(); defer { lock.unlock() }
+        return (raw["supabase_url"] as? String) ?? ""
+    }
+
+    public var supabaseAnonKey: String {
+        lock.lock(); defer { lock.unlock() }
+        return (raw["supabase_anon_key"] as? String) ?? ""
+    }
+
+    /// Snapshot of cloud-pairing fields for handing to
+    /// `RemoteAgentCloud` / `SupabaseRPCCaller`. Returned by value so
+    /// the consumer doesn't accidentally hold the store's lock.
+    public struct CloudConfig: Sendable, Equatable {
+        public let deviceId: String
+        public let helperSecret: String
+        public let supabaseURL: String
+        public let supabaseAnonKey: String
+
+        public init(
+            deviceId: String,
+            helperSecret: String,
+            supabaseURL: String,
+            supabaseAnonKey: String
+        ) {
+            self.deviceId = deviceId
+            self.helperSecret = helperSecret
+            self.supabaseURL = supabaseURL
+            self.supabaseAnonKey = supabaseAnonKey
+        }
+
+        /// True when all four required cloud fields are present.
+        /// Falsy for an unpaired helper or a half-migrated config
+        /// — callers should skip cloud RPCs in that state.
+        public var isPaired: Bool {
+            !deviceId.isEmpty && !helperSecret.isEmpty
+                && !supabaseURL.isEmpty && !supabaseAnonKey.isEmpty
+        }
+    }
+
+    public func cloudConfigSnapshot() -> CloudConfig {
+        lock.lock(); defer { lock.unlock() }
+        return CloudConfig(
+            deviceId: (raw["device_id"] as? String) ?? "",
+            helperSecret: (raw["helper_secret"] as? String) ?? "",
+            supabaseURL: (raw["supabase_url"] as? String) ?? "",
+            supabaseAnonKey: (raw["supabase_anon_key"] as? String) ?? ""
+        )
     }
 
     /// Flip the kill switch and persist. Atomic write so a

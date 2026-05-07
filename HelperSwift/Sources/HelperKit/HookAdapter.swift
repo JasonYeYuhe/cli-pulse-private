@@ -231,121 +231,15 @@ public enum HookAdapter {
         return truncate("\(toolName)(\(keys))", limit: 256)
     }
 
-    /// Marker used in place of redacted spans. Mirrors Python's
-    /// `helper/redaction.py:REDACTION_MARKER`. Visible in upload
-    /// payloads so a reviewer auditing event rows can tell
-    /// something was scrubbed (silent drop would obscure both the
-    /// leak and the redaction itself).
-    static let redactionMarker = "«REDACTED»"
+    /// Marker used in place of redacted spans. Phase 4E Slice 3
+    /// extracted the redaction implementation to `Redactor`;
+    /// this property + `redact` are kept as thin delegates so the
+    /// existing test surface (`HookAdapter.redact(...)`,
+    /// `HookAdapter.redactionMarker`) stays stable.
+    static let redactionMarker = Redactor.redactionMarker
 
-    /// Two-pass redaction matching `helper/redaction.py:redact`
-    /// element-for-element. Codex P1③.B review pin: any drift
-    /// between Python and Swift here means secrets in tool_input
-    /// reach the macOS app's approval UI under the Swift backend
-    /// but not the Python backend.
-    ///
-    /// Pass 1 — line/key:
-    ///   - HTTP-style headers: Authorization, Proxy-Authorization,
-    ///     Cookie, Set-Cookie, X-API-Key
-    ///   - Camel/snake-case credential keys: access_token,
-    ///     refresh_token, id_token, session_key, client_secret,
-    ///     api_key, secret_key, private_key, helper_secret,
-    ///     password, passwd
-    ///   - ALL_CAPS env-style: NAME_TOKEN= / NAME_KEY= /
-    ///     NAME_SECRET= / NAME_PASSWORD= / NAME_PASSWD=
-    ///
-    /// Pass 2 — token shape (catches bare tokens with no key context):
-    ///   - sk-…, sk-ant-…, AIza…, ghp_…, github_pat_…
-    ///   - AKIA… (AWS access keys)
-    ///   - Bearer <token>
-    ///   - JWTs (eyJ.eyJ.eyJ three-segment base64url)
-    ///   - Long hex blobs (helper_secret-style, MD5/SHA, undashed UUIDs)
     static func redact(_ text: String) -> String {
-        if text.isEmpty { return text }
-        var s = text
-        // Pass 1: line/key based — replacement preserves the
-        // captured key prefix (\1) and substitutes only the
-        // value with the marker.
-        for (pattern, opts) in Self.lineKeyPatterns {
-            s = applyRegex(s, pattern: pattern, options: opts,
-                           replacement: "$1\(Self.redactionMarker)")
-        }
-        // Pass 2: token shape — replaces the whole match.
-        for (pattern, opts) in Self.tokenShapePatterns {
-            s = applyRegex(s, pattern: pattern, options: opts,
-                           replacement: Self.redactionMarker)
-        }
-        return s
-    }
-
-    private static let lineKeyPatterns: [(String, NSRegularExpression.Options)] = [
-        // HTTP-style headers (case-insensitive). Boundary
-        // accepts line start, whitespace, or single/double quote
-        // — catches `curl -H "Authorization: ..."` shapes that
-        // the original quote-naive boundary missed in the Python
-        // helper.
-        ("((?:^|[\\s'\"])authorization\\s*:\\s*)[^\"'\\r\\n]+", [.caseInsensitive]),
-        ("((?:^|[\\s'\"])proxy-authorization\\s*:\\s*)[^\"'\\r\\n]+", [.caseInsensitive]),
-        ("((?:^|[\\s'\"])cookie\\s*:\\s*)[^\"'\\r\\n]+", [.caseInsensitive]),
-        ("((?:^|[\\s'\"])set-cookie\\s*:\\s*)[^\"'\\r\\n]+", [.caseInsensitive]),
-        ("((?:^|[\\s'\"])x-api-key\\s*:\\s*)[^\"'\\r\\n]+", [.caseInsensitive]),
-
-        // Camel/snake-case credential keys. The optional quote
-        // slots accept JSON / shell / YAML shapes; value class
-        // stops at whitespace, quotes, commas, semicolons,
-        // closing braces.
-        ("\\b(access[_-]?token['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
-        ("\\b(refresh[_-]?token['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
-        ("\\b(id[_-]?token['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
-        ("\\b(session[_-]?key['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
-        ("\\b(client[_-]?secret['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
-        ("\\b(api[_-]?key['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
-        ("\\b(secret[_-]?key['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
-        ("\\b(private[_-]?key['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
-        ("\\b(helper[_-]?secret['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
-        ("\\b(password['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
-        ("\\b(passwd['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
-
-        // ALL_CAPS env-style (case-sensitive — no need for
-        // caseInsensitive option; the leading [A-Z] requires upper).
-        ("\\b([A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD)\\s*=\\s*)\\S+", []),
-    ]
-
-    private static let tokenShapePatterns: [(String, NSRegularExpression.Options)] = [
-        // Provider API keys.
-        ("sk-[A-Za-z0-9_\\-]{8,}", []),
-        ("sk-ant-[A-Za-z0-9_\\-]{8,}", []),
-        ("AIza[0-9A-Za-z_\\-]{20,}", []),
-        ("ghp_[A-Za-z0-9]{20,}", []),
-        ("github_pat_[A-Za-z0-9_]{20,}", []),
-        // AWS-style.
-        ("AKIA[0-9A-Z]{12,}", []),
-        // Generic Bearer.
-        ("Bearer\\s+[A-Za-z0-9._\\-]{16,}", [.caseInsensitive]),
-        // JWTs — three base64url segments separated by dots,
-        // header always begins with `eyJ` (base64 of `{"`).
-        ("eyJ[A-Za-z0-9_\\-]{4,}\\.[A-Za-z0-9_\\-]{4,}\\.[A-Za-z0-9_\\-]{4,}", []),
-        // Long hex tokens — covers helper_secret-style values,
-        // MD5/SHA hashes, un-dashed UUIDs.
-        ("\\b[A-Fa-f0-9]{32,}\\b", []),
-    ]
-
-    private static func applyRegex(
-        _ text: String,
-        pattern: String,
-        options: NSRegularExpression.Options,
-        replacement: String
-    ) -> String {
-        guard let re = try? NSRegularExpression(pattern: pattern, options: options) else {
-            return text
-        }
-        let nsText = text as NSString
-        return re.stringByReplacingMatches(
-            in: text,
-            options: [],
-            range: NSRange(location: 0, length: nsText.length),
-            withTemplate: replacement
-        )
+        return Redactor.redact(text)
     }
 
     static func truncate(_ s: String, limit: Int) -> String {

@@ -152,12 +152,20 @@ public final class ManagedSessionManager: @unchecked Sendable {
     /// (currently Claude only — Codex / shell follow in iter 7).
     /// Publishes `session_started` to the broker on success and
     /// kicks off the drain loop.
+    ///
+    /// `forcedSessionId` (Phase 4E Slice 3): when non-nil, use the
+    /// caller-supplied UUID instead of a freshly-generated one.
+    /// Required for the Supabase-driven `start` command — the
+    /// macOS app already created the `remote_sessions` row with
+    /// that id and the helper's spawn must bind to the same row
+    /// so subsequent `prompt`/`stop`/`interrupt` commands resolve.
     @discardableResult
     public func startSession(
         provider: String,
         clientLabel: String?,
         cwd: String? = nil,
-        extraEnv: [String: String] = [:]
+        extraEnv: [String: String] = [:],
+        forcedSessionId: String? = nil
     ) throws -> Summary {
         var argv: [String]
         switch provider.lowercased() {
@@ -192,7 +200,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
             throw ManagerError.unsupportedProvider(provider)
         }
 
-        let sessionId = UUID().uuidString.lowercased()
+        let sessionId = forcedSessionId?.lowercased() ?? UUID().uuidString.lowercased()
 
         // Pre-register with the approval registry so the spawned
         // child's hook subprocess sees the capability token in env.
@@ -287,6 +295,32 @@ public final class ManagedSessionManager: @unchecked Sendable {
         return true
     }
 
+    /// Phase 4E Slice 3: send SIGINT to the session's process
+    /// group. Used by `RemoteAgentCloud.tick()` for the
+    /// `kind=interrupt` command. Returns true if the session was
+    /// owned + the signal dispatched, false when the helper
+    /// doesn't own the id (caller marks the queued command
+    /// `failed`).
+    @discardableResult
+    public func interruptSession(_ sessionId: String) -> Bool {
+        lock.lock()
+        let rec = sessions[sessionId]
+        lock.unlock()
+        guard let rec else { return false }
+        transport.interrupt(rec.handle)
+        return true
+    }
+
+    /// Returns true iff this manager currently owns a session
+    /// with the given id. Phase 4E Slice 3 — RemoteAgentCloud
+    /// uses this for the fail-closed posture on `stop` /
+    /// `interrupt` for unknown sessions (PR #18 lesson: marking
+    /// `delivered` on no-ops obscured stale-row bugs).
+    public func ownsSession(_ sessionId: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return sessions[sessionId] != nil
+    }
+
     /// Write to the PTY master, normalising the trailing
     /// terminator to `\r` (matches the Python helper —
     /// Claude Code's TUI is a raw-mode app with bracketed-paste
@@ -351,16 +385,33 @@ public final class ManagedSessionManager: @unchecked Sendable {
                 // mid-read; let the next isAlive check confirm.
             }
             if !transport.isAlive(record.handle) {
+                // Phase 4E Slice 3: capture exit code so
+                // RemoteAgentCloud can decide stopped vs errored
+                // status. `waitChild(timeoutSec: 0)` is a poll —
+                // returns nil if reaping isn't possible (already
+                // reaped / errno=ECHILD).
+                let exitStatus = transport.waitChild(record.handle, timeoutSec: 0)
+                let exitCode: Int32? = exitStatus.map { (status: Int32) -> Int32 in
+                    // POSIX wstatus → exit code if normal exit.
+                    if (status & 0x7f) == 0 {
+                        return (status >> 8) & 0xff
+                    }
+                    return -1   // signaled / dumped
+                }
                 lock.lock()
                 if sessions[record.sessionId] === record {
-                    record.status = "stopped"
+                    record.status = (exitCode == 0) ? "stopped" : "errored"
                     sessions.removeValue(forKey: record.sessionId)
                 }
                 lock.unlock()
-                broker?.publish([
+                var stoppedEvent: [String: Any] = [
                     "event": "session_stopped",
                     "session_id": record.sessionId,
-                ])
+                ]
+                if let exitCode {
+                    stoppedEvent["exit_code"] = Int(exitCode)
+                }
+                broker?.publish(stoppedEvent)
                 registry?.unregisterSession(record.sessionId)
                 break
             }
