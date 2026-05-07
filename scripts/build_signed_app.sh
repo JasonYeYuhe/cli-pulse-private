@@ -206,7 +206,29 @@ if grep -q "com.apple.security.app-sandbox" <<< "$HELPER_ENT_AFTER"; then
     echo "error: helper accidentally inherited app-sandbox entitlement — abort" >&2
     exit 2
 fi
-echo "    OK: $APP_PATH is signed; entitlements verified (sandbox + group preserved on app, helper unsandboxed)"
+# Phase 4E e2e fix (2026-05-07): helper MUST have the app-group
+# entitlement, otherwise the kernel blocks all access to
+# ~/Library/Group Containers/group.yyh.CLI-Pulse/ → AuthToken.
+# rotateToken hangs forever. Phase 4D shipped this empty.
+if ! grep -q "group.yyh.CLI-Pulse" <<< "$HELPER_ENT_AFTER"; then
+    echo "error: helper missing application-groups entitlement (group.yyh.CLI-Pulse) — abort" >&2
+    echo "  → check HelperSwift/cli_pulse_helper.entitlements" >&2
+    exit 2
+fi
+# Phase 4E e2e fix (2026-05-07): tilde paths in plist break
+# launchd. Reject so the bug can't ship.
+PLIST_PATH="$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+if [[ -f "$PLIST_PATH" ]]; then
+    if /usr/libexec/PlistBuddy -c "Print :StandardOutPath" "$PLIST_PATH" 2>/dev/null | grep -q "~"; then
+        echo "error: plist StandardOutPath contains '~' — launchd will not expand it" >&2
+        exit 2
+    fi
+    if /usr/libexec/PlistBuddy -c "Print :StandardErrorPath" "$PLIST_PATH" 2>/dev/null | grep -q "~"; then
+        echo "error: plist StandardErrorPath contains '~' — launchd will not expand it" >&2
+        exit 2
+    fi
+fi
+echo "    OK: $APP_PATH is signed; entitlements verified (sandbox + group preserved on app, helper unsandboxed but has group, plist clean)"
 
 echo ""
 echo "Final layout:"

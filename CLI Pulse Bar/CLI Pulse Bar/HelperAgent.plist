@@ -16,9 +16,16 @@
        containing .app bundle automatically. We don't need to
        know the user's install path.
 
-    2. Logs go to `~/Library/Logs/CLI Pulse/...` — launchd
-       expands `~` against the LOGGED-IN USER's home, not a
-       build-time constant. No `__HOME__` substitution needed.
+    2. Logging goes via `Logger(subsystem: "yyh.CLI-Pulse.helper",
+       ...)` os_log — visible via `log show --predicate
+       "process == 'cli_pulse_helper'"`. The plist had
+       `StandardOutPath` / `StandardErrorPath` keys with `~/Library/
+       Logs/CLI Pulse/...` paths previously, but launchd does NOT
+       expand `~` in those keys (Phase 4E e2e 2026-05-07 finding):
+       it tried to literally create `//~/Library/Logs/...` in `/`
+       (read-only) → exits 78 (EX_CONFIG) before main runs. Keys
+       removed; helper logs through the unified os_log subsystem
+       which doesn't need a writable file path.
 
     3. Supabase URL + anon key are NOT in the plist anymore.
        The Swift helper reads them from the app's Info.plist via
@@ -105,13 +112,12 @@
     <integer>30</integer>
 
     <!--
-      Logs to the user's Library/Logs. launchd expands `~` against
-      the user's home at agent-start time, so this works for any
-      Mac without build-time substitution.
+      No `StandardOutPath` / `StandardErrorPath` — see the comment
+      block at top. launchd doesn't expand `~` in those keys, and
+      hardcoding an absolute path would break across users / Macs.
+      Helper logging is through `Logger(subsystem: "yyh.CLI-Pulse.
+      helper", ...)` (os_log), readable via `log show --predicate
+      "process == 'cli_pulse_helper'"`.
     -->
-    <key>StandardOutPath</key>
-    <string>~/Library/Logs/CLI Pulse/helper.out.log</string>
-    <key>StandardErrorPath</key>
-    <string>~/Library/Logs/CLI Pulse/helper.err.log</string>
 </dict>
 </plist>
