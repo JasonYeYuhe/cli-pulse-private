@@ -247,17 +247,22 @@ jobs:
           # approvals.
           #
           # Simulate launchd's argv0 with `exec -a` and confirm
-          # the helper resolves its real bundle path.
+          # the helper resolves its real bundle path. We resolve
+          # `HELPER` to an absolute path via `$(pwd)` first so
+          # the `cd /` test case can still find the binary
+          # (otherwise sh resolves the relative path against
+          # the new cwd `/` and dies).
           set -o pipefail
-          APP="build_app_output/DerivedData/Build/Products/Debug/CLI Pulse Bar.app"
-          HELPER="$APP/Contents/Helpers/cli_pulse_helper"
+          APP_REL="build_app_output/DerivedData/Build/Products/Debug/CLI Pulse Bar.app"
+          HELPER="$(pwd)/$APP_REL/Contents/Helpers/cli_pulse_helper"
+          test -x "$HELPER" || (echo "::error::helper not found at $HELPER" >&2; exit 1)
 
           DIRECT_PATH="$("$HELPER" self-path)"
           LABEL_PATH="$(/bin/sh -c 'exec -a "cli_pulse_helper" "$0" self-path' "$HELPER")"
           CWD_ROOT_PATH="$(cd / && /bin/sh -c 'exec -a "cli_pulse_helper" "$0" self-path' "$HELPER")"
 
-          echo "direct          → $DIRECT_PATH"
-          echo "argv0=label     → $LABEL_PATH"
+          echo "direct            → $DIRECT_PATH"
+          echo "argv0=label       → $LABEL_PATH"
           echo "argv0=label,cwd=/ → $CWD_ROOT_PATH"
 
           # All three resolutions must agree, and all three must
