@@ -61,34 +61,97 @@ $ defaults read .../CLI\ Pulse\ Bar.app/Contents/Info CFBundleVersion
 50
 ```
 
-## Observation: Swift helper not in Release archive (pre-existing, ≥v1.12.3)
+## Codex review 2026-05-07: archive missing Swift helper — FIXED
 
-The Phase 4D Swift LaunchAgent binary (`Contents/Helpers/cli_pulse_helper`) and its plist (`Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist`) ship in **Debug** builds (`build_app_output/DerivedData/Build/Products/Debug/`) but **NOT** in Release archives. This is true for both `/tmp/v1.12.3-archives/CLIPulse-macOS-v1.12.3.xcarchive` and the new v1.13.0 archive — so v1.13.0 is at parity with v1.12.3 on this front.
+After my first pass, Codex independently inspected the archive and flagged that the Phase 4E Swift LaunchAgent helper was NOT actually in the Release archive — meaning v1.13.0 could not be described as "Phase 4E runtime cutover / Python retirement" until the archive was fixed. Two distinct issues:
 
-**Impact for v1.13.0 release:**
+1. **Swift helper + LaunchAgent plist absent from Release archive.** `xcodebuild archive` does not trigger any Run Script / Copy Files build phase for the `cli_pulse_helper` binary or `HelperAgent.plist` because those phases were never wired into the `.xcodeproj`. The same gap existed in the v1.12.3 archive currently in ASC.
+2. **Embedded `CLIPulseHelper.app` LoginItem stuck on `1.10.7 / 41`.** The LoginItem's `Info.plist` hard-codes its version, and that source had not been bumped through any release since v1.10.7. Old version metadata visible in the bundle.
 
-- The actual production helper surface today is `Contents/Library/LoginItems/CLIPulseHelper.app` (XPC-based LoginItem helper with its own `HelperDaemon`). That continues to work unchanged.
-- The Phase 4E Swift cloud-sync code (Slices 3 + 4) is correctly compiled into the HelperKit/CLIPulseCore frameworks shipped in the .app bundle, but the standalone `cli_pulse_helper` LaunchAgent binary that activates `RemoteAgentCloud.tick()` is not in the Release archive.
-- Effectively, v1.13.0 ships Slice 3 + 4 as **bundled dead code** ready to be activated whenever the Xcode "Copy Files" build phase for `cli_pulse_helper` and the `HelperAgent.plist` gets switched on for Release.
+Both fixed in this commit. Details:
 
-**Remediation deferred to v1.14:** investigate the project's Copy Files build phase configuration for the helper binary and plist. This is an orthogonal Xcode project-config issue and was the same in v1.12.3 (which is currently WAITING_FOR_REVIEW in ASC), so v1.13.0 is not introducing a regression.
+### Fix 1: Helper + plist embedding
 
-This issue shouldn't block ASC submission for v1.13.0 — the user-visible behavior is identical to v1.12.3.
+New script `scripts/embed_helper_in_archive.sh`:
+
+- Builds the Swift helper via `swift build -c release`.
+- Locates the `.app` inside an existing `.xcarchive`.
+- Copies the helper to `<app>/Contents/Helpers/cli_pulse_helper`.
+- Copies `HelperAgent.plist` to `<app>/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist`.
+- Detects the existing signing identity (extracted from the archive's `codesign -dvv`); falls back to ad-hoc `-` for unsigned CI archives.
+- Codesigns the helper with **its own minimal entitlements** (`HelperSwift/cli_pulse_helper.entitlements`, Hardened Runtime on, no sandbox).
+- Re-signs the parent app with `--preserve-metadata=entitlements,requirements,flags` so the Xcode-emitted sandbox + app-group + .xcent survive.
+- Verifies (a) helper is Mach-O + executable, (b) plist has `BundleProgram = "Contents/Helpers/cli_pulse_helper"`, (c) `codesign --verify --deep --strict` passes, (d) parent app entitlements still include sandbox + app-group, (e) helper does NOT have sandbox entitlement.
+
+`build_macos()` in `CLI Pulse Bar/scripts/build-appstore.sh` now calls this script after `xcodebuild archive`. The exportArchive + upload steps run unchanged.
+
+### Fix 2: CLIPulseHelper.app LoginItem version
+
+`CLI Pulse Bar/CLIPulseHelper/Info.plist` bumped `1.10.7 → 1.13.0`, build `41 → 50`. Verified inside the rebuilt archive.
+
+### Fix 3: CI verification
+
+New CI job `verify-archive-embedding` in `.github/workflows/swift-ci.yml`:
+
+- Runs `xcodebuild archive` with ad-hoc signing (mimicking ASC's archive shape).
+- Runs `embed_helper_in_archive.sh`.
+- Asserts Codex's four conditions: helper Mach-O exists, plist exists, `codesign --verify --deep --strict` passes, plist `BundleProgram` value matches the embedded path.
+
+This catches the bug Codex found if it ever regresses. Runs only on full matrix (PR / main push), not smoke pushes.
+
+## Verification (after fix)
+
+Rebuilt archive at `/tmp/v1.13.0-archives/CLIPulse-macOS-v1.13.0.xcarchive`:
+
+```
+$ defaults read .../CLI\ Pulse\ Bar.app/Contents/Info CFBundleShortVersionString
+1.13.0
+$ defaults read .../CLI\ Pulse\ Bar.app/Contents/Info CFBundleVersion
+50
+$ defaults read .../CLI\ Pulse\ Bar.app/Contents/Library/LoginItems/CLIPulseHelper.app/Contents/Info \
+    CFBundleShortVersionString
+1.13.0
+$ defaults read .../CLI\ Pulse\ Bar.app/Contents/Library/LoginItems/CLIPulseHelper.app/Contents/Info \
+    CFBundleVersion
+50
+
+$ find .../CLI\ Pulse\ Bar.app -name "cli_pulse_helper"
+.../Contents/Helpers/cli_pulse_helper
+$ file .../Contents/Helpers/cli_pulse_helper
+... Mach-O 64-bit executable arm64
+$ /usr/libexec/PlistBuddy -c "Print :BundleProgram" \
+    .../Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist
+Contents/Helpers/cli_pulse_helper
+
+$ codesign --verify --deep --strict \
+    .../CLI\ Pulse\ Bar.app
+# (no output → success)
+```
+
+All four Codex conditions pass.
 
 ## ASC submission
 
-The xcarchive is ready for ASC submission via:
+The xcarchive is now ready for ASC submission via:
 
 ```bash
 ./CLI\ Pulse\ Bar/scripts/build-appstore.sh macos --upload
 ```
 
+The script's `build_macos()` flow:
+
+1. `xcodebuild archive` (Xcode does Automatic signing).
+2. `embed_helper_in_archive.sh` (this fix — adds helper + plist + re-signs).
+3. `xcodebuild -exportArchive method=app-store` (re-signs for distribution + writes export).
+4. `upload_to_appstore` (uploads via `xcodebuild -exportArchive destination=upload` + ASC API key).
+
 Per `feedback_appstore_update.md`, the actual upload step is Jason's call.
 
-After upload, in ASC web UI, pick build 50 for v1.13.0 macOS submission. Apple typically reviews within 24-48 h.
+After upload, in ASC web UI pick build 50 for v1.13.0 macOS submission. Apple review typically 24-48 h.
 
 ## Out of scope
 
 - iOS xcarchive build (BLOCKED by pre-existing Xcode "Multiple commands produce CLIPulseCore.o / SentryCppHelper.o" issue — orthogonal to v1.13.0).
 - Phase 4E Slice 4 deferred items (crash-loop launcher script, atomic Python test retirement, native Swift heartbeat/sync) — see `PROJECT_FIX_2026-05-07_phase4e_slice4_cutover.md`.
 - Computer-use M4 toggle E2E (机会做) — Jason's manual session.
+- Wiring the embedding directly into `.xcodeproj` build phases (so plain `xcodebuild archive` is self-sufficient) — left as a future cleanup. The script-based path is the canonical entry point per the existing PHASE4D_XCODE_SETUP.md decision.
