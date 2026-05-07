@@ -195,6 +195,23 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"AIza[0-9A-Za-z_\-]{20,}"),
     re.compile(r"ghp_[A-Za-z0-9]{20,}"),
     re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
+    # Stripe — secret/restricted (sk_live_ / sk_test_ / rk_live_ /
+    # rk_test_) and publishable (pk_live_ / pk_test_). Live key
+    # leaks are immediately exploitable; redact unconditionally.
+    # The `[sr]k_` prefix uses `_` (not `-`) so it does not collide
+    # with the dash-prefixed `sk-` Anthropic / OpenAI shape above.
+    re.compile(r"[sr]k_(?:live|test)_[A-Za-z0-9]{16,}"),
+    re.compile(r"pk_(?:live|test)_[A-Za-z0-9]{16,}"),
+    # Slack tokens — xoxa (app), xoxb (bot), xoxp (user), xoxr
+    # (refresh), xoxs (other). Catches both legacy and granular-scope
+    # tokens.
+    re.compile(r"xox[abprs]-[A-Za-z0-9-]{10,}"),
+    # NPM access tokens — `npm_` prefix + base62 body (~36 chars
+    # in production).
+    re.compile(r"npm_[A-Za-z0-9]{16,}"),
+    # PyPI upload tokens — `pypi-` prefix + base64url body
+    # (allows `_` and `-`).
+    re.compile(r"pypi-[A-Za-z0-9_-]{16,}"),
     # AWS-style
     re.compile(r"AKIA[0-9A-Z]{12,}"),
     # Generic Bearer
