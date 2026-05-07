@@ -349,18 +349,27 @@ public final class AppState: ObservableObject {
     @Published public var localCapabilities: SessionControlCapabilities?
 
     /// Phase 4 helper-bundling: status of the embedded LaunchAgent.
+    #if os(macOS)
     /// Drives the Settings → Helper status surface so users can see
     /// whether the embedded helper is running (`.registered`),
     /// missing (`.bundledBinaryMissing` — dev build before Run
     /// Script phase), or in error. Live-updated by
-    /// `ensureHelperAgentRegistered()` on app launch.
+    /// `ensureHelperAgentRegistered()` on app launch. macOS-only —
+    /// `HelperLifecycleManager.Status` is itself `#if os(macOS)`
+    /// because `SMAppService` only exists on macOS.
     @Published public var helperAgentStatus: HelperLifecycleManager.Status = .notRegistered
+    #endif
 
+    #if os(macOS)
     /// Lifecycle manager for the embedded `cli_pulse_helper`
-    /// LaunchAgent. Held as an `actor` so registration / unregistration
+    /// LaunchAgent. macOS-only — `HelperLifecycleManager` itself is
+    /// `#if os(macOS)`-guarded because `SMAppService` doesn't exist on
+    /// iOS / watchOS / Widgets, and those targets have no helper to
+    /// supervise. Held as an `actor` so registration / unregistration
     /// can be invoked safely from any thread without races on the
     /// SMAppService API.
     public let helperLifecycle = HelperLifecycleManager()
+    #endif
 
     /// Helper protocol version reported by `hello`. Pinned at 1 by
     /// the iter-1 server; iter 2A may bump it.
@@ -582,12 +591,15 @@ public final class AppState: ObservableObject {
             await restoreSession()
         }
 
+        #if os(macOS)
         // Phase 4 helper-bundling: kick the LaunchAgent registration
         // off on launch. SMAppService.register is idempotent and
         // doesn't show user UI for LaunchAgents (only LoginItems do),
         // so calling on every launch is safe. The status updates
         // back onto MainActor so the Settings → Helper panel sees
-        // the new value without a manual refresh.
+        // the new value without a manual refresh. iOS / watchOS /
+        // Widgets have no helper to register; this whole block
+        // compiles out on those platforms.
         Task { [weak self] in
             guard let self else { return }
             let status = await self.helperLifecycle.ensureRegistered()
@@ -595,6 +607,7 @@ public final class AppState: ObservableObject {
                 self.helperAgentStatus = status
             }
         }
+        #endif
     }
 
     // MARK: - Menu Bar
