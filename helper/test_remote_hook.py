@@ -158,7 +158,7 @@ def test_run_hook_high_risk_short_circuits_to_local_fallback(monkeypatch):
     buf = _capture_stdout(monkeypatch)
     rpc_called = []
 
-    def fake_rpc(name, params):
+    def fake_rpc(name, params, **_kwargs):
         rpc_called.append(name)
         return {}
 
@@ -188,7 +188,7 @@ def test_run_hook_timeout_emits_fallback(monkeypatch):
     buf = _capture_stdout(monkeypatch)
     rpc_calls = []
 
-    def fake_rpc(name, params):
+    def fake_rpc(name, params, **_kwargs):
         rpc_calls.append(name)
         if name == "remote_helper_create_permission_request":
             return {"request_id": params["p_request_id"], "status": "pending"}
@@ -221,7 +221,7 @@ def test_run_hook_timeout_emits_fallback(monkeypatch):
 def test_run_hook_approve_round_trip(monkeypatch):
     buf = _capture_stdout(monkeypatch)
 
-    def fake_rpc(name, params):
+    def fake_rpc(name, params, **_kwargs):
         if name == "remote_helper_create_permission_request":
             return {"request_id": params["p_request_id"], "status": "pending"}
         if name == "remote_helper_poll_permission_decision":
@@ -255,7 +255,7 @@ def test_run_hook_approve_round_trip(monkeypatch):
 def test_run_hook_deny_round_trip(monkeypatch):
     buf = _capture_stdout(monkeypatch)
 
-    def fake_rpc(name, params):
+    def fake_rpc(name, params, **_kwargs):
         if name == "remote_helper_create_permission_request":
             return {"request_id": params["p_request_id"], "status": "pending"}
         if name == "remote_helper_poll_permission_decision":
@@ -287,7 +287,7 @@ def test_run_hook_deny_round_trip(monkeypatch):
 def test_run_hook_create_failure_falls_back(monkeypatch):
     buf = _capture_stdout(monkeypatch)
 
-    def fake_rpc(name, params):
+    def fake_rpc(name, params, **_kwargs):
         if name == "remote_helper_create_permission_request":
             raise RuntimeError("network down")
         return {}
@@ -447,7 +447,7 @@ def test_run_hook_uses_env_session_id_in_create_request(monkeypatch):
     monkeypatch.setenv(remote_hook.REMOTE_SESSION_ID_ENV, env_id)
     captured: dict[str, object] = {}
 
-    def fake_rpc(name, params):
+    def fake_rpc(name, params, **_kwargs):
         if name == "remote_helper_create_permission_request":
             captured.update(params)
             return {"request_id": params["p_request_id"], "status": "pending"}
@@ -496,3 +496,324 @@ def test_claude_redaction_does_not_corrupt_ordinary_short_commands():
         )
         assert "«REDACTED»" not in parsed.summary, f"false-positive redaction: {cmd!r}"
         assert "«REDACTED»" not in json.dumps(parsed.payload), f"false-positive redaction: {cmd!r}"
+
+
+# ── M2: per-request HTTP timeout (cross-team backport, 2026-05-07) ──
+#
+# `helper/cli_pulse_helper.py::supabase_rpc` accepts a `timeout` kwarg
+# and forwards it to `urllib.request.urlopen`. The remote-approval hook
+# passes `cfg.request_timeout_s` (default 2.5s) on every Supabase call so
+# a single hung RPC can't burn the whole `cfg.timeout_s` (10s) budget.
+# Mirrors cli-pulse-desktop v0.7.0's `tokio::time::timeout(2.5s)` per-call
+# ceiling; same semantics, same value.
+
+
+def test_supabase_rpc_passes_timeout_kwarg_to_urlopen(monkeypatch):
+    # Verify the new `timeout` kwarg on supabase_rpc actually reaches
+    # urllib's urlopen (since that's what gives us the cap on a stuck
+    # request). Mock urlopen to capture the kwarg without touching the
+    # network.
+    import cli_pulse_helper
+
+    captured: dict[str, object] = {}
+
+    class _FakeResp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b'{"ok": true}'
+
+    def fake_urlopen(req, timeout=None):
+        captured["timeout"] = timeout
+        return _FakeResp()
+
+    monkeypatch.setattr(cli_pulse_helper, "SUPABASE_URL", "https://example.test")
+    monkeypatch.setattr(cli_pulse_helper, "SUPABASE_ANON_KEY", "anon-key")
+    monkeypatch.setattr(cli_pulse_helper.urllib.request, "urlopen", fake_urlopen)
+
+    cli_pulse_helper.supabase_rpc("noop", {}, timeout=2.5)
+    assert captured["timeout"] == 2.5
+
+    cli_pulse_helper.supabase_rpc("noop", {}, timeout=0.5)
+    assert captured["timeout"] == 0.5
+
+
+def test_supabase_rpc_default_timeout_is_30s(monkeypatch):
+    # The 30s default preserves the historical behaviour for daemon
+    # bulk-sync callers (commits, sessions, alerts). Only tight-polling
+    # callers like the hook opt into a shorter ceiling.
+    import cli_pulse_helper
+
+    captured: dict[str, object] = {}
+
+    class _FakeResp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b'{}'
+
+    def fake_urlopen(req, timeout=None):
+        captured["timeout"] = timeout
+        return _FakeResp()
+
+    monkeypatch.setattr(cli_pulse_helper, "SUPABASE_URL", "https://example.test")
+    monkeypatch.setattr(cli_pulse_helper, "SUPABASE_ANON_KEY", "anon-key")
+    monkeypatch.setattr(cli_pulse_helper.urllib.request, "urlopen", fake_urlopen)
+
+    cli_pulse_helper.supabase_rpc("noop", {})  # no timeout kwarg
+    assert captured["timeout"] == 30.0
+
+
+def test_run_hook_create_passes_request_timeout_to_rpc(monkeypatch):
+    # The create call should carry `timeout=cfg.request_timeout_s`. We
+    # capture every kwargs dict the fake_rpc sees and assert the create
+    # request specifically has timeout=2.5 (default).
+    captured_kwargs: list[dict[str, object]] = []
+
+    def fake_rpc(name, params, **kwargs):
+        captured_kwargs.append({"name": name, **kwargs})
+        if name == "remote_helper_create_permission_request":
+            return {"request_id": params["p_request_id"], "status": "pending"}
+        if name == "remote_helper_poll_permission_decision":
+            return {"status": "approved", "decision": "approve", "scope": "once"}
+        return {}
+
+    payload = {
+        "tool_name": "Read",
+        "tool_input": {"file_path": "/etc/hosts"},
+        "cwd": "/Users/dev/x",
+    }
+    _capture_stdout(monkeypatch)
+    rc = remote_hook.run_hook(
+        "claude",
+        config=remote_hook.HookConfig(timeout_s=1.0, poll_interval_s=0.01),
+        stdin_payload=payload,
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        user_secret_loader=lambda: "user-hmac-secret",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    create_calls = [c for c in captured_kwargs if c["name"] == "remote_helper_create_permission_request"]
+    poll_calls = [c for c in captured_kwargs if c["name"] == "remote_helper_poll_permission_decision"]
+    assert create_calls, "create RPC was not called"
+    assert poll_calls, "poll RPC was not called"
+    # Default request_timeout_s is 2.5s; both create and poll carry it.
+    assert all(c.get("timeout") == 2.5 for c in create_calls), create_calls
+    assert all(c.get("timeout") == 2.5 for c in poll_calls), poll_calls
+
+
+def test_run_hook_request_timeout_is_configurable(monkeypatch):
+    # A non-default request_timeout_s threads through to the RPC call.
+    # Useful for environments with tight network budgets (or tests that
+    # want to exercise the timeout path quickly).
+    captured_kwargs: list[dict[str, object]] = []
+
+    def fake_rpc(name, params, **kwargs):
+        captured_kwargs.append({"name": name, **kwargs})
+        if name == "remote_helper_create_permission_request":
+            return {"request_id": params["p_request_id"], "status": "pending"}
+        if name == "remote_helper_poll_permission_decision":
+            return {"status": "approved", "decision": "approve", "scope": "once"}
+        return {}
+
+    payload = {
+        "tool_name": "Read",
+        "tool_input": {"file_path": "/etc/hosts"},
+        "cwd": "/Users/dev/x",
+    }
+    _capture_stdout(monkeypatch)
+    rc = remote_hook.run_hook(
+        "claude",
+        config=remote_hook.HookConfig(
+            timeout_s=1.0,
+            poll_interval_s=0.01,
+            request_timeout_s=0.75,
+        ),
+        stdin_payload=payload,
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        user_secret_loader=lambda: "user-hmac-secret",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    assert all(c.get("timeout") == 0.75 for c in captured_kwargs), captured_kwargs
+
+
+def test_main_cli_request_timeout_arg_threads_through(monkeypatch):
+    # `--request-timeout` on the CLI should populate the HookConfig, so
+    # an operator (or a future managed-session install) can override the
+    # default per-deployment without code changes.
+    seen_config: dict[str, object] = {}
+
+    def fake_run_hook(provider, config, **_kwargs):
+        seen_config["request_timeout_s"] = config.request_timeout_s
+        seen_config["timeout_s"] = config.timeout_s
+        return 0
+
+    monkeypatch.setattr(remote_hook, "run_hook", fake_run_hook)
+    rc = remote_hook.main([
+        "--provider", "claude",
+        "--timeout", "8",
+        "--request-timeout", "1.25",
+    ])
+    assert rc == 0
+    assert seen_config["request_timeout_s"] == 1.25
+    assert seen_config["timeout_s"] == 8.0
+
+
+# ── M3: token-level high-risk Bash classifier (cross-team backport) ──
+#
+# Mirrors cli-pulse-desktop v0.7.0 `risk.rs::is_high_risk_bash`. The
+# previous Mac classifier used `"rm -rf" in cmd` substring matching,
+# which silently failed on whitespace-perturbed forms. The new
+# classifier is whitespace-tolerant by construction (`command.split()`
+# collapses any run of whitespace) and uses exact-token equality for
+# single-word dangers so substring-style false positives like
+# `sudoer-config-tool` no longer trip HIGH.
+
+
+def _bash_risk(cmd: str) -> str:
+    parsed = ClaudeAdapter().parse_hook_input(
+        {"tool_name": "Bash", "tool_input": {"command": cmd}},
+        cwd_hmac=None,
+    )
+    return parsed.risk
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "rm -rf /tmp/junk",     # canonical -rf
+        "rm -fr /var/log",      # -fr
+        "rm  -rf /tmp/junk",    # double space (the v0.7.0 P1 bug)
+        "rm\t-rf\t/tmp",        # tab
+        "rm -r -f /tmp/junk",   # split flags
+        "rm -rfv /tmp",         # extra verbose flag
+        "  rm -rf /",           # leading whitespace
+        "rm -r --force ./build",  # long-form --force counts (contains 'f')
+    ],
+)
+def test_classify_rm_with_destructive_flags_is_high(cmd):
+    assert _bash_risk(cmd) == AdapterRisk.HIGH, f"expected HIGH for {cmd!r}"
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "rm file.txt",        # no -r or -f
+        "rm -i file.txt",     # interactive flag — recoverable
+        "rm -v file.txt",     # verbose only
+    ],
+)
+def test_classify_rm_without_destructive_flags_is_medium(cmd):
+    assert _bash_risk(cmd) == AdapterRisk.MEDIUM, f"expected MEDIUM for {cmd!r}"
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "sudo apt-get install",
+        "find . -type f | sudo cat",   # trailing sudo
+        "mkfs.ext4 /dev/sda1",          # mkfs base — not exact tok match, but mkfs.ext4 IS the token
+    ],
+)
+def test_classify_sudo_mkfs_token_high(cmd):
+    # `sudo` and `mkfs` (bare) are danger tokens. `mkfs.ext4` is a
+    # different token — confirm baseline `mkfs` matches the bare form
+    # only. (The .ext4 / .vfat / etc. variants are not classified HIGH
+    # — this matches Windows risk.rs and is intentional: real-world
+    # provisioning scripts use the suffixed form intentionally; the
+    # bare `mkfs` is the sledgehammer.)
+    if "mkfs.ext4" in cmd:
+        # Confirm the suffixed variant slips through as MEDIUM (drift
+        # from Windows would surface here).
+        assert _bash_risk(cmd) == AdapterRisk.MEDIUM
+    else:
+        assert _bash_risk(cmd) == AdapterRisk.HIGH
+
+
+@pytest.mark.parametrize("cmd", ["curl https://x", "wget http://example.com/file"])
+def test_classify_curl_wget_is_high(cmd):
+    assert _bash_risk(cmd) == AdapterRisk.HIGH
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    ["ssh user@host", "scp ./file user@host:/tmp", "rsync -av ./ remote:/dest"],
+)
+def test_classify_remote_transfer_tokens_high(cmd):
+    assert _bash_risk(cmd) == AdapterRisk.HIGH
+
+
+def test_classify_chmod_777_root_is_high():
+    assert _bash_risk("chmod 777 / -R") == AdapterRisk.HIGH
+
+
+def test_classify_chmod_777_local_path_is_medium():
+    # Setting permissive perms on a project file isn't world-ending.
+    # Matches Windows risk.rs.
+    assert _bash_risk("chmod 777 ./file.sh") == AdapterRisk.MEDIUM
+
+
+def test_classify_fork_bomb_is_high():
+    assert _bash_risk(" :(){ :|:& };:") == AdapterRisk.HIGH
+
+
+def test_classify_history_clear_is_high():
+    assert _bash_risk("history -c") == AdapterRisk.HIGH
+
+
+def test_classify_kextload_csrutil_high():
+    assert _bash_risk("kextload my.kext") == AdapterRisk.HIGH
+    assert _bash_risk("csrutil disable") == AdapterRisk.HIGH
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "./sudoer-config-tool --validate",  # NOT sudo (substring would FP)
+        "./forecast-curl-stats",            # NOT curl
+        "ssh-keygen -l -f ~/.ssh/id_rsa",   # NOT ssh — the binary is ssh-keygen
+        "less /var/log/messages",           # contains 'sudo' nowhere; harmless
+        "pip install requests",             # 'requests' is a project name
+    ],
+)
+def test_classify_token_names_dont_substring_false_positive(cmd):
+    assert _bash_risk(cmd) == AdapterRisk.MEDIUM, f"false HIGH for {cmd!r}"
+
+
+def test_classify_dd_only_high_with_if_flag():
+    # bare `dd` is dangerous with `if=`; without it `dd` could be a
+    # filename or an unrelated command. Avoids false-positive on
+    # `cd dd-folder/`.
+    assert _bash_risk("dd if=/dev/zero of=/tmp/file") == AdapterRisk.HIGH
+    assert _bash_risk("ls dd-folder/") == AdapterRisk.MEDIUM
+    assert _bash_risk("dd") == AdapterRisk.MEDIUM   # bare dd, no if= — safe
+
+
+def test_classify_low_risk_tools_unchanged():
+    # The token-level rewrite only changed the Bash branch; LOW for
+    # read-only tools must still hold (regression guard).
+    for tool in ("Read", "Glob", "Grep", "WebFetch", "WebSearch", "TodoRead"):
+        parsed = ClaudeAdapter().parse_hook_input(
+            {"tool_name": tool, "tool_input": {}},
+            cwd_hmac=None,
+        )
+        assert parsed.risk == AdapterRisk.LOW, f"tool {tool!r} should be LOW"
+
+
+def test_classify_unknown_tool_is_medium():
+    parsed = ClaudeAdapter().parse_hook_input(
+        {"tool_name": "MyMcpTool", "tool_input": {}},
+        cwd_hmac=None,
+    )
+    assert parsed.risk == AdapterRisk.MEDIUM
+
+
+def test_classify_bash_with_no_command_field_is_medium():
+    # Missing or non-string command — graceful degrade to medium.
+    for tool_input in ({}, {"command": None}, {"command": 42}, {"command": ""}):
+        parsed = ClaudeAdapter().parse_hook_input(
+            {"tool_name": "Bash", "tool_input": tool_input},
+            cwd_hmac=None,
+        )
+        assert parsed.risk == AdapterRisk.MEDIUM, f"input {tool_input!r} → {parsed.risk}"
