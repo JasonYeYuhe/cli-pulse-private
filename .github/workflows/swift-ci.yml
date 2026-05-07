@@ -316,18 +316,14 @@ jobs:
               ;;
           esac
 
-  verify-archive-embedding:
-    # Phase 4E Slice 4 follow-up (Codex review 2026-05-07): the
-    # `build-signed-app` job above only validates the Debug-with-
-    # script path — the ASC-bound `xcodebuild archive` flow is
-    # different and was silently shipping archives WITHOUT the
-    # helper because the .xcodeproj has no Run Script / Copy Files
-    # phases for it. This job covers that gap: run the same
-    # `xcodebuild archive` ASC uses, post-process via
-    # `embed_helper_in_archive.sh`, then verify the four conditions
-    # Codex pinned (helper Mach-O, LaunchAgent plist, codesign
-    # verifies, BundleProgram points at embedded helper).
-    name: Verify archive embedding (ASC path)
+  verify-mas-archive-excludes-launchagent:
+    # Mac App Store builds cannot ship the unsandboxed Swift
+    # LaunchAgent helper: ASC rejects nested unsandboxed executables
+    # with ITMS-90296. The Developer ID/debug path is still covered
+    # by `build-signed-app` above; this job pins the MAS path to the
+    # opposite contract so a future helper-embedding change cannot
+    # accidentally reintroduce the rejected artifact.
+    name: Verify MAS archive excludes LaunchAgent helper
     needs: [decide, test-helper-swift]
     runs-on: macos-15
     timeout-minutes: 25
@@ -354,60 +350,23 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM=""
 
-      - name: Embed Swift helper + plist into archive
-        run: |
-          set -o pipefail
-          ./scripts/embed_helper_in_archive.sh build/ci-archive/CLIPulse-macOS.xcarchive
-
-      - name: Verify Codex's four archive conditions + entitlement / plist hygiene
+      - name: Verify MAS archive does not contain Swift LaunchAgent helper
         run: |
           set -o pipefail
           ARCHIVE="build/ci-archive/CLIPulse-macOS.xcarchive"
           APP="$ARCHIVE/Products/Applications/CLI Pulse Bar.app"
           PLIST="$APP/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
 
-          echo "=== check 1: helper Mach-O at Contents/Helpers/ ==="
-          test -x "$APP/Contents/Helpers/cli_pulse_helper" \
-            || (echo "::error::helper missing" && exit 1)
-          file "$APP/Contents/Helpers/cli_pulse_helper" | grep -q "Mach-O" \
-            || (echo "::error::helper not Mach-O" && exit 1)
+          echo "=== check 1: no Swift LaunchAgent helper Mach-O ==="
+          ! test -e "$APP/Contents/Helpers/cli_pulse_helper" \
+            || (echo "::error::MAS archive contains unsandboxed Swift helper" && exit 1)
 
-          echo "=== check 2: LaunchAgent plist at Contents/Library/LaunchAgents/ ==="
-          test -f "$PLIST" || (echo "::error::LaunchAgent plist missing" && exit 1)
+          echo "=== check 2: no LaunchAgent plist ==="
+          ! test -e "$PLIST" \
+            || (echo "::error::MAS archive contains LaunchAgent plist" && exit 1)
 
-          echo "=== check 3: codesign --verify --deep --strict ==="
-          codesign --verify --deep --strict "$APP" \
-            || (echo "::error::codesign verify failed" && exit 1)
+          echo "=== check 3: LoginItem remains present for MAS runtime ==="
+          test -d "$APP/Contents/Library/LoginItems/CLIPulseHelper.app" \
+            || (echo "::error::MAS archive missing CLIPulseHelper.app LoginItem" && exit 1)
 
-          echo "=== check 4: BundleProgram points at embedded helper ==="
-          BP="$(/usr/libexec/PlistBuddy -c 'Print :BundleProgram' "$PLIST")"
-          [ "$BP" = "Contents/Helpers/cli_pulse_helper" ] \
-            || (echo "::error::BundleProgram is '$BP', expected 'Contents/Helpers/cli_pulse_helper'" && exit 1)
-
-          echo "=== check 5: helper has app-group entitlement (Phase 4E e2e fix) ==="
-          # Without group.yyh.CLI-Pulse the kernel blocks the helper
-          # from creating files in ~/Library/Group Containers/, so
-          # AuthToken.rotateToken hangs forever in __open. Phase 4D
-          # shipped this empty.
-          HELPER_ENT="$(codesign -d --entitlements :- "$APP/Contents/Helpers/cli_pulse_helper" 2>/dev/null)"
-          grep -q "group.yyh.CLI-Pulse" <<< "$HELPER_ENT" \
-            || (echo "::error::helper missing application-groups (group.yyh.CLI-Pulse)" && exit 1)
-
-          echo "=== check 6: helper does NOT carry parent's sandbox entitlement ==="
-          ! grep -q "com.apple.security.app-sandbox" <<< "$HELPER_ENT" \
-            || (echo "::error::helper accidentally has app-sandbox" && exit 1)
-
-          echo "=== check 7: parent app keeps sandbox + app-group ==="
-          APP_ENT="$(codesign -d --entitlements :- "$APP" 2>/dev/null)"
-          grep -q "com.apple.security.app-sandbox" <<< "$APP_ENT" \
-            || (echo "::error::parent app sandbox stripped" && exit 1)
-          grep -q "group.yyh.CLI-Pulse" <<< "$APP_ENT" \
-            || (echo "::error::parent app application-groups stripped" && exit 1)
-
-          echo "=== check 8: plist has no tilde paths (launchd doesn't expand ~) ==="
-          ! /usr/libexec/PlistBuddy -c "Print :StandardOutPath" "$PLIST" 2>/dev/null | grep -q "~" \
-            || (echo "::error::plist StandardOutPath contains '~' — launchd won't expand it" && exit 1)
-          ! /usr/libexec/PlistBuddy -c "Print :StandardErrorPath" "$PLIST" 2>/dev/null | grep -q "~" \
-            || (echo "::error::plist StandardErrorPath contains '~' — launchd won't expand it" && exit 1)
-
-          echo "OK: archive contains embedded helper + plist; signature verifies; entitlements + plist clean"
+          echo "OK: MAS archive excludes unsandboxed LaunchAgent helper and keeps the sandboxed LoginItem runtime"

@@ -35,17 +35,28 @@ import OSLog
 /// The LaunchAgent plist on disk is rewritten on first registration
 /// to substitute three placeholders:
 ///
-///   * `__CLI_PULSE_HELPER_BIN__` → absolute path to the bundled
-///     `Contents/Helpers/cli_pulse_helper` binary inside this build's
-///     .app
-///   * `__CLI_PULSE_SUPABASE_URL__`, `__CLI_PULSE_SUPABASE_ANON_KEY__`
-///     → values copied from the app's Info.plist (same anon key the
-///     SwiftUI HelperAPIClient uses; no new credential surface)
-///   * `__HOME__` → the user's home directory (so log paths resolve
-///     correctly even on multi-user Macs)
+/// Phase 4D P1.4 (Codex review fix): the previous design used
+/// runtime placeholders below + `installAgentPlist()` to substitute
+/// them. That was abandoned because mutating the signed bundle's
+/// LaunchAgents plist invalidated the code signature, breaking
+/// SMAppService.register on notarised builds.
 ///
-/// The substitution lives in `installAgentPlist()`; SMAppService
-/// then registers the rewritten copy.
+/// The current design ships the plist as-is in the bundle:
+///   * BundleProgram is a relative path (`Contents/Helpers/
+///     cli_pulse_helper`) — launchd resolves it against the app
+///     bundle, no runtime substitution.
+///   * The plist deliberately has NO `StandardOutPath` /
+///     `StandardErrorPath` keys — launchd does NOT expand `~` in
+///     those keys (Phase 4E e2e 2026-05-07 finding) and any tilde
+///     would crash the helper with EX_CONFIG. Helper logging goes
+///     through `Logger(subsystem: "yyh.CLI-Pulse.helper", ...)`
+///     os_log, viewable via `log show --predicate "process ==
+///     'cli_pulse_helper'"`. Don't reintroduce path-based logging
+///     keys; the embed_helper_in_archive.sh + verify-archive-
+///     embedding CI both reject tilde paths now.
+///   * Supabase URL + anon key live in the app's Info.plist; the
+///     helper reads them via the helper-config file the macOS app
+///     writes on first launch (NOT via plist substitution).
 public actor HelperLifecycleManager {
 
     /// Current state of the agent registration. Drives the
@@ -105,9 +116,9 @@ public actor HelperLifecycleManager {
     /// Phase 4D P1.4 (Codex): does NOT mutate the signed app
     /// bundle anymore. The plist already lives at
     /// `Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist`
-    /// in shippable form (BundleProgram + ~ for log paths — see
-    /// HelperAgent.plist comments). SMAppService.register reads
-    /// it directly without any runtime substitution.
+    /// in shippable form (BundleProgram only — no log paths;
+    /// see HelperAgent.plist comments for why). SMAppService.
+    /// register reads it directly without any runtime substitution.
     @discardableResult
     public func ensureRegistered() async -> Status {
         guard Self.locateBundledHelperBinary() != nil else {
