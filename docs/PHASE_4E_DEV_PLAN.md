@@ -164,6 +164,19 @@ Tests (mirror `helper/test_yield_collectors.py::TestGitCollector`):
 
 ### Slice 2 — `SystemCollector.swift` (Very High complexity)
 
+> **Update 2026-05-07 (post-Slice-1 ship, Codex cross-team suggestion accepted):** 1800 LOC in a single PR is too risky for a Very High complexity port. Slice 2 will ship as **four sub-slices** (each its own PR), in this order:
+>
+> | Sub-slice | Scope | Est. LOC | Tests |
+> |---|---|---|---|
+> | **2a** | Parity harness + synthetic RPC fixtures + `DeviceSnapshot` (`ps` / `vm_stat`) + `SessionDetector` (ps parsing) | ~400 | ~15 |
+> | **2b** | `AlertGenerator` (CPU spike + session-too-long thresholds) + `OAuthBackoff` actor + `KeychainReader` wrapper | ~400 | ~20 |
+> | **2c** | `ChromiumCookieReader` (PBKDF2 + AES-CBC) + `ClaudeQuotaFetcher` + `CodexQuotaFetcher` + `GeminiQuotaFetcher` | ~600 | ~25 |
+> | **2d** | `ClaudeSnapshotWriter` + `GeminiSnapshotWriter` + `SystemCollector` façade (wires everything together via `withTaskGroup`) + 3 snapshot parity tests | ~400 | ~10 |
+>
+> Each sub-slice gets its own Gemini diff review pre-commit (per Slice 1's precedent — Gemini caught 3 P0/P1s on a 250-LOC PR; expect higher density on the larger 2c). Ship strictly in order; later sub-slices import types declared by earlier ones (e.g., `SessionDetector`'s `CollectedSession` extension lands in 2a, used by `AlertGenerator` in 2b).
+>
+> Total still tracks to the original ~1800 LOC + ~60 tests target; the only thing that changes is review granularity.
+
 The largest port. Decompose into sub-files inside `HelperKit/SystemCollection/`:
 
 ```
