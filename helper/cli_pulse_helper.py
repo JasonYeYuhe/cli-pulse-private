@@ -104,7 +104,18 @@ class SyncError(Exception):
     """Transient sync/network error — daemon should retry."""
     pass
 
-def supabase_rpc(function_name: str, params: dict[str, Any]) -> Any:
+def supabase_rpc(
+    function_name: str,
+    params: dict[str, Any],
+    *,
+    timeout: float = 30.0,
+) -> Any:
+    """Execute a Supabase RPC. `timeout` caps a single HTTP request — the
+    daemon's bulk-sync RPCs (commits, sessions, alerts) keep the historical
+    30s budget, but tight-polling callers like the remote-hook approval
+    poller pass a much shorter value (~2.5s) so a single hung request can't
+    eat the whole hook budget. v0.7.0 cli-pulse-desktop uses the same
+    per-request 2.5s ceiling via `tokio::time::timeout`."""
     url = f"{SUPABASE_URL}/rest/v1/rpc/{function_name}"
     headers = {
         "Content-Type": "application/json",
@@ -116,7 +127,7 @@ def supabase_rpc(function_name: str, params: dict[str, Any]) -> Any:
     body = json.dumps(params).encode("utf-8")
     request = urllib.request.Request(url=url, data=body, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8")

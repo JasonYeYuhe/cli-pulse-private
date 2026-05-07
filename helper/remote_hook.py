@@ -54,6 +54,15 @@ class HookConfig:
     poll_interval_s: float = 1.0
     timeout_s: float = 10.0
     ttl_seconds: int = 60
+    # Per-request HTTP timeout — caps a single Supabase RPC so a hung
+    # call can't eat the whole `timeout_s` budget. Mirrors v0.7.0
+    # cli-pulse-desktop's `tokio::time::timeout(2.5s)` per-call ceiling
+    # (cross-team alignment 2026-05-07, Mac M2 P2 backport). Hook total
+    # budget unchanged: with a 1s poll_interval and 2.5s per-call cap,
+    # a healthy poll cycle still completes in <100ms; a stuck call is
+    # surfaced as a SyncError after 2.5s and the next poll iteration
+    # gets a fresh shot before `timeout_s` expires.
+    request_timeout_s: float = 2.5
     # If True, high-risk requests skip the remote round-trip and immediately
     # fall back to local prompt. Phase 1 default = True (fail closed).
     fail_closed_on_high_risk: bool = True
@@ -248,6 +257,7 @@ def _run_hook_inner(
                 "p_risk": parsed.risk,
                 "p_ttl_seconds": int(cfg.ttl_seconds),
             },
+            timeout=cfg.request_timeout_s,
         )
     except Exception as exc:
         logger.warning("create_permission_request failed: %s", exc)
@@ -265,6 +275,7 @@ def _run_hook_inner(
                     "p_helper_secret": helper_config.helper_secret,
                     "p_request_id": request_id,
                 },
+                timeout=cfg.request_timeout_s,
             )
         except Exception as exc:
             logger.warning("poll_permission_decision failed: %s", exc)
@@ -369,6 +380,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="Max seconds to wait for a remote decision (default 10)")
     parser.add_argument("--poll-interval", type=float, default=1.0,
                         help="Seconds between poll attempts (default 1)")
+    parser.add_argument("--request-timeout", type=float, default=2.5,
+                        help="Per-RPC HTTP timeout in seconds (default 2.5) — caps a single Supabase call so a hung request can't burn the whole --timeout budget")
     parser.add_argument("--allow-high-risk", action="store_true",
                         help="Allow high-risk requests to round-trip remotely (default: fail closed)")
     args = parser.parse_args(argv)
@@ -376,6 +389,7 @@ def main(argv: list[str] | None = None) -> int:
     config = HookConfig(
         poll_interval_s=args.poll_interval,
         timeout_s=args.timeout,
+        request_timeout_s=args.request_timeout,
         ttl_seconds=max(int(args.timeout) + 30, 60),
         fail_closed_on_high_risk=not args.allow_high_risk,
     )

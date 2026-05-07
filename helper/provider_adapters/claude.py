@@ -54,14 +54,24 @@ _LOW_RISK_TOOLS = {
     "TodoRead", "ListMcpResources",
 }
 
-# Shell command tokens that should always be HIGH risk regardless of content.
-_HIGH_RISK_SHELL_TOKENS = (
-    "rm -rf", "rm -fr", "sudo ", " sudo", "mkfs", "dd if=", " :(){ :|:& };:",
-    "shutdown", "reboot", "killall", "chmod 777 /",
-    "curl ", "wget ",                          # outbound (could be exfil)
-    "ssh ", "scp ", "rsync ",
-    "history -c", "kextload", "csrutil ",
+# Substring patterns where whitespace IS the structural signature of the
+# danger — fork bombs encode their meaning in the operator layout, and
+# `chmod 777 /` / `history -c` are multi-token signatures that only mean
+# what they mean as a phrase. Token-splitting would break these matches.
+_SUBSTRING_DANGER: tuple[str, ...] = (
+    ":(){ :|:& };:",   # fork bomb (whitespace IS the signature)
+    "chmod 777 /",     # root chmod 777 (non-root chmod 777 is medium)
+    "history -c",      # shell history wipe
 )
+
+# Single-token danger keywords — exact equality after whitespace split, so
+# `sudoer-config-tool`, `forecast-curl-stats`, etc. don't false-positive on
+# substring matches. `dd` is special-cased separately because it's only
+# dangerous when paired with the `if=` source-input flag.
+_SINGLE_TOKEN_DANGER: frozenset[str] = frozenset({
+    "sudo", "mkfs", "shutdown", "reboot", "killall", "kextload",
+    "csrutil", "curl", "wget", "ssh", "scp", "rsync",
+})
 
 # Future work (Gemini review P3 #9): tool inputs like `cat .env` or
 # `cat ~/.aws/credentials` will still pass through summary/payload because
@@ -76,14 +86,79 @@ def _truncate(text: str, limit: int) -> str:
     return text[: max(0, limit - 1)].rstrip() + "…"
 
 
+def _is_high_risk_bash(command: str) -> bool:
+    """Token-level high-risk classifier for Bash commands.
+
+    Mirrors cli-pulse-desktop v0.7.0 `risk.rs::is_high_risk_bash`
+    (cross-team alignment 2026-05-07, Mac M3 P2 backport). The previous
+    Mac classifier used naive `tok in command` substring matching, which
+    silently failed on whitespace-perturbed forms — `rm  -rf` (double
+    space), `rm\\t-rf` (tab), `rm -r -f` (split flags) all evaded the
+    `"rm -rf"` literal. Token-based matching is whitespace-tolerant by
+    construction: `command.split()` collapses any run of whitespace.
+
+    Logic:
+      * Substring scan for patterns whose whitespace IS the signature
+        (fork bomb, `chmod 777 /`, `history -c`).
+      * Token scan for single-keyword dangers (sudo / mkfs / curl / …).
+        Exact equality avoids `sudoer-config-tool` false-positives.
+      * `rm` paired with destructive flag clusters — single-token form
+        (`rm -rf`, `rm -fr`, `rm -rfv`) AND split-flag form
+        (`rm -r -f`, `rm -r --force`). A flag token "contains both r
+        and f" satisfies the single-token form; consecutive flag tokens
+        collectively satisfying r+f satisfy the split form.
+    """
+    for s in _SUBSTRING_DANGER:
+        if s in command:
+            return True
+
+    tokens = command.split()
+    if not tokens:
+        return False
+
+    for tok in tokens:
+        if tok in _SINGLE_TOKEN_DANGER:
+            return True
+        # `dd` is dangerous when invoked with `if=` (input file). Bare `dd`
+        # without args is harmless; treat any `dd` token as suspect only
+        # when the command also contains `if=`.
+        if tok == "dd" and "if=" in command:
+            return True
+
+    # `rm` paired with destructive flags: -rf / -fr / -rfv / -r -f / etc.
+    for i, tok in enumerate(tokens):
+        if tok != "rm":
+            continue
+        # Single-token form: next token contains both r and f.
+        if i + 1 < len(tokens):
+            stripped = tokens[i + 1].lstrip("-")
+            if "r" in stripped and "f" in stripped:
+                return True
+        # Split-flag form: scan consecutive flag tokens after `rm`,
+        # collecting r/f flags. Stop at the first non-flag (operand).
+        has_r = False
+        has_f = False
+        for tok2 in tokens[i + 1:]:
+            if not tok2.startswith("-"):
+                break
+            stripped = tok2.lstrip("-")
+            if "r" in stripped:
+                has_r = True
+            if "f" in stripped:
+                has_f = True
+        if has_r and has_f:
+            return True
+
+    return False
+
+
 def _classify_risk(tool_name: str, tool_input: dict[str, Any]) -> str:
     if tool_name in _LOW_RISK_TOOLS:
         return AdapterRisk.LOW
     if tool_name == "Bash":
         cmd = str(tool_input.get("command", ""))
-        for tok in _HIGH_RISK_SHELL_TOKENS:
-            if tok in cmd:
-                return AdapterRisk.HIGH
+        if _is_high_risk_bash(cmd):
+            return AdapterRisk.HIGH
         return AdapterRisk.MEDIUM
     # Edit / Write / MCP / etc — default medium. WebSearch is in low set above.
     return AdapterRisk.MEDIUM
