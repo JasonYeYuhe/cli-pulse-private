@@ -256,10 +256,10 @@ public enum PDFReportGenerator {
         y -= 4
         // iter22: pull the version from the bundle so the footer
         // doesn't rot when we ship new builds. Falls back to the
-        // current iter version (1.12.0) if Info.plist isn't present
+        // current iter version (1.12.3) if Info.plist isn't present
         // (e.g. running this generator outside an app bundle in
         // tests / SPM contexts).
-        let appVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.12.0"
+        let appVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.12.3"
         let _ = drawText(L10n.pdf.footer(appVersion, dateFormatter.string(from: generatedDate)), at: CGPoint(x: margin, y: y), fontSize: 8, color: .gray, context: context)
 
         context.endPage()
