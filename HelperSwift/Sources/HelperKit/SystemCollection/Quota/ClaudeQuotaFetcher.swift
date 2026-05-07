@@ -23,17 +23,20 @@ public actor ClaudeQuotaFetcher {
     private let keychain: KeychainReader
     private let backoff: OAuthBackoff
     private let http: HTTPHook
+    private let cookieReader: ChromiumCookieReader?
     private let now: @Sendable () -> Date
 
     public init(
         keychain: KeychainReader,
         backoff: OAuthBackoff,
         http: @escaping HTTPHook = ClaudeQuotaFetcher.liveHTTP,
+        cookieReader: ChromiumCookieReader? = nil,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.keychain = keychain
         self.backoff = backoff
         self.http = http
+        self.cookieReader = cookieReader
         self.now = now
     }
 
@@ -43,6 +46,40 @@ public actor ClaudeQuotaFetcher {
         let formatter = SessionDetector.makeISOFormatter()
         let nowDate = now()
         let nowISO = formatter.string(from: nowDate)
+
+        // Step 1 — try OAuth (Keychain → API). Returns the snapshot
+        // on success OR a tagged failure reason for the fallback to
+        // pivot on.
+        let oauthSnapshot = await fetchViaOAuth(planTypeOverride: nil, nowISO: nowISO)
+        if case .anthropicOAuth = oauthSnapshot.provenance {
+            return oauthSnapshot
+        }
+
+        // Step 2 — fall through to web-cookie path (Slice 2c.5
+        // follow-up). Skip if no cookieReader was injected (callers
+        // who don't want the fallback can pass `nil`).
+        if let cookieReader {
+            if let webSnapshot = await fetchViaWebCookie(
+                cookieReader: cookieReader,
+                nowISO: nowISO
+            ) {
+                return webSnapshot
+            }
+        }
+
+        // Both paths failed. Return the most informative failure
+        // reason — the OAuth one carries more diagnostic info than
+        // a generic "web_failed".
+        return oauthSnapshot
+    }
+
+    // MARK: - OAuth path
+
+    private func fetchViaOAuth(
+        planTypeOverride: String?,
+        nowISO: String
+    ) async -> ProviderQuotaSnapshot {
+        let nowDate = now()
 
         // Step 1: Read keychain blob.
         let kr = await keychain.find(generic: Self.keychainServiceName)
@@ -124,6 +161,91 @@ public actor ClaudeQuotaFetcher {
         default:
             return Self.unavailable(reason: "http_\(response.statusCode)", fetchedAt: nowISO)
         }
+    }
+
+    // MARK: - Web cookie path (Slice 2c.5)
+
+    /// Fall through path when OAuth fails. Resolves a `sessionKey`
+    /// from the user's browser via `ChromiumCookieReader`, then
+    /// calls `claude.ai/api/organizations` (to learn the org_id)
+    /// followed by `/api/organizations/{org_id}/usage`. Mirrors
+    /// Python `_fetch_claude_web_usage`.
+    ///
+    /// Returns `nil` (NOT a `.unavailable` snapshot) on any failure
+    /// so the caller can decide whether to surface the OAuth-side
+    /// failure reason or this one. The caller currently picks the
+    /// OAuth one because it's typically more diagnostic.
+    private func fetchViaWebCookie(
+        cookieReader: ChromiumCookieReader,
+        nowISO: String
+    ) async -> ProviderQuotaSnapshot? {
+        guard let resolved = await cookieReader.resolveClaudeSessionKey() else {
+            return nil
+        }
+        let sessionKey = resolved.key
+
+        // Step 1: Get org_id.
+        guard let orgsURL = URL(string: "https://claude.ai/api/organizations") else {
+            return nil
+        }
+        var orgReq = URLRequest(url: orgsURL)
+        orgReq.timeoutInterval = 15
+        orgReq.httpMethod = "GET"
+        orgReq.setValue("sessionKey=\(sessionKey)", forHTTPHeaderField: "Cookie")
+        orgReq.setValue("application/json", forHTTPHeaderField: "Accept")
+        orgReq.setValue("CLI-Pulse-Helper/Swift", forHTTPHeaderField: "User-Agent")
+
+        guard let (orgsBody, orgsResp) = await http(orgReq),
+              (200...299).contains(orgsResp.statusCode) else {
+            return nil
+        }
+        guard let orgs = try? JSONSerialization.jsonObject(with: orgsBody) as? [[String: Any]],
+              let firstOrg = orgs.first,
+              let orgID = (firstOrg["uuid"] as? String) ?? (firstOrg["id"] as? String)
+        else {
+            return nil
+        }
+
+        // Step 2: Get usage.
+        guard let usageURL = URL(string: "https://claude.ai/api/organizations/\(orgID)/usage") else {
+            return nil
+        }
+        var usageReq = URLRequest(url: usageURL)
+        usageReq.timeoutInterval = 15
+        usageReq.httpMethod = "GET"
+        usageReq.setValue("sessionKey=\(sessionKey)", forHTTPHeaderField: "Cookie")
+        usageReq.setValue("application/json", forHTTPHeaderField: "Accept")
+        usageReq.setValue("CLI-Pulse-Helper/Swift", forHTTPHeaderField: "User-Agent")
+
+        guard let (usageBody, usageResp) = await http(usageReq),
+              (200...299).contains(usageResp.statusCode) else {
+            return nil
+        }
+
+        // Same response shape as OAuth — three tiers, same parser.
+        // Provenance pivots from .anthropicOAuth to .anthropicWebCookie
+        // so the diagnostic surface shows which path produced the data.
+        let snap = Self.parseAPIResponse(
+            usageBody,
+            planType: "Max",   // web path doesn't have a plan-type signal; default Max
+            fetchedAt: nowISO
+        )
+        if case .anthropicOAuth = snap.provenance {
+            // Re-tag provenance to web — `parseAPIResponse` always
+            // returns .anthropicOAuth on success because it can't
+            // tell which path called it.
+            return ProviderQuotaSnapshot(
+                quota: snap.quota,
+                remaining: snap.remaining,
+                planType: snap.planType,
+                resetTime: snap.resetTime,
+                tiers: snap.tiers,
+                provenance: .anthropicWebCookie,
+                fetchedAt: snap.fetchedAt
+            )
+        }
+        // Parse error — fall through.
+        return nil
     }
 
     // MARK: - Parsing
