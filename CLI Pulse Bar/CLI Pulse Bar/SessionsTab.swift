@@ -14,6 +14,17 @@ struct SessionsTab: View {
     /// the UI so users (and Codex on review) can see resolved
     /// socket / token paths without opening Xcode logs.
     @State private var showLocalDiagnostics: Bool = false
+    /// Phase 4 helper-bundling: in-flight gate for the "Install
+    /// hook" button so a double-click can't race two parallel
+    /// install_claude_hook UDS calls (which would noop the second
+    /// one but still spin the spinner).
+    @State private var installHookInFlight: Bool = false
+    /// Phase 4: result from the most recent helper-driven install
+    /// call. When non-nil, the "Approval hook not wired" banner
+    /// renders a small "Last install: <action> — <path>" line so
+    /// the user sees that something actually changed instead of
+    /// only the banner disappearing.
+    @State private var lastInstallHookResult: InstallClaudeHookResult?
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
@@ -53,8 +64,32 @@ struct SessionsTab: View {
                 async let _approvals: () = state.refreshRemoteApprovals()
                 async let _local: () = state.refreshLocalSessionControlState()
                 _ = await (_sessions, _approvals, _local)
+                // Iter 2B: snapshot poll of local pending approvals
+                // is the recovery path when a stream disconnects or
+                // the user wakes the app with the Sessions tab
+                // already on screen. Stream events override / amend
+                // this map; the poll just guarantees freshness on
+                // a deterministic cadence.
+                if state.canStartLocalManagedSession,
+                   state.localCapabilities?.approvals == true {
+                    await state.refreshLocalPendingApprovals(sessionId: nil)
+                }
                 if showOutput, let sid = selectedManagedSessionId {
-                    await state.refreshRemoteSessionEvents(sessionId: sid)
+                    // Remote-routed rows pull events from the Supabase
+                    // tail. Local-routed rows are driven exclusively
+                    // by `subscribeToLocalEvents` (kicked off in
+                    // .onChange(of: showOutput) below) — calling the
+                    // remote-events refresh on a local row would
+                    // (a) issue a Supabase RPC for data we don't render
+                    // anyway and (b) repopulate `remoteSessionEvents`
+                    // for an id whose preview already comes from
+                    // `localOutputPreview`, double-rendering noise.
+                    // Codex review on PR #18: gate on
+                    // `shouldRouteSessionLocally` first.
+                    if let row = state.displayedManagedSessions.first(where: { $0.id == sid }),
+                       !state.shouldRouteSessionLocally(row) {
+                        await state.refreshRemoteSessionEvents(sessionId: sid)
+                    }
                 }
                 if !state.remoteControlEnabled {
                     try? await Task.sleep(nanoseconds: 10_000_000_000)
@@ -63,14 +98,55 @@ struct SessionsTab: View {
                 }
             }
         }
-        .onChange(of: selectedManagedSessionId) { _ in
+        .onChange(of: selectedManagedSessionId) { newId in
             // Selection changed — reset the per-detail toggle so the
             // user has to opt in again for the new session. Avoids
             // surprise-rendering output for a session they didn't
             // explicitly enable. (Single-arg `.onChange` form because
             // the bar target deploys to macOS 13; the two-arg variant
             // is macOS 14+.)
+            //
+            // Iter 2B: also tear down any active local stream
+            // subscription. We can't know the previous selection from
+            // this single-arg API, so we cancel ALL local streams
+            // (cheap, idempotent). The outer view re-subscribes when
+            // showOutput flips back on for the newly-selected row.
             showOutput = false
+            state.unsubscribeAllLocalEvents()
+            // When a row gets newly selected and there's already a
+            // pending local approval cached, refresh it from
+            // snapshot so the user sees Approve/Reject immediately
+            // without waiting for the next .task tick.
+            if let id = newId,
+               state.canStartLocalManagedSession,
+               state.localCapabilities?.approvals == true {
+                Task { await state.refreshLocalPendingApprovals(sessionId: id) }
+            }
+        }
+        .onChange(of: showOutput) { newValue in
+            // Iter 2B: subscribe to the live event stream for the
+            // currently-selected local-routed row when the user opts
+            // into "Show output", and unsubscribe on hide.
+            // Subscription is idempotent.
+            guard let sid = selectedManagedSessionId else { return }
+            // Resolve the row's local-routing decision. If it's a
+            // remote-routed row, the existing event-tail polling
+            // handles output and we don't subscribe.
+            guard let row = state.displayedManagedSessions.first(where: { $0.id == sid }),
+                  state.shouldRouteSessionLocally(row) else { return }
+            if newValue {
+                state.subscribeToLocalEvents(sessionId: sid)
+            } else {
+                state.unsubscribeFromLocalEvents(sessionId: sid)
+            }
+        }
+        .onDisappear {
+            // Tab leaves the screen → drop every live local
+            // subscription so the helper doesn't keep streaming
+            // events to a hidden subscriber. The macOS app's other
+            // tabs don't render Sessions output; subscriptions only
+            // matter while this view is visible.
+            state.unsubscribeAllLocalEvents()
         }
     }
 
@@ -180,6 +256,38 @@ struct SessionsTab: View {
             } else {
                 localFastPathToggle
             }
+            // PR #18 follow-up: surface "approval hook not wired"
+            // when the helper advertises structured approvals but
+            // ~/.claude/settings.json doesn't route PermissionRequest
+            // events through it. Without this banner the user sees
+            // Claude's native PTY prompt and assumes CLI Pulse is
+            // broken; the previous manual test produced exactly
+            // that confusion.
+            //
+            // The banner has TWO variants depending on detector
+            // status (Codex review on 7528084 — `parseError` was
+            // initially hidden, but malformed settings.json blocks
+            // approvals just as fully as a missing hook, AND we
+            // can't safely run the install path against malformed
+            // JSON anyway).
+            if shouldShowApprovalHookInstallBanner {
+                approvalHookNotWiredBanner
+            } else if shouldShowApprovalHookStaleCleanupBanner {
+                // Phase 4D iter12 (Codex P2⑤): pre-iter10
+                // CLI Pulse versions wrote a global hook into
+                // ~/.claude/settings.json. iter10 retired global
+                // install in favour of spawn-time `--settings`
+                // injection, but a leftover entry from an older
+                // CLI Pulse will keep firing for terminal-launched
+                // Claude — and the new HookAdapter fail-closed
+                // path will deny every Bash/Read/etc with a
+                // diagnostic message, breaking the user's terminal
+                // workflow. The banner offers a one-click cleanup
+                // command they can paste into a terminal.
+                approvalHookStaleCleanupBanner
+            } else if shouldShowApprovalHookFixSettingsBanner {
+                approvalHookFixSettingsBanner
+            }
         }
 
         if !remoteUsable && !localStartAvailable && displayed.isEmpty {
@@ -207,6 +315,7 @@ struct SessionsTab: View {
                             isSelected: selectedManagedSessionId == session.id,
                             pendingApproval: pendingApproval(for: session),
                             routesLocally: state.shouldRouteSessionLocally(session),
+                            isStaleLocal: state.isStaleLocalSession(session),
                             onSelect: {
                                 selectedManagedSessionId = (selectedManagedSessionId == session.id)
                                     ? nil : session.id
@@ -467,39 +576,68 @@ struct SessionsTab: View {
 
     private func commandBar(for session: RemoteSession) -> some View {
         let pending = pendingApproval(for: session)
+        let localPending = localPendingApproval(for: session)
         let isHighRisk = pending.flatMap { RemotePermissionRisk(rawValue: $0.risk) } == .high
-        let canApprove = pending != nil && !isHighRisk
+        let canApproveRemote = pending != nil && !isHighRisk
         let isRunning = session.status.caseInsensitiveCompare("running") == .orderedSame
         let isPending = session.status.caseInsensitiveCompare("pending") == .orderedSame
         let routesLocally = state.shouldRouteSessionLocally(session)
+        let isStaleLocal = state.isStaleLocalSession(session)
         let localSendUnsupported = routesLocally && (state.localCapabilities?.sendInput == false)
-        let promptDisabled = !isRunning || localSendUnsupported
-        // Codex review on PR #17 wrap-up: hide the disabled Approve
-        // button + ⌘↩ hint when the row is locally routed AND the
-        // helper's advertised capabilities don't include
-        // `approvals`. Local approvals (hook restructure +
-        // per-session capability token) are explicitly out of scope
-        // for this PR — they ship in Iter 2B from a fresh branch
-        // off main. Showing a permanently-disabled Approve button
-        // implies "the feature exists but isn't actionable here";
-        // the iter-2A surface is "the feature isn't here yet". Hide
-        // entirely on local-routed rows + replace the hint copy.
-        let approvalsAvailable: Bool = {
-            if routesLocally {
-                return state.localCapabilities?.approvals == true
-            }
-            // Remote / Supabase row: existing approval flow ships
-            // via RemoteApprovalsSheet — keep the Approve button
-            // visible regardless of pending state so the user can
-            // reach the existing surface.
-            return true
-        }()
+        // Iter 2B: approval-button visibility per row.
+        //
+        //   routesLocally + helper supports approvals + structured
+        //   pending row exists → render Approve + Reject calling
+        //   approveLocalAction. Hidden when no structured pending —
+        //   the spec is clear: never light up an inactive button
+        //   off PTY text matching, never bind ⌘↩ when there's
+        //   nothing to confirm.
+        //
+        //   routesLocally + helper does NOT advertise approvals →
+        //   keep the iter-2A "feature isn't here yet" UX (no
+        //   button, hint copy explains).
+        //
+        //   !routesLocally → existing remote / Supabase Approve
+        //   button surface (gated on remote pending).
+        let localApprovalsAvailable = routesLocally
+            && state.localCapabilities?.approvals == true
+        let remoteApprovalsAvailable = !routesLocally
+        // Codex iter6/iter7 finding: while a Claude PermissionRequest
+        // is in flight — through EITHER routing path — its PTY shows
+        // the native `1. Yes / 2. Yes, allow / 3. No` numbered prompt
+        // and any user-typed chars sent to the PTY during that wait
+        // window get fed to THAT prompt rather than being interpreted
+        // as a new turn (iter5 e2e captured the gibberish exactly).
+        //
+        // iter6 only locked the local path; iter7 closes the remote
+        // half. The remote-routed row's `pending != nil` flag means
+        // Claude on the OTHER Mac is parked waiting on the user's
+        // decision (delivered via Supabase poll loop in
+        // `remote_hook.py`). Until the user clicks the existing
+        // remote *Approve* button, sending more input keeps the
+        // race window open. Same lockout applies.
+        let hasLocalPendingApproval = localApprovalsAvailable && localPending != nil
+        let hasRemotePendingApproval = remoteApprovalsAvailable && pending != nil
+        let hasPendingApproval = hasLocalPendingApproval || hasRemotePendingApproval
+        // PR #18 follow-up: stale same-Mac rows (helper restart) have
+        // no PTY in the current helper. Send / Stop / Approve all
+        // have to fail closed against this id. Disable inputs in the
+        // expanded bar so the user gets a passive "this row is
+        // orphaned" UX rather than clicking buttons that no-op.
+        let promptDisabled = SessionControlPredicates.promptInputDisabled(
+            isRunning: isRunning,
+            localSendUnsupported: localSendUnsupported,
+            isStaleLocal: isStaleLocal,
+            hasPendingApproval: hasPendingApproval
+        )
+        let stopDisabled = isStaleLocal
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 TextField(
                     promptPlaceholder(
                         isRunning: isRunning,
-                        localSendUnsupported: localSendUnsupported
+                        localSendUnsupported: localSendUnsupported,
+                        hasPendingApproval: hasPendingApproval
                     ),
                     text: $promptText
                 )
@@ -516,13 +654,40 @@ struct SessionsTab: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .disabled(promptDisabled || promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                if approvalsAvailable {
-                    Button(canApprove ? "Approve pending" : (pending != nil ? "Approve (high-risk)" : "Approve")) {
+                if localApprovalsAvailable, let pendingApproval = localPending {
+                    Button("Approve") {
+                        Task {
+                            await state.approveLocalAction(
+                                sessionId: session.id,
+                                approvalId: pendingApproval.approvalId,
+                                decision: .approve
+                            )
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .help("Approve the pending Claude permission request bound to this local session (⌘↩).")
+                    Button("Reject") {
+                        Task {
+                            await state.approveLocalAction(
+                                sessionId: session.id,
+                                approvalId: pendingApproval.approvalId,
+                                decision: .reject
+                            )
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Reject the pending Claude permission request. Claude will continue waiting for a different decision or fall back to its own prompt.")
+                }
+                if remoteApprovalsAvailable {
+                    Button(canApproveRemote ? "Approve pending" : (pending != nil ? "Approve (high-risk)" : "Approve")) {
                         Task { await approveMatchingPending(for: session) }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .disabled(!canApprove)
+                    .disabled(!canApproveRemote)
                     .keyboardShortcut(.return, modifiers: .command)
                     .help(approveTooltip(pending: pending, isHighRisk: isHighRisk))
                 }
@@ -530,17 +695,26 @@ struct SessionsTab: View {
             HStack(spacing: 8) {
                 Text(commandBarHintText(
                     isPending: isPending,
-                    approvalsAvailable: approvalsAvailable
+                    routesLocally: routesLocally,
+                    localApprovalsAvailable: localApprovalsAvailable,
+                    hasLocalPending: localPending != nil,
+                    remoteApprovalsAvailable: remoteApprovalsAvailable,
+                    hasRemotePending: pending != nil,
+                    isStaleLocal: isStaleLocal
                 ))
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                 Spacer()
                 Button {
                     if showOutput {
-                        // Collapsing — drop the cache so the next
+                        // Collapsing — drop both caches so the next
                         // reveal pulls fresh rather than from the
-                        // previous run's tail.
+                        // previous run's tail. Local subscription
+                        // teardown happens in `.onChange(of:
+                        // showOutput)` above so toggling is the
+                        // single point of truth.
                         state.clearRemoteSessionEventsCache(sessionId: session.id)
+                        state.localOutputPreview.removeValue(forKey: session.id)
                     }
                     showOutput.toggle()
                 } label: {
@@ -572,7 +746,14 @@ struct SessionsTab: View {
                         // device-id equality for fresh rows the local
                         // list hasn't seen yet.
                         if state.shouldRouteSessionLocally(session) {
+                            // Iter 2B: tear down the live stream
+                            // BEFORE the helper kills the PTY so we
+                            // don't leave a hanging UDS connection
+                            // waiting for events that will never come.
+                            state.unsubscribeFromLocalEvents(sessionId: session.id)
                             _ = await state.stopLocalSession(sessionId: session.id)
+                            state.localOutputPreview.removeValue(forKey: session.id)
+                            state.localPendingApprovals.removeValue(forKey: session.id)
                         } else {
                             await state.stopRemoteSession(sessionId: session.id)
                         }
@@ -588,9 +769,11 @@ struct SessionsTab: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
-                .help(isPending
-                      ? "Cancel this queued session. No helper running yet, so this just removes the row."
-                      : "Stop the running Claude session. Helper will terminate the PTY.")
+                .disabled(stopDisabled)
+                .help(stopHelpText(
+                    isPending: isPending,
+                    isStaleLocal: isStaleLocal
+                ))
             }
 
             if showOutput {
@@ -608,18 +791,34 @@ struct SessionsTab: View {
 
     @ViewBuilder
     private func outputPanel(for session: RemoteSession) -> some View {
-        let events = state.remoteSessionEvents[session.id] ?? []
-        // Claude TUI scatters output across event boundaries
-        // (cursor repaints, CSI sequences split mid-byte, words
-        // overwritten in place). We aggregate the entire event tail
-        // and run a Claude-specific filter that emits only ❯ user
-        // echoes, ⏺ Claude replies, and error / login surfaces. The
-        // raw DB events stay intact for any future Phase 3 renderer.
+        let routesLocally = state.shouldRouteSessionLocally(session)
+        // Iter 2B: local-routed rows take their preview from the
+        // live UDS stream (subscribeToLocalEvents). Remote-routed
+        // rows continue to use the existing remoteSessionEvents
+        // tail which the helper uploads to Supabase.
+        let localPreviewRaw = state.localOutputPreview[session.id] ?? ""
+        let events = routesLocally ? [] : (state.remoteSessionEvents[session.id] ?? [])
         let stdoutPayloads = events
             .filter { $0.kind == "stdout" || $0.kind == "stderr" }
             .map { $0.payload }
-        let transcript = ClaudeConversationPreviewFormatter
-            .format(eventPayloads: stdoutPayloads)
+        // Both paths funnel through the same Claude-aware formatter
+        // so ANSI / CSI / TUI chrome are stripped and the user sees
+        // the same ❯ / ⏺ rendering whether the row came from local
+        // UDS or Supabase. Local previews come from the broker's
+        // already-redacted output_delta payloads. IIFE because the
+        // outer function is `@ViewBuilder` and an if-else assignment
+        // statement would be misinterpreted as a View-producing
+        // branch.
+        let transcript: String = {
+            if routesLocally {
+                return localPreviewRaw.isEmpty
+                    ? ClaudeConversationPreviewFormatter.emptyFallback
+                    : ClaudeConversationPreviewFormatter.format(eventPayloads: [localPreviewRaw])
+            }
+            return ClaudeConversationPreviewFormatter
+                .format(eventPayloads: stdoutPayloads)
+        }()
+        let hasContent = routesLocally ? !localPreviewRaw.isEmpty : !events.isEmpty
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 9))
@@ -635,15 +834,11 @@ struct SessionsTab: View {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: true) {
                     VStack(alignment: .leading, spacing: 0) {
-                        if events.isEmpty {
-                            Text(
-                                state.remoteControlEnabled
-                                    ? "No output yet…"
-                                    : "Remote Control is off — output won't stream."
-                            )
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                            .padding(6)
+                        if !hasContent {
+                            Text(emptyOutputText(routesLocally: routesLocally))
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                                .padding(6)
                         } else {
                             Text(transcript)
                                 .font(.system(size: 11, design: .monospaced))
@@ -653,19 +848,24 @@ struct SessionsTab: View {
                                 )
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
-                                .id("claude-transcript-\(events.count)")
+                                .id(routesLocally
+                                    ? "claude-transcript-local-\(localPreviewRaw.count)"
+                                    : "claude-transcript-\(events.count)")
                                 .padding(6)
                         }
                     }
                 }
                 .frame(maxHeight: 200)
-                .onChange(of: events.count) { _ in
-                    // Auto-scroll to the latest content as new events
-                    // arrive. We anchor on the transcript view's
-                    // count-derived id since the transcript is now a
-                    // single Text view rather than per-event rows.
+                .onChange(of: routesLocally ? localPreviewRaw.count : events.count) { _ in
+                    // Auto-scroll to the latest content. Anchor key
+                    // depends on which transport produced the content
+                    // (local-stream byte-count vs remote-event count)
+                    // so a route flip doesn't trip an animation.
+                    let anchor = routesLocally
+                        ? "claude-transcript-local-\(localPreviewRaw.count)"
+                        : "claude-transcript-\(events.count)"
                     withAnimation(.linear(duration: 0.1)) {
-                        proxy.scrollTo("claude-transcript-\(events.count)", anchor: .bottom)
+                        proxy.scrollTo(anchor, anchor: .bottom)
                     }
                 }
             }
@@ -740,10 +940,25 @@ struct SessionsTab: View {
         if ok { promptText = "" }
     }
 
-    private func promptPlaceholder(isRunning: Bool, localSendUnsupported: Bool) -> String {
+    private func promptPlaceholder(
+        isRunning: Bool,
+        localSendUnsupported: Bool,
+        hasPendingApproval: Bool
+    ) -> String {
         if !isRunning { return "Waiting for helper to start session…" }
         if localSendUnsupported {
             return "This local helper doesn't support send_input — update the helper to type prompts."
+        }
+        if hasPendingApproval {
+            // Codex iter6/iter7 lockout. Resolve the pending request
+            // (Approve or Reject) before sending more — keystrokes
+            // during Claude's PTY-side `1. Yes …` numbered prompt
+            // would be interpreted as a reply to that prompt, not as
+            // a new turn ("1Yes"-style gibberish). Same lockout
+            // applies to local-routed AND remote-routed rows: in
+            // both, Claude is parked waiting on a permission
+            // decision and its PTY shows the native prompt.
+            return "Resolve the pending permission request first (Approve or Reject)."
         }
         return "Prompt for Claude…"
     }
@@ -751,20 +966,90 @@ struct SessionsTab: View {
     /// Status-line text under the prompt input. Branches on:
     ///   * pending: the session hasn't started yet (helper hasn't
     ///     consumed the start command).
-    ///   * approvals available (remote rows or local helper that
-    ///     advertised `approvals: true`): show the ⌘↩ shortcut.
-    ///   * approvals NOT available (local-routed + helper hasn't
-    ///     shipped local approvals yet): replace the ⌘↩ hint with
-    ///     a clear "out-of-scope for now" sentence so the user
-    ///     understands they're not missing a button.
-    private func commandBarHintText(isPending: Bool, approvalsAvailable: Bool) -> String {
+    ///   * Iter 2B: local-routed row + local approvals capability +
+    ///     a structured pending exists → show ⌘↩ hint for Approve.
+    ///   * local-routed row + capability but no pending → "no
+    ///     active approval; ⌘↩ inactive" so the user knows the
+    ///     button absence is correct, not a bug.
+    ///   * local-routed row + helper does NOT advertise approvals →
+    ///     keep the iter-2A "next iteration" copy.
+    ///   * remote-routed rows → existing ⌘↩ approve hint.
+    /// Tooltip for the Stop / Cancel button. The stale-row case
+    /// matters for UX: if we just gave a generic "Stop the running
+    /// Claude session" hint while the button is disabled, the user
+    /// would have no idea why clicking does nothing.
+    private func stopHelpText(isPending: Bool, isStaleLocal: Bool) -> String {
+        if isStaleLocal {
+            return "This row was started by a previous helper process. The current helper does not own its PTY, so Stop here is disabled. Stop the underlying Claude process from your terminal directly."
+        }
+        if isPending {
+            return "Cancel this queued session. No helper running yet, so this just removes the row."
+        }
+        return "Stop the running Claude session. Helper will terminate the PTY."
+    }
+
+    private func commandBarHintText(
+        isPending: Bool,
+        routesLocally: Bool,
+        localApprovalsAvailable: Bool,
+        hasLocalPending: Bool,
+        remoteApprovalsAvailable: Bool,
+        hasRemotePending: Bool,
+        isStaleLocal: Bool = false
+    ) -> String {
+        if isStaleLocal {
+            return "Helper restarted — this row is no longer controllable from CLI Pulse. Stop the underlying Claude process from your terminal."
+        }
         if isPending {
             return "Waiting for helper to consume the start command. Cancel to remove this session."
         }
-        if approvalsAvailable {
-            return "Enter to send · ⌘↩ to approve pending"
+        if localApprovalsAvailable {
+            // Distinguish "no structured pending" from a generic
+            // "no approval" so the user understands that PTY chat
+            // text like `1. Yes, continue` is not a permission
+            // request — Approve / Reject only render for real
+            // Claude PermissionRequest hook events. PR #18 explicit
+            // invariant: never parse PTY text to derive an
+            // approval gate (would re-open the security hole this
+            // iteration closed).
+            //
+            // Codex iter6/iter7: when a structured pending exists,
+            // Send is disabled so the "Enter to send" prefix would
+            // be misleading — surface the lockout instead.
+            return hasLocalPending
+                ? "Resolve approval first · ⌘↩ to approve"
+                : "Enter to send · no structured permission request pending"
         }
-        return "Enter to send · approvals arrive in the next iteration"
+        if routesLocally {
+            // Local-routed but helper doesn't advertise the
+            // approvals capability — older daemon, transport
+            // missing broker / registry, etc.
+            return "Enter to send · approvals not advertised by this helper"
+        }
+        if remoteApprovalsAvailable {
+            // Codex iter7: same lockout copy as the local pending
+            // case so the user sees a consistent "you must resolve
+            // the pending approval first" cue regardless of
+            // routing. ⌘↩ binds to the existing remote Approve
+            // button; the iteration didn't change that shortcut.
+            return hasRemotePending
+                ? "Resolve approval first · ⌘↩ to approve"
+                : "Enter to send · ⌘↩ to approve pending"
+        }
+        return "Enter to send"
+    }
+
+    /// Empty-state copy for the output panel. Branches on whether
+    /// the row pulls output from local UDS or remote Supabase.
+    private func emptyOutputText(routesLocally: Bool) -> String {
+        if routesLocally {
+            return state.localCapabilities?.subscribeEvents == true
+                ? "No output yet…"
+                : "This helper doesn't advertise streaming output."
+        }
+        return state.remoteControlEnabled
+            ? "No output yet…"
+            : "Remote Control is off — output won't stream."
     }
 
     private func approveMatchingPending(for session: RemoteSession) async {
@@ -777,6 +1062,15 @@ struct SessionsTab: View {
 
     private func pendingApproval(for session: RemoteSession) -> RemotePermissionRequest? {
         state.remotePendingApprovals.first { $0.session_id == session.id }
+    }
+
+    /// Iter 2B: structured local pending approval bound to this
+    /// row's session id. Always nil for remote-routed rows. The
+    /// macOS UI ONLY renders Approve / Reject when this returns
+    /// non-nil — never on PTY output text. Pinned by tests in
+    /// SessionControlIter2BTests.
+    private func localPendingApproval(for session: RemoteSession) -> PendingApproval? {
+        state.localPendingApprovals[session.id]?.first
     }
 
     private func approveTooltip(pending: RemotePermissionRequest?, isHighRisk: Bool) -> String {
@@ -922,6 +1216,316 @@ struct SessionsTab: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
+    /// Common gate shared by both approval-hook banner variants.
+    /// Without these guards the banner is meaningless (helper not
+    /// reachable, gate off, or helper doesn't support approvals
+    /// at all → no point asking the user to wire a hook for a
+    /// feature they can't use).
+    private var approvalHookBannerBaseGate: Bool {
+        guard state.localHelperReachable, state.localControlEnabled else { return false }
+        return state.localCapabilities?.approvals == true
+    }
+
+    /// Pre-iter10 this banner showed "Approval hook not wired"
+    /// whenever `~/.claude/settings.json` was missing or didn't
+    /// contain our PermissionRequest hook entry. iter10 retired
+    /// the global hook install entirely — managed sessions inject
+    /// the hook inline at spawn time via `claude --settings <json>`,
+    /// and terminal-launched Claude is intentionally NOT
+    /// instrumented. So `notWired` / `settingsMissing` are the
+    /// EXPECTED happy-path state and surfacing a banner is
+    /// actively misleading.
+    ///
+    /// Codex P2④ review fix: banner is suppressed for the
+    /// happy-path states. The detector still runs (we keep
+    /// `parseError` surfacing for malformed-settings-fix UX) and
+    /// the existing `wired` / `notWired` enum stays compatible,
+    /// but the install banner is never shown anymore. The
+    /// stale-cleanup banner below replaces it for the narrow
+    /// case where a user has a leftover hook from a pre-iter10
+    /// CLI Pulse install (those entries no longer trigger the
+    /// hook on managed sessions but DO break terminal-launched
+    /// Claude — the fail-closed deny path in HookAdapter).
+    private var shouldShowApprovalHookInstallBanner: Bool {
+        // Always false. Replaced by the stale-cleanup banner
+        // for the only state where action is needed.
+        return false
+    }
+
+    /// Phase 4D iter11 (Codex P2④): if the user has an old hook
+    /// entry sitting in `~/.claude/settings.json` from a pre-
+    /// iter10 install, terminal-launched Claude will hit the
+    /// hook AND fail-closed (because the hook adapter denies
+    /// without managed-session env vars). That's worse than no
+    /// hook at all. This banner surfaces ONLY in that state and
+    /// offers a one-click "Remove stale hook entry" action — UI
+    /// next iter; for now the banner is informational so
+    /// reviewers can see it's surfaced for the right state.
+    private var shouldShowApprovalHookStaleCleanupBanner: Bool {
+        guard approvalHookBannerBaseGate else { return false }
+        // `wired` here means the user has our marker in their
+        // global settings.json. Pre-iter10 that was the desired
+        // state; iter10+ this is an "old install needs cleanup"
+        // signal. We do NOT show the banner for `.notWired` /
+        // `.settingsMissing` — those are the expected happy-path.
+        switch state.claudeApprovalHookStatus {
+        case .wired:
+            return true
+        case .notWired, .settingsMissing, .parseError, .none:
+            return false
+        }
+    }
+
+    /// "Settings malformed" fix-it banner — shown when the
+    /// detector couldn't parse `~/.claude/settings.json`. Distinct
+    /// from the install banner because:
+    ///   1. the install path itself refuses to overwrite
+    ///      malformed JSON (raises `ValueError`), so offering a
+    ///      `Copy command` install button would just lead the
+    ///      user into an error
+    ///   2. malformed settings.json blocks approvals AND most
+    ///      other Claude Code settings (permissions, model, etc.),
+    ///      so it's worth surfacing prominently
+    ///
+    /// Codex review on 7528084 caught the original mistake — pre-
+    /// fix, parseError was silently hidden and the user had no
+    /// in-app signal that anything was wrong.
+    private var shouldShowApprovalHookFixSettingsBanner: Bool {
+        guard approvalHookBannerBaseGate else { return false }
+        if case .parseError = state.claudeApprovalHookStatus {
+            return true
+        }
+        return false
+    }
+
+    /// "Settings malformed" fix-it banner. Shown when the detector
+    /// returned `.parseError`. Does NOT offer the install button —
+    /// running the install on malformed JSON would just raise
+    /// `ValueError` upstream, so we tell the user to repair the
+    /// file by hand first. The detector's parse-error message
+    /// (e.g. "settings.json is not valid JSON") gives the user
+    /// enough to find + fix the issue.
+    private var approvalHookFixSettingsBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Claude settings file can't be read")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(approvalHookParseErrorMessage)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                    Text("Approval routing depends on this file. Open ~/.claude/settings.json in a text editor, fix the JSON, and the banner will clear automatically. CLI Pulse won't try to install over a malformed file.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+            }
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    /// Phase 4D iter12 (Codex P2⑤): cleanup banner shown when a
+    /// pre-iter10 CLI Pulse install left a global PermissionRequest
+    /// hook in `~/.claude/settings.json`. After iter10 the hook is
+    /// injected at managed-session spawn time only — a leftover
+    /// global entry will keep firing for terminal-launched Claude
+    /// and the iter10 fail-closed adapter will deny every tool
+    /// call with a diagnostic message. Bad UX. The banner gives
+    /// the user a copy-paste command that surgically removes the
+    /// stale entry.
+    private var approvalHookStaleCleanupBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Old CLI Pulse hook in your Claude settings")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Earlier versions of CLI Pulse wrote a PermissionRequest hook into ~/.claude/settings.json. Recent versions inject the hook at managed-session spawn time instead, so the old entry is no longer needed AND it breaks Claude when you launch it from Terminal (the hook fails closed without managed-session env vars).")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Click the button to copy a one-line jq command. Paste into a terminal to remove the stale entry. Your other Claude settings stay intact.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button("Copy cleanup command") {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(
+                        Self.staleHookCleanupCommand,
+                        forType: .string
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .help("Copies a `jq` filter to your clipboard. The filter strips every PermissionRequest entry containing CLI Pulse's marker (\"remote-approval-hook --provider claude\") and writes the result back to ~/.claude/settings.json atomically. Your model / permissions / other hooks survive verbatim.")
+            }
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    /// Cleanup command put on the clipboard by the stale-hook
+    /// banner. Uses bundled-on-macOS Python rather than jq because:
+    ///
+    ///   1. Atomic write semantics (tmp + os.rename + mode 0600)
+    ///      match the same care `permissions_diagnose.py` takes
+    ///      with the same file. jq's `>` redirect leaves a window
+    ///      where the file is partially written.
+    ///   2. Surgical removal — strips ONLY entries that contain
+    ///      our `remote-approval-hook --provider claude` marker.
+    ///      Top-level keys (model, permissions, other hook
+    ///      events) and unrelated PermissionRequest entries stay
+    ///      verbatim.
+    ///   3. Cleaner shell quoting — `Color.staleHookCleanupCommand`
+    ///      embeds in a clipboard, then a terminal paste; the
+    ///      multi-line Python heredoc survives a shell paste
+    ///      better than a one-line jq filter with nested quotes.
+    ///
+    /// Documented as a constant for testability — Codex review on
+    /// PR #18 hardened every settings.json write path against
+    /// accidental data loss; same care here.
+    static let staleHookCleanupCommand: String = {
+        return #"""
+        python3 - <<'PYEOF'
+        import json, os, tempfile
+        p = os.path.expanduser("~/.claude/settings.json")
+        data = json.loads(open(p).read())
+        hooks = data.get("hooks", {})
+        pr = hooks.get("PermissionRequest", [])
+        marker = "remote-approval-hook --provider claude"
+        new_pr = []
+        for entry in pr:
+            if isinstance(entry.get("command"), str) and marker in entry["command"]:
+                continue
+            if isinstance(entry.get("hooks"), list) and any(
+                isinstance(h.get("command"), str) and marker in h["command"]
+                for h in entry["hooks"]
+            ):
+                continue
+            new_pr.append(entry)
+        if new_pr:
+            hooks["PermissionRequest"] = new_pr
+        elif "PermissionRequest" in hooks:
+            del hooks["PermissionRequest"]
+        if hooks:
+            data["hooks"] = hooks
+        elif "hooks" in data:
+            del data["hooks"]
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p))
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(data, indent=2) + "\n")
+        os.chmod(tmp, 0o600)
+        os.rename(tmp, p)
+        print(f"cleaned {p}: PermissionRequest entries={len(new_pr)}")
+        PYEOF
+        """#
+    }()
+
+    /// Detail string from the detector's `.parseError(...)` case.
+    /// Returns empty string for any non-parse-error state (the
+    /// surrounding view only renders this when the case actually
+    /// matches, but the helper is defensive).
+    private var approvalHookParseErrorMessage: String {
+        if case .parseError(let detail) = state.claudeApprovalHookStatus {
+            return detail
+        }
+        return ""
+    }
+
+    /// One-time setup nudge: helper supports approvals, but
+    /// `~/.claude/settings.json` isn't routing PermissionRequest
+    /// events through it. Phase 4 helper-bundling: the primary
+    /// affordance is now a one-click "Install hook" button that
+    /// asks the helper to write the file (it has filesystem
+    /// access; the sandboxed app does not). The legacy "Copy
+    /// command" path stays available as a fallback for users
+    /// running an older / manually-launched helper that doesn't
+    /// support the `install_claude_hook` UDS method (capability
+    /// flag missing OR the call returns
+    /// `not_implemented` / `bundled_binary_missing`).
+    private var approvalHookNotWiredBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "link.badge.plus")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Approval hook not wired")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Claude isn't routing permission requests through CLI Pulse, so structured Approve / Reject controls in Sessions stay inactive. Click Install hook to wire it up and restart Claude.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let lastInstall = lastInstallHookResult {
+                        // Phase 4 inline confirmation: shows the
+                        // `action: <verb>` from the helper after a
+                        // successful click so the user sees that
+                        // something actually changed.
+                        Text("Last install: \(lastInstall.action) — \(lastInstall.settingsPath)")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer()
+                VStack(spacing: 4) {
+                    Button("Install hook") {
+                        Task { await installClaudeHookFromBanner() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(installHookInFlight)
+                    .help("Asks the helper to wire up Claude's PermissionRequest hook in ~/.claude/settings.json. Idempotent — safe to click even if some other settings are already in place.")
+                    Button("Copy command") {
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        pasteboard.setString(
+                            ClaudeHookDetector.installCommandTemplate,
+                            forType: .string
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Fallback for users running an older helper that doesn't expose the install_claude_hook method. Paste into a terminal where the helper lives.")
+                }
+            }
+        }
+        .padding(10)
+        .background(Color.accentColor.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    @MainActor
+    private func installClaudeHookFromBanner() async {
+        installHookInFlight = true
+        defer { installHookInFlight = false }
+        let result = await state.installClaudeHookViaHelper()
+        if let result {
+            lastInstallHookResult = result
+            // Force-refresh the detector status so the banner
+            // disappears immediately — without this the user
+            // would see the green-checked confirmation but the
+            // banner would stay until the next polling tick of
+            // `claudeApprovalHookStatus`.
+            await state.refreshClaudeApprovalHookStatus()
+        }
+    }
+
     private var localFastPathToggle: some View {
         HStack(alignment: .center, spacing: 8) {
             Image(systemName: "bolt.circle")
@@ -965,6 +1569,13 @@ private struct ManagedSessionRow: View {
     /// badge so the user can see at a glance which transport they
     /// will hit. (Codex review on PR #17 manual verification.)
     let routesLocally: Bool
+    /// PR #18 follow-up (Codex iter4 manual test): same-Mac row
+    /// whose original helper process is no longer alive. Drives a
+    /// neutral "helper restarted · not controllable" pill instead
+    /// of the green "Local" pill, and the expanded command bar
+    /// disables Send / Stop / Approve so the user doesn't keep
+    /// clicking buttons that have to fail closed.
+    let isStaleLocal: Bool
     let onSelect: () -> Void
 
     /// Display label, with the duplicate-name workaround for
@@ -1013,6 +1624,14 @@ private struct ManagedSessionRow: View {
                         if routesLocally {
                             transportBadge(text: "Local", color: .green)
                                 .help("Prompt and Stop on this row use the local UDS fast path (helper-owned PTY).")
+                        } else if isStaleLocal {
+                            // Stale row: helper restarted, no PTY
+                            // for this id. Neutral grey pill plus
+                            // a hover-tooltip explaining what
+                            // happened — the user shouldn't think
+                            // this is normal "running" state.
+                            transportBadge(text: "Helper restarted", color: .secondary)
+                                .help("This row was started by a previous helper process. The current helper does not own its PTY, so Send / Stop / Approve here are disabled. Stop the underlying Claude process from the terminal directly.")
                         }
                     }
                     HStack(spacing: 6) {
@@ -1026,11 +1645,18 @@ private struct ManagedSessionRow: View {
                         }
                         // Affordance hint so the chevron isn't the
                         // only indication that a row expands into
-                        // controls.
+                        // controls. Stale rows replace the affordance
+                        // with an explanatory subtitle.
                         if !isSelected {
-                            Text("· tap to control")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.tertiary)
+                            if isStaleLocal {
+                                Text("· not controllable")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.tertiary)
+                            } else {
+                                Text("· tap to control")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.tertiary)
+                            }
                         }
                     }
                 }

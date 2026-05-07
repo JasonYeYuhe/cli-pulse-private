@@ -397,5 +397,260 @@ final class SessionControlIntegrationGapTests: XCTestCase {
         XCTAssertFalse(diag.tokenReadable)
         XCTAssertFalse(diag.nsHomeDirectory.isEmpty)
     }
+
+    // MARK: - Iter 2B+ stale-row routing (Codex review on PR #18 manual test)
+
+    /// PR #18 manual-test surface: helper restart leaves
+    /// stale Supabase rows whose `device_id` still matches
+    /// `selfDeviceId` but whose ids are no longer in
+    /// `localManagedSessions`. Pre-fix the predicate fell back on
+    /// the device_id match and routed those rows to the local UDS
+    /// path — get_pending_approvals / subscribe_events / Stop all
+    /// kept hammering the helper for ids it didn't own. New rule:
+    /// the predicate is device_id-independent. Only ids the helper
+    /// authoritatively owns route locally.
+    @MainActor
+    func testRouteLocally_strictOwnershipByIdIgnoresDeviceIdEntirely() {
+        let state = makeState()
+        state.localHelperReachable = true
+        state.localControlEnabled = true
+        state.localManagedSessions = [
+            .init(id: "S-1", provider: "claude", clientLabel: nil,
+                  status: "running", controllable: true, source: .managed)
+        ]
+        // Row S-2 is NOT in localManagedSessions. Predicate must
+        // return false regardless of what device_id the row carries
+        // — the stale-row hazard the device_id fallback opened.
+        for deviceId in ["", "self-mac-id", "remote-mac-id", "anything"] {
+            let row = makeRow(id: "S-2", deviceId: deviceId)
+            XCTAssertFalse(
+                state.shouldRouteSessionLocally(row),
+                "id S-2 not in localManagedSessions must NOT route locally regardless of device_id (\(deviceId))"
+            )
+        }
+    }
+
+    /// `reconcileLocalStaleSessionState` runs implicitly after each
+    /// successful `refreshLocalSessionControlState` and explicitly
+    /// here. Stale per-session UI state (live event task, pending
+    /// approvals bucket, output preview) MUST be torn down for ids
+    /// no longer in the helper's authoritative list.
+    @MainActor
+    func testReconcileLocalStaleSessionState_clearsAllPerSessionBuckets() {
+        let state = makeState()
+        state.localHelperReachable = true
+        state.localControlEnabled = true
+
+        // Set up: two sessions had previously been live, but the
+        // helper has since restarted and only owns S-A now.
+        state.localManagedSessions = [
+            .init(id: "S-A", provider: "claude", clientLabel: nil,
+                  status: "running", controllable: true, source: .managed)
+        ]
+        // Plant zombie state for the now-stale S-B + S-C ids.
+        state.localEventTasks["S-B"] = Task { /* noop */ }
+        state.localEventTasks["S-C"] = Task { /* noop */ }
+        state.localEventTasks["S-A"] = Task { /* noop */ }
+        state.localPendingApprovals["S-B"] = [PendingApproval(
+            approvalId: "AID", sessionId: "S-B", type: "PermissionRequest",
+            title: "Read", summary: "", toolMetadata: [:],
+            status: "pending", createdAt: Date(), expiresAt: nil
+        )]
+        state.localPendingApprovals["S-A"] = [PendingApproval(
+            approvalId: "A2", sessionId: "S-A", type: "PermissionRequest",
+            title: "Edit", summary: "", toolMetadata: [:],
+            status: "pending", createdAt: Date(), expiresAt: nil
+        )]
+        state.localOutputPreview["S-B"] = "stale tail"
+        state.localOutputPreview["S-A"] = "live tail"
+
+        state.reconcileLocalStaleSessionState()
+
+        // Stale ids: gone everywhere.
+        XCTAssertNil(state.localEventTasks["S-B"])
+        XCTAssertNil(state.localEventTasks["S-C"])
+        XCTAssertNil(state.localPendingApprovals["S-B"])
+        XCTAssertNil(state.localOutputPreview["S-B"])
+        // Owned id: untouched.
+        XCTAssertNotNil(state.localEventTasks["S-A"])
+        XCTAssertEqual(state.localPendingApprovals["S-A"]?.count, 1)
+        XCTAssertEqual(state.localOutputPreview["S-A"], "live tail")
+
+        // Cleanup the surviving Task we planted so it doesn't leak.
+        state.localEventTasks["S-A"]?.cancel()
+        state.localEventTasks["S-A"] = nil
+    }
+
+    /// `subscribeToLocalEvents(sessionId:)` MUST refuse to open a
+    /// stream for a session id the helper doesn't own. Pre-fix the
+    /// SessionsTab polling loop kept resubscribing to stale ids
+    /// after a helper restart, which showed up in the helper log
+    /// as repeated `subscribe_events session=...` calls for ids
+    /// that produced no events.
+    @MainActor
+    func testSubscribeToLocalEvents_skipsUnknownSessionId() {
+        let state = makeState()
+        state.localHelperReachable = true
+        state.localControlEnabled = true
+        state.localCapabilities = SessionControlCapabilities.iter2bLocal
+        state.localManagedSessions = []  // helper doesn't own anything
+
+        state.subscribeToLocalEvents(sessionId: "stale-id")
+        XCTAssertNil(state.localEventTasks["stale-id"],
+                     "must not open a stream for ids the helper doesn't own")
+    }
+
+    /// `refreshLocalPendingApprovals(sessionId:)` MUST NOT issue a
+    /// UDS round-trip for a session id the helper doesn't own.
+    /// Side-benefit: any stale `localPendingApprovals` bucket for
+    /// that id is dropped.
+    @MainActor
+    func testRefreshLocalPendingApprovals_skipsAndCleansStaleSessionId() async {
+        let state = makeState()
+        state.localHelperReachable = true
+        state.localControlEnabled = true
+        state.localCapabilities = SessionControlCapabilities.iter2bLocal
+        state.localManagedSessions = []   // helper owns nothing
+        // Stale bucket survived a previous helper's lifetime.
+        state.localPendingApprovals["stale-id"] = [PendingApproval(
+            approvalId: "AID", sessionId: "stale-id", type: "PermissionRequest",
+            title: "Read", summary: "", toolMetadata: [:],
+            status: "pending", createdAt: Date(), expiresAt: nil
+        )]
+
+        await state.refreshLocalPendingApprovals(sessionId: "stale-id")
+
+        XCTAssertNil(state.localPendingApprovals["stale-id"],
+                     "stale per-session bucket must be cleared on guarded refresh")
+    }
+
+    /// `approveLocalAction` MUST refuse to dispatch a decision when
+    /// the session id is no longer in `localManagedSessions`.
+    /// Defence in depth: the SessionsTab gate on
+    /// `localPendingApprovals[id]` should already hide the buttons
+    /// after `reconcileLocalStaleSessionState`, but if the UI
+    /// somehow plumbed a stale id through, we surface a typed
+    /// error rather than letting the helper return one (which
+    /// would log spurious `local_rpc method=approve_action` lines).
+    @MainActor
+    func testApproveLocalAction_returnsFalseForUnknownSessionId() async {
+        let state = makeState()
+        state.localHelperReachable = true
+        state.localControlEnabled = true
+        state.localCapabilities = SessionControlCapabilities.iter2bLocal
+        state.localManagedSessions = []  // helper owns nothing
+
+        let ok = await state.approveLocalAction(
+            sessionId: "stale-id",
+            approvalId: "AID",
+            decision: .approve
+        )
+        XCTAssertFalse(ok)
+        XCTAssertNotNil(state.localHelperError)
+    }
+
+    // MARK: - isStaleLocalSession (Codex iter4 stale-row UX)
+
+    /// `isStaleLocalSession` must be true when:
+    ///   - helper reachable + local control on
+    ///   - row.device_id == selfDeviceId (in test rig: nil) → predicate
+    ///     short-circuits via isSelfDevice when neither side is nil
+    ///   - row.id NOT in localManagedSessions
+    /// We can't directly mock `selfDeviceId` (it reads HelperConfig
+    /// from disk), so the test rig pins the predicate's two
+    /// authority signals: `localManagedSessions` membership and the
+    /// helper-reachable / gate-on guards.
+    @MainActor
+    func testIsStaleLocalSession_falseWhenIdInLocalManagedSessions() {
+        let state = makeState()
+        state.localHelperReachable = true
+        state.localControlEnabled = true
+        state.localManagedSessions = [
+            .init(id: "S-OWN", provider: "claude", clientLabel: nil,
+                  status: "running", controllable: true, source: .managed)
+        ]
+        let row = makeRow(id: "S-OWN", deviceId: state.selfDeviceId ?? "")
+        XCTAssertFalse(state.isStaleLocalSession(row),
+                       "owned session must NOT be classified stale")
+    }
+
+    @MainActor
+    func testIsStaleLocalSession_falseWhenHelperUnreachable() {
+        let state = makeState()
+        state.localHelperReachable = false
+        state.localControlEnabled = true
+        state.localManagedSessions = []
+        let row = makeRow(id: "S-X", deviceId: state.selfDeviceId ?? "")
+        XCTAssertFalse(state.isStaleLocalSession(row),
+                       "no UDS reachability → can't claim 'helper restarted' meaningfully")
+    }
+
+    @MainActor
+    func testIsStaleLocalSession_falseWhenGateOff() {
+        let state = makeState()
+        state.localHelperReachable = true
+        state.localControlEnabled = false
+        state.localManagedSessions = []
+        let row = makeRow(id: "S-X", deviceId: state.selfDeviceId ?? "")
+        XCTAssertFalse(state.isStaleLocalSession(row),
+                       "gate off → row isn't 'stale local', it's just not under local control")
+    }
+
+    @MainActor
+    func testIsStaleLocalSession_falseForCrossDeviceRow() {
+        let state = makeState()
+        state.localHelperReachable = true
+        state.localControlEnabled = true
+        state.localManagedSessions = []
+        // device_id intentionally a different mac → cross-device row
+        // should never be flagged as "stale local" — it was never a
+        // local session in the first place.
+        let row = makeRow(id: "S-X", deviceId: "another-mac-uuid")
+        XCTAssertFalse(state.isStaleLocalSession(row),
+                       "cross-device row must NOT be classified stale local")
+    }
+
+    /// Helper-restart simulation end-to-end: after the new helper's
+    /// first list_sessions returns an empty managed list, a
+    /// previously-live id MUST no longer route locally and MUST
+    /// have its per-session UI state cleaned up.
+    @MainActor
+    func testHelperRestartSimulation_dropsAllStaleControlState() {
+        let state = makeState()
+        state.localHelperReachable = true
+        state.localControlEnabled = true
+
+        // Pre-restart: helper owned S-X, app had subscribed and
+        // received a pending approval.
+        state.localManagedSessions = [
+            .init(id: "S-X", provider: "claude", clientLabel: nil,
+                  status: "running", controllable: true, source: .managed)
+        ]
+        state.localEventTasks["S-X"] = Task { /* noop */ }
+        state.localPendingApprovals["S-X"] = [PendingApproval(
+            approvalId: "AID", sessionId: "S-X", type: "PermissionRequest",
+            title: "Read", summary: "", toolMetadata: [:],
+            status: "pending", createdAt: Date(), expiresAt: nil
+        )]
+        state.localOutputPreview["S-X"] = "previous-helper-output"
+
+        // S-X's row was registered with helper's device_id; in a
+        // realistic post-restart flow the Supabase row stays
+        // running and selfDeviceId still matches it.
+        let row = makeRow(id: "S-X", deviceId: "self-mac-id")
+
+        // Helper restart: new helper's list_sessions returns []
+        // → app's localManagedSessions is reset.
+        state.localManagedSessions = []
+        state.reconcileLocalStaleSessionState()
+
+        // Routing predicate now refuses to route S-X locally.
+        XCTAssertFalse(state.shouldRouteSessionLocally(row),
+                       "post-restart stale id must not route locally")
+        // Per-session UI state cleaned.
+        XCTAssertNil(state.localEventTasks["S-X"])
+        XCTAssertNil(state.localPendingApprovals["S-X"])
+        XCTAssertNil(state.localOutputPreview["S-X"])
+    }
 }
 #endif

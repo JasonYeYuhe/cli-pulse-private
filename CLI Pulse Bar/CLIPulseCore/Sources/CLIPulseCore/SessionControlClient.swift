@@ -122,13 +122,24 @@ public struct SessionControlCapabilities: Sendable, Equatable {
         approvals: false
     )
 
-    /// What the iter-2A LocalSessionControlClient advertises after a
+    /// What the iter-2A LocalSessionControlClient advertised after a
     /// successful hello — start/list/stop/send_input. Streaming
-    /// (subscribe_events) and approvals stay deferred to iter 2B.
+    /// (subscribe_events) and approvals were deferred. Pinned by
+    /// existing tests; production now ships `iter2bLocal`.
     public static let iter2aLocal = SessionControlCapabilities(
         sendInput: true,
         subscribeEvents: false,
         approvals: false
+    )
+
+    /// What the iter-2B LocalSessionControlClient advertises today
+    /// once the helper wires the event broker AND the approval
+    /// registry — full local surface: send_input, subscribe_events,
+    /// structured approvals.
+    public static let iter2bLocal = SessionControlCapabilities(
+        sendInput: true,
+        subscribeEvents: true,
+        approvals: true
     )
 
     /// What the RemoteSessionControlClient advertises today — the
@@ -251,6 +262,41 @@ public enum SessionControlError: Error, Equatable, Sendable, CustomStringConvert
     /// here" rather than offering action buttons.
     case notControllable
 
+    /// Iter 2B: the approval id has no record on the helper. Either
+    /// it was never created, the helper restarted (in-memory state
+    /// is non-durable), or another client just resolved it and the
+    /// row was reaped.
+    case approvalNotFound
+
+    /// Iter 2B: the approval's TTL elapsed before the user acted.
+    /// The hook subprocess will have already fallen back to its
+    /// local prompt by the time the app sees this; the UI should
+    /// drop the row from `localPendingApprovals` rather than treat
+    /// it as a hard error.
+    case approvalExpired
+
+    /// Iter 2B: the approval was already approved / rejected /
+    /// cancelled by another caller (e.g. a second device, a
+    /// concurrent click). UI should re-fetch pending state.
+    case approvalAlreadyResolved
+
+    /// Iter 2B: the supplied session_id doesn't match the approval
+    /// id's owning session. Either a programmer error or a stale UI
+    /// state pointing at the wrong row; refresh pending and retry.
+    case approvalNotAllowed
+
+    /// Iter 2B: the per-session capability token check failed on
+    /// the hook ingress (or the approval registry doesn't recognise
+    /// the session at all). Should not surface in the app-side UI
+    /// because the app uses the global auth token; logged for
+    /// completeness so a misrouted call surfaces as a typed case.
+    case approvalCapabilityInvalid
+
+    /// Iter 2B: the helper is hard-capping pending approvals per
+    /// session. Surfaces if a single session has many concurrent
+    /// permission requests — extremely rare in normal Claude usage.
+    case approvalLimitReached
+
     public var description: String {
         switch self {
         case .helperNotRunning:    return "helper not running"
@@ -262,6 +308,12 @@ public enum SessionControlError: Error, Equatable, Sendable, CustomStringConvert
         case .disconnected:        return "disconnected"
         case .sessionNotFound:     return "session not found"
         case .notControllable:     return "session not controllable from here"
+        case .approvalNotFound:    return "approval not found"
+        case .approvalExpired:     return "approval expired"
+        case .approvalAlreadyResolved: return "approval already resolved"
+        case .approvalNotAllowed:  return "approval not allowed for this session"
+        case .approvalCapabilityInvalid: return "approval capability invalid"
+        case .approvalLimitReached: return "too many pending approvals"
         case .invalidResponse(let detail): return "invalid response: \(detail)"
         case .internalError(let detail):   return "internal error: \(detail)"
         }
@@ -285,7 +337,50 @@ public enum SessionControlErrorMapping {
         case "frame_truncated":   return .disconnected
         case "session_not_found": return .sessionNotFound
         case "not_controllable":  return .notControllable
+        // Iter 2B approval surface. Codes match
+        // helper/local_approvals.py:ApprovalError.
+        case "approval_not_found":         return .approvalNotFound
+        case "approval_expired":           return .approvalExpired
+        case "approval_already_resolved":  return .approvalAlreadyResolved
+        case "approval_not_allowed":       return .approvalNotAllowed
+        case "approval_capability_invalid": return .approvalCapabilityInvalid
+        case "approval_limit_reached":     return .approvalLimitReached
         default:                  return .internalError("\(code): \(message)")
         }
+    }
+}
+
+/// Pure predicates that drive Sessions-tab gating on the macOS app.
+/// Extracted into the core module so they can be tested without
+/// instantiating SwiftUI views or AppState.
+public enum SessionControlPredicates {
+    /// Codex iter6/iter7 send-lockout. While Claude is parked waiting
+    /// on a PermissionRequest decision (either through the local fast
+    /// path or the remote Supabase routing), its PTY shows the native
+    /// `1. Yes / 2. Yes, allow / 3. No` numbered prompt. Any keystroke
+    /// the user sends during that wait window gets fed to THAT prompt
+    /// instead of being interpreted as a new turn — the iter5 e2e
+    /// captured this as `Run bash command: pwd1Yes`-style gibberish.
+    /// SessionsTab uses this predicate to disable Send + the prompt
+    /// field until the user resolves the pending approval (Approve
+    /// / Reject), regardless of whether the routing is local or
+    /// remote.
+    ///
+    /// Pure function — no SwiftUI state, no AppState reference. The
+    /// caller composes the four flags from `RemoteSession.status`,
+    /// `state.localCapabilities`, `state.isStaleLocalSession(...)`,
+    /// and the `local pending != nil || remote pending != nil` view
+    /// of the approval registries.
+    public static func promptInputDisabled(
+        isRunning: Bool,
+        localSendUnsupported: Bool,
+        isStaleLocal: Bool,
+        hasPendingApproval: Bool
+    ) -> Bool {
+        if !isRunning { return true }
+        if localSendUnsupported { return true }
+        if isStaleLocal { return true }
+        if hasPendingApproval { return true }
+        return false
     }
 }

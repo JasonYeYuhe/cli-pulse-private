@@ -64,5 +64,17 @@ PROJECT_HEALTH_HANDOFF_*.md
 backend/supabase/.temp/
 /supabase/
 
+# PyInstaller helper bundle artifacts (Phase 4: macOS app embeds the
+# frozen binary; the build phase invokes pyinstaller and the output
+# goes into the .app via Xcode build phase, not into git).
+helper/build/
+helper/dist/
+helper/__pycache__/
+
 # Room schema exports (generated, tracked for migration testing)
 # android/app/schemas/
+
+# Phase 4D: Swift helper port build artifacts
+HelperSwift/.build/
+HelperSwift/.swiftpm/
+HelperSwift/Package.resolved

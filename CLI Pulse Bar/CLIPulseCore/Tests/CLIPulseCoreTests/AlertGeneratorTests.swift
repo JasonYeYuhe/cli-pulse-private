@@ -55,25 +55,78 @@ final class AlertGeneratorTests: XCTestCase {
         XCTAssertEqual(alerts[0]["source_kind"] as? String, "device")
     }
 
-    // Iter2 — cpu-spike id must rotate hourly (so a re-spike after the user
-    // resolved an old one creates a new row instead of upserting into the
-    // resolved one) and stay scoped to a device (so a multi-device user
-    // doesn't have one mac silence the other's alerts).
-    func testCpuSpikeIdRotatesByHour() {
+    // Iter3 (post-Codex review on PR #18) — cpu-spike id must NOT
+    // rotate hourly. The previous hourly bucket caused
+    // resolved / snoozed alerts to re-fire as new unresolved rows
+    // every hour the device stayed above 85%, with no Settings
+    // knob to silence it. Stable id lets the existing suppression
+    // infra (client `suppressedAlertIDs` + server `is_resolved`)
+    // do its job: once the user dismisses, the row stays
+    // dismissed across hours.
+    func testCpuSpikeIdStableAcrossHours() {
         let snap = DeviceMetrics.Snapshot(cpuUsage: 90, memoryUsage: 40)
-        // Pin two timestamps exactly one hour apart, same device id.
-        let t1 = Date(timeIntervalSince1970: 1_770_000_000)              // hour bucket N
-        let t2 = Date(timeIntervalSince1970: 1_770_000_000 + 3600)       // hour bucket N+1
+        // Pin three timestamps spanning multiple hours.
+        let t1 = Date(timeIntervalSince1970: 1_770_000_000)            // hour N
+        let t2 = Date(timeIntervalSince1970: 1_770_000_000 + 3600)     // hour N+1
+        let t3 = Date(timeIntervalSince1970: 1_770_000_000 + 7200)     // hour N+2
         let alertsT1 = AlertGenerator.generate(device: snap, sessions: [], deviceID: "dev-A", now: t1)
         let alertsT2 = AlertGenerator.generate(device: snap, sessions: [], deviceID: "dev-A", now: t2)
+        let alertsT3 = AlertGenerator.generate(device: snap, sessions: [], deviceID: "dev-A", now: t3)
         XCTAssertEqual(alertsT1.count, 1)
         XCTAssertEqual(alertsT2.count, 1)
+        XCTAssertEqual(alertsT3.count, 1)
         let id1 = alertsT1[0]["id"] as? String
         let id2 = alertsT2[0]["id"] as? String
-        XCTAssertNotEqual(id1, id2,
-                          "cpu-spike id must rotate across the hour boundary so a re-spike fires fresh")
-        XCTAssertEqual(id1, "cpu-spike-dev-A-\(Int(t1.timeIntervalSince1970 / 3600))")
-        XCTAssertEqual(id2, "cpu-spike-dev-A-\(Int(t2.timeIntervalSince1970 / 3600))")
+        let id3 = alertsT3[0]["id"] as? String
+        XCTAssertEqual(id1, id2,
+                       "cpu-spike id must be stable across hours; suppression keys by id")
+        XCTAssertEqual(id2, id3,
+                       "cpu-spike id must be stable across hours; suppression keys by id")
+        XCTAssertEqual(id1, "cpu-spike-dev-A")
+        // suppression_key matches id so client + server suppression
+        // infra agree.
+        XCTAssertEqual(alertsT1[0]["suppression_key"] as? String, id1)
+        XCTAssertEqual(alertsT3[0]["suppression_key"] as? String, id3)
+    }
+
+    /// Resolving / snoozing the cpu-spike alert via the existing
+    /// suppression infra MUST cause subsequent generation cycles
+    /// to NOT re-introduce it as a new unresolved row, even when
+    /// the device is still over 85%. The infra works by id; the
+    /// stable id makes this work.
+    func testCpuSpikeSuppressionBlocksReFireAcrossHours() {
+        let snap = DeviceMetrics.Snapshot(cpuUsage: 90, memoryUsage: 40)
+        let t1 = Date(timeIntervalSince1970: 1_770_000_000)
+        let alertsT1 = AlertGenerator.generate(device: snap, sessions: [], deviceID: "dev-A", now: t1)
+        let id = alertsT1[0]["id"] as? String ?? ""
+        XCTAssertFalse(id.isEmpty)
+
+        // Simulate the user resolving / snoozing the alert. The
+        // app's `AppState.suppressedAlertIDs` is the client-side
+        // half; the prune helper produces a Set<String> of "active
+        // suppressions" keyed by the same id we just emitted.
+        let suppressedAt = t1
+        let entry = AppState.SuppressionEntry(
+            until: Date.distantFuture,
+            dismissedAt: suppressedAt
+        )
+        let pruned = AppState.prunedSuppressions(
+            [id: entry], now: suppressedAt
+        )
+        XCTAssertTrue(pruned.active.contains(id))
+
+        // 4 hours later the device is STILL over 85%. The new
+        // generation cycle emits the same id — and the existing
+        // suppression set still contains it, so the UI filter (the
+        // app applies `pruned.active` against incoming alerts and
+        // drops matches) keeps it suppressed.
+        let t2 = Date(timeIntervalSince1970: 1_770_000_000 + 4 * 3600)
+        let alertsT2 = AlertGenerator.generate(device: snap, sessions: [], deviceID: "dev-A", now: t2)
+        let id2 = alertsT2[0]["id"] as? String ?? ""
+        XCTAssertEqual(id2, id,
+                       "subsequent CPU spikes on the same device produce the same alert id — suppression survives")
+        XCTAssertTrue(pruned.active.contains(id2),
+                      "id is still in the suppression set so the UI filters it out")
     }
 
     func testCpuSpikeIdScopedByDevice() {
@@ -81,8 +134,10 @@ final class AlertGeneratorTests: XCTestCase {
         let t = Date(timeIntervalSince1970: 1_770_000_000)
         let alertsA = AlertGenerator.generate(device: snap, sessions: [], deviceID: "dev-A", now: t)
         let alertsB = AlertGenerator.generate(device: snap, sessions: [], deviceID: "dev-B", now: t)
+        XCTAssertEqual(alertsA[0]["id"] as? String, "cpu-spike-dev-A")
+        XCTAssertEqual(alertsB[0]["id"] as? String, "cpu-spike-dev-B")
         XCTAssertNotEqual(alertsA[0]["id"] as? String, alertsB[0]["id"] as? String,
-                          "two devices must produce independent cpu-spike ids in the same hour")
+                          "two devices must produce independent cpu-spike ids")
         XCTAssertEqual(alertsA[0]["suppression_key"] as? String, alertsA[0]["id"] as? String)
         XCTAssertEqual(alertsB[0]["grouping_key"] as? String, "Usage Spike:device:dev-B")
     }

@@ -5,6 +5,7 @@ import argparse
 import json
 import logging
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -366,17 +367,37 @@ def daemon(args: argparse.Namespace) -> None:
     local_executor = None
     local_uds_server = None
     local_auth_token: str | None = None
+    local_event_broker = None
+    local_approval_registry = None
     try:
+        from local_approvals import ApprovalRegistry  # type: ignore
+        from local_events import EventBroker  # type: ignore
         from local_executor import LocalExecutor  # type: ignore
+        from local_session_server import default_socket_path  # type: ignore
         from remote_agent import RemoteAgentManager  # type: ignore
         config_for_manager = load_config()
         local_executor = LocalExecutor()
+        # Phase 3 Iter 2B: broker + registry are constructed BEFORE
+        # the manager so the manager can publish session_started /
+        # output_delta on its own initiative. The registry's
+        # `on_event` taps into the broker so approval lifecycle
+        # events show up on subscribed streams without the manager
+        # having to forward them by hand.
+        local_event_broker = EventBroker()
+        local_approval_registry = ApprovalRegistry(
+            on_event=local_event_broker.publish,
+        )
         remote_agent_manager = RemoteAgentManager(
             helper_config=config_for_manager,
             rpc_caller=supabase_rpc,
             executor=local_executor,
+            event_broker=local_event_broker,
+            approval_registry=local_approval_registry,
+            local_helper_socket_path=str(default_socket_path()),
         )
-        logger.info("remote agent manager initialised (executor=on)")
+        logger.info(
+            "remote agent manager initialised (executor=on, broker=on, approvals=on)",
+        )
     except ConfigError:
         # Helper not paired yet — daemon will likely fail in heartbeat
         # too. Don't synthesise a manager; the next iteration's
@@ -471,6 +492,23 @@ def daemon(args: argparse.Namespace) -> None:
                 stop_session=_stop_local,
                 send_input=_send_input_local,
                 list_detected_sessions=_list_detected_local,
+                # Iter 2B: broker drives subscribe_events; registry
+                # backs approve_action / get_pending_approvals plus
+                # the hook-side hook_create_approval / wait_decision
+                # path.
+                event_broker=local_event_broker,
+                approval_registry=local_approval_registry,
+                # Phase 4 helper-bundling: pass the helper's own
+                # entry-point path so `install_claude_hook` UDS
+                # method can write the right command into
+                # `~/.claude/settings.json`. Returns the absolute
+                # path of either the python source (`.py` dev path)
+                # or the PyInstaller frozen binary (`Contents/Helpers/
+                # cli_pulse_helper` in the bundled .app). `sys.argv[0]`
+                # is the conventional way to get this in Python and
+                # PyInstaller exposes the same value, so a single
+                # callable covers both paths.
+                get_helper_argv0=lambda: os.path.abspath(sys.argv[0]),
             )
             local_uds_server.start()
             logger.info(
@@ -589,6 +627,11 @@ def daemon(args: argparse.Namespace) -> None:
                 local_executor.shutdown(wait=True, timeout=5.0)
             except Exception as exc:
                 logger.warning("local executor shutdown failed: %s", exc)
+        if local_event_broker is not None:
+            try:
+                local_event_broker.close()
+            except Exception as exc:
+                logger.warning("local event broker shutdown failed: %s", exc)
     logger.info("daemon stopped")
 
 
@@ -705,6 +748,25 @@ def main() -> None:
     )
     ra_print_parser.set_defaults(func=_remote_approvals_print_hook_cmd)
 
+    # Idempotent merge of the PermissionRequest hook into
+    # ~/.claude/settings.json. Distinct from print-claude-hook-config
+    # (which only echoes the snippet) — install actually mutates the
+    # file. Preserves every other key the user has set, refuses to
+    # overwrite malformed JSON.
+    ra_install_parser = remote_subparsers.add_parser(
+        "install-claude-hook",
+        help="merge the CLI Pulse PermissionRequest hook into ~/.claude/settings.json (idempotent)",
+    )
+    ra_install_parser.add_argument(
+        "--python", default=None,
+        help="python3 interpreter to embed in the hook command (defaults to 'python3')",
+    )
+    ra_install_parser.add_argument(
+        "--settings", default=None,
+        help="override target settings file (default: ~/.claude/settings.json)",
+    )
+    ra_install_parser.set_defaults(func=_remote_approvals_install_hook_cmd)
+
     ra_diagnose_parser = remote_subparsers.add_parser(
         "diagnose-claude-permissions",
         help="diagnose Claude Code permission rules + hook wiring (read-only)",
@@ -792,6 +854,46 @@ def _remote_approvals_print_hook_cmd(args: argparse.Namespace) -> None:
     print("# ~/.claude/settings.json. If that file already has a `hooks`")
     print("# section, MERGE rather than replace — keep your existing hooks.")
     print("# Restart Claude Code after saving so it picks up the change.")
+
+
+def _remote_approvals_install_hook_cmd(args: argparse.Namespace) -> None:
+    """Idempotently merge the CLI Pulse PermissionRequest hook into
+    `~/.claude/settings.json`. Preserves every other key.
+
+    Output the resulting status so the operator (or a calling script
+    like the macOS app's Settings page) can tell which path was
+    taken: `created` / `added` / `replaced` / `noop`.
+    """
+    import permissions_diagnose
+
+    helper_path = Path(__file__).resolve()
+    settings_path: Path | None = None
+    if getattr(args, "settings", None):
+        settings_path = Path(args.settings).expanduser().resolve()
+
+    try:
+        result = permissions_diagnose.install_claude_hook(
+            helper_path=helper_path,
+            settings_path=settings_path,
+            python_path=getattr(args, "python", None),
+        )
+    except ValueError as exc:
+        # Surfaces malformed-JSON / non-object-root cases with a
+        # readable explanation rather than a Python traceback.
+        print(f"install-claude-hook: error: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+    print(f"settings_path: {result['settings_path']}")
+    print(f"action:        {result['action']}")
+    if result.get("previous_command") is not None and result["action"] != "noop":
+        print(f"previous:      {result['previous_command']}")
+    print(f"new_command:   {result['new_command']}")
+    if result["action"] == "noop":
+        print()
+        print("# Hook already wired correctly. Nothing to do.")
+    else:
+        print()
+        print("# Restart Claude Code so it picks up the new hook entry.")
 
 
 def _remote_approvals_diagnose_cmd(args: argparse.Namespace) -> None:

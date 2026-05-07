@@ -348,6 +348,20 @@ public final class AppState: ObservableObject {
     /// is in effect (iter 1: start / list / stop only).
     @Published public var localCapabilities: SessionControlCapabilities?
 
+    /// Phase 4 helper-bundling: status of the embedded LaunchAgent.
+    /// Drives the Settings → Helper status surface so users can see
+    /// whether the embedded helper is running (`.registered`),
+    /// missing (`.bundledBinaryMissing` — dev build before Run
+    /// Script phase), or in error. Live-updated by
+    /// `ensureHelperAgentRegistered()` on app launch.
+    @Published public var helperAgentStatus: HelperLifecycleManager.Status = .notRegistered
+
+    /// Lifecycle manager for the embedded `cli_pulse_helper`
+    /// LaunchAgent. Held as an `actor` so registration / unregistration
+    /// can be invoked safely from any thread without races on the
+    /// SMAppService API.
+    public let helperLifecycle = HelperLifecycleManager()
+
     /// Helper protocol version reported by `hello`. Pinned at 1 by
     /// the iter-1 server; iter 2A may bump it.
     @Published public var localProtocolVersion: Int = 0
@@ -385,6 +399,55 @@ public final class AppState: ObservableObject {
     /// Cleared to nil on logout / sign-out, otherwise refreshed
     /// every tick the Sessions tab is on screen.
     @Published public var localDiagnostics: LocalSessionControlClient.Diagnostics?
+
+    /// PR #18 follow-up — most recent `~/.claude/settings.json` hook
+    /// wiring status. The Sessions tab uses this to show a banner
+    /// when the helper advertises `capabilities.approvals = true`
+    /// but Claude itself isn't routing PermissionRequest events to
+    /// the helper. Without that wiring, Claude shows its native
+    /// PTY prompt and the structured Approve/Reject controls in
+    /// CLI Pulse never light up — exactly the diagnosis the
+    /// previous manual test surfaced.
+    ///
+    /// Refreshed each `.task` tick of SessionsTab and on
+    /// `refreshLocalSessionControlState`. `nil` while we haven't
+    /// checked yet (suppresses banner during cold launch).
+    @Published public var claudeApprovalHookStatus: ClaudeHookDetector.Status?
+
+    // MARK: - Local Session Control (Phase 3 Iter 2B, macOS-only)
+
+    /// Iter 2B: structured pending approvals per managed session,
+    /// keyed by session id. Populated from `subscribe_events`
+    /// approval_requested frames AND from `get_pending_approvals`
+    /// snapshots (the latter is the recovery path after a stream
+    /// reconnect or app launch).
+    ///
+    /// **The Approve / Reject controls in SessionsTab MUST be gated
+    /// on `localPendingApprovals[sessionId]?.isEmpty == false`.**
+    /// This is the only correct way to determine whether a session
+    /// has an outstanding approval — never infer from PTY output
+    /// text.
+    @Published public var localPendingApprovals: [String: [PendingApproval]] = [:]
+
+    /// Iter 2B: rolling output preview per session, fed by
+    /// `output_delta` events on the live stream. The macOS
+    /// expanded-row view tails this string. Capped at
+    /// `localOutputPreviewCap` chars per session so a chatty
+    /// Claude session can't grow app memory unbounded.
+    @Published public var localOutputPreview: [String: String] = [:]
+
+    /// Per-session preview buffer cap. ~32 KB per session is plenty
+    /// for the last few seconds of tail output without becoming a
+    /// memory hog. The user reads this to decide when to send the
+    /// next prompt; stale tail bytes don't add value.
+    public static let localOutputPreviewCap: Int = 32 * 1024
+
+    /// In-flight `subscribe_events` Tasks keyed by session id.
+    /// `subscribeToLocalEvents(sessionId:)` populates this; the
+    /// matching `unsubscribeFromLocalEvents` cancels the Task.
+    /// Internal because the UI binds via @Published — only AppState
+    /// itself reads/writes this map.
+    internal var localEventTasks: [String: Task<Void, Never>] = [:]
     #endif
 
     /// Aggregated per-provider summaries over the currently-selected range.
@@ -518,6 +581,20 @@ public final class AppState: ObservableObject {
             }
             await restoreSession()
         }
+
+        // Phase 4 helper-bundling: kick the LaunchAgent registration
+        // off on launch. SMAppService.register is idempotent and
+        // doesn't show user UI for LaunchAgents (only LoginItems do),
+        // so calling on every launch is safe. The status updates
+        // back onto MainActor so the Settings → Helper panel sees
+        // the new value without a manual refresh.
+        Task { [weak self] in
+            guard let self else { return }
+            let status = await self.helperLifecycle.ensureRegistered()
+            await MainActor.run {
+                self.helperAgentStatus = status
+            }
+        }
     }
 
     // MARK: - Menu Bar
@@ -585,7 +662,15 @@ public final class AppState: ObservableObject {
             if maxProviders >= 0 {
                 let currentEnabled = providerConfigs.filter(\.isEnabled).count
                 if currentEnabled >= maxProviders {
-                    tierLimitWarning = "Your \(subscriptionManager.currentTier.rawValue) plan allows up to \(maxProviders) providers. Upgrade to enable more."
+                    // Same "CLI Pulse" disambiguation as the periodic
+                    // tier-limit banner — see DataRefreshManager
+                    // .tierLimitWarning. Use the localized display
+                    // name ("Free", "Pro", "Team") rather than the
+                    // lowercase enum rawValue ("free"/"pro"/"team").
+                    let tierLabel = subscriptionManager.tierName(
+                        for: subscriptionManager.currentTier
+                    )
+                    tierLimitWarning = "Your CLI Pulse \(tierLabel) plan allows up to \(maxProviders) providers. Upgrade to enable more."
                     return
                 }
             }

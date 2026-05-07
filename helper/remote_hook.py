@@ -242,6 +242,41 @@ def _run_hook_inner(
 
     sleep = sleep_fn or time.sleep
 
+    # Phase 3 Iter 2B local-first fast path. When the helper spawned this
+    # Claude session, it set three env vars on the child:
+    #
+    #   CLI_PULSE_LOCAL_HELPER_SOCK  — UDS socket path
+    #   CLI_PULSE_LOCAL_SESSION_ID   — managed session UUID
+    #   CLI_PULSE_LOCAL_HOOK_TOKEN   — per-session capability token
+    #
+    # If all three are set we try the local UDS approval path before
+    # touching Supabase. The function returns one of:
+    #
+    #   AdapterDecision  — user approved or rejected; emit it.
+    #   "local_fallback" — local pending row was created (user saw it
+    #                      on the macOS app) but the wait timed out /
+    #                      expired / cancelled / mid-flow connection
+    #                      drop. We MUST NOT fall through to Supabase
+    #                      here — that would create a duplicate
+    #                      pending approval on iPhone after the user
+    #                      already saw the local one. Emit the local
+    #                      fallback so Claude prompts again.
+    #   None             — local helper never accepted the request
+    #                      (helper down, gate off, capability rejected,
+    #                      session not registered). Local path was
+    #                      never started → fall through to Supabase
+    #                      remote-approval flow as before.
+    local_outcome = _try_local_uds_hook(parsed, adapter)
+    if isinstance(local_outcome, str) and local_outcome == _LOCAL_FALLBACK_SENTINEL:
+        _emit(adapter.emit_local_fallback(
+            parsed,
+            "Local approval did not resolve — please retry locally",
+        ))
+        return 0
+    if local_outcome is not None:
+        _emit(adapter.emit_hook_output(local_outcome, parsed))
+        return 0
+
     try:
         rpc_caller(
             "remote_helper_create_permission_request",
@@ -371,6 +406,211 @@ def _resolve_managed_session_id(raw_session_id: str) -> str | None:
         if validated:
             return validated
     return _coerce_uuid(raw_session_id)
+
+
+# ── local UDS fast path ──────────────────────────────────
+
+
+# Env var names that wire the local approval surface. Mirrors the
+# constants RemoteAgentManager._build_env emits — keep in sync. Read
+# at request time so tests can monkeypatch via os.environ.
+_LOCAL_SOCK_ENV = "CLI_PULSE_LOCAL_HELPER_SOCK"
+_LOCAL_SESSION_ENV = "CLI_PULSE_LOCAL_SESSION_ID"
+_LOCAL_TOKEN_ENV = "CLI_PULSE_LOCAL_HOOK_TOKEN"
+
+# Hard caps mirroring local_session_server.MAX_PAYLOAD / framing.
+_UDS_LENGTH_PREFIX = 4
+_UDS_MAX_PAYLOAD = 1 << 20
+
+# Connect / wait timeouts. Connect is short (helper is local); wait
+# matches the hook's overall budget plus a small slack.
+_UDS_CONNECT_TIMEOUT_S = 1.5
+_UDS_REPLY_TIMEOUT_S = 5.0
+
+# Sentinel returned by `_try_local_uds_hook` when the helper accepted
+# the request (a pending row exists / existed) but the wait did not
+# resolve to approve / reject. The caller emits a local fallback
+# rather than falling through to Supabase, so we never end up with
+# both a local AND a remote pending row for the same Claude tool call.
+_LOCAL_FALLBACK_SENTINEL = "local_fallback"
+
+
+def _try_local_uds_hook(parsed: Any, adapter: Any) -> Any | None:
+    """Attempt to resolve this hook invocation through the same-Mac
+    UDS approval surface. Return values:
+
+      AdapterDecision           — user approved or rejected.
+      _LOCAL_FALLBACK_SENTINEL  — pending row was created; wait did
+                                  not resolve to a user decision
+                                  (timed out, expired, cancelled,
+                                  mid-flow connection drop). Caller
+                                  emits adapter.emit_local_fallback
+                                  rather than falling through to
+                                  Supabase, so we never duplicate the
+                                  pending row.
+      None                      — pending row was NEVER created on
+                                  this helper. Caller may fall through
+                                  to the existing Supabase remote
+                                  approval path.
+    """
+    sock_path = os.environ.get(_LOCAL_SOCK_ENV) or ""
+    session_id = os.environ.get(_LOCAL_SESSION_ENV) or ""
+    session_token = os.environ.get(_LOCAL_TOKEN_ENV) or ""
+    if not sock_path or not session_id or not session_token:
+        return None
+
+    # Lazy imports — keep run_hook's existing import-time surface tiny
+    # so a corrupt local module doesn't break Supabase fallback.
+    import socket
+    import struct
+
+    from provider_adapters.base import AdapterDecision
+
+    if not os.path.exists(sock_path):
+        logger.debug("local UDS hook: socket %s missing", sock_path)
+        return None
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    except OSError as exc:
+        logger.debug("local UDS hook: socket() failed: %s", exc)
+        return None
+    s.settimeout(_UDS_CONNECT_TIMEOUT_S)
+    try:
+        try:
+            s.connect(sock_path)
+        except OSError as exc:
+            logger.debug("local UDS hook: connect failed: %s", exc)
+            return None
+        s.settimeout(_UDS_REPLY_TIMEOUT_S)
+
+        def send_recv(envelope: dict[str, Any], timeout: float) -> dict[str, Any] | None:
+            body = json.dumps(envelope).encode("utf-8")
+            if len(body) > _UDS_MAX_PAYLOAD:
+                return None
+            try:
+                s.sendall(struct.pack("!I", len(body)) + body)
+            except OSError as exc:
+                logger.debug("local UDS hook: send failed: %s", exc)
+                return None
+            s.settimeout(timeout)
+            header = _recv_exact(s, _UDS_LENGTH_PREFIX)
+            if header is None:
+                return None
+            (length,) = struct.unpack("!I", header)
+            if length == 0 or length > _UDS_MAX_PAYLOAD:
+                return None
+            payload = _recv_exact(s, length)
+            if payload is None:
+                return None
+            try:
+                return json.loads(payload.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                logger.debug("local UDS hook: bad reply json: %s", exc)
+                return None
+
+        # 1. hook_create_approval — registers the request and returns
+        #    the helper-issued approval_id. Tool metadata reuses the
+        #    redacted payload the parser already produced; no raw
+        #    inputs ever cross this boundary.
+        meta = dict(getattr(parsed, "payload", {}) or {})
+        meta.setdefault("provider", getattr(parsed, "provider", "claude"))
+        meta.setdefault("risk", getattr(parsed, "risk", "low"))
+        if getattr(parsed, "cwd_basename", ""):
+            meta.setdefault("cwd_basename", parsed.cwd_basename)
+        create_envelope = {
+            "id": str(uuid.uuid4()),
+            "method": "hook_create_approval",
+            "params": {
+                "session_id": session_id,
+                "session_token": session_token,
+                "type": getattr(parsed, "tool_name", None) or "PermissionRequest",
+                "title": getattr(parsed, "tool_name", None) or "PermissionRequest",
+                "summary": getattr(parsed, "summary", "") or "",
+                "tool_metadata": meta,
+                "timeout_s": 60.0,
+            },
+        }
+        create_reply = send_recv(create_envelope, _UDS_REPLY_TIMEOUT_S)
+        if not isinstance(create_reply, dict) or not create_reply.get("ok"):
+            if isinstance(create_reply, dict):
+                err = create_reply.get("error") or {}
+                logger.info(
+                    "local UDS hook: create rejected code=%s",
+                    (err.get("code") if isinstance(err, dict) else None),
+                )
+            return None
+        approval_id = (
+            (create_reply.get("result") or {}).get("approval_id")
+            if isinstance(create_reply.get("result"), dict)
+            else None
+        )
+        if not isinstance(approval_id, str) or not approval_id:
+            return None
+
+        # 2. hook_wait_decision — blocks until the user (or a TTL)
+        #    resolves the approval. timeout aligns with the typical
+        #    Claude tool-call grace (60 s) plus a connection slack.
+        #
+        #    POINT OF NO RETURN: at this stage a pending row exists in
+        #    the helper's registry (and the macOS app may have already
+        #    rendered it). Any non-approve / non-reject outcome from
+        #    here on returns the local-fallback sentinel rather than
+        #    None, so the hook never falls through to Supabase and
+        #    creates a duplicate pending request on the iPhone.
+        wait_envelope = {
+            "id": str(uuid.uuid4()),
+            "method": "hook_wait_decision",
+            "params": {
+                "session_id": session_id,
+                "session_token": session_token,
+                "approval_id": approval_id,
+                "timeout_s": 60.0,
+            },
+        }
+        wait_reply = send_recv(wait_envelope, 70.0)
+        if not isinstance(wait_reply, dict) or not wait_reply.get("ok"):
+            # Mid-flow connection drop or helper-side error AFTER
+            # the row was created. Local helper still owns the
+            # decision; emit local fallback so Claude re-prompts.
+            return _LOCAL_FALLBACK_SENTINEL
+        result = wait_reply.get("result")
+        if not isinstance(result, dict):
+            return _LOCAL_FALLBACK_SENTINEL
+        if result.get("timed_out"):
+            return _LOCAL_FALLBACK_SENTINEL
+        status = result.get("status")
+        if status == "approved":
+            return AdapterDecision(decision="approve", scope="once", reason="")
+        if status == "rejected":
+            return AdapterDecision(decision="deny", scope="once", reason="")
+        # `expired` / `cancelled` — the helper already detached the
+        # row; we still don't escalate to Supabase.
+        return _LOCAL_FALLBACK_SENTINEL
+    finally:
+        try:
+            s.close()
+        except OSError:
+            pass
+
+
+def _recv_exact(s: Any, n: int) -> bytes | None:
+    """Read exactly n bytes from the UDS socket. Returns the bytes or
+    None on EOF / short read. Used by the local-UDS fast path; same
+    semantics as `local_session_server._recv_exact` but inlined here
+    so the hook doesn't import the server module.
+    """
+    if n <= 0:
+        return b""
+    buf = bytearray()
+    while len(buf) < n:
+        try:
+            chunk = s.recv(n - len(buf))
+        except OSError:
+            return None
+        if not chunk:
+            return None
+        buf.extend(chunk)
+    return bytes(buf)
 
 
 def main(argv: list[str] | None = None) -> int:

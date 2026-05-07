@@ -38,6 +38,8 @@ We surface these in `diagnose_permissions(...)` as labelled findings.
 from __future__ import annotations
 
 import json
+import os
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -486,17 +488,351 @@ def recommended_hook_config_snippet(helper_path: Path, python_path: str | None =
     `helper_path` should be the absolute path to cli_pulse_helper.py.
     `python_path` defaults to whatever the user's python3 is on PATH;
     callers can pass a specific interpreter if they want.
+
+    Schema: each PermissionRequest entry is a matcher object with
+    a nested `hooks` array (per Claude Code's current contract,
+    surfaced by `claude /doctor`). The flat
+    `[{"type":"command","command":"..."}]` shape used by older
+    docs is rejected at runtime — Claude Code logs
+    `hooks.PermissionRequest.0.hooks: Expected array, but
+    received undefined` and silently never invokes the hook.
+    Empty matcher matches every tool name.
     """
-    py = python_path or "python3"
-    cmd = f"{py} {helper_path} remote-approval-hook --provider claude"
+    cmd = recommended_hook_command(helper_path=helper_path, python_path=python_path)
     snippet = {
         "hooks": {
             "PermissionRequest": [
-                {
-                    "type": "command",
-                    "command": cmd,
-                }
+                _cli_pulse_hook_entry(cmd)
             ]
         }
     }
     return json.dumps(snippet, indent=2)
+
+
+def _cli_pulse_hook_entry(command: str) -> dict[str, Any]:
+    """Build the matcher-shape hook entry for `~/.claude/settings.json`.
+
+    Single source of truth used by both
+    `recommended_hook_config_snippet` (print path) and
+    `install_claude_hook` (merge path) so the two can never drift
+    on schema details.
+    """
+    return {
+        "matcher": "",
+        "hooks": [
+            {"type": "command", "command": command}
+        ],
+    }
+
+
+def recommended_hook_command(helper_path: Path, python_path: str | None = None) -> str:
+    """Return JUST the `command` string the helper installs as a Claude
+    Code PermissionRequest hook. Used by both
+    `recommended_hook_config_snippet` (for the print path) and
+    `install_claude_hook` (for the merge path) so the two surfaces
+    can never drift.
+
+    Both `python_path` and `helper_path` are run through
+    `shlex.quote` because Claude Code shell-parses the command
+    string. Without quoting, a helper checkout living under a path
+    with spaces (e.g. `~/Documents/cli pulse/helper/cli_pulse_helper.py`,
+    which is the dev layout in this repo) would be split by the
+    shell into multiple argv entries — Python would then try to
+    run a non-existent path and the hook would silently fail.
+
+    The unquoted form was a real bug Codex caught after the
+    initial Stage 1 commit. Pinned by
+    `test_install_claude_hook_quotes_paths_with_spaces`.
+    """
+    py = shlex.quote(python_path or "python3")
+    helper = shlex.quote(str(helper_path))
+    return f"{py} {helper} remote-approval-hook --provider claude"
+
+
+def install_claude_hook(
+    helper_path: Path,
+    *,
+    settings_path: Path | None = None,
+    python_path: str | None = None,
+) -> dict[str, object]:
+    """Idempotently merge the CLI Pulse PermissionRequest hook into
+    `~/.claude/settings.json`, preserving every other key the user
+    has set.
+
+    Behaviour:
+
+      - if the file is missing or empty → write a minimal settings
+        object containing just `hooks.PermissionRequest` with our
+        command.
+      - if the file is parse-broken JSON → raise `ValueError` (do
+        NOT clobber the user's data; the operator must fix the file
+        manually).
+      - if the file already contains `hooks.PermissionRequest` with
+        an entry whose `.command` resolves to our helper script →
+        no-op (idempotent).
+      - if the file contains `hooks.PermissionRequest` with OTHER
+        entries → append our entry (do not remove the user's other
+        hooks); this is documented as the unsupported case in the
+        original print-snippet flow but is the safe default here.
+      - otherwise create the missing keys and add our entry.
+
+    Returns a small status dict the CLI command renders for the user:
+    `{"settings_path", "action", "previous_command", "new_command"}`.
+    `action` is one of `"created" | "added" | "noop" | "replaced"`.
+    """
+    settings = settings_path or (Path.home() / ".claude" / "settings.json")
+    target_command = recommended_hook_command(
+        helper_path=helper_path, python_path=python_path,
+    )
+
+    # Load existing data if any.
+    if settings.exists() and settings.stat().st_size > 0:
+        try:
+            raw = settings.read_text(encoding="utf-8")
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"refusing to overwrite malformed JSON at {settings}: {exc.msg}. "
+                "Please fix the file by hand and rerun this command."
+            ) from exc
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"refusing to overwrite non-object JSON at {settings} "
+                f"(got {type(data).__name__}). The file must be a JSON object."
+            )
+    else:
+        data = {}
+
+    # Locate / create hooks.PermissionRequest.
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        hooks = {}
+    pr = hooks.get("PermissionRequest")
+    if not isinstance(pr, list):
+        pr = []
+
+    # Detect existing CLI Pulse hook entries. The marker
+    # `remote-approval-hook --provider claude` is unique to this
+    # codebase — no other Claude PermissionRequest hook would use
+    # both that subcommand AND that argument shape, so matching on
+    # this string alone is specific enough without false positives.
+    #
+    # We probe BOTH schema shapes AND check matcher canonicality:
+    #
+    #   - **Current canonical (matcher: "" + nested hooks)**: each
+    #     PermissionRequest entry is `{"matcher": "", "hooks":
+    #     [{"type":"command","command":"..."}]}`. The empty-string
+    #     matcher means "fire on every PermissionRequest" — this is
+    #     the only shape that lets CLI Pulse intercept ALL tool
+    #     permission prompts (Bash + Read + Write + …). Anything
+    #     else is non-canonical even if the inner command matches
+    #     our marker.
+    #   - **Narrower matcher (matcher: "Bash" / "Read" / etc.)**:
+    #     same nested-hooks structure but the matcher would only
+    #     fire for one tool family, so the rest of the structured
+    #     approval routing stays broken. Codex iter6 finding: this
+    #     must be reported as `replaced`, NOT `noop`, even when the
+    #     inner command matches.
+    #   - **Legacy flat (no matcher, top-level command)**: each
+    #     entry is `{"type":"command","command":"..."}`. Older
+    #     versions of this codebase wrote this shape; Claude Code's
+    #     current `/doctor` rejects it as malformed (
+    #     `hooks.PermissionRequest.0.hooks: Expected array, but
+    #     received undefined`). Auto-heal lifts these into the
+    #     canonical matcher shape.
+    helper_marker = "remote-approval-hook --provider claude"
+
+    def _hook_has_marker(h: object) -> bool:
+        return (
+            isinstance(h, dict)
+            and isinstance(h.get("command"), str)
+            and helper_marker in h["command"]
+        )
+
+    def _is_cli_pulse_legacy_entry(entry: object) -> bool:
+        """Legacy flat shape: top-level `command` field, no nested
+        `hooks` array. The whole entry IS our hook (no other hooks
+        can be co-resident in this shape).
+        """
+        return (
+            isinstance(entry, dict)
+            and not isinstance(entry.get("hooks"), list)
+            and isinstance(entry.get("command"), str)
+            and helper_marker in entry["command"]
+        )
+
+    def _matcher_entry_has_our_hook(entry: object) -> bool:
+        """Matcher-shape entry whose nested `hooks` array contains
+        our marker. The entry MAY also contain other (non-CLI-Pulse)
+        nested hooks — the mixed-entry preservation path below
+        surgically removes only our nested hook in that case.
+        """
+        if not isinstance(entry, dict):
+            return False
+        nested = entry.get("hooks")
+        if not isinstance(nested, list):
+            return False
+        return any(_hook_has_marker(h) for h in nested)
+
+    def _is_canonical_matcher(entry: object) -> bool:
+        """Match-all matcher: exactly the empty string `""`.
+        Missing key, `None`, or any non-empty value (`"Bash"`,
+        `"Read"`, regex-like strings, etc.) is non-canonical —
+        Codex iter6: those would only fire for a subset of
+        PermissionRequests and silently break structured approvals
+        for the rest, so installer must replace and detector must
+        report .notWired.
+        """
+        return isinstance(entry, dict) and entry.get("matcher") == ""
+
+    def _is_canonical_pure_cli_pulse_entry(entry: object) -> bool:
+        """Entry that is EXACTLY our canonical shape: matcher="",
+        hooks=[<single CLI Pulse hook>]. Used for the noop-eligibility
+        check — anything richer (extra nested hooks, narrower
+        matcher) needs auto-heal.
+        """
+        if not _is_canonical_matcher(entry):
+            return False
+        nested = entry.get("hooks")
+        if not isinstance(nested, list) or len(nested) != 1:
+            return False
+        return _hook_has_marker(nested[0])
+
+    def _entry_command(entry: object) -> str | None:
+        """Pull the helper command string out of either schema shape."""
+        if _is_cli_pulse_legacy_entry(entry):
+            return entry["command"]
+        if _matcher_entry_has_our_hook(entry):
+            for h in entry["hooks"]:
+                if _hook_has_marker(h):
+                    return h["command"]
+        return None
+
+    # First-pass scan: count how many entries touch our marker
+    # (in either schema shape) and find the previous command (for
+    # the status-dict response).
+    cli_pulse_touched_count = sum(
+        1 for entry in pr
+        if _is_cli_pulse_legacy_entry(entry) or _matcher_entry_has_our_hook(entry)
+    )
+    previous_command: str | None = None
+    for entry in pr:
+        cmd = _entry_command(entry)
+        if cmd is not None:
+            previous_command = cmd
+            break
+
+    # Noop ONLY when the array contains exactly one CLI-Pulse-related
+    # entry AND that entry is the canonical pure shape with the
+    # exact target command. Anything else (narrower matcher, legacy
+    # shape, mixed nested hooks, duplicate entries, stale command)
+    # routes through the auto-heal rebuild path below.
+    canonical_pure_indices = [
+        i for i, entry in enumerate(pr)
+        if _is_canonical_pure_cli_pulse_entry(entry)
+        and entry["hooks"][0]["command"] == target_command
+    ]
+    is_noop = (
+        cli_pulse_touched_count == 1
+        and len(canonical_pure_indices) == 1
+    )
+
+    had_unrelated_entries = any(
+        not (_is_cli_pulse_legacy_entry(entry) or _matcher_entry_has_our_hook(entry))
+        for entry in pr
+    )
+
+    if is_noop:
+        action = "noop"
+    else:
+        # Auto-heal rebuild path. Three guarantees:
+        #   1. **Drop legacy flat entries** — they have no nested
+        #      hooks list, the entire entry IS our hook, no user
+        #      data to preserve.
+        #   2. **Surgically remove our nested hook from mixed
+        #      matcher entries** — Codex iter6 finding: if the user
+        #      put another hook (e.g. an audit hook) in the SAME
+        #      matcher entry's nested hooks array as ours, replacing
+        #      the whole entry would silently delete their hook.
+        #      Instead we filter the nested array to exclude only
+        #      the marker-matching entries; if the cleaned array is
+        #      empty, the parent entry had nothing else and we drop
+        #      it; if non-empty, we preserve the parent entry with
+        #      the cleaned nested array (matcher key + any other
+        #      sibling keys preserved verbatim).
+        #   3. **Append exactly one canonical CLI Pulse entry** at
+        #      the end so detection lights up as `.wired` on the
+        #      next read.
+        new_pr: list[Any] = []
+        for entry in pr:
+            if _is_cli_pulse_legacy_entry(entry):
+                continue
+            if _matcher_entry_has_our_hook(entry):
+                cleaned_nested = [
+                    h for h in entry["hooks"] if not _hook_has_marker(h)
+                ]
+                if not cleaned_nested:
+                    # Whole nested array was CLI Pulse — drop entry.
+                    continue
+                # Mixed entry: preserve every key except `hooks`,
+                # which we replace with the cleaned (CLI-Pulse-free)
+                # array. `dict(entry)` shallow-copies so we don't
+                # mutate the caller's data.
+                preserved = dict(entry)
+                preserved["hooks"] = cleaned_nested
+                new_pr.append(preserved)
+            else:
+                # Entry doesn't touch our marker — leave verbatim.
+                new_pr.append(entry)
+        new_pr.append(_cli_pulse_hook_entry(target_command))
+        pr = new_pr
+
+        if previous_command is not None:
+            # Pre-existing CLI Pulse hook found in non-canonical
+            # form — covers narrower matcher, legacy flat schema,
+            # mixed nested, stale command, duplicate entries.
+            action = "replaced"
+        elif had_unrelated_entries or data:
+            # Existing settings file with other content but no
+            # CLI Pulse hook yet — we added alongside.
+            action = "added"
+        else:
+            action = "created"
+
+    hooks["PermissionRequest"] = pr
+    data["hooks"] = hooks
+
+    if action != "noop":
+        # Atomic write — temp file in same dir, then rename.
+        # Mode handling (P2 fix from Codex review on 7528084):
+        # preserve the existing file's mode if it was already on
+        # disk (a 0600 settings.json must NOT be widened to 0644
+        # by our install). New files default to 0600 — settings
+        # often contain machine-readable hook commands referencing
+        # paths under $HOME, and on multi-user systems the
+        # safer default is owner-only.
+        mode_to_set = 0o600
+        try:
+            existing_stat = settings.stat()
+            mode_to_set = existing_stat.st_mode & 0o777
+        except FileNotFoundError:
+            pass
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        tmp = settings.with_suffix(settings.suffix + ".tmp")
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        os.chmod(tmp, mode_to_set)
+        tmp.replace(settings)
+        # `replace` may preserve the destination's mode on some
+        # POSIX implementations (it's syscall-level rename, but
+        # mode is on the inode being-replaced, not the new one).
+        # Re-chmod the final path to be defensive — same
+        # idempotent-mode pattern `local_auth_token.rotate_token`
+        # uses for the same reason.
+        os.chmod(settings, mode_to_set)
+
+    return {
+        "settings_path": str(settings),
+        "action": action,
+        "previous_command": previous_command,
+        "new_command": target_command,
+    }

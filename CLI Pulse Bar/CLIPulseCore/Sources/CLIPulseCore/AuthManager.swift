@@ -155,11 +155,9 @@ extension AppState {
         lastError = nil
         do {
             let session = try await authManager.verifyOTP(email: otpEmail, code: code)
-            applyAuthenticatedState(session)
             otpSent = false
             otpEmail = ""
-            startRefreshLoop()
-            await refreshAll()
+            await completeAuthenticatedSignIn(session)
         } catch {
             lastError = error.localizedDescription
         }
@@ -171,9 +169,7 @@ extension AppState {
         lastError = nil
         do {
             let session = try await authManager.signInWithPassword(email: email, password: password)
-            applyAuthenticatedState(session)
-            startRefreshLoop()
-            await refreshAll()
+            await completeAuthenticatedSignIn(session)
         } catch {
             lastError = error.localizedDescription
         }
@@ -197,9 +193,7 @@ extension AppState {
                 fullName: fullName,
                 email: email
             )
-            applyAuthenticatedState(session)
-            startRefreshLoop()
-            await refreshAll()
+            await completeAuthenticatedSignIn(session)
         } catch {
             lastError = error.localizedDescription
         }
@@ -212,9 +206,7 @@ extension AppState {
         lastError = nil
         do {
             let session = try await authManager.signInWithGoogle(idToken: idToken, name: name, email: email)
-            applyAuthenticatedState(session)
-            startRefreshLoop()
-            await refreshAll()
+            await completeAuthenticatedSignIn(session)
         } catch {
             lastError = error.localizedDescription
         }
@@ -227,13 +219,50 @@ extension AppState {
         lastError = nil
         do {
             let authState = try await authManager.exchangeOAuthCode(code: code, codeVerifier: codeVerifier)
-            applyAuthenticatedState(authState)
-            startRefreshLoop()
-            await refreshAll()
+            await completeAuthenticatedSignIn(authState)
         } catch {
             lastError = error.localizedDescription
         }
         isLoading = false
+    }
+
+    /// Single ordered post-authentication setup helper. All active
+    /// sign-in paths (verifyOTP, signInWithPassword, signInWithApple,
+    /// signInWithGoogle, exchangeOAuthCode) plus the cold-launch
+    /// `restoreSession()` route through here so the order
+    ///   applyAuthenticatedState → updateCurrentEntitlements →
+    ///   migrateProviderLimitsIfNeeded → startRefreshLoop → refreshAll
+    /// is enforced exactly once per flow.
+    ///
+    /// **Why the explicit `await` on `updateCurrentEntitlements`:**
+    /// `SubscriptionManager.shared` is a singleton. Its `init` schedules
+    /// `Task { await updateCurrentEntitlements() }` the first time it's
+    /// touched, which can race the app's `apiClient` wiring done in
+    /// `AppState.init`. If the first tick fires before `apiClient` is
+    /// assigned, both the JWS-validation path and the server-tier
+    /// fallback bail out without an authoritative answer. Pre-this fix
+    /// every active sign-in path skipped this `await` (only
+    /// `restoreSession` had it), so `refreshAll()` evaluated
+    /// `tierLimitWarning(...)` against the stale default `.free` →
+    /// Pro-entitled accounts saw "Over CLI Pulse free plan limits" on
+    /// every active login. Routing every flow through this helper
+    /// closes the race in one place.
+    ///
+    /// Also: `migrateProviderLimitsIfNeeded()` runs AFTER the
+    /// entitlement refresh because the migration's gate compares
+    /// `activeProviderCount` against `subscriptionManager.maxProviders`
+    /// — running it on a stale `.free` would prune the user's
+    /// providers prematurely.
+    @MainActor
+    private func completeAuthenticatedSignIn(_ session: AuthSessionState) async {
+        applyAuthenticatedState(session)
+        // Tier resolution must complete BEFORE the refresh loop kicks
+        // off any tierLimitWarning evaluation. Do not start the loop
+        // first — its first tick can race the await below.
+        await subscriptionManager.updateCurrentEntitlements()
+        migrateProviderLimitsIfNeeded()
+        startRefreshLoop()
+        await refreshAll()
     }
 
     /// Build an OAuth URL for a given provider (PKCE flow).
@@ -472,15 +501,11 @@ extension AppState {
             enterDemoMode()
         case .restored(let session):
             isLoading = true
-            applyAuthenticatedState(session)
-            serverOnline = true
+            // Reuse the same post-auth helper the active sign-in paths
+            // use so the ordering invariant lives in one place. See
+            // `completeAuthenticatedSignIn` for the full rationale.
+            await completeAuthenticatedSignIn(session)
             isLoading = false
-            await subscriptionManager.updateCurrentEntitlements()
-            // Tier is now known — safe to run the one-shot free-tier provider
-            // migration. See `migrateProviderLimitsIfNeeded` for ranking logic.
-            migrateProviderLimitsIfNeeded()
-            startRefreshLoop()
-            await refreshAll()
         case .unavailable:
             // iter19 (2026-04-29): pre-iter19 this was just `break`,
             // which left the AppState init's default

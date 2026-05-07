@@ -50,6 +50,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from local_approvals import ApprovalRegistry
+from local_events import EventBroker
 from local_executor import LocalExecutor
 from redaction import redact
 from transports import SessionHandle, SessionTransport, TransportError
@@ -182,6 +184,9 @@ class RemoteAgentManager:
         rpc_caller: Callable[..., Any],
         transport: SessionTransport | None = None,
         executor: LocalExecutor | None = None,
+        event_broker: EventBroker | None = None,
+        approval_registry: ApprovalRegistry | None = None,
+        local_helper_socket_path: str | None = None,
     ) -> None:
         self.helper_config = helper_config
         self.rpc_caller = rpc_caller
@@ -197,6 +202,15 @@ class RemoteAgentManager:
         # None (existing tests, ad-hoc callers), the methods run
         # inline and behave exactly as they did before.
         self._executor = executor
+        # Phase 3 Iter 2B: optional broker / registry for the local
+        # streaming + approval surface. Both default to None so
+        # existing tests construct managers without ceremony; when
+        # supplied, the manager publishes session lifecycle + PTY
+        # output to the broker and registers per-session capability
+        # tokens for hook-driven approvals.
+        self._event_broker = event_broker
+        self._approval_registry = approval_registry
+        self._local_helper_socket_path = local_helper_socket_path
 
     @staticmethod
     def _default_transport() -> SessionTransport:
@@ -248,7 +262,24 @@ class RemoteAgentManager:
             )
             return False
 
-        env = self._build_env(params)
+        # Phase 3 Iter 2B: register the session in the approval registry
+        # BEFORE spawn so the env we pass to the child carries a valid
+        # capability token. PID is unknown at this point — we update it
+        # below once Popen returns.
+        capability_token: str | None = None
+        if self._approval_registry is not None:
+            try:
+                capability_token = self._approval_registry.register_session(
+                    params.session_id, claude_pid=None,
+                )
+            except Exception as exc:  # noqa: BLE001 — registry is best-effort
+                logger.warning(
+                    "approval registry register_session(%s) failed: %s",
+                    params.session_id, exc,
+                )
+                capability_token = None
+
+        env = self._build_env(params, capability_token=capability_token)
         cwd = params.cwd or None  # POSIX transport interprets None as inherit
 
         try:
@@ -267,6 +298,13 @@ class RemoteAgentManager:
                 "spawn_session(%s): transport.start raised: %s",
                 params.session_id, exc,
             )
+            # Drop the registry slot so a stale capability token doesn't
+            # outlive the failed spawn — there's no PTY to defend now.
+            if self._approval_registry is not None:
+                try:
+                    self._approval_registry.unregister_session(params.session_id)
+                except Exception:
+                    pass
             self._post_status(params.session_id, "errored")
             self._post_info(
                 params.session_id, f"spawn failed: {exc}"
@@ -276,6 +314,33 @@ class RemoteAgentManager:
         self._sessions[params.session_id] = _ManagedSession(
             params=params, handle=handle, spawned_at=time.monotonic(),
         )
+        # Update the registry's recorded Claude PID so descent
+        # verification on hook ingress can compare against it.
+        if self._approval_registry is not None:
+            child_pid = self._extract_pid(handle)
+            if child_pid is not None and child_pid > 0:
+                try:
+                    self._approval_registry.update_session_pid(
+                        params.session_id, child_pid,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "approval registry update_session_pid(%s) failed: %s",
+                        params.session_id, exc,
+                    )
+        # Publish session_started so any subscriber (e.g. the macOS
+        # row that already had a stream open) gets the lifecycle
+        # event without a separate poll. Best-effort.
+        if self._event_broker is not None:
+            try:
+                self._event_broker.publish({
+                    "event": "session_started",
+                    "session_id": params.session_id,
+                    "provider": params.provider,
+                    "client_label": params.client_label,
+                })
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("broker session_started publish failed: %s", exc)
         logger.info(
             "spawn_session(%s): provider=%s cwd=%s",
             params.session_id, params.provider, cwd or "<inherit>",
@@ -328,6 +393,21 @@ class RemoteAgentManager:
         # would land with seq=0 (the missing-session fallback) instead
         # of the next dense value (Phase 2 P0).
         self._post_status(session_id, "stopped")
+        # Cancel any pending approvals + drop capability token so a
+        # rogue late hook can't ride a stopped session's id.
+        if self._approval_registry is not None:
+            try:
+                self._approval_registry.unregister_session(session_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("registry unregister(%s) failed: %s", session_id, exc)
+        if self._event_broker is not None:
+            try:
+                self._event_broker.publish({
+                    "event": "session_stopped",
+                    "session_id": session_id,
+                })
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("broker session_stopped publish failed: %s", exc)
         self._sessions.pop(session_id, None)
 
     def interrupt_session(self, session_id: str) -> None:
@@ -482,11 +562,40 @@ class RemoteAgentManager:
             elif kind == "prompt":
                 ok, err = self._handle_prompt(session_id, payload)
             elif kind == "stop":
-                self._stop_session_impl(session_id)
-                ok, err = True, ""
+                # Iter 2B fix (Codex review on PR #18 manual test):
+                # previously the dispatcher called the impl
+                # unconditionally and stamped (True, "") regardless
+                # of whether the session was actually owned by this
+                # helper process. After a helper restart the macOS
+                # app still saw the old session in remoteSessions
+                # (its Supabase row outlived the previous helper
+                # process), the row's device_id matched, and the
+                # remote-queue path repeatedly stopped a session
+                # that didn't exist — with `complete_command` rows
+                # marked `delivered`, telling the app the no-op
+                # succeeded and obscuring the stale-row bug. Now
+                # the dispatcher checks ownership and reports
+                # `failed` when the helper has no PTY for the
+                # supplied session_id. The matching client-side fix
+                # in `shouldRouteSessionLocally` no longer routes
+                # these stale rows to the local UDS path either, so
+                # a stale stop falls through to here and is
+                # honestly surfaced as a failure.
+                if session_id not in self._sessions:
+                    ok, err = False, "session not running on this helper"
+                else:
+                    self._stop_session_impl(session_id)
+                    ok, err = True, ""
             elif kind == "interrupt":
-                self._interrupt_session_impl(session_id)
-                ok, err = True, ""
+                # Same fail-closed posture as stop above. An
+                # interrupt for a session this helper doesn't own
+                # is a user-visible no-op; reporting it as
+                # `delivered` would mask the stale row.
+                if session_id not in self._sessions:
+                    ok, err = False, "session not running on this helper"
+                else:
+                    self._interrupt_session_impl(session_id)
+                    ok, err = True, ""
             else:
                 ok, err = False, f"unknown command kind: {kind!r}"
         except Exception as exc:
@@ -645,6 +754,28 @@ class RemoteAgentManager:
                 )
                 self._post_status(session_id, "errored")
                 self._post_info(session_id, f"exited: {code_label}")
+            # Cancel pending approvals + publish session_stopped so
+            # streaming subscribers see the lifecycle without a
+            # separate poll.
+            if self._approval_registry is not None:
+                try:
+                    self._approval_registry.unregister_session(session_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "registry unregister on exit(%s) failed: %s",
+                        session_id, exc,
+                    )
+            if self._event_broker is not None:
+                try:
+                    self._event_broker.publish({
+                        "event": "session_stopped",
+                        "session_id": session_id,
+                        "exit_code": code,
+                    })
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "broker session_stopped publish failed: %s", exc,
+                    )
             self._sessions.pop(session_id, None)
             exited += 1
         return exited
@@ -769,7 +900,12 @@ class RemoteAgentManager:
             return list(self.CLAUDE_ARGV)
         return None
 
-    def _build_env(self, params: SessionStartParams) -> dict[str, str]:
+    def _build_env(
+        self,
+        params: SessionStartParams,
+        *,
+        capability_token: str | None = None,
+    ) -> dict[str, str]:
         """Build the subset of env vars the manager controls. Posix
         transport merges this with `os.environ` so PATH / TERM survive.
         """
@@ -780,7 +916,38 @@ class RemoteAgentManager:
         # inline approve from the Sessions UI lands on the row matching
         # this managed session. After UUID validation only.
         env["CLI_PULSE_REMOTE_SESSION_ID"] = params.session_id
+        # Phase 3 Iter 2B: when running on a helper that exposes the
+        # local UDS fast path, pass the socket path + per-session
+        # capability token so the hook prefers the same-Mac approval
+        # surface over Supabase. The hook script reads these on
+        # startup; if any are missing or the UDS isn't reachable, the
+        # hook silently falls back to the existing Supabase remote
+        # path. **Capability token is intentionally NOT logged.**
+        if capability_token and self._local_helper_socket_path:
+            env["CLI_PULSE_LOCAL_SESSION_ID"] = params.session_id
+            env["CLI_PULSE_LOCAL_HOOK_TOKEN"] = capability_token
+            env["CLI_PULSE_LOCAL_HELPER_SOCK"] = self._local_helper_socket_path
         return env
+
+    @staticmethod
+    def _extract_pid(handle: SessionHandle) -> int | None:
+        """Best-effort PID extraction from a transport handle.
+
+        POSIX transport stashes a `subprocess.Popen` on `handle.payload`;
+        we read `.pid` from there. The Windows ConPTY transport (cli-
+        pulse-desktop) will need a parallel accessor, but that track
+        doesn't run the local approval surface in this iteration.
+        """
+        payload = getattr(handle, "payload", None)
+        if payload is None:
+            return None
+        proc = getattr(payload, "proc", None)
+        if proc is None:
+            return None
+        pid = getattr(proc, "pid", None)
+        if isinstance(pid, int) and pid > 0:
+            return pid
+        return None
 
     # ── event posting (iter 2: stdout + info + status) ─────────
 
@@ -852,6 +1019,18 @@ class RemoteAgentManager:
             )
             return
         self._post_event(session_id, "status", status)
+        # Mirror the lifecycle change onto the local broker so a
+        # subscribed macOS row updates without waiting for the next
+        # snapshot poll. Best-effort.
+        if self._event_broker is not None:
+            try:
+                self._event_broker.publish({
+                    "event": "session_status",
+                    "session_id": session_id,
+                    "status": status,
+                })
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("broker session_status publish failed: %s", exc)
 
     def _post_info(self, session_id: str, detail: str) -> bool:
         """Post a redacted, length-bounded `kind='info'` event with
@@ -892,6 +1071,20 @@ class RemoteAgentManager:
         redacted = redact(text)
         if not redacted:
             return False
-        return self._post_event(
-            session_id, "stdout", redacted[:_EVENT_PAYLOAD_CAP_CHARS]
-        )
+        capped = redacted[:_EVENT_PAYLOAD_CAP_CHARS]
+        # Mirror the chunk to the local broker BEFORE the cloud
+        # post — keeps the same-Mac UI snappy even if the Supabase
+        # upload is briefly throttled / offline. Same redaction
+        # applies (defence in depth: avoid showing secrets in a
+        # screenshot of the macOS row even when the user is on the
+        # same machine that already has them in their terminal).
+        if self._event_broker is not None:
+            try:
+                self._event_broker.publish({
+                    "event": "output_delta",
+                    "session_id": session_id,
+                    "payload": capped,
+                })
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("broker output_delta publish failed: %s", exc)
+        return self._post_event(session_id, "stdout", capped)
