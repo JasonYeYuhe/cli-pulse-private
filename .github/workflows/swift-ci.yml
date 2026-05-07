@@ -233,3 +233,45 @@ jobs:
             echo "::error::helper accidentally has app-sandbox entitlement" >&2; exit 2
           fi
           echo "OK: app sandbox + group preserved; helper unsandboxed"
+
+      - name: Verify helper resolves its own path under launchd-style argv0
+        run: |
+          # Phase 4D iter11 (Codex P1④): the embedded helper must
+          # return its real absolute on-disk path from
+          # `_NSGetExecutablePath`, NOT from `CommandLine.arguments
+          # .first`. Under launchd, argv[0] is the
+          # `ProgramArguments[0]` label string ("cli_pulse_helper"),
+          # not the bundle path. Pre-fix, the helper would compute
+          # something like `/cli_pulse_helper` and embed it in the
+          # `claude --settings` inline JSON, breaking structured
+          # approvals.
+          #
+          # Simulate launchd's argv0 with `exec -a` and confirm
+          # the helper resolves its real bundle path.
+          set -o pipefail
+          APP="build_app_output/DerivedData/Build/Products/Debug/CLI Pulse Bar.app"
+          HELPER="$APP/Contents/Helpers/cli_pulse_helper"
+
+          DIRECT_PATH="$("$HELPER" self-path)"
+          LABEL_PATH="$(/bin/sh -c 'exec -a "cli_pulse_helper" "$0" self-path' "$HELPER")"
+          CWD_ROOT_PATH="$(cd / && /bin/sh -c 'exec -a "cli_pulse_helper" "$0" self-path' "$HELPER")"
+
+          echo "direct          → $DIRECT_PATH"
+          echo "argv0=label     → $LABEL_PATH"
+          echo "argv0=label,cwd=/ → $CWD_ROOT_PATH"
+
+          # All three resolutions must agree, and all three must
+          # contain Contents/Helpers/cli_pulse_helper.
+          if [ "$DIRECT_PATH" != "$LABEL_PATH" ] || [ "$DIRECT_PATH" != "$CWD_ROOT_PATH" ]; then
+            echo "::error::self-path resolution differs across argv0 / cwd contexts (Codex P1④ regression)" >&2
+            exit 2
+          fi
+          case "$DIRECT_PATH" in
+            */Contents/Helpers/cli_pulse_helper)
+              echo "OK: helper resolves to Contents/Helpers/cli_pulse_helper under launchd-style argv0"
+              ;;
+            *)
+              echo "::error::self-path is not Contents/Helpers/cli_pulse_helper: $DIRECT_PATH" >&2
+              exit 2
+              ;;
+          esac

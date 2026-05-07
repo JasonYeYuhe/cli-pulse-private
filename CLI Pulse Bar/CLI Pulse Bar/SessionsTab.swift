@@ -1213,16 +1213,52 @@ struct SessionsTab: View {
         return state.localCapabilities?.approvals == true
     }
 
-    /// "Approval hook not wired" install banner — shown when
-    /// `~/.claude/settings.json` is well-formed but missing our
-    /// PermissionRequest hook (or is missing entirely). Carries
-    /// the `Copy command` button.
+    /// Pre-iter10 this banner showed "Approval hook not wired"
+    /// whenever `~/.claude/settings.json` was missing or didn't
+    /// contain our PermissionRequest hook entry. iter10 retired
+    /// the global hook install entirely — managed sessions inject
+    /// the hook inline at spawn time via `claude --settings <json>`,
+    /// and terminal-launched Claude is intentionally NOT
+    /// instrumented. So `notWired` / `settingsMissing` are the
+    /// EXPECTED happy-path state and surfacing a banner is
+    /// actively misleading.
+    ///
+    /// Codex P2④ review fix: banner is suppressed for the
+    /// happy-path states. The detector still runs (we keep
+    /// `parseError` surfacing for malformed-settings-fix UX) and
+    /// the existing `wired` / `notWired` enum stays compatible,
+    /// but the install banner is never shown anymore. The
+    /// stale-cleanup banner below replaces it for the narrow
+    /// case where a user has a leftover hook from a pre-iter10
+    /// CLI Pulse install (those entries no longer trigger the
+    /// hook on managed sessions but DO break terminal-launched
+    /// Claude — the fail-closed deny path in HookAdapter).
     private var shouldShowApprovalHookInstallBanner: Bool {
+        // Always false. Replaced by the stale-cleanup banner
+        // for the only state where action is needed.
+        return false
+    }
+
+    /// Phase 4D iter11 (Codex P2④): if the user has an old hook
+    /// entry sitting in `~/.claude/settings.json` from a pre-
+    /// iter10 install, terminal-launched Claude will hit the
+    /// hook AND fail-closed (because the hook adapter denies
+    /// without managed-session env vars). That's worse than no
+    /// hook at all. This banner surfaces ONLY in that state and
+    /// offers a one-click "Remove stale hook entry" action — UI
+    /// next iter; for now the banner is informational so
+    /// reviewers can see it's surfaced for the right state.
+    private var shouldShowApprovalHookStaleCleanupBanner: Bool {
         guard approvalHookBannerBaseGate else { return false }
+        // `wired` here means the user has our marker in their
+        // global settings.json. Pre-iter10 that was the desired
+        // state; iter10+ this is an "old install needs cleanup"
+        // signal. We do NOT show the banner for `.notWired` /
+        // `.settingsMissing` — those are the expected happy-path.
         switch state.claudeApprovalHookStatus {
-        case .notWired, .settingsMissing:
+        case .wired:
             return true
-        case .wired, .parseError, .none:
+        case .notWired, .settingsMissing, .parseError, .none:
             return false
         }
     }
