@@ -213,7 +213,7 @@ def test_local_first_resolved_local_fallback_emits_local_not_supabase(monkeypatc
     )
     rpc_calls = []
 
-    def fake_rpc(name, _params):
+    def fake_rpc(name, _params, **_kwargs):
         rpc_calls.append(name)
         return {}
 
@@ -281,7 +281,7 @@ def test_local_first_none_falls_through_to_supabase(monkeypatch):
     )
     rpc_calls = []
 
-    def fake_rpc(name, _params):
+    def fake_rpc(name, _params, **_kwargs):
         rpc_calls.append(name)
         if name == "remote_helper_create_permission_request":
             return {"request_id": "x", "status": "pending"}
