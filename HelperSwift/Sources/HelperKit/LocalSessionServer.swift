@@ -583,28 +583,25 @@ public final class LocalSessionServer: @unchecked Sendable {
     }
 
     private func handleInstallClaudeHook(request: WireRequest) -> WireResponse {
-        guard let argv0 = hooks.getHelperArgv0() else {
-            return .err(id: request.id, code: .notImplemented,
-                        message: "helper did not record its own argv[0] — install_claude_hook unavailable")
-        }
-        do {
-            let result = try ClaudeSettingsInstaller.install(helperPath: argv0)
-            var dict: [String: Any] = [
-                "settings_path": result.settingsPath,
-                "action": result.action.rawValue,
-                "new_command": result.newCommand,
-            ]
-            if let prev = result.previousCommand {
-                dict["previous_command"] = prev
-            } else {
-                dict["previous_command"] = NSNull()
-            }
-            return .ok(id: request.id, result: dict)
-        } catch ClaudeSettingsInstaller.InstallError.malformedSettings(let msg) {
-            return .err(id: request.id, code: .settingsMalformed, message: msg)
-        } catch {
-            return .err(id: request.id, code: .internalError, message: "install_claude_hook: \(error)")
-        }
+        // Phase 4D iter10 (Codex P1③.A): the global ~/.claude/
+        // settings.json install path is now a no-op.
+        // ManagedSessionManager.startSession injects the hook
+        // inline via `claude --settings <json>` at spawn time, so
+        // a global install is no longer necessary AND would
+        // re-introduce the "terminal-launched Claude breaks"
+        // problem Codex flagged.
+        //
+        // The macOS app's existing "Install hook" button (PR #19
+        // D) keeps working — it gets a successful response with
+        // `action: "noop_deprecated"` so the UI flow doesn't
+        // surface an error. v1.14 removes the UI button.
+        return .ok(id: request.id, result: [
+            "settings_path": "<deprecated; hook is injected at spawn time>",
+            "action": "noop_deprecated",
+            "previous_command": NSNull(),
+            "new_command": "<deprecated>",
+            "note": "CLI Pulse no longer needs a global hook in ~/.claude/settings.json. Managed sessions inject the PermissionRequest hook inline via the helper's --settings flag at spawn time. Terminal-launched Claude is left alone.",
+        ])
     }
 
     // MARK: - iter4 hook ingress

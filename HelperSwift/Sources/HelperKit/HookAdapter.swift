@@ -69,45 +69,37 @@ public enum HookAdapter {
     /// and returns the exit code (always 0 — Claude needs the
     /// stdout JSON regardless of decision).
     ///
-    /// Codex P1.A review fix: the hook is installed globally in
-    /// `~/.claude/settings.json`, so it runs for EVERY Claude
-    /// session — including ones the user opened from Terminal
-    /// without the CLI Pulse helper spawning them. Those sessions
-    /// have no CLI_PULSE_LOCAL_* env vars and thus can't reach
-    /// the structured-approval flow. Pre-fix, those sessions had
-    /// every Bash/Read/Write/etc denied with "Remote approval
-    /// unavailable", which globally broke `claude` from the
-    /// terminal once the user had installed CLI Pulse.
+    /// Codex P1③.A review fix (iter10 — supersedes iter9's
+    /// fail-open path): `behavior: "allow"` is NOT a no-op in
+    /// PermissionRequest semantics — it AUTO-APPROVES the request,
+    /// bypassing Claude's own settings.json allow/deny rules. So
+    /// returning allow from the hook for a non-managed session
+    /// would silently grant Bash / Read / Write privileges that
+    /// the user might not have allowed in their global settings.
     ///
-    /// New behaviour:
+    /// The whole problem is gone in iter10 because the hook is no
+    /// longer installed globally in `~/.claude/settings.json`.
+    /// `ManagedSessionManager.startSession` injects the hook via
+    /// `claude --settings <inline-json>` at spawn time, so the
+    /// hook ONLY runs for managed sessions. A terminal-launched
+    /// Claude doesn't see the hook at all, behaves exactly like
+    /// it would without CLI Pulse installed.
+    ///
+    /// Decision branches now:
     ///   - **Managed session** (env vars present, UDS reachable,
     ///     hook_create_approval succeeds) → block on
     ///     hook_wait_decision, return user's approve/reject.
     ///   - **Managed session, mid-flow failure** (pending row
-    ///     created but wait_decision drops) → deny with
-    ///     "Local approval did not resolve" — preserves the
-    ///     point-of-no-return semantic the Python helper uses
-    ///     (no Supabase duplicate).
-    ///   - **Non-managed session** (no env vars / not reachable)
-    ///     → fail-open with `behavior: "allow"`. Claude's
-    ///     `settings.json` allow/deny rules decide the outcome
-    ///     directly. The hook becomes a no-op for any session
-    ///     CLI Pulse didn't itself spawn.
-    ///
-    /// Why fail-open is safe here: the hook is opt-in
-    /// instrumentation for CLI Pulse's structured-approval flow.
-    /// Users who haven't routed a session through CLI Pulse
-    /// expect Claude to behave exactly as it did before they
-    /// installed CLI Pulse — i.e. their `permissions.allow` /
-    /// `permissions.deny` decide. Returning `deny` from the hook
-    /// would invert that expectation and effectively quarantine
-    /// every terminal-launched Claude session.
-    ///
-    /// Note: the structured-approval flow's security boundary is
-    /// in the helper-spawned Claude — capability token + descent
-    /// verification means a non-managed Claude CANNOT impersonate
-    /// a managed one and forge the env vars to reach the local
-    /// fast path.
+    ///     created but wait_decision drops, helper not reachable,
+    ///     etc.) → deny with explanatory message; the user can
+    ///     fix the helper and retry.
+    ///   - **No env vars at all** (we shouldn't be invoked in this
+    ///     state because the hook isn't in user settings.json
+    ///     anymore; reaching this branch indicates a bug or a
+    ///     stale hook entry left over from a previous CLI Pulse
+    ///     install) → deny with diagnostic message instead of
+    ///     auto-approving. Codex P1③ flagged the iter9 fail-open
+    ///     as a release blocker; iter10 reverts.
     @discardableResult
     public static func run(provider: String) -> Int32 {
         let stdinData = readAllStdin()
@@ -119,11 +111,15 @@ public enum HookAdapter {
             return 0
         }
 
-        // Codex P1.A: non-managed session path — fail OPEN, not
-        // closed. Claude's settings.json decides via its own
-        // allow/deny rules; the hook is a no-op. See run() docs
-        // above for the safety argument.
-        emit(Decision(behavior: .allow, message: nil))
+        // Codex P1③.A: non-managed session reaching the hook is
+        // a misconfiguration (Phase 4D iter10 stopped global
+        // install). Fail CLOSED — auto-approving would silently
+        // bypass Claude's own permission rules. The diagnostic
+        // tells the user what's wrong + how to fix.
+        emit(Decision(
+            behavior: .deny,
+            message: "CLI Pulse hook fired without managed-session env vars. This Claude session was NOT spawned by the CLI Pulse helper. If you see this in a session that SHOULD be managed, restart CLI Pulse. If you see this in a terminal-launched Claude, remove the leftover hook entry from ~/.claude/settings.json — recent CLI Pulse versions inject the hook at spawn time and don't need a global install."
+        ))
         return 0
     }
 
@@ -235,35 +231,121 @@ public enum HookAdapter {
         return truncate("\(toolName)(\(keys))", limit: 256)
     }
 
-    /// Minimal redaction — strips obvious secret-looking
-    /// substrings the Phase 4D iter 8 path can produce. The
-    /// Python helper has a much richer regex set in
-    /// `redaction.py`; we'll port that in iter 9. For now the
-    /// risk surface is bounded — the `tool_input` dict goes only
-    /// to the macOS app over an authenticated UDS, so leaking
-    /// fragments is bounded to the same trust boundary.
+    /// Marker used in place of redacted spans. Mirrors Python's
+    /// `helper/redaction.py:REDACTION_MARKER`. Visible in upload
+    /// payloads so a reviewer auditing event rows can tell
+    /// something was scrubbed (silent drop would obscure both the
+    /// leak and the redaction itself).
+    static let redactionMarker = "«REDACTED»"
+
+    /// Two-pass redaction matching `helper/redaction.py:redact`
+    /// element-for-element. Codex P1③.B review pin: any drift
+    /// between Python and Swift here means secrets in tool_input
+    /// reach the macOS app's approval UI under the Swift backend
+    /// but not the Python backend.
+    ///
+    /// Pass 1 — line/key:
+    ///   - HTTP-style headers: Authorization, Proxy-Authorization,
+    ///     Cookie, Set-Cookie, X-API-Key
+    ///   - Camel/snake-case credential keys: access_token,
+    ///     refresh_token, id_token, session_key, client_secret,
+    ///     api_key, secret_key, private_key, helper_secret,
+    ///     password, passwd
+    ///   - ALL_CAPS env-style: NAME_TOKEN= / NAME_KEY= /
+    ///     NAME_SECRET= / NAME_PASSWORD= / NAME_PASSWD=
+    ///
+    /// Pass 2 — token shape (catches bare tokens with no key context):
+    ///   - sk-…, sk-ant-…, AIza…, ghp_…, github_pat_…
+    ///   - AKIA… (AWS access keys)
+    ///   - Bearer <token>
+    ///   - JWTs (eyJ.eyJ.eyJ three-segment base64url)
+    ///   - Long hex blobs (helper_secret-style, MD5/SHA, undashed UUIDs)
     static func redact(_ text: String) -> String {
-        // NSRegularExpression-based replacement; works on Swift 5.9
-        // toolchains without typed-regex. Same patterns as the
-        // Python helper's `redaction.py` for the most common
-        // secret shapes that show up in tool_input.
-        var s = text as NSString
-        let patterns: [(String, String)] = [
-            ("sk-[A-Za-z0-9_-]{20,}", "sk-…"),
-            ("Bearer\\s+[A-Za-z0-9._-]+", "Bearer …"),
-            ("(?i)password=[^\\s]+", "password=…"),
-        ]
-        for (pat, replacement) in patterns {
-            guard let re = try? NSRegularExpression(pattern: pat, options: []) else {
-                continue
-            }
-            let range = NSRange(location: 0, length: s.length)
-            s = re.stringByReplacingMatches(
-                in: s as String, options: [], range: range,
-                withTemplate: replacement
-            ) as NSString
+        if text.isEmpty { return text }
+        var s = text
+        // Pass 1: line/key based — replacement preserves the
+        // captured key prefix (\1) and substitutes only the
+        // value with the marker.
+        for (pattern, opts) in Self.lineKeyPatterns {
+            s = applyRegex(s, pattern: pattern, options: opts,
+                           replacement: "$1\(Self.redactionMarker)")
         }
-        return s as String
+        // Pass 2: token shape — replaces the whole match.
+        for (pattern, opts) in Self.tokenShapePatterns {
+            s = applyRegex(s, pattern: pattern, options: opts,
+                           replacement: Self.redactionMarker)
+        }
+        return s
+    }
+
+    private static let lineKeyPatterns: [(String, NSRegularExpression.Options)] = [
+        // HTTP-style headers (case-insensitive). Boundary
+        // accepts line start, whitespace, or single/double quote
+        // — catches `curl -H "Authorization: ..."` shapes that
+        // the original quote-naive boundary missed in the Python
+        // helper.
+        ("((?:^|[\\s'\"])authorization\\s*:\\s*)[^\"'\\r\\n]+", [.caseInsensitive]),
+        ("((?:^|[\\s'\"])proxy-authorization\\s*:\\s*)[^\"'\\r\\n]+", [.caseInsensitive]),
+        ("((?:^|[\\s'\"])cookie\\s*:\\s*)[^\"'\\r\\n]+", [.caseInsensitive]),
+        ("((?:^|[\\s'\"])set-cookie\\s*:\\s*)[^\"'\\r\\n]+", [.caseInsensitive]),
+        ("((?:^|[\\s'\"])x-api-key\\s*:\\s*)[^\"'\\r\\n]+", [.caseInsensitive]),
+
+        // Camel/snake-case credential keys. The optional quote
+        // slots accept JSON / shell / YAML shapes; value class
+        // stops at whitespace, quotes, commas, semicolons,
+        // closing braces.
+        ("\\b(access[_-]?token['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
+        ("\\b(refresh[_-]?token['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
+        ("\\b(id[_-]?token['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
+        ("\\b(session[_-]?key['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
+        ("\\b(client[_-]?secret['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
+        ("\\b(api[_-]?key['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
+        ("\\b(secret[_-]?key['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
+        ("\\b(private[_-]?key['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
+        ("\\b(helper[_-]?secret['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
+        ("\\b(password['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
+        ("\\b(passwd['\"]?\\s*[:=]\\s*['\"]?)[^\\s'\",;}]+", [.caseInsensitive]),
+
+        // ALL_CAPS env-style (case-sensitive — no need for
+        // caseInsensitive option; the leading [A-Z] requires upper).
+        ("\\b([A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD)\\s*=\\s*)\\S+", []),
+    ]
+
+    private static let tokenShapePatterns: [(String, NSRegularExpression.Options)] = [
+        // Provider API keys.
+        ("sk-[A-Za-z0-9_\\-]{8,}", []),
+        ("sk-ant-[A-Za-z0-9_\\-]{8,}", []),
+        ("AIza[0-9A-Za-z_\\-]{20,}", []),
+        ("ghp_[A-Za-z0-9]{20,}", []),
+        ("github_pat_[A-Za-z0-9_]{20,}", []),
+        // AWS-style.
+        ("AKIA[0-9A-Z]{12,}", []),
+        // Generic Bearer.
+        ("Bearer\\s+[A-Za-z0-9._\\-]{16,}", [.caseInsensitive]),
+        // JWTs — three base64url segments separated by dots,
+        // header always begins with `eyJ` (base64 of `{"`).
+        ("eyJ[A-Za-z0-9_\\-]{4,}\\.[A-Za-z0-9_\\-]{4,}\\.[A-Za-z0-9_\\-]{4,}", []),
+        // Long hex tokens — covers helper_secret-style values,
+        // MD5/SHA hashes, un-dashed UUIDs.
+        ("\\b[A-Fa-f0-9]{32,}\\b", []),
+    ]
+
+    private static func applyRegex(
+        _ text: String,
+        pattern: String,
+        options: NSRegularExpression.Options,
+        replacement: String
+    ) -> String {
+        guard let re = try? NSRegularExpression(pattern: pattern, options: options) else {
+            return text
+        }
+        let nsText = text as NSString
+        return re.stringByReplacingMatches(
+            in: text,
+            options: [],
+            range: NSRange(location: 0, length: nsText.length),
+            withTemplate: replacement
+        )
     }
 
     static func truncate(_ s: String, limit: Int) -> String {

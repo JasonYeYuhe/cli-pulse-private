@@ -42,25 +42,119 @@ final class HookAdapterTests: XCTestCase {
         XCTAssertEqual(parsed.summary, "Read file")
     }
 
-    func testRedactStripsApiKey() {
-        let s = "API_KEY=sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    // MARK: - P1③.B redaction (full Python parity)
+
+    func testRedactStripsAnthropicSkAnt() {
+        let s = "API_KEY=sk-ant-abcdefghijklmnopq"
         let red = HookAdapter.redact(s)
-        XCTAssertFalse(red.contains("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
-        XCTAssertTrue(red.contains("sk-…"))
+        XCTAssertFalse(red.contains("abcdefghijklmnopq"))
+        XCTAssertTrue(red.contains("«REDACTED»"))
+    }
+
+    func testRedactStripsGithubToken() {
+        let s = "git push https://x:ghp_abcdefghijklmnopqrstuvwxyz0123@github.com/foo/bar"
+        let red = HookAdapter.redact(s)
+        XCTAssertFalse(red.contains("ghp_abcdef"))
+        XCTAssertTrue(red.contains("«REDACTED»"))
+    }
+
+    func testRedactStripsGithubPat() {
+        let s = "AUTH=github_pat_11ABC1234567890123456_abcdefghij"
+        let red = HookAdapter.redact(s)
+        XCTAssertFalse(red.contains("github_pat_11ABC"))
+    }
+
+    func testRedactStripsGoogleApiKey() {
+        let s = "GMAPS=AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ-abc"
+        let red = HookAdapter.redact(s)
+        XCTAssertFalse(red.contains("AIzaSyABCDEFG"))
+        XCTAssertTrue(red.contains("«REDACTED»"))
+    }
+
+    func testRedactStripsAwsAccessKey() {
+        let s = "AKIAIOSFODNN7EXAMPLE plus other text"
+        let red = HookAdapter.redact(s)
+        XCTAssertFalse(red.contains("AKIAIOSFODNN7"))
     }
 
     func testRedactStripsBearer() {
-        let s = "Authorization: Bearer eyJhbGciOiJSUzI1NiIs"
+        let s = "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9"
         let red = HookAdapter.redact(s)
-        XCTAssertTrue(red.contains("Bearer …"))
-        XCTAssertFalse(red.contains("eyJhbGci"))
+        XCTAssertFalse(red.contains("eyJhbGciOiJSUzI1Ni"))
+    }
+
+    func testRedactStripsJwt() {
+        let s = "Refreshing token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        let red = HookAdapter.redact(s)
+        XCTAssertFalse(red.contains("eyJhbGciOiJIUz"))
+        XCTAssertTrue(red.contains("«REDACTED»"))
+    }
+
+    func testRedactStripsLongHex() {
+        let s = "helper_secret_hash_for_review = 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        let red = HookAdapter.redact(s)
+        XCTAssertFalse(red.contains("0123456789abcdef0123"))
+        XCTAssertTrue(red.contains("«REDACTED»"))
+    }
+
+    func testRedactStripsAuthorizationHeader() {
+        let s = #"curl -H "Authorization: Basic dXNlcjpwYXNz" https://example.com"#
+        let red = HookAdapter.redact(s)
+        XCTAssertFalse(red.contains("Basic dXNlcjpwYXNz"))
+        XCTAssertTrue(red.contains("Authorization:"),
+                       "key prefix preserved so user knows what was scrubbed")
+    }
+
+    func testRedactStripsCookieHeader() {
+        let s = #"--header "Cookie: session=abc123; foo=bar""#
+        let red = HookAdapter.redact(s)
+        XCTAssertFalse(red.contains("session=abc123"))
+    }
+
+    func testRedactStripsXApiKeyHeader() {
+        let s = #"-H 'X-API-Key: my-secret-key-xyz'"#
+        let red = HookAdapter.redact(s)
+        XCTAssertFalse(red.contains("my-secret-key-xyz"))
+    }
+
+    func testRedactStripsAccessTokenJson() {
+        let s = #"{"access_token":"abc123xyz","ok":true}"#
+        let red = HookAdapter.redact(s)
+        XCTAssertFalse(red.contains("abc123xyz"))
+    }
+
+    func testRedactStripsClientSecretShellArg() {
+        let s = "curl --data 'client_secret=topsecretvalue123'"
+        let red = HookAdapter.redact(s)
+        XCTAssertFalse(red.contains("topsecretvalue123"))
+    }
+
+    func testRedactStripsAllCapsEnvKey() {
+        let s = "GITHUB_TOKEN=ghp_realtokenvaluewouldbehere bar=baz"
+        let red = HookAdapter.redact(s)
+        XCTAssertFalse(red.contains("ghp_realtokenvalue"))
+        XCTAssertFalse(red.contains("realtokenvalue"))
     }
 
     func testRedactStripsPassword() {
         let s = "psql --password=hunter2 --user=foo"
         let red = HookAdapter.redact(s)
-        XCTAssertTrue(red.contains("password=…"))
         XCTAssertFalse(red.contains("hunter2"))
+    }
+
+    func testRedactDoesNotMatchOnNonSensitiveLongString() {
+        // Long lower-case ascii like a project name should NOT
+        // be redacted (only the long-hex pattern triggers).
+        let s = "CLIPulseHelperFrameworkInternalLogicallyValidLongIdentifier"
+        let red = HookAdapter.redact(s)
+        XCTAssertEqual(red, s, "non-token long strings must survive verbatim")
+    }
+
+    func testRedactIdempotent() {
+        let s = "Bearer eyJabc.eyJxyz.eyJqwe AKIAIOSFODNN7EXAMPLE"
+        let once = HookAdapter.redact(s)
+        let twice = HookAdapter.redact(once)
+        XCTAssertEqual(once, twice, "redact must be idempotent")
     }
 
     func testTruncateRespectsLimit() {
@@ -81,10 +175,13 @@ final class HookAdapterTests: XCTestCase {
     }
 
     func testTryLocalUdsHookNoEnvReturnsNil() {
-        // No CLI_PULSE_LOCAL_* env vars set → tryLocalUdsHook
-        // returns nil → run() emits `behavior: allow` (fail-open
-        // path; lets non-managed terminal Claude sessions
-        // continue using their settings.json rules).
+        // P1③.A revert: missing CLI_PULSE_LOCAL_* env vars now
+        // means run() emits `behavior: deny` with a diagnostic
+        // message — NOT `behavior: allow`. The latter would
+        // auto-approve every Bash/Read/Write etc. on terminal-
+        // launched Claude. Phase 4D iter10 stops global hook
+        // install entirely; this branch is now reachable only
+        // on misconfiguration / leftover stale hook entries.
         let parsed = HookAdapter.ClaudeHookInput(
             toolName: "Bash",
             toolInput: [:],
@@ -94,7 +191,7 @@ final class HookAdapterTests: XCTestCase {
         )
         let outcome = HookAdapter.tryLocalUdsHook(parsed: parsed)
         XCTAssertNil(outcome,
-                     "missing env vars must return nil so run() can fail-open")
+                     "missing env vars must return nil so run() can fail-closed")
     }
 
     // MARK: - Codex P1.B redaction
@@ -108,7 +205,7 @@ final class HookAdapterTests: XCTestCase {
         let cmd = out["command"] as? String ?? ""
         XCTAssertFalse(cmd.contains("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
                        "api key must be stripped from redacted command")
-        XCTAssertTrue(cmd.contains("sk-…"))
+        XCTAssertTrue(cmd.contains("«REDACTED»"))
     }
 
     func testRedactedToolInputTruncatesLongStrings() {

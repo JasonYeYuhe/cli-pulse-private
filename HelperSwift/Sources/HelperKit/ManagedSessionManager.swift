@@ -40,6 +40,24 @@ public final class ManagedSessionManager: @unchecked Sendable {
     private let transport: PtyTransport
     private let registry: ApprovalRegistry?
     private let broker: EventBroker?
+    /// Phase 4D iter10 (Codex P1③.A): hook is no longer installed
+    /// globally in `~/.claude/settings.json`. Instead the helper
+    /// injects an ephemeral settings JSON at spawn time via
+    /// `claude --settings <json>`, so:
+    ///
+    ///   - Managed sessions get the hook → structured approvals.
+    ///   - Terminal-launched Claude (NOT spawned by the helper)
+    ///     never sees the hook → behaves exactly as if CLI Pulse
+    ///     weren't installed. No global "approve all" / "deny all"
+    ///     hijack.
+    ///
+    /// This callable resolves the helper's own absolute path so
+    /// the injected hook's `command` points at the right binary.
+    /// Daemon main wires `os.path.abspath(sys.argv[0])`-equivalent
+    /// here. Returning nil disables hook injection (managed
+    /// sessions still spawn but no structured approvals — used by
+    /// unit tests that don't need approvals wired).
+    private let getHelperArgv0: @Sendable () -> String?
     private let lock = NSLock()
     private var sessions: [String: ManagedSessionRecord] = [:]
     private var stopFlag = AtomicBool()
@@ -71,12 +89,38 @@ public final class ManagedSessionManager: @unchecked Sendable {
         transport: PtyTransport = PtyTransport(),
         registry: ApprovalRegistry? = nil,
         broker: EventBroker? = nil,
-        config: Config = Config()
+        config: Config = Config(),
+        getHelperArgv0: @escaping @Sendable () -> String? = { nil }
     ) {
         self.config = config
         self.transport = transport
         self.registry = registry
         self.broker = broker
+        self.getHelperArgv0 = getHelperArgv0
+    }
+
+    /// Build the inline JSON Claude Code's `--settings` flag
+    /// accepts, populated with our PermissionRequest hook entry
+    /// pointing at `helperPath`. Returns nil only if JSON
+    /// serialisation fails (which shouldn't happen for the
+    /// statically-shaped dict below). Public so unit tests can
+    /// pin the exact wire shape.
+    public static func buildInlineSettingsForManagedSession(helperPath: String) -> String? {
+        let hookCommand = ClaudeSettingsInstaller.recommendedHookCommand(
+            helperPath: helperPath
+        )
+        let inlineSettings: [String: Any] = [
+            "hooks": [
+                "PermissionRequest": [
+                    ClaudeSettingsInstaller.canonicalHookEntry(command: hookCommand),
+                ],
+            ],
+        ]
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: inlineSettings,
+            options: []
+        ) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     /// Stop every running session + their drain loops. Called by
@@ -115,7 +159,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
         cwd: String? = nil,
         extraEnv: [String: String] = [:]
     ) throws -> Summary {
-        let argv: [String]
+        var argv: [String]
         switch provider.lowercased() {
         case "claude":
             // Same default as the Python helper: just `claude` in
@@ -123,6 +167,27 @@ public final class ManagedSessionManager: @unchecked Sendable {
             // env (via ProgramArguments wrapper TBD) is responsible
             // for finding the right binary.
             argv = ["claude"]
+            // Phase 4D iter10 (Codex P1③.A): inject the
+            // PermissionRequest hook via `claude --settings`
+            // inline JSON. This is the spawn-time-only path that
+            // replaces global ~/.claude/settings.json install —
+            // managed sessions still trigger structured approval
+            // through the hook, but terminal-launched Claude never
+            // sees the hook (CLI Pulse no longer mutates user
+            // settings).
+            //
+            // `--settings <json>` is the same flag Claude itself
+            // uses when spawning sub-agents; verified via the
+            // Claude Code CLI ps output. The injected JSON merges
+            // into the user's effective settings WITHOUT being
+            // persisted, so no on-disk pollution.
+            if let helperArgv0 = getHelperArgv0() {
+                if let inlineJson = Self.buildInlineSettingsForManagedSession(
+                    helperPath: helperArgv0
+                ) {
+                    argv.append(contentsOf: ["--settings", inlineJson])
+                }
+            }
         default:
             throw ManagerError.unsupportedProvider(provider)
         }

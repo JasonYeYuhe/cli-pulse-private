@@ -53,38 +53,37 @@ case "remote-approval-hook":
     exit(code)
 
 case "remote-approvals":
-    // Phase 4D P1.1: minimal CLI surface for the install-claude-hook
-    // subcommand. The macOS app invokes `install_claude_hook` over
-    // UDS now (PR #18 iter5/iter6/iter7 + PR #19 D); the CLI path
-    // is here for power users + dev workflows that want to run the
-    // install from a terminal without the macOS app.
+    // Phase 4D iter10 (Codex P1③.A): `install-claude-hook` is now
+    // a deprecation no-op. The hook is no longer installed in the
+    // user's `~/.claude/settings.json` because that breaks every
+    // terminal-launched Claude session. Instead managed sessions
+    // get the hook via spawn-time `claude --settings <inline-json>`
+    // injection in `ManagedSessionManager.startSession`. Power
+    // users who ran this subcommand pre-iter10 can clean up by
+    // removing any `remote-approval-hook --provider claude` entry
+    // from their settings.json.
     if args.count >= 2 && args[1] == "install-claude-hook" {
-        let myPath = FileManager.default.currentDirectoryPath
-        let myArgv0 = (CommandLine.arguments.first ?? "cli_pulse_helper")
-        let absolute: String
-        if myArgv0.hasPrefix("/") {
-            absolute = myArgv0
-        } else {
-            absolute = (myPath as NSString)
-                .appendingPathComponent(myArgv0)
-        }
-        do {
-            let result = try ClaudeSettingsInstaller.install(helperPath: absolute)
-            print("settings_path: \(result.settingsPath)")
-            print("action:        \(result.action.rawValue)")
-            if let prev = result.previousCommand {
-                print("previous:      \(prev)")
-            }
-            print("new_command:   \(result.newCommand)")
-            print("")
-            print("# Restart Claude Code so it picks up the new hook entry.")
-            exit(0)
-        } catch {
-            FileHandle.standardError.write(Data(
-                "error: install_claude_hook failed: \(error)\n".utf8
-            ))
-            exit(1)
-        }
+        FileHandle.standardError.write(Data("""
+        cli_pulse_helper remote-approvals install-claude-hook (deprecated)
+
+        Phase 4D iter10 retired the global hook install in
+        ~/.claude/settings.json. The PermissionRequest hook is now
+        injected at managed-session spawn time so terminal-launched
+        Claude is unaffected.
+
+          - Managed sessions: hook is set via `claude --settings
+            <inline-json>` automatically; no action required.
+          - Terminal-launched Claude: removes the hook entry
+            yourself if you have a stale one. Run:
+              sed-i-equivalent or hand-edit ~/.claude/settings.json
+              to drop any `remote-approval-hook --provider claude`
+              entry.
+
+        This subcommand is retained for backward compatibility but
+        does NOTHING. v1.14 removes it entirely.
+        \n
+        """.utf8))
+        exit(0)
     } else {
         usage()
     }
@@ -106,10 +105,18 @@ case "daemon":
     let socketPath = AuthToken.containerPath().appendingPathComponent("clipulse-helper.sock")
     let broker = EventBroker()
     let registry = ApprovalRegistry(broker: broker)
+    // Phase 4D iter10 (Codex P1③.A): managed sessions inject the
+    // PermissionRequest hook via `claude --settings` at spawn time.
+    // The hook command refs the running daemon's own absolute path
+    // so it can route the hook subprocess back to this process'
+    // UDS via the env vars (CLI_PULSE_LOCAL_*) the manager sets.
     let sessionManager = ManagedSessionManager(
         transport: PtyTransport(),
         registry: registry,
-        broker: broker
+        broker: broker,
+        getHelperArgv0: { CommandLine.arguments.first.map {
+            URL(fileURLWithPath: $0).path
+        } }
     )
 
     // Phase 4D P1.2 (Codex): persist the local-control kill switch
