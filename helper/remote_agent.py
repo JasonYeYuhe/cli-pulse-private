@@ -834,11 +834,19 @@ class RemoteAgentManager:
     # ── local UDS entry points (Phase 3 Iter 1) ──────────────
 
     def local_start_claude_session(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Start a new managed Claude session on behalf of the local
-        macOS app. The UDS server submits this through the executor
-        (so this body always runs on the writer thread); we generate
-        the session id here, spawn the PTY, and return the id back
-        for the client to track.
+        """Start a new managed session on behalf of the local macOS
+        app. The UDS server submits this through the executor (so this
+        body always runs on the writer thread); we generate the session
+        id here, spawn the PTY, and return the id back for the client
+        to track.
+
+        v1.15: name kept as `local_start_claude_session` for
+        back-compat with HelperKit / Swift call sites, but the
+        `payload['provider']` is now honored — Claude was the only
+        v1.13/v1.14 option, but this path accepts the full registry
+        (claude / codex / gemini) and forwards the choice to
+        `SessionStartParams`. Codex review 2026-05-08 caught the
+        previous hardcoded-claude bug.
 
         Note: we do NOT round-trip through Supabase to "create the
         pending row" first, because that's the latency the local
@@ -857,9 +865,16 @@ class RemoteAgentManager:
         session_id = str(uuid.uuid4())
         client_label = payload.get("client_label")
         cwd_hmac = payload.get("cwd_hmac")
+        # v1.15: read provider from payload (defaulting to claude for
+        # callers older than v1.15 that omit the field). The UDS
+        # server has already validated it against the spawner
+        # registry; here we just plumb it through.
+        provider = payload.get("provider") or "claude"
+        if not isinstance(provider, str) or not provider:
+            provider = "claude"
         params = SessionStartParams(
             session_id=session_id,
-            provider="claude",
+            provider=provider,
             cwd="",
             cwd_hmac=cwd_hmac if isinstance(cwd_hmac, str) else None,
             client_label=client_label if isinstance(client_label, str) else None,

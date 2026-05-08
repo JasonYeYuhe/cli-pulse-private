@@ -829,10 +829,21 @@ class LocalSessionServer:
             provider = params.get("provider", "claude")
             if not isinstance(provider, str) or not provider:
                 raise _RequestError("bad_request", "'provider' must be a string")
-            if provider != "claude":
+            # v1.15: accept any provider whose helper-side spawner
+            # exists. The check uses the same registry as the remote
+            # path so the two surfaces stay in lockstep — codex review
+            # 2026-05-08 caught the local rejection bug where the
+            # macOS picker would happily send `codex` and the helper
+            # would refuse it with `not_implemented`.
+            try:
+                from provider_spawners import get_spawner
+                allow_provider = get_spawner(provider) is not None
+            except Exception:  # noqa: BLE001
+                allow_provider = (provider == "claude")
+            if not allow_provider:
                 raise _RequestError(
                     "not_implemented",
-                    f"provider {provider!r} not supported in this iteration",
+                    f"provider {provider!r} not supported by this helper",
                 )
             client_label = params.get("client_label")
             cwd_basename = params.get("cwd_basename") or ""

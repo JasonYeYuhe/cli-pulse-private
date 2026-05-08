@@ -110,6 +110,19 @@ public enum GeminiConversationPreviewFormatter {
         if looksLikeSpinnerOnly(trimmed) { return true }
         if isBoxDrawingDominant(trimmed) { return true }
 
+        // Bar-bracketed banner content (parity with Codex). Gemini's
+        // welcome banner + auth-pending banner both wrap interior
+        // rows in `│ <text> │`. Body is mostly text so the dominance
+        // check above won't fire, but the structural shape is
+        // reliably chrome.
+        if trimmed.count >= 3 {
+            let first = trimmed.first!
+            let last = trimmed.last!
+            if first == "│" && last == "│" {
+                return true
+            }
+        }
+
         return false
     }
 
@@ -132,6 +145,20 @@ public enum GeminiConversationPreviewFormatter {
         "press ctrl+c again to exit",
         "press tab to autocomplete",
         "press enter to send",
+        // Hardening 2026-05-08 — observed in `gemini_reply.bin`
+        // against gemini-cli 0.38.2. Substring drop catches each
+        // chrome surface even when CUP-paint glues them together.
+        "gemini cli v0.",
+        "gemini cli v1.",
+        "gemini cli v2.",
+        "signed in with google",
+        "gemini code assist in google",
+        "gemini cli update available",
+        "installed via homebrew",
+        "? for shortcuts",
+        "shift+tab to accept edits",
+        "type your message",
+        "@path/to/file",
     ]
 
     /// `1.`, `2.`, `3.`, `(1)`, `[1]`. Matches at line start with
@@ -146,8 +173,14 @@ public enum GeminiConversationPreviewFormatter {
         return numberedMenuPattern.firstMatch(in: trimmed, options: [], range: r) != nil
     }
 
+    /// Box-drawing range covers `─│╭╮╰╯` etc. Block-element range
+    /// (U+2580–259F) covers `▀▄▌▐▖▗▘▙▚▛▜▝▞▟` which gemini uses for
+    /// its top/bottom separator strips. Both kinds of lines are
+    /// chrome; treat them identically for the dominance heuristic.
     private static let boxDrawingStart: UInt32 = 0x2500
     private static let boxDrawingEnd: UInt32 = 0x257F
+    private static let blockElementStart: UInt32 = 0x2580
+    private static let blockElementEnd: UInt32 = 0x259F
     private static let separatorASCII: Set<Character> = ["-", "=", "_"]
     private static let spinnerGlyphs: Set<Character> = [
         "·", "•", "✶", "✸", "*", "/", "◉", "◯", "⠁", "⠂", "⠄", "⡀", "✦",
@@ -168,6 +201,8 @@ public enum GeminiConversationPreviewFormatter {
             nonSpace += 1
             let v = sc.value
             if v >= boxDrawingStart && v <= boxDrawingEnd {
+                border += 1
+            } else if v >= blockElementStart && v <= blockElementEnd {
                 border += 1
             } else if let ch = Character(String(sc)) as Character?,
                       separatorASCII.contains(ch) {

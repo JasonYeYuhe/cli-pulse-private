@@ -176,4 +176,96 @@ final class GeminiConversationPreviewFormatterTests: XCTestCase {
             "first-launch chrome should not surface as conversation; " +
             "got:\n\(preview)")
     }
+
+    // MARK: - real-fixture regression #2 (PR #42 hardening)
+    //
+    // Synthesized from `/tmp/v1.15-fixtures/gemini_reply.bin` —
+    // gemini-cli 0.38.2 launched in `~/Documents/cli pulse`. The OAuth
+    // flow never completed inside the PTY (auth banner spun the whole
+    // capture window) but the welcome banner, version line, plan
+    // banner, update notice, and footer chrome all surfaced — and
+    // these are EXACTLY the cases where the v1 formatter's
+    // `looksLikeAssistantProse` heuristic would falsely keep them.
+    // The following pin the hardened behaviour.
+
+    func test_drops_box_bracketed_banner_row() {
+        XCTAssertTrue(F.shouldDropAsHelperChrome("│ Gemini CLI v0.38.2                                                  │"))
+        XCTAssertTrue(F.shouldDropAsHelperChrome("│ Signed in with Google /auth                                         │"))
+        XCTAssertTrue(F.shouldDropAsHelperChrome("│ Plan: Gemini Code Assist in Google One AI Pro /upgrade              │"))
+        // Empty banner row.
+        XCTAssertTrue(F.shouldDropAsHelperChrome("│                                                                     │"))
+    }
+
+    func test_drops_gemini_cli_version_banner() {
+        XCTAssertTrue(F.shouldDropAsHelperChrome("▝▜▄     Gemini CLI v0.38.2"))
+    }
+
+    func test_drops_signed_in_with_google_status() {
+        XCTAssertTrue(F.shouldDropAsHelperChrome("▗▟▀    Signed in with Google /auth"))
+    }
+
+    func test_drops_plan_banner() {
+        XCTAssertTrue(F.shouldDropAsHelperChrome(
+            "▝▀      Plan: Gemini Code Assist in Google One AI Pro /upgrade"
+        ))
+    }
+
+    func test_drops_gemini_cli_update_available_notice() {
+        XCTAssertTrue(F.shouldDropAsHelperChrome(
+            "Gemini CLI update available! 0.38.2 → 0.41.2"
+        ))
+        XCTAssertTrue(F.shouldDropAsHelperChrome(
+            #"Installed via Homebrew. Please update with "brew upgrade gemini-cli"."#
+        ))
+    }
+
+    func test_drops_shortcuts_hint() {
+        XCTAssertTrue(F.shouldDropAsHelperChrome("? for shortcuts"))
+    }
+
+    func test_drops_shift_tab_to_accept_edits_footer() {
+        XCTAssertTrue(F.shouldDropAsHelperChrome(
+            "Shift+Tab to accept edits                                                                   1 GEMINI.md file · 1 skill"
+        ))
+    }
+
+    func test_drops_type_your_message_placeholder() {
+        // The empty input field shows `>   Type your message or
+        // @path/to/file`. Should NOT be treated as a real `> hello`.
+        XCTAssertTrue(F.shouldDropAsHelperChrome(
+            ">   Type your message or @path/to/file"
+        ))
+    }
+
+    func test_drops_block_element_separator_strip() {
+        // Top of input area in gemini's TUI is a row of ▀; bottom
+        // is a row of ▄. Both are block-element fills (U+2580/U+2584)
+        // and must drop as box-drawing-dominant chrome.
+        let topStrip = String(repeating: "▀", count: 80)
+        let bottomStrip = String(repeating: "▄", count: 80)
+        XCTAssertTrue(F.shouldDropAsHelperChrome(topStrip))
+        XCTAssertTrue(F.shouldDropAsHelperChrome(bottomStrip))
+    }
+
+    func test_format_gemini_welcome_banner_is_silenced() {
+        // Real welcome-banner block from gemini_reply.bin after CSI
+        // strip. Auth never landed; everything is chrome. Must drop.
+        let banner = """
+        ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+        │                                                                                                                      │
+        │ ⠋ Waiting for authentication... (Press Esc or Ctrl+C to cancel)                                                      │
+        ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+        ▝▜▄     Gemini CLI v0.38.2
+        ▗▟▀    Signed in with Google /auth
+        ▝▀      Plan: Gemini Code Assist in Google One AI Pro /upgrade
+        │ Gemini CLI update available! 0.38.2 → 0.41.2                                                                         │
+        │ Installed via Homebrew. Please update with "brew upgrade gemini-cli".                                                │
+        ? for shortcuts
+        ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+        Shift+Tab to accept edits                                                                   1 GEMINI.md file · 1 skill
+        >   Type your message or @path/to/file
+        """
+        XCTAssertEqual(F.format(eventPayloads: [banner]), F.emptyFallback,
+            "first-launch banner block should not surface; got:\n\(F.format(eventPayloads: [banner]))")
+    }
 }

@@ -119,6 +119,20 @@ public enum CodexConversationPreviewFormatter {
         if looksLikeSpinnerOnly(trimmed) { return true }
         if isBoxDrawingDominant(trimmed) { return true }
 
+        // Bar-bracketed banner content. Codex's welcome banner paints
+        // every interior row as `│ <text>          │`. The body is
+        // mostly text (so `isBoxDrawingDominant` doesn't fire) but the
+        // structural `│ … │` shape is reliably banner chrome, never
+        // user-facing prose. Tight match: starts with `│`, ends with
+        // `│`, and at least 3 chars long.
+        if trimmed.count >= 3 {
+            let first = trimmed.first!
+            let last = trimmed.last!
+            if first == "│" && last == "│" {
+                return true
+            }
+        }
+
         return false
     }
 
@@ -129,11 +143,26 @@ public enum CodexConversationPreviewFormatter {
     private static let updateWizardPrefixes: [String] = []
 
     private static let updateWizardMarkers: [String] = [
+        // Update wizard.
         "release notes:",
         "press enter to continue",
         "update available",
         "press esc to dismiss",
         "skip until next version",
+        // Hardening 2026-05-08 — observed in `codex_reply.bin` against
+        // codex 0.128.0. CUP-paint smooshes status chrome into the same
+        // mega-line as actual conversation; substring drop is the only
+        // way to discard the line cleanly without splitting at `›`.
+        "esc to interrupt",
+        // Codex 0.128.0 actually writes the typo `inerrupt` in one
+        // status line (`(0s• esc to inerrupt)`). Match both spellings
+        // so the line drops regardless of which build the helper hit.
+        "esc to inerrupt",
+        "tab to queue message",
+        "context left",
+        "starting mcp server",
+        "booting mcp server",
+        "tip: try the codex app",
     ]
 
     /// Matches `1.`, `2.`, `3.`, optionally preceded by `›` and

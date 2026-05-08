@@ -741,6 +741,25 @@ struct ManagedSessionDetailView: View {
         }
     }
 
+    /// v1.15 codex review fix: when the helper rejects a spawn (e.g.
+    /// the picker offered "Codex" but the helper has no codex binary
+    /// on PATH), the only surface that explains why is the helper's
+    /// `kind='info'` event payload. Pre-fix the iOS Sessions panel
+    /// dropped those events on the floor — the user saw an empty
+    /// ended session and had no actionable detail. Returns the most
+    /// recent info-event payload for `currentSession`, or nil if no
+    /// info events have arrived. The macOS panel already shows
+    /// stdout/stderr inline; this banner specifically targets the
+    /// iOS surface for spawn-time failure detail.
+    private var latestHelperInfoMessage: String? {
+        let events = state.remoteSessionEvents[currentSession.id] ?? []
+        guard let payload = events
+            .last(where: { $0.kind == "info" })?
+            .payload else { return nil }
+        let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     @ViewBuilder
     private var outputPanel: some View {
         let events = state.remoteSessionEvents[currentSession.id] ?? []
@@ -817,6 +836,31 @@ struct ManagedSessionDetailView: View {
                         proxy.scrollTo("claude-transcript-\(newValue)", anchor: .bottom)
                     }
                 }
+            }
+
+            // v1.15 hardening: surface helper info events. The most
+            // common case is a spawn-time failure ("spawn failed: ..."
+            // when codex / gemini binary is missing on the helper).
+            // Pre-fix the user saw an empty ended session with no
+            // explanation; this banner shows the helper's actual
+            // failure detail in red.
+            if let info = latestHelperInfoMessage {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(info.lowercased().contains("fail")
+                                         || info.lowercased().contains("error")
+                                         ? Color.red : Color.blue)
+                    Text(info)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 6)
+                .background(Color.secondary.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
 
             // Diagnostic strip: when the formatter returns the empty

@@ -418,7 +418,30 @@ def test_start_list_stop_round_trip(short_sock_dir):
         server.stop()
 
 
-def test_start_session_rejects_non_claude_provider_with_not_implemented(short_sock_dir):
+def test_start_session_rejects_unknown_provider_with_not_implemented(short_sock_dir):
+    """v1.15: the local UDS server now accepts any registered provider
+    (claude / codex / gemini); only TRULY unknown providers — names
+    not in `helper.provider_spawners` — get rejected. This test pins
+    that the rejection path still fires for the unknown case."""
+    server, _mgr, _state = _make_server(short_sock_dir, token="T", enabled=True)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "x", "method": "start_session",
+            "auth_token": "T",
+            "params": {"provider": "totally-not-a-cli"},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "not_implemented"
+    finally:
+        server.stop()
+
+
+def test_start_session_accepts_codex_provider(short_sock_dir):
+    """v1.15 codex review fix: local UDS used to hardcode `claude`
+    and reject `codex`/`gemini` even though the helper had spawners
+    for them. Codex review caught this 2026-05-08. The local path
+    must accept any registered provider so the macOS picker's
+    selection gets honored end-to-end."""
     server, _mgr, _state = _make_server(short_sock_dir, token="T", enabled=True)
     try:
         reply = _client_call(server._socket_path, {
@@ -426,8 +449,26 @@ def test_start_session_rejects_non_claude_provider_with_not_implemented(short_so
             "auth_token": "T",
             "params": {"provider": "codex"},
         })
-        assert reply["ok"] is False
-        assert reply["error"]["code"] == "not_implemented"
+        # The mock RemoteAgentManager (`_make_server`) records the
+        # start request and returns ok; we don't actually exec codex
+        # here. The assertion is that the UDS server didn't reject
+        # the `codex` provider at the gate. `not_implemented` would
+        # signal a regression.
+        assert reply["ok"] is True, f"unexpected reject: {reply}"
+    finally:
+        server.stop()
+
+
+def test_start_session_accepts_gemini_provider(short_sock_dir):
+    """Same as codex parity — v1.15 must let `gemini` through."""
+    server, _mgr, _state = _make_server(short_sock_dir, token="T", enabled=True)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "x", "method": "start_session",
+            "auth_token": "T",
+            "params": {"provider": "gemini"},
+        })
+        assert reply["ok"] is True, f"unexpected reject: {reply}"
     finally:
         server.stop()
 

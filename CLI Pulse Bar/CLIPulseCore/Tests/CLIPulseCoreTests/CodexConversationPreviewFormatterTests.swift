@@ -181,4 +181,109 @@ final class CodexConversationPreviewFormatterTests: XCTestCase {
             "wizard chrome should not surface as conversation; " +
             "got:\n\(preview)")
     }
+
+    // MARK: - real-fixture regression #2 (PR #42 hardening)
+    //
+    // Synthesized from `/tmp/v1.15-fixtures/codex_reply.bin` — codex
+    // 0.128.0 launched in `~/Documents/cli pulse`, pressed `2` to
+    // dismiss the update wizard, then sent `hello`. After ANSI / CSI
+    // strip the surface includes:
+    //   * the welcome banner (lines surrounded by `│ … │`)
+    //   * status line: `Booting MCP server: computer-use(0s • esc to interrupt)›tab to queue message100% context left`
+    //   * status line: `Tip: Try the Codex App. … Starting MCP servers (1/2): codx_apps (0s• esc to inerrupt)`
+    //                  (note codex 0.128.0's `inerrupt` typo)
+    //   * status bar: ` gpt-5.5 high · ~/Documents/cli pulse`
+    //   * actual user prompt: `›hello`
+    //   * actual warning: `⚠ Heads up, you have less than 25% of your weekly limit left. Run /status for a breakdown.`
+    //
+    // The v1 formatter accepted some of these as "assistant prose"
+    // because alnum >= 8. Hardening adds substring drop markers for
+    // `esc to interrupt` (and `inerrupt` typo), `tab to queue message`,
+    // `context left`, `starting mcp server`, `booting mcp server`,
+    // `tip: try the codex app`, AND a `│ ... │` bar-bracketed banner
+    // detector. These tests pin the new behaviour.
+
+    func test_drops_box_bracketed_banner_row() {
+        // Real codex welcome-banner rows after CSI strip.
+        XCTAssertTrue(F.shouldDropAsHelperChrome("│ >_ OpenAI Codex (v0.128.0)                 │"))
+        XCTAssertTrue(F.shouldDropAsHelperChrome("│ model:     gpt-5.5 high   /model to change │"))
+        XCTAssertTrue(F.shouldDropAsHelperChrome("│ directory: ~/Documents/cli pulse           │"))
+        // Empty banner row (just the bars + spaces).
+        XCTAssertTrue(F.shouldDropAsHelperChrome("│                                            │"))
+    }
+
+    func test_drops_esc_to_interrupt_status() {
+        XCTAssertTrue(F.shouldDropAsHelperChrome(
+            "Booting MCP server: computer-use(0s • esc to interrupt)"
+        ))
+    }
+
+    func test_drops_codex_inerrupt_typo() {
+        // codex 0.128.0 actual output has a typo: `inerrupt`. Our
+        // chrome filter must catch it so the line still drops.
+        XCTAssertTrue(F.shouldDropAsHelperChrome(
+            "Starting MCP servers (1/2): codx_apps (0s• esc to inerrupt)"
+        ))
+    }
+
+    func test_drops_tab_to_queue_message_status() {
+        XCTAssertTrue(F.shouldDropAsHelperChrome(
+            "›tab to queue message100% context left"
+        ))
+    }
+
+    func test_drops_starting_and_booting_mcp_status() {
+        XCTAssertTrue(F.shouldDropAsHelperChrome(
+            "Starting MCP servers (1/2): codx_apps"
+        ))
+        XCTAssertTrue(F.shouldDropAsHelperChrome(
+            "Booting MCP server: computer-use"
+        ))
+    }
+
+    func test_drops_codex_app_tip_chrome() {
+        XCTAssertTrue(F.shouldDropAsHelperChrome(
+            "Tip: Try the Codex App. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true"
+        ))
+    }
+
+    func test_format_codex_welcome_banner_is_silenced() {
+        // Real lines from codex_reply.bin after CSI strip.
+        let banner = """
+        ╭────────────────────────────────────────────╮
+        │ >_ OpenAI Codex (v0.128.0)                 │
+        │                                            │
+        │ model:     gpt-5.5 high   /model to change │
+        │ directory: ~/Documents/cli pulse           │
+        ╰────────────────────────────────────────────╯
+        """
+        XCTAssertEqual(F.format(eventPayloads: [banner]), F.emptyFallback)
+    }
+
+    func test_format_real_status_megaline_is_silenced() {
+        // Real CUP-painted mega-line from codex_reply.bin: includes
+        // banner border, MCP boot status, queue hint, context counter.
+        // No conversation content. Must drop.
+        let mega = "╰─────────────────────────────────────────────────╯•Booting MCP server: computer-use(0s • esc to interrupt)›tab to queue message100% context leftMMMMMMMMM\n"
+        XCTAssertEqual(F.format(eventPayloads: [mega]), F.emptyFallback)
+    }
+
+    func test_format_real_user_prompt_with_warning_survives() {
+        // Real CUP-painted line from codex_reply.bin AFTER user typed
+        // hello: contains the weekly-limit warning, the user prompt,
+        // and the status bar all glued together. Substantive content
+        // (warning + prompt) is what we want the user to see.
+        let line = "⚠ Heads up, you have less than 25% of your weekly limit left. Run /status for a breakdown.›hello  gpt-5.5 high · ~/Documents/cli pulse"
+        let preview = F.format(eventPayloads: [line])
+        // The line is not empty fallback — substantive content
+        // surfaces. Exact text intentionally not pinned: codex's
+        // CUP-paint mashes the surfaces together and "perfect"
+        // splitting is a v2 task. The minimum invariant: the prompt
+        // and warning are preserved, even if status-bar text trails.
+        XCTAssertNotEqual(preview, F.emptyFallback)
+        XCTAssertTrue(preview.contains("hello"),
+            "user's prompt 'hello' must survive in transcript; got:\n\(preview)")
+        XCTAssertTrue(preview.contains("Heads up") || preview.contains("weekly limit"),
+            "warning text must survive; got:\n\(preview)")
+    }
 }
