@@ -420,6 +420,21 @@ public final class LocalSessionServer: @unchecked Sendable {
     private func handleAuthenticated(method: SupportedMethod, request: WireRequest) -> WireResponse {
         switch method {
         case .hello:
+            // v1.15: include the list of providers whose CLI binary
+            // the helper can actually spawn on this host. The macOS
+            // / iOS spawn picker uses this to gray out unavailable
+            // providers in the dropdown so users don't try to start
+            // a Codex session on a Mac that doesn't have Codex
+            // installed. Falls back to a defensive empty list when
+            // the manager doesn't expose a registry (e.g. tests
+            // configuring `LocalSessionServer` without a session
+            // manager hook).
+            let providerAvailability: [String]
+            if let mgr = hooks.sessionManager {
+                providerAvailability = mgr.availableProviders()
+            } else {
+                providerAvailability = []
+            }
             return .ok(id: request.id, result: [
                 "protocol_version": kProtocolVersion,
                 "supported_methods": SupportedMethod.allCases.map(\.rawValue),
@@ -429,6 +444,7 @@ public final class LocalSessionServer: @unchecked Sendable {
                     "subscribe_events": true,
                     "approvals": true,
                 ],
+                "provider_availability": providerAvailability,
             ])
         case .ping:
             return .ok(id: request.id, result: ["pong": true])

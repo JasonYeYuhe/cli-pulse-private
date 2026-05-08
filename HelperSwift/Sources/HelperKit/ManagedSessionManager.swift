@@ -58,6 +58,12 @@ public final class ManagedSessionManager: @unchecked Sendable {
     /// sessions still spawn but no structured approvals — used by
     /// unit tests that don't need approvals wired).
     private let getHelperArgv0: @Sendable () -> String?
+    /// v1.15 multi-CLI: the registry resolves provider → spawner.
+    /// Default standard registry wires Claude with the inline-settings
+    /// hook injection so structured approvals continue to fire for
+    /// managed Claude sessions — same byte-for-byte behaviour as
+    /// pre-v1.15 Phase 4D.
+    private let providerRegistry: ProviderSpawnerRegistry
     private let lock = NSLock()
     private var sessions: [String: ManagedSessionRecord] = [:]
     private var stopFlag = AtomicBool()
@@ -90,13 +96,30 @@ public final class ManagedSessionManager: @unchecked Sendable {
         registry: ApprovalRegistry? = nil,
         broker: EventBroker? = nil,
         config: Config = Config(),
-        getHelperArgv0: @escaping @Sendable () -> String? = { nil }
+        getHelperArgv0: @escaping @Sendable () -> String? = { nil },
+        providerRegistry: ProviderSpawnerRegistry? = nil
     ) {
         self.config = config
         self.transport = transport
         self.registry = registry
         self.broker = broker
         self.getHelperArgv0 = getHelperArgv0
+        // v1.15: default registry wires Claude with inline-settings
+        // injection (same hook semantics as Phase 4D iter10) +
+        // Codex/Gemini spawners. Tests can pass a custom registry
+        // (e.g. all spawners stubbed) via the explicit param.
+        self.providerRegistry = providerRegistry ?? ProviderSpawnerRegistry.standard(
+            buildClaudeInlineSettings: { helperPath in
+                Self.buildInlineSettingsForManagedSession(helperPath: helperPath)
+            }
+        )
+    }
+
+    /// Public access for `LocalSessionServer.handleHello` so the UDS
+    /// `provider_availability` field reflects the same registry the
+    /// manager actually consults at spawn time.
+    public func availableProviders() -> [String] {
+        providerRegistry.availableProviderNames()
     }
 
     /// Build the inline JSON Claude Code's `--settings` flag
@@ -167,38 +190,21 @@ public final class ManagedSessionManager: @unchecked Sendable {
         extraEnv: [String: String] = [:],
         forcedSessionId: String? = nil
     ) throws -> Summary {
-        var argv: [String]
-        switch provider.lowercased() {
-        case "claude":
-            // Same default as the Python helper: just `claude` in
-            // PATH. The user's shell rc sourced into the LaunchAgent
-            // env (via ProgramArguments wrapper TBD) is responsible
-            // for finding the right binary.
-            argv = ["claude"]
-            // Phase 4D iter10 (Codex P1③.A): inject the
-            // PermissionRequest hook via `claude --settings`
-            // inline JSON. This is the spawn-time-only path that
-            // replaces global ~/.claude/settings.json install —
-            // managed sessions still trigger structured approval
-            // through the hook, but terminal-launched Claude never
-            // sees the hook (CLI Pulse no longer mutates user
-            // settings).
-            //
-            // `--settings <json>` is the same flag Claude itself
-            // uses when spawning sub-agents; verified via the
-            // Claude Code CLI ps output. The injected JSON merges
-            // into the user's effective settings WITHOUT being
-            // persisted, so no on-disk pollution.
-            if let helperArgv0 = getHelperArgv0() {
-                if let inlineJson = Self.buildInlineSettingsForManagedSession(
-                    helperPath: helperArgv0
-                ) {
-                    argv.append(contentsOf: ["--settings", inlineJson])
-                }
-            }
-        default:
+        // v1.15 multi-CLI dispatch: resolve provider → spawner via
+        // the registry. Pre-v1.15 this was a hardcoded
+        // `switch provider { case "claude": ... default: throw }`
+        // which immediately rejected codex/gemini even though the
+        // SQL allowlist + iOS picker were already plumbing those
+        // through. Registry lookup keeps Claude's inline-settings
+        // hook injection intact (the standard registry wires
+        // ClaudeSpawner with `buildInlineSettingsForManagedSession`).
+        guard let spawner = providerRegistry.spawner(for: provider) else {
             throw ManagerError.unsupportedProvider(provider)
         }
+        let argv = spawner.argv(
+            extraEnv: extraEnv,
+            helperArgv0: getHelperArgv0()
+        )
 
         let sessionId = forcedSessionId?.lowercased() ?? UUID().uuidString.lowercased()
 
