@@ -88,7 +88,7 @@ def _known_provider_names() -> list[str]:
     importable.
     """
     try:
-        from helper.provider_spawners import all_provider_names
+        from provider_spawners import all_provider_names
         return all_provider_names()
     except ImportError:
         return ["claude"]
@@ -959,7 +959,7 @@ class RemoteAgentManager:
         # spawner package isn't on the path (e.g. legacy tests using
         # `sys.path = ['helper']` with no package init traversal).
         try:
-            from helper.provider_spawners import get_spawner
+            from provider_spawners import get_spawner
         except ImportError:  # pragma: no cover — defensive
             return self._legacy_claude_spawner_for(provider)
         return get_spawner(provider)

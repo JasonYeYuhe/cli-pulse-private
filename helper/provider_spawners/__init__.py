@@ -26,11 +26,14 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 # Re-export the provider classes so callers can do
-#   from helper.provider_spawners import ClaudeSpawner
-# without knowing the per-provider module names.
-from helper.provider_spawners.claude import ClaudeSpawner
-from helper.provider_spawners.codex import CodexSpawner
-from helper.provider_spawners.gemini import GeminiSpawner
+#   from provider_spawners import ClaudeSpawner
+# without knowing the per-provider module names. Relative imports
+# (rather than `helper.provider_spawners.X`) so the package resolves
+# both at runtime (helper invoked from inside `helper/`) and in CI
+# (`pytest -q` from `helper/`).
+from .claude import ClaudeSpawner
+from .codex import CodexSpawner
+from .gemini import GeminiSpawner
 
 
 @runtime_checkable

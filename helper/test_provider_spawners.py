@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from helper.provider_spawners import (
+# CI runs `pytest -q` from `helper/` as the working dir, so `helper.X`
+# style imports do NOT resolve. Use the same `sys.path.insert` trick
+# `test_local_session_server.py` uses to keep the test runnable both
+# from the repo root (`pytest helper/`) and from within the helper dir.
+HELPER_DIR = Path(__file__).resolve().parent
+if str(HELPER_DIR) not in sys.path:
+    sys.path.insert(0, str(HELPER_DIR))
+
+from provider_spawners import (  # noqa: E402
     ClaudeSpawner,
     CodexSpawner,
     GeminiSpawner,

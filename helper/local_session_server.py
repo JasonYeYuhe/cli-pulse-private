@@ -762,7 +762,12 @@ class LocalSessionServer:
             # so a stale `provider_spawners` import doesn't break the
             # whole hello reply.
             try:
-                from helper.provider_spawners import available_providers
+                # Bare import (no `helper.` prefix) — CI runs pytest
+                # with helper/ as the working directory, and the helper
+                # daemon itself is invoked from within the helper/ dir
+                # too, so the package-qualified path does not resolve
+                # in either runtime.
+                from provider_spawners import available_providers
                 provider_availability = list(available_providers())
             except Exception:  # noqa: BLE001
                 provider_availability = ["claude"]
