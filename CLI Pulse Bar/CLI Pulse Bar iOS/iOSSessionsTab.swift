@@ -879,30 +879,11 @@ struct ManagedSessionDetailView: View {
                 }
             }
 
-            // v1.15 hardening: surface helper info events. The most
-            // common case is a spawn-time failure ("spawn failed: ..."
-            // when codex / gemini binary is missing on the helper).
-            // Pre-fix the user saw an empty ended session with no
-            // explanation; this banner shows the helper's actual
-            // failure detail in red.
-            if let info = latestHelperInfoMessage {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption2)
-                        .foregroundStyle(info.lowercased().contains("fail")
-                                         || info.lowercased().contains("error")
-                                         ? Color.red : Color.blue)
-                    Text(info)
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(.vertical, 4)
-                .padding(.horizontal, 6)
-                .background(Color.secondary.opacity(0.04))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
+            // Note: round-2 had a kind=='info' banner here too, but
+            // round-3 deduplicated — the banner now lives in the
+            // parent body (above the showOutputToggle) so it renders
+            // regardless of the toggle. Keeping a copy here would
+            // double-render when the user opens Show output.
 
             // Diagnostic strip: when the formatter returns the empty
             // fallback but stdout events ARE flowing, surface the raw

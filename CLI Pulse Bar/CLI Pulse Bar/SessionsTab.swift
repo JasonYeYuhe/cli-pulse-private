@@ -679,6 +679,21 @@ struct SessionsTab: View {
             hasPendingApproval: hasPendingApproval
         )
         let stopDisabled = isStaleLocal
+        // v1.15 codex review (round 3): pull the latest helper info
+        // event for THIS row so we can surface the spawn-failure
+        // detail above the showOutput gate. Local-routed rows skip
+        // (their info path is the broker, different stream — and the
+        // Local Sessions surface here doesn't render kind=='info'
+        // payloads from the broker yet, so showing them in this banner
+        // would be misleading).
+        let latestInfoMessage: String? = {
+            guard !routesLocally else { return nil }
+            guard let payload = (state.remoteSessionEvents[session.id] ?? [])
+                .last(where: { $0.kind == "info" })?
+                .payload else { return nil }
+            let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }()
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 TextField(
@@ -824,6 +839,30 @@ struct SessionsTab: View {
                 ))
             }
 
+            // v1.15 codex review (round 3): the info-event banner has
+            // to live OUTSIDE the showOutput gate, parity with iOS
+            // round-2 fix. Otherwise the user has no way to see "spawn
+            // failed: codex binary not on PATH" without expanding
+            // live output, and on macOS a remote-routed row can drop
+            // off the active list before the user thinks to expand it.
+            if let info = latestInfoMessage {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(info.lowercased().contains("fail")
+                                         || info.lowercased().contains("error")
+                                         ? Color.red : Color.blue)
+                    Text(info)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.vertical, 3)
+                .padding(.horizontal, 6)
+                .background(Color.secondary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
             if showOutput {
                 outputPanel(for: session)
             }
@@ -831,6 +870,25 @@ struct SessionsTab: View {
         .padding(8)
         .background(Color.accentColor.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+        // v1.15 codex review (round 3): one-shot event fetch when the
+        // row transitions to a terminal state. Pre-fix the macOS
+        // sessions tab only polled events when showOutput=true, so a
+        // remote-routed Codex/Gemini spawn failure was invisible
+        // unless the user happened to expand live output. `.task(id:
+        // session.status)` re-fires whenever the status keying value
+        // changes; we only fetch when entering a terminal state and
+        // the cache is empty so we don't trample fresh polled data.
+        .task(id: session.status) {
+            let lower = session.status.lowercased()
+            let isTerminal = lower == "errored"
+                || lower == "stopped"
+                || lower == "ended"
+            guard isTerminal, !routesLocally else { return }
+            let cached = state.remoteSessionEvents[session.id] ?? []
+            if cached.isEmpty {
+                await state.refreshRemoteSessionEvents(sessionId: session.id)
+            }
+        }
     }
 
     // MARK: - Helpers
@@ -880,43 +938,12 @@ struct SessionsTab: View {
             )
         }()
         let hasContent = routesLocally ? !localPreviewRaw.isEmpty : !events.isEmpty
-
-        // v1.15 codex review (round 2): macOS panel was also dropping
-        // helper `kind=='info'` events on the floor (mirror of the
-        // iOS bug). When the helper rejects a Codex/Gemini spawn from
-        // a remote-routed start, the failure detail lives in the
-        // info event payload — and the user only saw an empty
-        // ended-session row otherwise. Compute the latest info-event
-        // text outside the conversation formatter and render it as a
-        // banner above the transcript.
-        let latestInfoMessage: String? = {
-            guard !routesLocally else { return nil }
-            guard let payload = events
-                .last(where: { $0.kind == "info" })?
-                .payload else { return nil }
-            let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        }()
+        // Note: round-2 added a kind=='info' banner here, but round-3
+        // moved it to the parent `commandBar(for:)` so the banner is
+        // visible without expanding Show output. The duplicate copy
+        // inside outputPanel was removed — keep ONE banner per card.
 
         VStack(alignment: .leading, spacing: 4) {
-            if let info = latestInfoMessage {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(info.lowercased().contains("fail")
-                                         || info.lowercased().contains("error")
-                                         ? Color.red : Color.blue)
-                    Text(info)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(.vertical, 3)
-                .padding(.horizontal, 6)
-                .background(Color.secondary.opacity(0.06))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-            }
             HStack(spacing: 6) {
                 Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 9))
                     .foregroundStyle(.tertiary)
