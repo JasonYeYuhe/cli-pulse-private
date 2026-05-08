@@ -362,6 +362,56 @@ final class ClaudeConversationPreviewFormatterTests: XCTestCase {
         )
     }
 
+    func test_keeps_multiline_assistant_continuation() {
+        // iOS screenshot regression: Claude's terminal wraps an assistant
+        // reply onto rows that do not repeat the `⏺` marker. The preview
+        // must keep those rows instead of stopping after the first wrap.
+        let raw = """
+        ❯ What directory are you currently in
+        ⏺ /Users/jason/Documents/cli
+        pulse(branch:
+        dashboard-parity-and-v1.14-lifetime)
+        """
+        let preview = F.format(eventPayloads: [raw])
+        XCTAssertEqual(
+            preview,
+            """
+            ❯ What directory are you currently in
+            ⏺ /Users/jason/Documents/cli
+            pulse(branch:
+            dashboard-parity-and-v1.14-lifetime)
+            """,
+            "assistant continuation rows must survive: \(preview)"
+        )
+    }
+
+    func test_assistant_continuation_still_drops_tui_chrome() {
+        let raw = """
+        ⏺ Here is the answer:
+        Processing...
+        ↓ 142 tokens
+        useful continuation line
+        ─────────────────────────────
+        ❯ next prompt
+        """
+        let preview = F.format(eventPayloads: [raw])
+        XCTAssertTrue(preview.contains("⏺ Here is the answer:"))
+        XCTAssertTrue(preview.contains("useful continuation line"))
+        XCTAssertTrue(preview.contains("❯ next prompt"))
+        XCTAssertFalse(preview.contains("Processing"), "chrome must drop: \(preview)")
+        XCTAssertFalse(preview.contains("142 tokens"), "token counter must drop: \(preview)")
+        XCTAssertFalse(preview.contains("─────"), "separator must drop: \(preview)")
+    }
+
+    func test_assistant_continuation_keeps_tokens_when_prose() {
+        let raw = """
+        ⏺ A quick explanation:
+        background processing uses tokens differently here.
+        """
+        let preview = F.format(eventPayloads: [raw])
+        XCTAssertTrue(preview.contains("background processing uses tokens differently here."))
+    }
+
     func test_aggregates_csi_split_across_events() {
         // `\u{1B}[31m` (red SGR) split across two events. Per-event
         // strip would leave "[31m" in the output. Aggregating first
@@ -479,5 +529,66 @@ final class ClaudeConversationPreviewFormatterTests: XCTestCase {
         XCTAssertTrue(preview.contains("❯ late prompt"))
         XCTAssertTrue(preview.contains("⏺ late reply"))
         XCTAssertFalse(preview.contains("Processing"))
+    }
+
+    // MARK: - Production trace 2026-05-08 (assistant continuation drop bug)
+
+    /// Production session 4eb2d46e (user-visible bug):
+    /// Claude TUI emits the assistant response across two visual rows when
+    /// the working-directory path wraps. First row carries `⏺`; second
+    /// row is plain continuation text. User reported only
+    /// `⏺ /Users/jason/Documents/cli pulse(branch:` appearing in iOS
+    /// preview, with `dashboard-parity-and-v1.14-lifetime).` invisible.
+    func test_assistant_response_continuation_after_path_wrap() {
+        let payload = """
+        ❯ What directory are you currently in
+        ⏺ /Users/jason/Documents/cli pulse (branch:
+          dashboard-parity-and-v1.14-lifetime).
+        ✻ Misting… (running stop hook · 2s · ↓ 13 tokens)
+        """
+        let preview = F.format(eventPayloads: [payload])
+        XCTAssertTrue(preview.contains("❯ What directory are you currently in"),
+                      "user prompt must survive: \(preview)")
+        XCTAssertTrue(preview.contains("/Users/jason/Documents/cli pulse"),
+                      "assistant first line must survive: \(preview)")
+        XCTAssertTrue(preview.contains("dashboard-parity-and-v1.14-lifetime"),
+                      "assistant continuation MUST surface — this is the user-reported bug: \(preview)")
+        XCTAssertFalse(preview.contains("running stop hook"),
+                       "stop-hook chrome must drop: \(preview)")
+        XCTAssertFalse(preview.contains("13 tokens"),
+                       "token counter chrome must drop: \(preview)")
+    }
+
+    /// Continuation arriving across event boundary (helper batcher cuts
+    /// between the path and the branch-name row).
+    func test_assistant_continuation_across_event_boundary() {
+        let event1 = "❯ What directory are you currently in\n⏺ /Users/jason/Documents/cli pulse (branch:\r"
+        let event2 = "  dashboard-parity-and-v1.14-lifetime).\n✻ Misting… (running stop hook · 2s)\n"
+        let preview = F.format(eventPayloads: [event1, event2])
+        XCTAssertTrue(preview.contains("/Users/jason/Documents/cli pulse"),
+                      "first half must survive: \(preview)")
+        XCTAssertTrue(preview.contains("dashboard-parity-and-v1.14-lifetime"),
+                      "continuation across event boundary must survive: \(preview)")
+    }
+
+    /// Bullet-list assistant body — Claude often answers with markdown
+    /// bullets. None of the bullet rows carry `⏺`; only the first does.
+    /// All bullets must surface as continuations.
+    func test_assistant_bullet_list_continuations() {
+        let payload = """
+        ❯ summarize the project
+        ⏺ Here's what I see:
+          - CLI Pulse (4 platform commercial app, on dashboard-parity-and-v1.14-lifetime branch)
+          - Backend on Supabase (gkjwsxotmwrgqsvfijzs)
+          - Helper paired as 'CLI Pulse Helper'
+        """
+        let preview = F.format(eventPayloads: [payload])
+        XCTAssertTrue(preview.contains("Here's what I see"))
+        XCTAssertTrue(preview.contains("4 platform commercial app"),
+                      "bullet 1 must surface: \(preview)")
+        XCTAssertTrue(preview.contains("Backend on Supabase"),
+                      "bullet 2 must surface: \(preview)")
+        XCTAssertTrue(preview.contains("Helper paired"),
+                      "bullet 3 must surface: \(preview)")
     }
 }
