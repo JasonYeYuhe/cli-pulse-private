@@ -801,29 +801,42 @@ struct SessionsTab: View {
         let stdoutPayloads = events
             .filter { $0.kind == "stdout" || $0.kind == "stderr" }
             .map { $0.payload }
-        // Both paths funnel through the same Claude-aware formatter
-        // so ANSI / CSI / TUI chrome are stripped and the user sees
-        // the same ❯ / ⏺ rendering whether the row came from local
-        // UDS or Supabase. Local previews come from the broker's
-        // already-redacted output_delta payloads. IIFE because the
-        // outer function is `@ViewBuilder` and an if-else assignment
-        // statement would be misinterpreted as a View-producing
-        // branch.
+        // v1.15: route by `session.provider` so Codex / Gemini sessions
+        // get their own marker recognition + chrome filter. Pre-v1.15
+        // claude-only call sites used `ClaudeConversationPreviewFormatter`
+        // directly; the router falls back to claude when the provider
+        // string is unknown so legacy rows keep working.
+        let providerKey = session.provider
+        let transcriptFallback =
+            ConversationPreviewRouter.emptyFallback(for: providerKey)
+        let transcriptHeader =
+            ConversationPreviewRouter.headerLabel(for: providerKey)
+        // Both paths funnel through the same provider-aware router so
+        // ANSI / CSI / TUI chrome are stripped and the user sees a
+        // per-CLI marker rendering whether the row came from local UDS
+        // or Supabase. Local previews come from the broker's already-
+        // redacted output_delta payloads. IIFE because the outer
+        // function is `@ViewBuilder` and an if-else assignment
+        // statement would be misinterpreted as a View-producing branch.
         let transcript: String = {
             if routesLocally {
                 return localPreviewRaw.isEmpty
-                    ? ClaudeConversationPreviewFormatter.emptyFallback
-                    : ClaudeConversationPreviewFormatter.format(eventPayloads: [localPreviewRaw])
+                    ? transcriptFallback
+                    : ConversationPreviewRouter.format(
+                        provider: providerKey,
+                        eventPayloads: [localPreviewRaw]
+                    )
             }
-            return ClaudeConversationPreviewFormatter
-                .format(eventPayloads: stdoutPayloads)
+            return ConversationPreviewRouter.format(
+                provider: providerKey, eventPayloads: stdoutPayloads
+            )
         }()
         let hasContent = routesLocally ? !localPreviewRaw.isEmpty : !events.isEmpty
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 9))
                     .foregroundStyle(.tertiary)
-                Text("Claude conversation preview")
+                Text(transcriptHeader)
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                 Spacer()
@@ -843,7 +856,7 @@ struct SessionsTab: View {
                             Text(transcript)
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundStyle(
-                                    transcript == ClaudeConversationPreviewFormatter.emptyFallback
+                                    transcript == transcriptFallback
                                         ? Color.secondary : Color.primary
                                 )
                                 .textSelection(.enabled)

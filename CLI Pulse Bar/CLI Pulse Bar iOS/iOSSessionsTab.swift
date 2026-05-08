@@ -721,8 +721,16 @@ struct ManagedSessionDetailView: View {
             .filter { $0.kind == "stdout" || $0.kind == "stderr" }
             .map { $0.payload }
         let stdoutEventCount = stdoutPayloads.count
-        let transcript = ClaudeConversationPreviewFormatter
-            .format(eventPayloads: stdoutPayloads)
+        // v1.15: route by provider so Codex / Gemini sessions get their
+        // own marker recognition + chrome filter.
+        let providerKey = currentSession.provider
+        let transcript = ConversationPreviewRouter.format(
+            provider: providerKey, eventPayloads: stdoutPayloads
+        )
+        let transcriptFallback =
+            ConversationPreviewRouter.emptyFallback(for: providerKey)
+        let transcriptHeader =
+            ConversationPreviewRouter.headerLabel(for: providerKey)
         // 2026-05-08 (user-reported 3rd-turn bug): use the latest event's
         // monotonic id as the scroll trigger, not `events.count`. Once the
         // ring buffer hits cap (`AppState.remoteSessionEventsCap`), count
@@ -735,7 +743,7 @@ struct ManagedSessionDetailView: View {
                 Image(systemName: "bubble.left.and.bubble.right")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                Text("Claude conversation preview")
+                Text(transcriptHeader)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                 Spacer()
@@ -759,7 +767,7 @@ struct ManagedSessionDetailView: View {
                             Text(transcript)
                                 .font(.callout.monospaced())
                                 .foregroundStyle(
-                                    transcript == ClaudeConversationPreviewFormatter.emptyFallback
+                                    transcript == transcriptFallback
                                         ? Color.secondary : Color.primary
                                 )
                                 .textSelection(.enabled)
@@ -786,7 +794,7 @@ struct ManagedSessionDetailView: View {
             // pull markers (Claude TUI scrolled them off, payload
             // truncation, etc.). Also gives a recovery action.
             if !events.isEmpty
-               && transcript == ClaudeConversationPreviewFormatter.emptyFallback {
+               && transcript == transcriptFallback {
                 HStack(spacing: 6) {
                     Image(systemName: "info.circle")
                         .font(.caption2)
