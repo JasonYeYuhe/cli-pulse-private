@@ -154,7 +154,7 @@ struct SessionsTab: View {
 
     private var managedHeader: some View {
         HStack {
-            Text("Managed Claude sessions")
+            Text(ProviderDisplay.managedSectionHeader)
                 .font(.system(size: 14, weight: .bold))
             // Status pill so the user sees local state without
             // having to read logs (Codex review on PR #17).
@@ -484,7 +484,7 @@ struct SessionsTab: View {
                 .font(.system(size: 11))
                 .foregroundStyle(PulseTheme.providerColor(row.provider))
             VStack(alignment: .leading, spacing: 2) {
-                Text(row.clientLabel ?? "Claude session")
+                Text(row.clientLabel ?? ProviderDisplay.defaultLabel(for: row.provider))
                     .font(.system(size: 11, weight: .semibold))
                     .lineLimit(1)
                 Text(row.status)
@@ -1717,11 +1717,15 @@ private struct ManagedSessionRow: View {
     private var displayLabel: String {
         let label = session.client_label?.trimmingCharacters(in: .whitespaces) ?? ""
         let device = session.device_name?.trimmingCharacters(in: .whitespaces) ?? ""
-        if label.isEmpty { return "Claude session" }
-        // If label and device are the same string, the second column
-        // would just repeat — collapse to a single line.
+        // v1.15 round-4: provider-aware fallback / "X on <device>"
+        // formatting. Pre-fix this hardcoded "Claude" so a Codex
+        // session with no client_label rendered as "Claude session"
+        // and a Codex row whose label collapsed-with-device-name
+        // rendered as "Claude on Mac" instead of "Codex on Mac".
+        let providerName = ProviderDisplay.displayName(for: session.provider)
+        if label.isEmpty { return "\(providerName) session" }
         if !device.isEmpty && label.caseInsensitiveCompare(device) == .orderedSame {
-            return "Claude on \(device)"
+            return "\(providerName) on \(device)"
         }
         return label
     }
@@ -1736,9 +1740,12 @@ private struct ManagedSessionRow: View {
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 8) {
-                Image(systemName: "brain.head.profile")
+                // v1.15 round-4: per-provider glyph + tint. Pre-fix
+                // every row got the orange Claude brain icon even for
+                // Codex/Gemini.
+                Image(systemName: ProviderDisplay.iconSymbol(for: session.provider))
                     .font(.system(size: 11))
-                    .foregroundStyle(PulseTheme.providerColor("Claude"))
+                    .foregroundStyle(ProviderDisplay.color(for: session.provider))
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(displayLabel)

@@ -126,7 +126,7 @@ struct iOSSessionsTab: View {
     private var managedSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Managed Claude sessions")
+                Text(ProviderDisplay.managedSectionHeader)
                     .font(.headline)
                 Spacer()
                 if state.remoteControlEnabled {
@@ -181,9 +181,12 @@ struct iOSSessionsTab: View {
         let pending = state.remotePendingApprovals.first { $0.session_id == session.id }
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Image(systemName: "brain.head.profile")
-                    .foregroundStyle(PulseTheme.providerColor("Claude"))
-                Text(session.client_label ?? "Claude session")
+                // v1.15 round-4: per-provider icon + tint instead of
+                // hardcoded brain/Claude. Codex/Gemini rows had been
+                // showing as orange Claude rows on iOS.
+                Image(systemName: ProviderDisplay.iconSymbol(for: session.provider))
+                    .foregroundStyle(ProviderDisplay.color(for: session.provider))
+                Text(session.client_label ?? ProviderDisplay.defaultLabel(for: session.provider))
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                 Spacer()
@@ -213,8 +216,11 @@ struct iOSSessionsTab: View {
         .background(PulseTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(
+            // v1.15 round-4: card border tints to match the row's
+            // actual provider, so Codex rows get the codex blue and
+            // Gemini rows get the gemini hue rather than orange.
             RoundedRectangle(cornerRadius: 10)
-                .stroke(PulseTheme.providerColor("Claude").opacity(0.2), lineWidth: 1)
+                .stroke(ProviderDisplay.color(for: session.provider).opacity(0.2), lineWidth: 1)
         )
     }
 
@@ -301,7 +307,7 @@ struct iOSSessionsTab: View {
     private var sessionList: some View {
         List {
             if state.remoteControlEnabled || !state.remoteSessions.isEmpty {
-                Section("Managed Claude sessions") {
+                Section(ProviderDisplay.managedSectionHeader) {
                     // Error banner (when RC is on) — render regardless
                     // of whether the list is empty. Without this, a
                     // failed `remote_app_list_sessions` (e.g. 404 on
@@ -324,11 +330,13 @@ struct iOSSessionsTab: View {
                     } else {
                         ForEach(state.remoteSessions) { session in
                             HStack(spacing: 10) {
-                                Image(systemName: "brain.head.profile")
-                                    .foregroundStyle(PulseTheme.providerColor("Claude"))
+                                // v1.15 round-4: per-provider glyph
+                                // instead of hardcoded brain/Claude.
+                                Image(systemName: ProviderDisplay.iconSymbol(for: session.provider))
+                                    .foregroundStyle(ProviderDisplay.color(for: session.provider))
                                     .frame(width: 24)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(session.client_label ?? "Claude session")
+                                    Text(session.client_label ?? ProviderDisplay.defaultLabel(for: session.provider))
                                         .font(.subheadline.weight(.medium))
                                         .lineLimit(1)
                                     Text(session.status)
@@ -449,12 +457,21 @@ struct iOSSessionsTab: View {
 
     private func openManagedClaudeSession(provider: String = "claude") async {
         guard let device = targetDeviceForStart else { return }
+        // v1.15 round-4: include the picked provider in the stored
+        // client_label so the row in the database reads e.g.
+        // "Codex on MacBook" rather than ambiguously matching the
+        // device name. Pre-fix the iPhone screenshot showed "Claude
+        // on CLI Pulse Helper" for a Codex spawn because the label
+        // was just the device name and the renderer fell back to
+        // Claude defaults.
+        let providerName = ProviderDisplay.displayName(for: provider)
+        let label = "\(providerName) on \(device.name)"
         let id = await state.requestRemoteClaudeSessionStart(
             deviceId: device.id,
             provider: provider,
             cwdBasename: "",
             cwdHmac: nil,
-            clientLabel: device.name
+            clientLabel: label
         )
         if let id, let session = state.remoteSessions.first(where: { $0.id == id }) {
             selectedManagedSession = session
@@ -701,7 +718,7 @@ struct ManagedSessionDetailView: View {
             }
             .padding()
         }
-        .navigationTitle(currentSession.client_label ?? "Claude session")
+        .navigationTitle(currentSession.client_label ?? ProviderDisplay.defaultLabel(for: currentSession.provider))
         .navigationBarTitleDisplayMode(.inline)
         .task {
             // Detail view owns its own refresh loop because SwiftUI may
@@ -1027,15 +1044,20 @@ struct ManagedSessionDetailView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "brain.head.profile")
+        // v1.15 round-4: detail-view header now reflects the session's
+        // actual provider. Pre-fix every row showed the orange brain
+        // glyph + Claude tint regardless of whether it was Codex or
+        // Gemini, which the user reported as confusing.
+        let providerKey = currentSession.provider
+        return HStack(spacing: 12) {
+            Image(systemName: ProviderDisplay.iconSymbol(for: providerKey))
                 .font(.title2)
-                .foregroundStyle(PulseTheme.providerColor("Claude"))
+                .foregroundStyle(ProviderDisplay.color(for: providerKey))
                 .frame(width: 44, height: 44)
-                .background(PulseTheme.providerColor("Claude").opacity(0.12))
+                .background(ProviderDisplay.color(for: providerKey).opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 4) {
-                Text(currentSession.client_label ?? "Claude session")
+                Text(currentSession.client_label ?? ProviderDisplay.defaultLabel(for: providerKey))
                     .font(.title3.weight(.bold))
                 HStack(spacing: 8) {
                     Text(displayStatus)
