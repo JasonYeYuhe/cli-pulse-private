@@ -481,6 +481,14 @@ struct ManagedSessionDetailView: View {
     /// (each `RemoteSession` value taps into a fresh struct instance).
     @State private var showOutput: Bool = false
 
+    /// 2026-05-08: when the conversation extractor under-matches (returns
+    /// emptyFallback despite stdout flowing), the user can flip into
+    /// "raw" mode to see ANSI-stripped stdout text directly. Disabled by
+    /// default to keep the tidy preview as the primary view; surfaces in
+    /// the diagnostic strip's expand affordance when the smart formatter
+    /// has nothing to say.
+    @State private var showRawOutput: Bool = false
+
     /// Latest server-side row for this session, falling back to the
     /// navigation-captured snapshot. Use this for every render-time
     /// decision (status, device name, label) so the detail view doesn't
@@ -788,6 +796,14 @@ struct ManagedSessionDetailView: View {
                         .foregroundStyle(.tertiary)
                     Spacer()
                     Button {
+                        showRawOutput.toggle()
+                    } label: {
+                        Text(showRawOutput ? "Hide raw" : "Show raw")
+                            .font(.caption2.weight(.medium))
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(PulseTheme.accent)
+                    Button {
                         state.clearRemoteSessionEventsCache(
                             sessionId: currentSession.id
                         )
@@ -803,6 +819,9 @@ struct ManagedSessionDetailView: View {
                     .buttonStyle(.borderless)
                     .foregroundStyle(PulseTheme.accent)
                 }
+                if showRawOutput {
+                    rawOutputPanel(payloads: stdoutPayloads)
+                }
             } else if events.count >= AppState.remoteSessionEventsCap {
                 HStack(spacing: 4) {
                     Image(systemName: "tray.full")
@@ -814,6 +833,38 @@ struct ManagedSessionDetailView: View {
                 }
             }
         }
+    }
+
+    /// Diagnostic raw-stdout view. Concatenates the same payloads the
+    /// smart formatter sees, strips ANSI, and renders verbatim — no
+    /// marker filter, no dedup. Useful when Claude's TUI emits content
+    /// without `❯` / `⏺` prefixes (e.g., login flow, /help output, or
+    /// permission prompts) and the conversation extractor under-matches.
+    @ViewBuilder
+    private func rawOutputPanel(payloads: [String]) -> some View {
+        let blob = payloads.joined()
+        let stripped = AnsiSanitizer.strip(blob)
+        // Tail to a reasonable size to keep the diagnostic readable even
+        // for long sessions. 8 KB ≈ 100 lines of monospaced text — more
+        // than enough to spot whether output is flowing.
+        let tail: String = {
+            let cap = 8000
+            return stripped.count <= cap
+                ? stripped
+                : "…(truncated \(stripped.count - cap) bytes)…\n"
+                  + String(stripped.suffix(cap))
+        }()
+        ScrollView(.vertical, showsIndicators: true) {
+            Text(tail.isEmpty ? "(no stdout payload)" : tail)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+        }
+        .frame(maxHeight: 200)
+        .background(Color.secondary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     @ViewBuilder
