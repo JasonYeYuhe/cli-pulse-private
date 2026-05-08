@@ -24,7 +24,13 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-HELPER_VERSION = "0.2.0"
+# v1.15: bump from 0.2.0 so the device-snapshot heartbeat updates the
+# `devices.helper_version` row to a value the macOS / iOS picker's
+# version gate (Models.DeviceRecord.supportsMultiCLIManagedSessions)
+# will accept. Existing paired Macs running this v1.15 helper get
+# their row bumped on the next heartbeat tick (~120s); newly-paired
+# Macs use the matching pair-time default in cli_pulse_helper.py.
+HELPER_VERSION = "1.15.0"
 
 logger = logging.getLogger("cli_pulse.collector")
 

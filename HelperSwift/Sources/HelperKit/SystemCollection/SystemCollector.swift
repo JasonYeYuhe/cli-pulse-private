@@ -66,7 +66,12 @@ public actor SystemCollector {
 
     public init(
         userSecret: Data,
-        helperVersion: String = "swift-phase4e-slice2d",
+        // v1.15: bump default to a real semver string so the
+        // iOS / macOS picker's version gate accepts heartbeats from
+        // the Swift helper. Pre-v1.15 the placeholder
+        // "swift-phase4e-slice2d" never parsed as semver and so
+        // every Swift-helper-paired Mac failed the multi-CLI gate.
+        helperVersion: String = "1.15.0",
         deviceCollector: DeviceSnapshotCollector? = nil,
         sessionDetector: SessionDetector? = nil,
         alertGenerator: AlertGenerator = AlertGenerator(),
