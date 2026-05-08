@@ -1694,13 +1694,23 @@ public actor APIClient {
         // v0.3.1: send our paired device_id so the row lands under
         // (user_id, device_id, ...) and doesn't race-clobber rows from
         // a Win/Linux Tauri client running on the same account.
-        // HelperConfig.deviceId is populated whenever the user has gone
-        // through register_helper. If somehow nil (rare — pre-pair
-        // transient), omit the param and the server falls back to the
-        // sentinel UUID, which keeps legacy single-device users
-        // working as before.
+        //
+        // 2026-05-08: switched `load()` → `loadIfMatches(authenticatedUserId:)`.
+        // Background: when the user signs into a different Supabase account
+        // while the app-group still holds a paired-helper config from the
+        // previous account, the stale `deviceId` was being sent to the
+        // server. The server's ownership check
+        // (`devices.user_id == auth.uid()` for the supplied id) fails →
+        // raises errcode 42501 → HTTP 403 → every syncDailyUsage upload
+        // bounces and the iPhone sees stale cloud data forever. The
+        // guarded loader returns nil on mismatch so we fall through to
+        // the no-`p_device_id` path (server sentinel UUID; no ownership
+        // check). Re-pairing the helper with the new account refreshes
+        // the config to the matching pair.
         var body: [String: Any] = ["metrics": metrics]
-        if let deviceId = HelperConfig.load()?.deviceId, !deviceId.isEmpty {
+        if let deviceId = HelperConfig.loadIfMatches(
+            authenticatedUserId: userId
+        )?.deviceId, !deviceId.isEmpty {
             body["p_device_id"] = deviceId
         }
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)

@@ -54,6 +54,37 @@ public struct HelperConfig: Codable, Sendable {
         )
     }
 
+    /// 2026-05-08: bug observed in production — when a user signs into the
+    /// macOS app under a NEW Supabase account while the app-group already
+    /// holds a `helper_config` from a PRIOR account, the stale `deviceId`
+    /// + `userId` are silently used by the upload path. The server's
+    /// `upsert_daily_usage(p_device_id)` then fails the ownership check
+    /// (`devices.user_id` of the stored device != `auth.uid()` of the new
+    /// JWT) and raises errcode 42501 → HTTP 403. The Mac sees
+    /// `[syncDailyUsage] failed: HTTP 403` every refresh forever; the
+    /// iPhone reads stale cloud data.
+    ///
+    /// `loadIfMatches(...)` returns the config ONLY when the stored
+    /// `userId` equals the currently-authenticated user_id (e.g. the
+    /// `sub` claim of the access token). Callers that need to send
+    /// `p_device_id` MUST use this guarded variant — passing nil for
+    /// `p_device_id` is the safe fallback (the server then attributes
+    /// the upsert to the sentinel UUID instead of failing the device
+    /// check; see migrate_v0.37_daily_usage_device_id.sql).
+    public static func loadIfMatches(authenticatedUserId: String?) -> HelperConfig? {
+        guard let cfg = load() else { return nil }
+        guard let auth = authenticatedUserId, !auth.isEmpty else {
+            // No authenticated user yet — caller shouldn't be sending
+            // p_device_id at all.
+            return nil
+        }
+        guard cfg.userId == auth else {
+            // Cross-account leak: refuse to surface the stale config.
+            return nil
+        }
+        return cfg
+    }
+
     /// Write config: non-secret fields to UserDefaults, secret to Keychain.
     public static func save(_ config: HelperConfig) {
         let stored = StoredConfig(
