@@ -247,6 +247,18 @@ def test_hello_returns_caps_without_auth(short_sock_dir):
             "subscribe_events": False,
             "approvals": False,
         }
+        # v1.15: provider_availability is a list of installed CLI
+        # spawners. The exact contents depend on the host PATH (the
+        # test runs against the dev machine). Assertion is structural:
+        # always present, always a list, always a subset of the known
+        # provider names. The macOS / iOS picker uses this to gray out
+        # menu items for missing CLIs; an empty list means "helper
+        # unsure, allow all".
+        assert "provider_availability" in result
+        assert isinstance(result["provider_availability"], list)
+        assert set(result["provider_availability"]).issubset(
+            {"claude", "codex", "gemini"}
+        )
     finally:
         server.stop()
 

@@ -163,28 +163,37 @@ struct SessionsTab: View {
             let canStartRemote = state.remoteControlEnabled && targetDeviceForStart != nil
             let canStartLocal = state.canStartLocalManagedSession
             if canStartRemote || canStartLocal {
-                // v1.15: split into a Menu so the user can pick Claude /
-                // Codex / Gemini. Backend (migrate_v0.45) and helper
-                // spawner registry both accept all three; the helper
-                // capability map (Phase 5) will gray out unavailable
-                // entries once it ships, but for now we offer all three
-                // and surface a typed error if the helper rejects.
+                // v1.15: pickable Menu for Claude / Codex / Gemini.
+                // The helper advertises which CLIs it can actually
+                // spawn via `localProviderAvailability` (set in
+                // hello). When the local helper is the target and the
+                // list is non-empty, we gray out unavailable entries.
+                // Empty list means a pre-v1.15 helper that doesn't
+                // ship the field — fall through to allowing all so we
+                // don't block users on rolling helpers.
+                let avail = canStartLocal ? state.localProviderAvailability : []
+                let claudeOK = avail.isEmpty || avail.contains("claude")
+                let codexOK  = avail.isEmpty || avail.contains("codex")
+                let geminiOK = avail.isEmpty || avail.contains("gemini")
                 Menu {
                     Button {
                         Task { await openManagedClaudeSession(provider: "claude") }
                     } label: {
                         Label("Claude", systemImage: "sparkles")
                     }
+                    .disabled(!claudeOK)
                     Button {
                         Task { await openManagedClaudeSession(provider: "codex") }
                     } label: {
                         Label("Codex", systemImage: "chevron.left.slash.chevron.right")
                     }
+                    .disabled(!codexOK)
                     Button {
                         Task { await openManagedClaudeSession(provider: "gemini") }
                     } label: {
                         Label("Gemini", systemImage: "diamond")
                     }
+                    .disabled(!geminiOK)
                 } label: {
                     Label(canStartLocal ? "New Local" : "New",
                           systemImage: "plus.circle.fill")

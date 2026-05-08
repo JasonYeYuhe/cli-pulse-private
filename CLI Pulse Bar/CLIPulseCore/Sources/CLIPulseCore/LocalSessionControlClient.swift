@@ -379,10 +379,18 @@ public final class LocalSessionControlClient: SessionControlClient {
             subscribeEvents: (capsRaw["subscribe_events"] as? Bool) ?? false,
             approvals: (capsRaw["approvals"] as? Bool) ?? false
         )
+        // v1.15: optional `provider_availability` field. Older helpers
+        // omit it entirely; treat that as "no advertised list" so the
+        // UI falls back to the legacy implicit Claude default rather
+        // than blanking out every Menu item on a not-yet-upgraded
+        // helper.
+        let providerAvailability =
+            (result["provider_availability"] as? [String]) ?? []
         return SessionControlHello(
             protocolVersion: version,
             supportedMethods: Set(methods),
-            capabilities: caps
+            capabilities: caps,
+            providerAvailability: providerAvailability
         )
     }
 

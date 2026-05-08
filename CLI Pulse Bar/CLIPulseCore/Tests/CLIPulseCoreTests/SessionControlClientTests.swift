@@ -49,6 +49,43 @@ final class SessionControlClientTests: XCTestCase {
         )
     }
 
+    // MARK: - v1.15 provider availability shape
+
+    func testHello_providerAvailability_defaultsEmpty() {
+        // Existing call sites used the 3-arg init before v1.15. The
+        // new providerAvailability field MUST default to an empty
+        // array so a stale caller (e.g. test stubs that haven't been
+        // updated) keeps compiling without a forced relink.
+        let hello = SessionControlHello(
+            protocolVersion: 1,
+            supportedMethods: ["hello"],
+            capabilities: .iter1Local
+        )
+        XCTAssertEqual(hello.providerAvailability, [])
+    }
+
+    func testHello_providerAvailability_roundTrip() {
+        let hello = SessionControlHello(
+            protocolVersion: 1,
+            supportedMethods: ["hello", "start_session"],
+            capabilities: .iter2bLocal,
+            providerAvailability: ["claude", "codex"]
+        )
+        XCTAssertEqual(hello.providerAvailability, ["claude", "codex"])
+        // Equatable conformance must include providerAvailability —
+        // otherwise picker UI tests that compare against expected
+        // shapes will silently pass on stale data.
+        XCTAssertNotEqual(
+            hello,
+            SessionControlHello(
+                protocolVersion: 1,
+                supportedMethods: ["hello", "start_session"],
+                capabilities: .iter2bLocal,
+                providerAvailability: ["claude"]
+            )
+        )
+    }
+
     func testWireCodeMapping_internalAndBadRequest() {
         XCTAssertEqual(
             SessionControlErrorMapping.error(forWireCode: "internal", message: "boom"),

@@ -84,6 +84,7 @@ extension AppState {
             self.localHelperReachable = true
             self.localCapabilities = hello.capabilities
             self.localProtocolVersion = hello.protocolVersion
+            self.localProviderAvailability = hello.providerAvailability
             self.localHelperError = nil
         } catch let err as SessionControlError {
             self.localHelperReachable = false

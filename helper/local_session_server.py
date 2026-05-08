@@ -753,6 +753,19 @@ class LocalSessionServer:
                     "version_mismatch",
                     f"helper speaks protocol {PROTOCOL_VERSION}, client requested {requested}",
                 )
+            # v1.15: include the list of providers whose CLI binary
+            # the helper can actually spawn on this host. The macOS /
+            # iOS spawn picker uses this to gray out unavailable
+            # providers in the dropdown so users don't try to start a
+            # Codex session on a Mac that doesn't have Codex installed.
+            # Falls back to a defensive empty list rather than raising,
+            # so a stale `provider_spawners` import doesn't break the
+            # whole hello reply.
+            try:
+                from helper.provider_spawners import available_providers
+                provider_availability = list(available_providers())
+            except Exception:  # noqa: BLE001
+                provider_availability = ["claude"]
             return {
                 "protocol_version": PROTOCOL_VERSION,
                 "supported_methods": list(SUPPORTED_METHODS),
@@ -773,6 +786,10 @@ class LocalSessionServer:
                     "subscribe_events": self._event_broker is not None,
                     "approvals": self._approval_registry is not None,
                 },
+                # v1.15: array of installed providers (subset of
+                # ['claude','codex','gemini']). UI uses this to disable
+                # menu items for providers whose binary is missing.
+                "provider_availability": provider_availability,
             }
 
         if method == "ping":

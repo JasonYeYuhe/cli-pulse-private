@@ -108,15 +108,24 @@ public struct SessionControlHello: Sendable, Equatable {
     public let protocolVersion: Int
     public let supportedMethods: Set<String>
     public let capabilities: SessionControlCapabilities
+    /// v1.15: subset of `["claude","codex","gemini"]` the helper can
+    /// actually spawn on this host. Empty means "helper didn't tell us"
+    /// — older helpers without v1.15 wired in don't ship this field;
+    /// callers should treat empty as "no advertised list, fall back to
+    /// the legacy implicit `[claude]` so users on a still-rolling-out
+    /// helper aren't blocked from spawning Claude.
+    public let providerAvailability: [String]
 
     public init(
         protocolVersion: Int,
         supportedMethods: Set<String>,
-        capabilities: SessionControlCapabilities
+        capabilities: SessionControlCapabilities,
+        providerAvailability: [String] = []
     ) {
         self.protocolVersion = protocolVersion
         self.supportedMethods = supportedMethods
         self.capabilities = capabilities
+        self.providerAvailability = providerAvailability
     }
 }
 
