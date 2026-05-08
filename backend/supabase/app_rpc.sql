@@ -89,22 +89,30 @@ begin
     with usage_agg as (
       select
         provider,
+        -- Codex P2 (PR #41 review, 2026-05-08): clamp upper bound to
+        -- v_today so multi-timezone users can't sum future-dated metrics
+        -- written by a device ahead of the querying client's local day.
+        -- See migrate_v0.42_user_tz_today.sql for the full rationale.
         sum(case when metric_date = v_today
               then coalesce(input_tokens,0) + coalesce(cached_tokens,0) + coalesce(output_tokens,0)
               else 0 end) as today_usage,
-        sum(case when metric_date >= v_week_start
+        sum(case when metric_date >= v_week_start and metric_date <= v_today
               then coalesce(input_tokens,0) + coalesce(cached_tokens,0) + coalesce(output_tokens,0)
               else 0 end) as total_usage,
         sum(case when metric_date = v_today then cost else 0 end) as today_cost,
-        sum(case when metric_date >= v_week_start then cost else 0 end) as week_cost,
-        sum(cost) as month_cost
+        sum(case when metric_date >= v_week_start and metric_date <= v_today
+              then cost else 0 end) as week_cost,
+        sum(case when metric_date <= v_today then cost else 0 end) as month_cost
       from public.daily_usage_metrics
       where user_id = v_user_id
         and metric_date >= v_month_start
+        and metric_date <= v_today
       group by provider
     ),
     quota_agg as (
-      select provider, remaining, quota, plan_type, reset_time, tiers
+      -- v0.43 (2026-05-04): added `updated_at` so cli-pulse-desktop can
+      -- render a "stale" badge when cached server data is older than ~6 min.
+      select provider, remaining, quota, plan_type, reset_time, tiers, updated_at
       from public.provider_quotas
       where user_id = v_user_id
     )
@@ -121,7 +129,8 @@ begin
         'quota', q.quota,
         'plan_type', q.plan_type,
         'reset_time', q.reset_time,
-        'tiers', coalesce(q.tiers, '[]'::jsonb)
+        'tiers', coalesce(q.tiers, '[]'::jsonb),
+        'updated_at', q.updated_at
       ) as row_data,
       coalesce(u.total_usage, 0) as sort_key
       from usage_agg u

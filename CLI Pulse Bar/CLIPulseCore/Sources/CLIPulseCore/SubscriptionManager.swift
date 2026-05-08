@@ -201,6 +201,34 @@ public final class SubscriptionManager: ObservableObject {
 
     // MARK: - Entitlements
 
+    /// Tie-break for `Transaction.currentEntitlements` selection.
+    ///
+    /// Returns `true` if a transaction with `(newTier, newIsLifetime)` should
+    /// replace the running highest `(currentTier, currentIsLifetime)`.
+    ///
+    /// Rules:
+    /// - Strictly higher rank wins (Team beats both Pro variants).
+    /// - On a Pro-rank tie, Lifetime beats auto-renewable Pro. This routes
+    ///   the long-term receipt to `validate-receipt`, which persists
+    ///   `current_period_end = NULL` server-side. Without this tie-break,
+    ///   whichever transaction `Transaction.currentEntitlements` yielded
+    ///   first won; Apple does not document a stable order, so a Pro-yearly
+    ///   user who later buys Lifetime could end up with the server still
+    ///   holding the yearly's expiry timestamp.
+    /// - Two non-Lifetime equals never trade places (no behavior change for
+    ///   pre-v1.14 entitlement combinations).
+    nonisolated static func shouldPromote(
+        newTier: SubscriptionTier,
+        newIsLifetime: Bool,
+        currentTier: SubscriptionTier,
+        currentIsLifetime: Bool
+    ) -> Bool {
+        if newTier.tierRank > currentTier.tierRank { return true }
+        if newTier.tierRank == currentTier.tierRank
+           && newIsLifetime && !currentIsLifetime { return true }
+        return false
+    }
+
     public func updateCurrentEntitlements() async {
         var activeSubs: [StoreKit.Transaction] = []
         var highestTier: SubscriptionTier = .free
@@ -218,6 +246,7 @@ public final class SubscriptionManager: ObservableObject {
             // .pro tier signal — Team (auto-renewable) still outranks
             // Lifetime if both are active.
             let txTier: SubscriptionTier
+            let txIsLifetime: Bool
             switch transaction.productType {
             case .autoRenewable:
                 activeSubs.append(transaction)
@@ -230,15 +259,24 @@ public final class SubscriptionManager: ObservableObject {
                 } else {
                     txTier = .free
                 }
+                txIsLifetime = false
             case .nonConsumable where transaction.productID == Self.proLifetimeID:
                 activeSubs.append(transaction)
                 sawLifetime = true
                 txTier = .pro
+                txIsLifetime = true
             default:
                 txTier = .free
+                txIsLifetime = false
             }
 
-            if txTier.tierRank > highestTier.tierRank {
+            // Codex P1 (PR #41 review, 2026-05-08): see `shouldPromote`
+            // doc comment for the tie-break rationale.
+            let currentHighestIsLifetime = (highestProductID == Self.proLifetimeID)
+            if Self.shouldPromote(
+                newTier: txTier, newIsLifetime: txIsLifetime,
+                currentTier: highestTier, currentIsLifetime: currentHighestIsLifetime
+            ) {
                 highestTier = txTier
                 highestJWS = result.jwsRepresentation
                 highestProductID = transaction.productID

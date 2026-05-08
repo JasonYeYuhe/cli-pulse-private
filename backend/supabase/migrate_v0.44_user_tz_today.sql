@@ -1,5 +1,17 @@
 -- ============================================================
--- migrate_v0.42 — Timezone-aware dashboard_summary / provider_summary
+-- migrate_v0.44 — Timezone-aware dashboard_summary / provider_summary
+--
+-- (Filename was originally migrate_v0.42; renamed to v0.44 because
+-- v0.43 was already applied to production by the cli-pulse-desktop
+-- team on 2026-05-04 — see `v0_43_provider_quotas_bigint_and_updated_at`.
+-- Rebasing this migration on top of v0.43 means it must:
+--   * Keep the `updated_at` column projection that v0.43 added.
+--   * Restore the correct rolling-window math (6 days / 29 days for
+--     7- and 30-day inclusive windows). v0.43 inadvertently shipped
+--     an off-by-one regression by writing `'7 days'` / `'30 days'` —
+--     the CI guard `ci_check_date_windows.py` only scans this repo's
+--     `backend/supabase/*.sql` and didn't see v0.43 because that
+--     migration was authored in cli-pulse-desktop's tree.)
 --
 -- Bug (observed 2026-05-08, reported by user at 02:03 CN):
 --   iPhone "Usage Today" = 0 / "<$0.01"
@@ -25,6 +37,11 @@
 --   needed. Old callers that pass nothing keep the previous behavior
 --   via the default (forward-compatible during client rollout).
 --
+--   Codex P2 follow-up (PR #41 review): clamp `metric_date <= v_today`
+--   in provider_summary so a multi-timezone user (Mac in CN UTC+8 +
+--   iPhone queried from US Pacific) cannot have the iPhone's 7- and
+--   30-day totals include CN-tomorrow rows the Mac just wrote.
+--
 -- Migration shape (per Codex review of v0.37 + memory
 -- `feedback_gemini_review_patterns.md` rule #1):
 --   * jsonb-returning functions survive CREATE OR REPLACE only if the
@@ -38,7 +55,11 @@
 --   * Self-review against `feedback_gemini_review_patterns.md` — passed
 --     #1 (DROP first) and #4 (no silent fallback worth surfacing in UI:
 --     server is single source of truth).
---   * Should be re-reviewed by Gemini and Codex before merge.
+--   * Codex P1+P2 (PR #41 review, 2026-05-08): caught Lifetime tie-break
+--     in SubscriptionManager + missing upper-bound on provider_summary.
+--     Both fixes applied.
+--   * Gemini 3.1 Pro — approved migration as ship-ready (idempotency,
+--     PostgREST routing, upper-bound clamp all correct).
 -- ============================================================
 
 set lock_timeout = '30s';
@@ -100,8 +121,14 @@ begin
 end;
 $$;
 
-grant execute on function public.dashboard_summary(date) to authenticated;
+-- Lock down: revoke the implicit PUBLIC grant Postgres applies to new
+-- functions, then explicit grant to authenticated only. Without these
+-- two REVOKEs anon can call the RPC and only get bounced by the in-body
+-- `auth.uid() is null` check — defense-in-depth says lock at the role
+-- boundary too.
+revoke execute on function public.dashboard_summary(date) from public;
 revoke execute on function public.dashboard_summary(date) from anon;
+grant execute on function public.dashboard_summary(date) to authenticated;
 
 -- ────────────────────────────────────────────────────────────
 -- 2. provider_summary — accept p_user_today (today / 7-day / 30-day
@@ -131,22 +158,37 @@ begin
     with usage_agg as (
       select
         provider,
+        -- Codex P2 (PR #41 review, 2026-05-08): clamp the upper bound to
+        -- v_today so a multi-timezone user (Mac in CN UTC+8 + iPhone
+        -- queried from US Pacific, say) cannot have the iPhone's 7-day
+        -- and 30-day totals include CN-tomorrow rows the Mac already
+        -- wrote. Pre-v0.42 the boundary was the server's `current_date`,
+        -- which always trailed any local-TZ writer; with `p_user_today`
+        -- the upper edge is now client-controlled, so the explicit
+        -- `metric_date <= v_today` clamp restores the implicit guarantee.
+        -- The `today_usage` and `today_cost` cases already use equality,
+        -- so they do not need the clamp.
         sum(case when metric_date = v_today
               then coalesce(input_tokens,0) + coalesce(cached_tokens,0) + coalesce(output_tokens,0)
               else 0 end) as today_usage,
-        sum(case when metric_date >= v_week_start
+        sum(case when metric_date >= v_week_start and metric_date <= v_today
               then coalesce(input_tokens,0) + coalesce(cached_tokens,0) + coalesce(output_tokens,0)
               else 0 end) as total_usage,
         sum(case when metric_date = v_today then cost else 0 end) as today_cost,
-        sum(case when metric_date >= v_week_start then cost else 0 end) as week_cost,
-        sum(cost) as month_cost
+        sum(case when metric_date >= v_week_start and metric_date <= v_today
+              then cost else 0 end) as week_cost,
+        sum(case when metric_date <= v_today then cost else 0 end) as month_cost
       from public.daily_usage_metrics
       where user_id = v_user_id
         and metric_date >= v_month_start
+        and metric_date <= v_today
       group by provider
     ),
     quota_agg as (
-      select provider, remaining, quota, plan_type, reset_time, tiers
+      -- v0.43 (2026-05-04): added updated_at projection so cli-pulse-desktop
+      -- can render a "stale" badge when cached server data is older than
+      -- ~6 minutes. Preserved here in v0.44.
+      select provider, remaining, quota, plan_type, reset_time, tiers, updated_at
       from public.provider_quotas
       where user_id = v_user_id
     )
@@ -163,7 +205,8 @@ begin
         'quota', q.quota,
         'plan_type', q.plan_type,
         'reset_time', q.reset_time,
-        'tiers', coalesce(q.tiers, '[]'::jsonb)
+        'tiers', coalesce(q.tiers, '[]'::jsonb),
+        'updated_at', q.updated_at
       ) as row_data,
       coalesce(u.total_usage, 0) as sort_key
       from usage_agg u
@@ -173,8 +216,9 @@ begin
 end;
 $$;
 
-grant execute on function public.provider_summary(date) to authenticated;
+revoke execute on function public.provider_summary(date) from public;
 revoke execute on function public.provider_summary(date) from anon;
+grant execute on function public.provider_summary(date) to authenticated;
 
 reset lock_timeout;
 
