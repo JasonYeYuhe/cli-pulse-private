@@ -207,6 +207,14 @@
 "subscription.switch_pro" = "Cambiar a Pro";
 "subscription.switch_team" = "Cambiar a Equipo";
 
+/* ── v1.14 IAP de por vida ── */
+"subscription.lifetime" = "Pro de por Vida";
+"subscription.lifetime_description" = "Funciones Pro para siempre, en todas las plataformas. Pago único, sin cargos recurrentes.";
+"subscription.lifetime_owned" = "Tienes Pro de por Vida";
+"subscription.one_time" = "pago único";
+"subscription.one_time_badge" = "ÚNICO";
+"subscription.buy_lifetime" = "Comprar de por Vida";
+
 /* ── Acerca de ── */
 "about.title" = "Acerca de CLI Pulse Bar";
 "about.description" = "Monitorea herramientas de codificación con IA desde la barra de menú. Rastrea uso, costos y alertas de más de 20 proveedores incluyendo Claude, Codex y Gemini.";

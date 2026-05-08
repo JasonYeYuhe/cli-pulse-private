@@ -217,6 +217,51 @@ verify_mas_archive_has_no_launchagent() {
         echo "  Mac App Store builds must ship without the unsandboxed LaunchAgent helper." >&2
         return 1
     fi
+
+    # Codex review (PR #39): assert every nested executable inside the MAS
+    # bundle is sandboxed. ITMS-90296 rejects ANY unsandboxed nested binary,
+    # not just the Swift LaunchAgent helper. The CLIPulseHelper.app LoginItem
+    # is the only nested binary that ships in MAS archives; verify its signed
+    # entitlements include app-sandbox=true. This catches accidental drift in
+    # ENABLE_APP_SANDBOX project settings or future nested binaries that
+    # someone forgets to sandbox.
+    local LOGIN_ITEM="$APP_PATH/Contents/Library/LoginItems/CLIPulseHelper.app"
+    local LOGIN_ITEM_BIN="$LOGIN_ITEM/Contents/MacOS/CLIPulseHelper"
+    if [[ ! -d "$LOGIN_ITEM" ]]; then
+        echo "  ERROR: MAS archive missing CLIPulseHelper.app LoginItem at $LOGIN_ITEM" >&2
+        return 1
+    fi
+    if [[ ! -x "$LOGIN_ITEM_BIN" ]]; then
+        echo "  ERROR: MAS archive missing LoginItem binary at $LOGIN_ITEM_BIN" >&2
+        return 1
+    fi
+    local LOGIN_ITEM_ENT
+    LOGIN_ITEM_ENT="$(codesign -d --entitlements :- "$LOGIN_ITEM_BIN" 2>/dev/null || true)"
+    if [[ -z "$LOGIN_ITEM_ENT" ]]; then
+        echo "  WARN: could not read LoginItem entitlements via codesign (likely an unsigned CI build)" >&2
+        # Fall back to source entitlements file when binary is unsigned.
+        local SRC_ENT="${SRCROOT:-$(pwd)}/CLIPulseHelper/CLIPulseHelper.entitlements"
+        if [[ ! -f "$SRC_ENT" ]]; then
+            SRC_ENT="$(dirname "$0")/../CLIPulseHelper/CLIPulseHelper.entitlements"
+        fi
+        if [[ -f "$SRC_ENT" ]]; then
+            LOGIN_ITEM_ENT="$(cat "$SRC_ENT")"
+        fi
+    fi
+    if ! grep -q "com.apple.security.app-sandbox" <<< "$LOGIN_ITEM_ENT"; then
+        echo "  ERROR: CLIPulseHelper LoginItem is not sandboxed (missing app-sandbox entitlement)" >&2
+        echo "  Mac App Store rejects unsandboxed nested binaries with ITMS-90296." >&2
+        return 1
+    fi
+    # Confirm it's set to <true/>, not just present.
+    if ! awk '
+        /<key>com.apple.security.app-sandbox<\/key>/ { found=1; next }
+        found && /<true\/>/ { print "ok"; exit }
+        found && /<false\/>/ { exit }
+    ' <<< "$LOGIN_ITEM_ENT" | grep -q ok; then
+        echo "  ERROR: CLIPulseHelper LoginItem app-sandbox entitlement is not <true/>" >&2
+        return 1
+    fi
 }
 
 # --- iOS Build (includes Widgets) ---

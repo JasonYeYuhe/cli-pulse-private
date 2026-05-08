@@ -315,6 +315,13 @@ public enum L10n {
         public static var retry: String { tr("subscription.retry") }
         public static var viewAllPlans: String { tr("subscription.view_all_plans") }
         public static var billing: String { tr("subscription.billing") }
+        // v1.14: Pro Lifetime IAP strings
+        public static var lifetime: String { tr("subscription.lifetime") }
+        public static var lifetimeDescription: String { tr("subscription.lifetime_description") }
+        public static var lifetimeOwned: String { tr("subscription.lifetime_owned") }
+        public static var oneTime: String { tr("subscription.one_time") }
+        public static var oneTimeBadge: String { tr("subscription.one_time_badge") }
+        public static var buyLifetime: String { tr("subscription.buy_lifetime") }
     }
 
     // MARK: - About

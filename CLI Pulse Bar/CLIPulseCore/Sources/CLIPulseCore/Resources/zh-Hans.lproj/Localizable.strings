@@ -700,3 +700,11 @@
 
 /* ── 订阅计费切换 ── */
 "subscription.billing" = "计费";
+
+/* ── v1.14 Pro 终身买断 IAP ── */
+"subscription.lifetime" = "Pro 终身版";
+"subscription.lifetime_description" = "全平台 Pro 功能,永久有效。一次买断,不再续订。";
+"subscription.lifetime_owned" = "你已拥有 Pro 终身版";
+"subscription.one_time" = "一次性";
+"subscription.one_time_badge" = "一次买断";
+"subscription.buy_lifetime" = "购买终身版";

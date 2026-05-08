@@ -8,11 +8,17 @@
 -- v1.10.5+: sources today_usage/today_cost from daily_usage_metrics
 -- (populated by CostUsageScanner via JSONL bookmarks, unaffected by the
 -- MAS sandbox gap that made `sessions` unreliable).
-create or replace function public.dashboard_summary()
+-- v0.42 (2026-05-08): added p_user_today parameter so the "today" boundary
+-- aligns with the user's local timezone instead of the server's UTC clock.
+-- Old callers without the param keep prior behavior via the NULL default.
+-- See migrate_v0.42_user_tz_today.sql for the bug write-up.
+create or replace function public.dashboard_summary(
+  p_user_today date default null
+)
 returns jsonb as $$
 declare
   v_user_id uuid := auth.uid();
-  v_today date := current_date;
+  v_today date := coalesce(p_user_today, current_date);
   v_today_usage bigint;
   v_today_cost numeric;
   v_today_rows integer;
@@ -59,16 +65,21 @@ $$ language plpgsql security definer set search_path = pg_catalog, public, exten
 -- AND `estimated_cost_30_day` so iOS/Watch/Android can show actual 30-day
 -- cost without extrapolating from 7 days. Sources all windows from
 -- `daily_usage_metrics`.
-create or replace function public.provider_summary()
+-- v0.42 (2026-05-08): added p_user_today parameter — same fix as
+-- dashboard_summary. All windows (today / 7-day / 30-day) key off the
+-- client-supplied local date when present.
+create or replace function public.provider_summary(
+  p_user_today date default null
+)
 returns jsonb as $$
 declare
   v_user_id uuid := auth.uid();
-  v_today date := current_date;
+  v_today date := coalesce(p_user_today, current_date);
   -- Rolling-7-day window = today + previous 6 days inclusive (= 7 calendar days).
   -- Same convention as Swift `DateRange.rollingWeekStart`.
-  v_week_start date := current_date - interval '6 days';
+  v_week_start date := v_today - interval '6 days';
   -- Rolling-30-day window = today + previous 29 days inclusive.
-  v_month_start date := current_date - interval '29 days';
+  v_month_start date := v_today - interval '29 days';
 begin
   if v_user_id is null then
     raise exception 'Not authenticated';

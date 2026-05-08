@@ -79,15 +79,22 @@ public final class SubscriptionManager: ObservableObject {
     public static let proYearlyID = "com.clipulse.pro.yearly"
     public static let teamMonthlyID = "com.clipulse.team.monthly"
     public static let teamYearlyID = "com.clipulse.team.yearly"
+    /// v1.14: Pro Lifetime — Non-Consumable IAP, pro tier, never expires.
+    /// ASC: com.clipulse.pro.lifetime / Apple ID 6767441323 / ¥128 CNY base.
+    public static let proLifetimeID = "com.clipulse.pro.lifetime"
 
     private static let allProductIDs: Set<String> = [
-        proMonthlyID, proYearlyID, teamMonthlyID, teamYearlyID
+        proMonthlyID, proYearlyID, teamMonthlyID, teamYearlyID, proLifetimeID
     ]
 
     @Published public var currentTier: SubscriptionTier = .free
     @Published public var products: [Product] = []
     @Published public var purchasedSubscriptions: [StoreKit.Transaction] = []
     @Published public var isLoading = false
+    /// v1.14: true when the user has redeemed `proLifetimeID` (Non-Consumable
+    /// purchase recorded in `Transaction.currentEntitlements`). Drives the
+    /// "You own Pro Lifetime" badge in paywall surfaces.
+    @Published public var isLifetime: Bool = false
 
     /// PR #18 follow-up: resolution state + diagnostic fields. See
     /// `TierResolutionState` doc comment for the rationale.
@@ -132,6 +139,7 @@ public final class SubscriptionManager: ObservableObject {
     public var proYearly: Product? { products.first { $0.id == Self.proYearlyID } }
     public var teamMonthly: Product? { products.first { $0.id == Self.teamMonthlyID } }
     public var teamYearly: Product? { products.first { $0.id == Self.teamYearlyID } }
+    public var proLifetime: Product? { products.first { $0.id == Self.proLifetimeID } }
 
     private var updateListenerTask: Task<Void, Error>?
 
@@ -198,14 +206,21 @@ public final class SubscriptionManager: ObservableObject {
         var highestTier: SubscriptionTier = .free
         var highestJWS: String?
         var highestProductID: String?
+        var sawLifetime = false
 
         for await result in StoreKit.Transaction.currentEntitlements {
             guard let transaction = try? checkVerified(result) else { continue }
 
-            if transaction.productType == .autoRenewable {
+            // v1.14: a Lifetime purchase appears once in
+            // `currentEntitlements` as a Non-Consumable transaction with no
+            // `expirationDate`. Apple keeps it there forever (until refund).
+            // We surface it through `isLifetime` for UI and treat it as a
+            // .pro tier signal — Team (auto-renewable) still outranks
+            // Lifetime if both are active.
+            let txTier: SubscriptionTier
+            switch transaction.productType {
+            case .autoRenewable:
                 activeSubs.append(transaction)
-
-                let txTier: SubscriptionTier
                 if transaction.productID == Self.teamMonthlyID ||
                    transaction.productID == Self.teamYearlyID {
                     txTier = .team
@@ -215,16 +230,23 @@ public final class SubscriptionManager: ObservableObject {
                 } else {
                     txTier = .free
                 }
+            case .nonConsumable where transaction.productID == Self.proLifetimeID:
+                activeSubs.append(transaction)
+                sawLifetime = true
+                txTier = .pro
+            default:
+                txTier = .free
+            }
 
-                if txTier.tierRank > highestTier.tierRank {
-                    highestTier = txTier
-                    highestJWS = result.jwsRepresentation
-                    highestProductID = transaction.productID
-                }
+            if txTier.tierRank > highestTier.tierRank {
+                highestTier = txTier
+                highestJWS = result.jwsRepresentation
+                highestProductID = transaction.productID
             }
         }
 
         purchasedSubscriptions = activeSubs
+        isLifetime = sawLifetime
 
         // Path 1: signed StoreKit 2 JWS exists → server-side validate.
         //

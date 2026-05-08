@@ -206,6 +206,26 @@ public actor APIClient {
         let today_sessions: Int?
     }
 
+    /// v0.42: shared param shape for dashboard_summary / provider_summary.
+    /// Encoded as `{"p_user_today": "YYYY-MM-DD"}` per PostgREST RPC contract.
+    struct UserTodayParams: Encodable {
+        let p_user_today: String
+    }
+
+    /// Today as `YYYY-MM-DD` in the device's current calendar.
+    /// Matches the same Calendar.current convention CostUsageScanner uses
+    /// when writing `metric_date` (CostUsageScanner.swift line ~450), so
+    /// the server's date comparison aligns with the writer's intent.
+    static func localTodayKey(now: Date = Date(), calendar: Calendar = .current) -> String {
+        let comps = calendar.dateComponents([.year, .month, .day], from: now)
+        return String(
+            format: "%04d-%02d-%02d",
+            comps.year ?? 1970,
+            comps.month ?? 1,
+            comps.day ?? 1
+        )
+    }
+
     private struct ProviderSummaryPayload: Decodable {
         let provider: String?
         let today_usage: Int?
@@ -501,7 +521,15 @@ public actor APIClient {
     // MARK: - Dashboard
 
     public func dashboard() async throws -> DashboardSummary {
-        let summary: DashboardSummaryPayload = try await rpc("dashboard_summary")
+        // v0.42 (2026-05-08): pass the device's local-TZ today so the server
+        // computes today/30-day windows against the user's wall clock instead
+        // of UTC. Server falls back to current_date if param absent (default
+        // NULL via PostgREST), so callers on older servers still work.
+        // See migrate_v0.42_user_tz_today.sql.
+        let summary: DashboardSummaryPayload = try await rpc(
+            "dashboard_summary",
+            params: UserTodayParams(p_user_today: Self.localTodayKey())
+        )
 
         let todayUsage = summary.today_usage ?? 0
         let todayCost = summary.today_cost ?? 0
@@ -544,7 +572,11 @@ public actor APIClient {
     // MARK: - Providers
 
     public func providers() async throws -> [ProviderUsage] {
-        let providers: [ProviderSummaryPayload] = try await rpc("provider_summary")
+        // v0.42: same local-TZ today fix as dashboard().
+        let providers: [ProviderSummaryPayload] = try await rpc(
+            "provider_summary",
+            params: UserTodayParams(p_user_today: Self.localTodayKey())
+        )
         return providers.map { provider in
             let name = provider.provider ?? ""
             // v1.9.4: attach a minimal metadata so cloud-only rows (provider

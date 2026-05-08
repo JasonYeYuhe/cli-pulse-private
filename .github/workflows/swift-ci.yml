@@ -369,4 +369,29 @@ jobs:
           test -d "$APP/Contents/Library/LoginItems/CLIPulseHelper.app" \
             || (echo "::error::MAS archive missing CLIPulseHelper.app LoginItem" && exit 1)
 
+          # Codex review (PR #39): assert LoginItem is sandboxed. ITMS-90296
+          # rejects any unsandboxed nested binary in a MAS archive, not just
+          # the Swift LaunchAgent helper. Even though ENABLE_APP_SANDBOX=YES
+          # in the Xcode project, this guard catches accidental drift if
+          # build settings change or if `CLIPulseHelper.entitlements`
+          # source loses its sandbox key.
+          echo "=== check 4: LoginItem entitlements include app-sandbox=true ==="
+          LOGIN_ITEM_ENT_FILE="CLI Pulse Bar/CLIPulseHelper/CLIPulseHelper.entitlements"
+          if [[ ! -f "$LOGIN_ITEM_ENT_FILE" ]]; then
+            echo "::error::source LoginItem entitlements file missing at $LOGIN_ITEM_ENT_FILE" >&2; exit 1
+          fi
+          if ! grep -q "com.apple.security.app-sandbox" "$LOGIN_ITEM_ENT_FILE"; then
+            echo "::error::CLIPulseHelper.entitlements missing com.apple.security.app-sandbox key" >&2
+            echo "::error::ITMS-90296 will reject the MAS upload — sandbox key must be explicit so verifier can detect drift" >&2
+            exit 1
+          fi
+          if ! awk '
+            /<key>com.apple.security.app-sandbox<\/key>/ { found=1; next }
+            found && /<true\/>/ { print "ok"; exit }
+            found && /<false\/>/ { exit }
+          ' "$LOGIN_ITEM_ENT_FILE" | grep -q ok; then
+            echo "::error::CLIPulseHelper.entitlements has app-sandbox key but value is not <true/>" >&2
+            exit 1
+          fi
+
           echo "OK: MAS archive excludes unsandboxed LaunchAgent helper and keeps the sandboxed LoginItem runtime"

@@ -698,3 +698,11 @@
 
 /* ── Subscription billing picker ── */
 "subscription.billing" = "Billing";
+
+/* ── v1.14 Pro Lifetime IAP ── */
+"subscription.lifetime" = "Pro Lifetime";
+"subscription.lifetime_description" = "Pro features forever, all platforms. One-time purchase, no recurring charges.";
+"subscription.lifetime_owned" = "You own Pro Lifetime";
+"subscription.one_time" = "one-time";
+"subscription.one_time_badge" = "ONE-TIME";
+"subscription.buy_lifetime" = "Buy Lifetime";

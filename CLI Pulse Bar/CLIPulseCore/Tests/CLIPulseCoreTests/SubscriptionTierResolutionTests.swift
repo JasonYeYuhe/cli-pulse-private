@@ -145,6 +145,35 @@ final class SubscriptionTierResolutionTests: XCTestCase {
         XCTAssertEqual(TierRefreshErrorCategory.receiptValidatorRejected.rawValue, "receipt-validator-rejected")
         XCTAssertEqual(TierRefreshErrorCategory.serverTierError.rawValue, "server-tier-error")
     }
+
+    // MARK: - v1.14 Pro Lifetime IAP
+
+    /// Lifetime product ID is exposed and the all-products set includes it.
+    /// Pin the constants so an ASC-side rename doesn't silently drop the
+    /// product from `Product.products(for:)`.
+    func testLifetimeProductIDIsRegistered() {
+        XCTAssertEqual(SubscriptionManager.proLifetimeID, "com.clipulse.pro.lifetime")
+    }
+
+    /// `isLifetime` defaults to false and the property is readable. Pinned
+    /// because the paywall surfaces gate the Lifetime tile on this exact
+    /// signal — an accidental rename to `hasLifetime` would silently
+    /// re-show the tile to users who already own it.
+    @MainActor
+    func testIsLifetimeDefaultsToFalse() {
+        let mgr = SubscriptionManager()
+        XCTAssertFalse(mgr.isLifetime, "fresh manager must report isLifetime = false")
+    }
+
+    /// `proLifetime` accessor returns nil when products haven't loaded.
+    /// (Verifying the accessor exists at all is the load-bearing part —
+    /// `manager.proLifetime` is referenced by SubscriptionView, the iOS
+    /// SettingsTab paywall, and SubscriptionSection's inline IAP cards.)
+    @MainActor
+    func testProLifetimeAccessorIsNilBeforeProductsLoad() {
+        let mgr = SubscriptionManager()
+        XCTAssertNil(mgr.proLifetime, "proLifetime must be nil until ASC products list arrives")
+    }
 }
 
 #endif
