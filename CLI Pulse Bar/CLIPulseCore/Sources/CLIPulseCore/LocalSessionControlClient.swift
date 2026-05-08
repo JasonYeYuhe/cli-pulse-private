@@ -408,6 +408,22 @@ public final class LocalSessionControlClient: SessionControlClient {
         guard let sid = result["session_id"] as? String, !sid.isEmpty else {
             throw SessionControlError.invalidResponse("start_session: missing session_id")
         }
+        // v1.15 codex review (round 2): the helper's
+        // `_local_start_claude_session_impl` returns
+        //   { "session_id": <uuid>, "ok": <bool> }
+        // where `ok=false` indicates the spawn itself failed (e.g. the
+        // requested provider's binary was not on PATH). Pre-fix the
+        // Swift caller only checked `session_id`, treated the call as
+        // success, and the optimistic-append path in
+        // `LocalSessionControlState` registered a phantom "running"
+        // session that never existed. Surface the failure as a typed
+        // error so the caller can show it AND skip the optimistic
+        // append.
+        if let ok = result["ok"] as? Bool, !ok {
+            throw SessionControlError.spawnFailed(
+                detail: "helper reported start_session ok=false (provider \(provider))"
+            )
+        }
         return SessionControlStartResult(sessionId: sid, commandId: nil)
     }
 

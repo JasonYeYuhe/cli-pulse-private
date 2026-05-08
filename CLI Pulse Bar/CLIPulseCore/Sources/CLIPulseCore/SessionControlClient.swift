@@ -328,6 +328,18 @@ public enum SessionControlError: Error, Equatable, Sendable, CustomStringConvert
     /// permission requests — extremely rare in normal Claude usage.
     case approvalLimitReached
 
+    /// v1.15 — local UDS reported `ok: false` on `start_session`.
+    /// The helper accepted the request but the spawn itself failed
+    /// (e.g. requested provider's binary not on PATH). Pre-v1.15 this
+    /// case never fired because the only provider was claude and the
+    /// helper short-circuited unsupported names with `notImplemented`;
+    /// v1.15 split that into a "registry lookup" gate (still
+    /// `notImplemented`) vs. an actual spawn failure (`spawnFailed`).
+    /// The associated value is a UI-suitable detail string ("spawn
+    /// failed" without further context if the helper didn't include
+    /// one).
+    case spawnFailed(detail: String)
+
     public var description: String {
         switch self {
         case .helperNotRunning:    return "helper not running"
@@ -345,6 +357,7 @@ public enum SessionControlError: Error, Equatable, Sendable, CustomStringConvert
         case .approvalNotAllowed:  return "approval not allowed for this session"
         case .approvalCapabilityInvalid: return "approval capability invalid"
         case .approvalLimitReached: return "too many pending approvals"
+        case .spawnFailed(let detail):     return "spawn failed: \(detail)"
         case .invalidResponse(let detail): return "invalid response: \(detail)"
         case .internalError(let detail):   return "internal error: \(detail)"
         }

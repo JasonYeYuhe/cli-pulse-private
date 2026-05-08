@@ -49,6 +49,50 @@ final class SessionControlClientTests: XCTestCase {
         )
     }
 
+    // MARK: - v1.15 spawn-failed error wiring (Codex review round 2)
+
+    func testSpawnFailed_descriptionIncludesDetail() {
+        // Pre-fix LocalSessionControlClient ignored `ok: false` from
+        // the helper's start_session reply, optimistically appending a
+        // running session that didn't exist. The fix added a
+        // `.spawnFailed(detail:)` case that the client throws when
+        // `result["ok"] == false`. Pin the description shape so any
+        // future enum change has to update the tests intentionally —
+        // the macOS / iOS UI uses `String(describing:)` to render the
+        // helper's reason inline.
+        let err = SessionControlError.spawnFailed(
+            detail: "helper reported start_session ok=false (provider codex)"
+        )
+        XCTAssertTrue(
+            String(describing: err).contains("spawn failed"),
+            "spawnFailed description must lead with 'spawn failed'; got \(err)"
+        )
+        XCTAssertTrue(
+            String(describing: err).contains("provider codex"),
+            "spawnFailed detail must round-trip into description"
+        )
+    }
+
+    func testSpawnFailed_isNotEqualToOtherCases() {
+        // Equatable conformance is auto-synthesized; pin that the new
+        // case is distinct from the existing `notImplemented` (the
+        // earlier failure mode for "helper rejected this provider")
+        // so a test that asserts notImplemented can't accidentally
+        // pass for an actual spawn failure.
+        XCTAssertNotEqual(
+            SessionControlError.spawnFailed(detail: "x"),
+            SessionControlError.notImplemented
+        )
+        XCTAssertEqual(
+            SessionControlError.spawnFailed(detail: "x"),
+            SessionControlError.spawnFailed(detail: "x")
+        )
+        XCTAssertNotEqual(
+            SessionControlError.spawnFailed(detail: "x"),
+            SessionControlError.spawnFailed(detail: "y")
+        )
+    }
+
     // MARK: - v1.15 provider availability shape
 
     func testHello_providerAvailability_defaultsEmpty() {

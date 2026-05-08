@@ -11,19 +11,23 @@ Approval surface:
     `default | auto_edit | yolo | plan` plus a `--yolo` shorthand.
     There is no first-class hook protocol the helper can subscribe to.
 
-    The iOS spawn picker surfaces an opt-in "Auto-approve all tools
-    (yolo)" toggle so the user can pick between two failure modes:
-      * default      — every tool prompts in the TUI; user must walk
-                       to the Mac to approve. Safe but blocks the
-                       managed-session UX.
-      * yolo         — Gemini auto-approves everything. Risky but
-                       unblocks remote use. User must opt in
-                       explicitly per spawn.
+    `params.extra_env` is the wire that will carry an optional
+    `CLI_PULSE_GEMINI_YOLO=1` flag when an opt-in YOLO toggle ships in
+    the picker. The translation logic — env var ⇒ `--yolo` argv flag —
+    is implemented here so the spawner is ready when the UI lands.
 
-    `params.extra_env` carries an optional `CLI_PULSE_GEMINI_YOLO=1`
-    flag from the spawn request when the user opted in. We translate
-    that to the `--yolo` argv flag here so the upstream binary sees a
-    standard form.
+    Future picker work (NOT in v1.15): an explicit, per-spawn
+    "Auto-approve all tools (yolo)" toggle so the user picks between
+    failure modes:
+      * default — every tool prompts in the TUI; user must walk to
+                  the Mac to approve. Safe but blocks managed-session
+                  UX.
+      * yolo    — Gemini auto-approves everything. Risky but unblocks
+                  remote use. Must require explicit per-spawn opt-in
+                  (no remembered preference) when this UI exists.
+
+    Until that UI ships, the env var is never set by any caller and
+    Gemini runs in `default` mode.
 
 Override the binary path via `CLI_PULSE_GEMINI_ARGV0` if needed (same
 shape as Claude/Codex overrides).

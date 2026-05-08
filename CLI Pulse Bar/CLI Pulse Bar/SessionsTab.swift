@@ -166,15 +166,38 @@ struct SessionsTab: View {
                 // v1.15: pickable Menu for Claude / Codex / Gemini.
                 // The helper advertises which CLIs it can actually
                 // spawn via `localProviderAvailability` (set in
-                // hello). When the local helper is the target and the
-                // list is non-empty, we gray out unavailable entries.
-                // Empty list means a pre-v1.15 helper that doesn't
-                // ship the field — fall through to allowing all so we
-                // don't block users on rolling helpers.
-                let avail = canStartLocal ? state.localProviderAvailability : []
-                let claudeOK = avail.isEmpty || avail.contains("claude")
-                let codexOK  = avail.isEmpty || avail.contains("codex")
-                let geminiOK = avail.isEmpty || avail.contains("gemini")
+                // hello).
+                //
+                // Codex review (round 2): the prior empty-fallback
+                // semantic was wrong — empty meant "all three" but
+                // a pre-v1.15 helper only knows Claude. The corrected
+                // semantic: empty list ⇒ the helper is pre-v1.15 (or
+                // the spawner registry import broke); fall back to
+                // CLAUDE-ONLY so we don't gray-bait users into
+                // clicking Codex/Gemini items that the helper will
+                // refuse. Cross-Mac (`!canStartLocal`) keeps offering
+                // all three because we have no per-Mac availability
+                // there yet (deferred to v1.16 cross-Mac column).
+                // IIFE because SwiftUI's @ViewBuilder rejects an
+                // inline if/else assignment block here. Returns a
+                // tuple of (claudeOK, codexOK, geminiOK).
+                let (claudeOK, codexOK, geminiOK): (Bool, Bool, Bool) = {
+                    if !canStartLocal {
+                        // Remote-routed start: optimistic, no per-Mac map.
+                        return (true, true, true)
+                    }
+                    let avail = state.localProviderAvailability
+                    if avail.isEmpty {
+                        // Local helper but no advertised list ⇒
+                        // pre-v1.15 helper that only knew Claude.
+                        return (true, false, false)
+                    }
+                    return (
+                        avail.contains("claude"),
+                        avail.contains("codex"),
+                        avail.contains("gemini")
+                    )
+                }()
                 Menu {
                     Button {
                         Task { await openManagedClaudeSession(provider: "claude") }
@@ -857,7 +880,43 @@ struct SessionsTab: View {
             )
         }()
         let hasContent = routesLocally ? !localPreviewRaw.isEmpty : !events.isEmpty
+
+        // v1.15 codex review (round 2): macOS panel was also dropping
+        // helper `kind=='info'` events on the floor (mirror of the
+        // iOS bug). When the helper rejects a Codex/Gemini spawn from
+        // a remote-routed start, the failure detail lives in the
+        // info event payload — and the user only saw an empty
+        // ended-session row otherwise. Compute the latest info-event
+        // text outside the conversation formatter and render it as a
+        // banner above the transcript.
+        let latestInfoMessage: String? = {
+            guard !routesLocally else { return nil }
+            guard let payload = events
+                .last(where: { $0.kind == "info" })?
+                .payload else { return nil }
+            let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }()
+
         VStack(alignment: .leading, spacing: 4) {
+            if let info = latestInfoMessage {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(info.lowercased().contains("fail")
+                                         || info.lowercased().contains("error")
+                                         ? Color.red : Color.blue)
+                    Text(info)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.vertical, 3)
+                .padding(.horizontal, 6)
+                .background(Color.secondary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
             HStack(spacing: 6) {
                 Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 9))
                     .foregroundStyle(.tertiary)

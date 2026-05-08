@@ -662,6 +662,32 @@ struct ManagedSessionDetailView: View {
                         .foregroundStyle(.orange)
                 }
 
+                // v1.15 codex review (round 2): the spawn-failure
+                // banner has to live OUTSIDE the `if showOutput` gate
+                // so the user can see "spawn failed: codex binary not
+                // on PATH" even when they haven't toggled live output.
+                // Pre-fix the banner only rendered inside outputPanel
+                // and the events were only polled inside the same
+                // gate, so a cold-start spawn failure was invisible.
+                if let info = latestHelperInfoMessage {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(info.lowercased().contains("fail")
+                                             || info.lowercased().contains("error")
+                                             ? Color.red : Color.blue)
+                        Text(info)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 6)
+                    .background(Color.secondary.opacity(0.04))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+
                 Divider()
 
                 showOutputToggle
@@ -692,12 +718,27 @@ struct ManagedSessionDetailView: View {
                 async let _sessions: () = state.refreshRemoteSessions()
                 async let _approvals: () = state.refreshRemoteApprovals()
                 _ = await (_sessions, _approvals)
-                // iter-2 live tail: only fetch events when the user
-                // has explicitly toggled "Show output" on for this
-                // session. Privacy-visible opt-in — helper writes
-                // events while RC is on, but the app doesn't render
-                // them unless asked.
-                if showOutput {
+                // iter-2 live tail: only POLL events on the fast loop
+                // when the user has explicitly toggled "Show output"
+                // on for this session. Privacy-visible opt-in —
+                // helper writes events while RC is on, but the app
+                // doesn't keep refreshing them unless asked.
+                //
+                // v1.15 codex review (round 2): we DO fetch once on
+                // mount (and again whenever the session reaches a
+                // terminal status) so the spawn-failure banner has
+                // data for the cold-start case where the user never
+                // expanded live output. Polling stays gated.
+                // One-shot fetch on mount + on transition to ended,
+                // so the spawn-failure banner sees data even when
+                // showOutput stayed off the whole time. `sessionEnded`
+                // covers errored/stopped/disappeared rows; cheap
+                // because `refreshRemoteSessionEvents` early-outs when
+                // the cache is fresh.
+                let needsOneShotFetch =
+                    !hasRefreshedAtLeastOnce
+                    || (!showOutput && sessionEnded)
+                if showOutput || needsOneShotFetch {
                     await state.refreshRemoteSessionEvents(
                         sessionId: currentSession.id
                     )
