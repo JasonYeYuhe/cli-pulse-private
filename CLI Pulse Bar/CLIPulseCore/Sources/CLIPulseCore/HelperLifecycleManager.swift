@@ -94,13 +94,10 @@ public actor HelperLifecycleManager {
     public static let agentLabel = "yyh.CLI-Pulse.helper"
     public static let agentPlistName = "yyh.CLI-Pulse.helper.plist"
 
-    /// Template plist filename inside the .app bundle's main
-    /// resources (NOT the LaunchAgents subdirectory). The on-disk
-    /// install path is `Contents/Library/LaunchAgents/` once
-    /// substitution has run; we keep the template as a Resources
-    /// item so the build phase doesn't have to copy anything
-    /// special — Xcode handles both.
-    public static let plistResourceName = "HelperAgent"
+    /// Bundled LaunchAgent plist basename. The macOS app target's
+    /// "Embed Helper LaunchAgent" Copy Files phase ships this file
+    /// to `Contents/Library/LaunchAgents/`.
+    public static let plistResourceName = "yyh.CLI-Pulse.helper"
 
     private var lastKnownStatus: Status = .notRegistered
 
@@ -117,7 +114,7 @@ public actor HelperLifecycleManager {
     /// bundle anymore. The plist already lives at
     /// `Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist`
     /// in shippable form (BundleProgram only — no log paths;
-    /// see HelperAgent.plist comments for why). SMAppService.
+    /// see yyh.CLI-Pulse.helper.plist comments for why). SMAppService.
     /// register reads it directly without any runtime substitution.
     @discardableResult
     public func ensureRegistered() async -> Status {

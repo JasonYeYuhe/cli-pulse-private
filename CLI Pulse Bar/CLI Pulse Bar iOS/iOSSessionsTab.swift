@@ -138,16 +138,19 @@ struct iOSSessionsTab: View {
                         } label: {
                             Label("Claude", systemImage: "sparkles")
                         }
+                        .disabled(!canStartManagedProvider("claude"))
                         Button {
                             Task { await openManagedClaudeSession(provider: "codex") }
                         } label: {
                             Label("Codex", systemImage: "chevron.left.slash.chevron.right")
                         }
+                        .disabled(!canStartManagedProvider("codex"))
                         Button {
                             Task { await openManagedClaudeSession(provider: "gemini") }
                         } label: {
                             Label("Gemini", systemImage: "diamond")
                         }
+                        .disabled(!canStartManagedProvider("gemini"))
                     } label: {
                         Label("New", systemImage: "plus.circle.fill")
                     }
@@ -158,17 +161,23 @@ struct iOSSessionsTab: View {
             if !state.remoteControlEnabled {
                 hint(icon: "lock.shield",
                      text: "Remote Control is off. Turn it on in Settings → Privacy.")
-            } else if state.remoteSessions.isEmpty {
-                hint(icon: "terminal.fill",
-                     text: targetDeviceForStart == nil
-                           ? "No paired Mac with the helper installed."
-                           : "Tap New to spawn a Claude session.")
             } else {
-                ForEach(state.remoteSessions) { session in
-                    NavigationLink(value: session) {
-                        managedRow(session)
+                if let upgradeHint = managedProviderUpgradeHint {
+                    hint(icon: "arrow.up.circle",
+                         text: upgradeHint)
+                }
+                if state.remoteSessions.isEmpty {
+                    hint(icon: "terminal.fill",
+                         text: targetDeviceForStart == nil
+                               ? "No paired Mac with the helper installed."
+                               : "Tap New to spawn a managed session.")
+                } else {
+                    ForEach(state.remoteSessions) { session in
+                        NavigationLink(value: session) {
+                            managedRow(session)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
             if let err = state.remoteSessionsError {
@@ -321,6 +330,11 @@ struct iOSSessionsTab: View {
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
+                    if let upgradeHint = managedProviderUpgradeHint {
+                        Text(upgradeHint)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     if state.remoteSessions.isEmpty {
                         Text(targetDeviceForStart == nil
                              ? "No paired Mac with the helper installed."
@@ -410,16 +424,19 @@ struct iOSSessionsTab: View {
                         } label: {
                             Label("Claude", systemImage: "sparkles")
                         }
+                        .disabled(!canStartManagedProvider("claude"))
                         Button {
                             Task { await openManagedClaudeSession(provider: "codex") }
                         } label: {
                             Label("Codex", systemImage: "chevron.left.slash.chevron.right")
                         }
+                        .disabled(!canStartManagedProvider("codex"))
                         Button {
                             Task { await openManagedClaudeSession(provider: "gemini") }
                         } label: {
                             Label("Gemini", systemImage: "diamond")
                         }
+                        .disabled(!canStartManagedProvider("gemini"))
                     } label: {
                         Label("New", systemImage: "plus.circle.fill")
                     }
@@ -457,6 +474,10 @@ struct iOSSessionsTab: View {
 
     private func openManagedClaudeSession(provider: String = "claude") async {
         guard let device = targetDeviceForStart else { return }
+        guard device.supportsManagedSessionProvider(provider) else {
+            state.remoteSessionsError = unsupportedRemoteProviderMessage(provider: provider, device: device)
+            return
+        }
         // v1.15 round-4: include the picked provider in the stored
         // client_label so the row in the database reads e.g.
         // "Codex on MacBook" rather than ambiguously matching the
@@ -476,6 +497,25 @@ struct iOSSessionsTab: View {
         if let id, let session = state.remoteSessions.first(where: { $0.id == id }) {
             selectedManagedSession = session
         }
+    }
+
+    private func canStartManagedProvider(_ provider: String) -> Bool {
+        targetDeviceForStart?.supportsManagedSessionProvider(provider) == true
+    }
+
+    private var managedProviderUpgradeHint: String? {
+        guard let device = targetDeviceForStart,
+              !device.supportsMultiCLIManagedSessions else { return nil }
+        let version = device.helper_version.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = version.isEmpty ? "" : " Current helper: \(version)."
+        return "Codex and Gemini sessions require CLI Pulse Helper 1.15 or later on \(device.name). Claude still works.\(suffix)"
+    }
+
+    private func unsupportedRemoteProviderMessage(provider: String, device: DeviceRecord) -> String {
+        let providerName = ProviderDisplay.displayName(for: provider)
+        let version = device.helper_version.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = version.isEmpty ? "" : " Current helper: \(version)."
+        return "\(providerName) sessions require CLI Pulse Helper 1.15 or later on \(device.name). Update the Mac helper and try again.\(suffix)"
     }
 
     private func hint(icon: String, text: String) -> some View {
@@ -546,6 +586,18 @@ struct ManagedSessionDetailView: View {
     /// they're equal by construction (the fallback shares the same id).
     private var currentSession: RemoteSession {
         state.remoteSessions.first(where: { $0.id == session.id }) ?? session
+    }
+
+    private var providerKey: String {
+        currentSession.provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var footerHelpText: String {
+        let providerName = ProviderDisplay.displayName(for: providerKey)
+        if providerKey == "claude" {
+            return "Free-text input is sent verbatim to the spawned Claude. Claude's own permission prompt fires when it tries to run any tool — those approvals appear above when this session is selected."
+        }
+        return "Free-text input is sent verbatim to the spawned \(providerName). CLI Pulse shows best-effort live output for this managed session."
     }
 
     /// True when we have authoritative evidence the session is no longer
@@ -712,7 +764,7 @@ struct ManagedSessionDetailView: View {
                     outputPanel
                 }
 
-                Text("Free-text input is sent verbatim to the spawned Claude. Claude's own permission prompt fires when it tries to run any tool — those approvals appear above when this session is selected.")
+                Text(footerHelpText)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }

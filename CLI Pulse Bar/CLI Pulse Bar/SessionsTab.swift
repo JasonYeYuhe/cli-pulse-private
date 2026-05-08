@@ -25,6 +25,11 @@ struct SessionsTab: View {
     /// the user sees that something actually changed instead of
     /// only the banner disappearing.
     @State private var lastInstallHookResult: InstallClaudeHookResult?
+    /// Remote-routed start ids that may disappear from the active
+    /// sessions RPC if the helper immediately marks them errored.
+    /// Keep them long enough to fetch and render the helper's info
+    /// event instead of leaving the UI as a silent pending/start no-op.
+    @State private var pendingRemoteStartIds: Set<String> = []
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
@@ -64,6 +69,7 @@ struct SessionsTab: View {
                 async let _approvals: () = state.refreshRemoteApprovals()
                 async let _local: () = state.refreshLocalSessionControlState()
                 _ = await (_sessions, _approvals, _local)
+                await refreshDisappearedRemoteStartInfo()
                 // Iter 2B: snapshot poll of local pending approvals
                 // is the recovery path when a stream disconnects or
                 // the user wakes the app with the Sessions tab
@@ -175,16 +181,23 @@ struct SessionsTab: View {
                 // the spawner registry import broke); fall back to
                 // CLAUDE-ONLY so we don't gray-bait users into
                 // clicking Codex/Gemini items that the helper will
-                // refuse. Cross-Mac (`!canStartLocal`) keeps offering
-                // all three because we have no per-Mac availability
-                // there yet (deferred to v1.16 cross-Mac column).
+                // refuse. Cross-Mac still has no per-provider map, but
+                // it does have helper_version; use that as the hard
+                // compatibility gate until the v1.16 availability
+                // column exists.
                 // IIFE because SwiftUI's @ViewBuilder rejects an
                 // inline if/else assignment block here. Returns a
                 // tuple of (claudeOK, codexOK, geminiOK).
                 let (claudeOK, codexOK, geminiOK): (Bool, Bool, Bool) = {
                     if !canStartLocal {
-                        // Remote-routed start: optimistic, no per-Mac map.
-                        return (true, true, true)
+                        guard let device = targetDeviceForStart else {
+                            return (false, false, false)
+                        }
+                        return (
+                            device.supportsManagedSessionProvider("claude"),
+                            device.supportsManagedSessionProvider("codex"),
+                            device.supportsManagedSessionProvider("gemini")
+                        )
                     }
                     let avail = state.localProviderAvailability
                     if avail.isEmpty {
@@ -347,6 +360,12 @@ struct SessionsTab: View {
             if let err = state.remoteSessionsError {
                 errorHint(err)
             }
+            if let upgradeHint = managedProviderUpgradeHint {
+                inlineHint(icon: "arrow.up.circle", text: upgradeHint)
+            }
+            ForEach(remoteStartFailureMessages, id: \.id) { failure in
+                errorHint(failure.message)
+            }
             if displayed.isEmpty {
                 inlineHint(
                     icon: "terminal.fill",
@@ -443,7 +462,7 @@ struct SessionsTab: View {
 
     private func emptyStateText(localStartAvailable: Bool, remoteUsable: Bool) -> String {
         if localStartAvailable || (remoteUsable && targetDeviceForStart != nil) {
-            return "No managed sessions yet. Click \"Open managed Claude session\" to spawn one."
+            return "No managed sessions yet. Click \"New\" to spawn one."
         }
         return "No paired Mac with the helper installed. Install the helper to open a managed session."
     }
@@ -1243,6 +1262,7 @@ struct SessionsTab: View {
         //   3. Else: nothing (Open button shouldn't have been
         //      visible).
         let newSessionId: String?
+        var startedViaRemote = false
         if state.canStartLocalManagedSession {
             // Local start path: implicitly targets THIS Mac.
             // Trust `canStartLocalManagedSession` (which already
@@ -1250,26 +1270,87 @@ struct SessionsTab: View {
             // && localControlEnabled`); don't add a redundant
             // device-id-equality gate that re-introduces the
             // store-drift bug.
-            let label = "Local \(provider.capitalized) session"
+            let label = "Local \(ProviderDisplay.displayName(for: provider)) session"
             newSessionId = await state.requestLocalClaudeSessionStart(
                 provider: provider,
                 clientLabel: label
             )
         } else if state.remoteControlEnabled, let device = targetDeviceForStart {
+            guard device.supportsManagedSessionProvider(provider) else {
+                state.remoteSessionsError = unsupportedRemoteProviderMessage(provider: provider, device: device)
+                return
+            }
+            startedViaRemote = true
+            let providerName = ProviderDisplay.displayName(for: provider)
             newSessionId = await state.requestRemoteClaudeSessionStart(
                 deviceId: device.id,
                 provider: provider,
                 cwdBasename: "",
                 cwdHmac: nil,
-                clientLabel: device.name
+                clientLabel: "\(providerName) on \(device.name)"
             )
         } else {
             newSessionId = nil
         }
         if let id = newSessionId {
+            if startedViaRemote {
+                pendingRemoteStartIds.insert(id)
+            }
             selectedManagedSessionId = id
             promptText = ""
         }
+    }
+
+    private var remoteStartFailureMessages: [(id: String, message: String)] {
+        let activeIds = Set(state.displayedManagedSessions.map(\.id))
+        return pendingRemoteStartIds.compactMap { id in
+            guard !activeIds.contains(id),
+                  let message = latestRemoteInfoMessage(sessionId: id)
+            else { return nil }
+            return (id: id, message: message)
+        }
+        .sorted { $0.id < $1.id }
+    }
+
+    private var managedProviderUpgradeHint: String? {
+        guard !state.canStartLocalManagedSession,
+              state.remoteControlEnabled,
+              let device = targetDeviceForStart,
+              !device.supportsMultiCLIManagedSessions
+        else { return nil }
+        let version = device.helper_version.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = version.isEmpty ? "" : " Current helper: \(version)."
+        return "Codex and Gemini sessions require CLI Pulse Helper 1.15 or later on \(device.name). Claude still works.\(suffix)"
+    }
+
+    @MainActor
+    private func refreshDisappearedRemoteStartInfo() async {
+        guard state.remoteControlEnabled, !pendingRemoteStartIds.isEmpty else { return }
+        let activeIds = Set(state.displayedManagedSessions.map(\.id))
+        for id in pendingRemoteStartIds where !activeIds.contains(id) {
+            let cached = state.remoteSessionEvents[id] ?? []
+            if cached.isEmpty {
+                await state.refreshRemoteSessionEvents(sessionId: id)
+            }
+        }
+        pendingRemoteStartIds = pendingRemoteStartIds.filter { id in
+            activeIds.contains(id) || latestRemoteInfoMessage(sessionId: id) != nil
+        }
+    }
+
+    private func latestRemoteInfoMessage(sessionId: String) -> String? {
+        guard let payload = (state.remoteSessionEvents[sessionId] ?? [])
+            .last(where: { $0.kind == "info" })?
+            .payload else { return nil }
+        let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func unsupportedRemoteProviderMessage(provider: String, device: DeviceRecord) -> String {
+        let providerName = ProviderDisplay.displayName(for: provider)
+        let version = device.helper_version.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = version.isEmpty ? "" : " Current helper: \(version)."
+        return "\(providerName) sessions require CLI Pulse Helper 1.15 or later on \(device.name). Update the Mac helper and try again.\(suffix)"
     }
 
     /// True when this Mac has a paired helper but its UDS socket
@@ -1667,7 +1748,7 @@ struct SessionsTab: View {
                     .font(.system(size: 11, weight: .semibold))
                 Text(state.localControlEnabled
                      ? "Same-device sessions go through the local helper socket — no Supabase round-trip."
-                     : "Off by default. Turn on to spawn and stop same-device Claude sessions through the local helper socket instead of the cloud.")
+                     : "Off by default. Turn on to spawn and stop same-device managed sessions through the local helper socket instead of the cloud.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

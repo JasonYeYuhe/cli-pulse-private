@@ -30,6 +30,8 @@
 		A10051 /* LocalModeGuideCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10051 /* LocalModeGuideCard.swift */; };
 		A10052 /* WelcomeModeChoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10052 /* WelcomeModeChoice.swift */; };
 		A10012 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10012 /* Assets.xcassets */; };
+		A10060 /* cli_pulse_helper in Embed Helper Binary */ = {isa = PBXBuildFile; fileRef = B10060 /* cli_pulse_helper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		A10062 /* yyh.CLI-Pulse.helper.plist in Embed Helper LaunchAgent */ = {isa = PBXBuildFile; fileRef = B10062 /* yyh.CLI-Pulse.helper.plist */; };
 		A10020 /* ProviderConfigEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10020 /* ProviderConfigEditor.swift */; };
 		A10021 /* NoAutoFillFields.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10021 /* NoAutoFillFields.swift */; };
 		A20001 /* CLIPulseApp_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20001 /* CLIPulseApp_iOS.swift */; };
@@ -142,6 +144,28 @@
 			name = "Embed Login Items";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CP10001 /* Embed Helper Binary */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Helpers";
+			dstSubfolderSpec = 16;
+			files = (
+				A10060 /* cli_pulse_helper in Embed Helper Binary */,
+			);
+			name = "Embed Helper Binary";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CP10002 /* Embed Helper LaunchAgent */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Library/LaunchAgents";
+			dstSubfolderSpec = 16;
+			files = (
+				A10062 /* yyh.CLI-Pulse.helper.plist in Embed Helper LaunchAgent */,
+			);
+			name = "Embed Helper LaunchAgent";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -168,6 +192,8 @@
 		B10012 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B10013 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B10014 /* CLI_Pulse_Bar.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CLI_Pulse_Bar.entitlements; sourceTree = "<group>"; };
+		B10060 /* cli_pulse_helper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; path = "../HelperSwift/.build/release/cli_pulse_helper"; sourceTree = SOURCE_ROOT; };
+		B10062 /* yyh.CLI-Pulse.helper.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "yyh.CLI-Pulse.helper.plist"; sourceTree = "<group>"; };
 		B10020 /* ProviderConfigEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderConfigEditor.swift; sourceTree = "<group>"; };
 		B10021 /* NoAutoFillFields.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoAutoFillFields.swift; sourceTree = "<group>"; };
 		B20001 /* CLIPulseApp_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIPulseApp_iOS.swift; sourceTree = "<group>"; };
@@ -312,6 +338,8 @@
 				B10012 /* Assets.xcassets */,
 				B10013 /* Info.plist */,
 				B10014 /* CLI_Pulse_Bar.entitlements */,
+				B10060 /* cli_pulse_helper */,
+				B10062 /* yyh.CLI-Pulse.helper.plist */,
 			);
 			path = "CLI Pulse Bar";
 			sourceTree = "<group>";
@@ -412,6 +440,9 @@
 				F10002 /* Sources */,
 				D10001 /* Frameworks */,
 				F10003 /* Resources */,
+				SH10001 /* Build Helper Binary (Swift) */,
+				CP10001 /* Embed Helper Binary */,
+				CP10002 /* Embed Helper LaunchAgent */,
 				CP60001 /* Embed Login Items */,
 			);
 			buildRules = (
@@ -593,6 +624,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		SH10001 /* Build Helper Binary (Swift) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../HelperSwift/Package.swift",
+			);
+			name = "Build Helper Binary (Swift)";
+			outputPaths = (
+				"$(SRCROOT)/../HelperSwift/.build/release/cli_pulse_helper",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"$SRCROOT/../scripts/build_helper_swift.sh\"";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		F10002 /* Sources */ = {
