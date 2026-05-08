@@ -717,6 +717,7 @@ struct SessionsTab: View {
             HStack(spacing: 6) {
                 TextField(
                     promptPlaceholder(
+                        provider: session.provider,
                         isRunning: isRunning,
                         localSendUnsupported: localSendUnsupported,
                         hasPendingApproval: hasPendingApproval
@@ -1089,6 +1090,7 @@ struct SessionsTab: View {
     }
 
     private func promptPlaceholder(
+        provider: String,
         isRunning: Bool,
         localSendUnsupported: Bool,
         hasPendingApproval: Bool
@@ -1108,7 +1110,11 @@ struct SessionsTab: View {
             // decision and its PTY shows the native prompt.
             return "Resolve the pending permission request first (Approve or Reject)."
         }
-        return "Prompt for Claude…"
+        // v1.15 round-5: provider-aware placeholder. Pre-fix this
+        // hardcoded "Prompt for Claude…" for every row regardless
+        // of the actual session's provider — confusing when the
+        // user just spawned Codex / Gemini.
+        return "Prompt for \(ProviderDisplay.displayName(for: provider))…"
     }
 
     /// Status-line text under the prompt input. Branches on:
