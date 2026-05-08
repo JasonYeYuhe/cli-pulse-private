@@ -850,20 +850,25 @@ struct SessionsTab: View {
                                 .fixedSize(horizontal: false, vertical: true)
                                 .id(routesLocally
                                     ? "claude-transcript-local-\(localPreviewRaw.count)"
-                                    : "claude-transcript-\(events.count)")
+                                    : "claude-transcript-\(events.last?.id ?? 0)")
                                 .padding(6)
                         }
                     }
                 }
                 .frame(maxHeight: 200)
-                .onChange(of: routesLocally ? localPreviewRaw.count : events.count) { _ in
-                    // Auto-scroll to the latest content. Anchor key
-                    // depends on which transport produced the content
-                    // (local-stream byte-count vs remote-event count)
-                    // so a route flip doesn't trip an animation.
+                // 2026-05-08: parity with iOS — use the latest event id
+                // (monotonic, ever-growing) as the scroll trigger for the
+                // remote path. With `events.count` the trigger silently
+                // froze once the ring buffer hit cap and old events were
+                // trimmed; auto-scroll then stopped following fresh
+                // arrivals. Local path still uses byte count because
+                // there's no event-id equivalent on that branch.
+                .onChange(of: routesLocally
+                          ? localPreviewRaw.count
+                          : (events.last?.id ?? 0)) { _ in
                     let anchor = routesLocally
                         ? "claude-transcript-local-\(localPreviewRaw.count)"
-                        : "claude-transcript-\(events.count)"
+                        : "claude-transcript-\(events.last?.id ?? 0)"
                     withAnimation(.linear(duration: 0.1)) {
                         proxy.scrollTo(anchor, anchor: .bottom)
                     }

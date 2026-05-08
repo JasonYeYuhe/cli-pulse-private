@@ -373,4 +373,111 @@ final class ClaudeConversationPreviewFormatterTests: XCTestCase {
         XCTAssertFalse(preview.contains("[31"),
                        "CSI body split across events must be removed: \(preview)")
     }
+
+    // MARK: - Multi-turn conversation regression (2026-05-08, iOS user report)
+
+    /// Reported symptom: "first two turns display fine, by the 3rd turn
+    /// nothing shows in the live tail." Pin the formatter against a
+    /// realistic 3-turn TUI repaint trace where each new turn comes in as
+    /// fresh stdout chunks while Claude's TUI repaints earlier turns from
+    /// scrollback. All three user prompts and all three assistant replies
+    /// must survive the format pipeline.
+    func test_three_turn_conversation_keeps_all_messages() {
+        // Turn 1: user types "first question", Claude answers. TUI
+        // repaints the input line several times as the user types.
+        let turn1Echo = "❯ first question\n❯ first question\n❯ first question\n"
+        let turn1Reply = "⏺ Answer to first question.\n"
+        // Turn 2: TUI keeps showing turn-1 history above as the user types
+        // turn-2 input, then renders turn-2's reply. Status chrome lines
+        // (Processing, token counters) interleave per repaint.
+        let turn2Echo = """
+        ❯ first question
+        ⏺ Answer to first question.
+        ❯ second question
+        ❯ second question
+        Processing...
+        ↓ 142 tokens
+        """
+        let turn2Reply = """
+        ❯ first question
+        ⏺ Answer to first question.
+        ❯ second question
+        ⏺ Answer to second question.
+        """
+        // Turn 3: same shape — full history above + new typing + reply.
+        let turn3Echo = """
+        ❯ first question
+        ⏺ Answer to first question.
+        ❯ second question
+        ⏺ Answer to second question.
+        ❯ third question
+        Processing...
+        """
+        let turn3Reply = """
+        ❯ first question
+        ⏺ Answer to first question.
+        ❯ second question
+        ⏺ Answer to second question.
+        ❯ third question
+        ⏺ Answer to third question.
+        """
+        let preview = F.format(eventPayloads: [
+            turn1Echo, turn1Reply, turn2Echo, turn2Reply, turn3Echo, turn3Reply
+        ])
+        XCTAssertTrue(preview.contains("❯ first question"),
+                      "turn 1 user input must survive: \(preview)")
+        XCTAssertTrue(preview.contains("⏺ Answer to first question."),
+                      "turn 1 assistant reply must survive: \(preview)")
+        XCTAssertTrue(preview.contains("❯ second question"),
+                      "turn 2 user input must survive: \(preview)")
+        XCTAssertTrue(preview.contains("⏺ Answer to second question."),
+                      "turn 2 assistant reply must survive: \(preview)")
+        XCTAssertTrue(preview.contains("❯ third question"),
+                      "turn 3 user input must survive: \(preview)")
+        XCTAssertTrue(preview.contains("⏺ Answer to third question."),
+                      "turn 3 assistant reply must survive: \(preview)")
+        XCTAssertFalse(preview.contains("Processing"),
+                       "chrome lines must drop across all turns: \(preview)")
+    }
+
+    /// Same scenario but Claude's TUI scrolls the oldest turn off the
+    /// visible viewport — turn-1 lines stop appearing in later events.
+    /// (Real behavior when terminal height < total transcript length.)
+    /// We must still see all three turns because each came through the
+    /// stream at some earlier point.
+    func test_three_turn_conversation_with_viewport_scroll() {
+        let turn1 = "❯ q1\n⏺ a1\n"
+        // Turn 2: viewport still has both turns visible.
+        let turn2 = "❯ q1\n⏺ a1\n❯ q2\n⏺ a2\n"
+        // Turn 3: turn-1 has scrolled OFF the viewport, only q2/a2 + q3/a3
+        // appear in the latest screen frames. This is the realistic
+        // trace once the visible terminal fills up.
+        let turn3 = "❯ q2\n⏺ a2\n❯ q3\n⏺ a3\n"
+        let preview = F.format(eventPayloads: [turn1, turn2, turn3])
+        XCTAssertTrue(preview.contains("❯ q1"),  "turn 1 user lost: \(preview)")
+        XCTAssertTrue(preview.contains("⏺ a1"),  "turn 1 reply lost: \(preview)")
+        XCTAssertTrue(preview.contains("❯ q2"),  "turn 2 user lost: \(preview)")
+        XCTAssertTrue(preview.contains("⏺ a2"),  "turn 2 reply lost: \(preview)")
+        XCTAssertTrue(preview.contains("❯ q3"),  "turn 3 user lost: \(preview)")
+        XCTAssertTrue(preview.contains("⏺ a3"),  "turn 3 reply lost: \(preview)")
+    }
+
+    /// Stress: when the live-tail ring buffer is near-cap and the
+    /// formatter sees a chatty TUI burst that contains MOSTLY chrome
+    /// events with one substantive `❯`/`⏺` per cycle, the chrome must
+    /// not crowd out the conversational lines. Pre-fix would still have
+    /// passed this — including it as a defense for future refactors.
+    func test_chatty_tui_chrome_does_not_crowd_out_conversation() {
+        var payloads: [String] = []
+        // 50 chrome-only repaint events.
+        for _ in 0..<50 {
+            payloads.append("Processing...\n↓ 100 tokens\nrunning sp hook\n")
+        }
+        // Then a substantive turn at the end.
+        payloads.append("❯ late prompt\n⏺ late reply\n")
+        let preview = F.format(eventPayloads: payloads)
+        XCTAssertTrue(preview.contains("❯ late prompt"))
+        XCTAssertTrue(preview.contains("⏺ late reply"))
+        XCTAssertFalse(preview.contains("Processing"))
+    }
 }

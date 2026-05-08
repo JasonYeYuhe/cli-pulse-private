@@ -321,11 +321,20 @@ public final class AppState: ObservableObject {
     /// so we never re-fetch unbounded history.
     @Published public var remoteSessionEvents: [String: [RemoteSessionEvent]] = [:]
 
-    /// Per-session ring-buffer cap. 200 events × ≤ 4 KB / event = ~800
-    /// KB worst case per session (in practice much less because the
+    /// Per-session ring-buffer cap. 500 events × ≤ 4 KB / event = ~2 MB
+    /// worst case per session (in practice much less because the
     /// helper's batcher targets ~3.5 KB chunks and redaction shrinks
-    /// most output). Adjust if a future iter needs longer scrollback.
-    public static let remoteSessionEventsCap: Int = 200
+    /// most output).
+    ///
+    /// Bumped from 200 to 500 on 2026-05-08 to address a user-reported
+    /// "3rd-turn output stops displaying" symptom. Claude's TUI emits
+    /// many chrome / repaint events between user prompts (Processing
+    /// spinners, token counters, status bar). At cap=200 a chatty Claude
+    /// run could push the conversational `❯` / `⏺` markers out of the
+    /// trimmed window before the user finished reading earlier turns.
+    /// 500 events covers ≥ 5 minutes of typical activity at the helper's
+    /// 3.5 KB / 0.5 s flush cadence.
+    public static let remoteSessionEventsCap: Int = 500
 
     // MARK: - Local Session Control (Phase 3 Iter 1, macOS-only)
     #if os(macOS)

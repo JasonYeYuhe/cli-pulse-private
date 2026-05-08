@@ -712,8 +712,16 @@ struct ManagedSessionDetailView: View {
         let stdoutPayloads = events
             .filter { $0.kind == "stdout" || $0.kind == "stderr" }
             .map { $0.payload }
+        let stdoutEventCount = stdoutPayloads.count
         let transcript = ClaudeConversationPreviewFormatter
             .format(eventPayloads: stdoutPayloads)
+        // 2026-05-08 (user-reported 3rd-turn bug): use the latest event's
+        // monotonic id as the scroll trigger, not `events.count`. Once the
+        // ring buffer hits cap (`AppState.remoteSessionEventsCap`), count
+        // stays constant across polls while new events evict old ones —
+        // `.onChange(of: events.count)` then fails to fire and the user's
+        // view stops auto-scrolling to fresh output.
+        let scrollAnchor = events.last?.id ?? 0
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Image(systemName: "bubble.left.and.bubble.right")
@@ -748,7 +756,7 @@ struct ManagedSessionDetailView: View {
                                 )
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
-                                .id("claude-transcript-\(events.count)")
+                                .id("claude-transcript-\(scrollAnchor)")
                                 .padding(8)
                         }
                     }
@@ -756,10 +764,53 @@ struct ManagedSessionDetailView: View {
                 .frame(maxHeight: 260)
                 .background(Color.secondary.opacity(0.06))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
-                .onChange(of: events.count) { _, _ in
+                .onChange(of: scrollAnchor) { _, newValue in
                     withAnimation(.linear(duration: 0.1)) {
-                        proxy.scrollTo("claude-transcript-\(events.count)", anchor: .bottom)
+                        proxy.scrollTo("claude-transcript-\(newValue)", anchor: .bottom)
                     }
+                }
+            }
+
+            // Diagnostic strip: when the formatter returns the empty
+            // fallback but stdout events ARE flowing, surface the raw
+            // event count + a "Refresh" button so the user knows the
+            // stream is alive even if the conversation extractor can't
+            // pull markers (Claude TUI scrolled them off, payload
+            // truncation, etc.). Also gives a recovery action.
+            if !events.isEmpty
+               && transcript == ClaudeConversationPreviewFormatter.emptyFallback {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text("\(stdoutEventCount) event(s) received — no conversation lines extracted yet.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Button {
+                        state.clearRemoteSessionEventsCache(
+                            sessionId: currentSession.id
+                        )
+                        Task {
+                            await state.refreshRemoteSessionEvents(
+                                sessionId: currentSession.id
+                            )
+                        }
+                    } label: {
+                        Text("Refresh")
+                            .font(.caption2.weight(.medium))
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(PulseTheme.accent)
+                }
+            } else if events.count >= AppState.remoteSessionEventsCap {
+                HStack(spacing: 4) {
+                    Image(systemName: "tray.full")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text("Showing latest \(AppState.remoteSessionEventsCap) events (older trimmed)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
             }
         }
