@@ -319,14 +319,40 @@ def _deduplicate_sessions(sessions: list[CollectedSession]) -> list[CollectedSes
     return merged
 
 
-def collect_alerts(sessions: list[CollectedSession], device_snapshot: DeviceSnapshot) -> list[CollectedAlert]:
+def collect_alerts(
+    sessions: list[CollectedSession],
+    device_snapshot: DeviceSnapshot,
+    device_id: str | None = None,
+) -> list[CollectedAlert]:
+    """Build alert payloads for the helper-sync RPC.
+
+    `device_id` is required to dedupe device-level alerts (CPU spike).
+    Pre-v1.15 every tick generated a fresh `cpu-spike-{timestamp}` id,
+    so the backend's `(id, user_id)` UPSERT created a new row each
+    sync instead of updating the same row — users saw 44+ identical
+    "Device CPU usage is elevated" alerts piling up. Now matches the
+    Swift `AlertGenerator` (CLIPulseCore iter 2B fix) which uses
+    `cpu-spike-{deviceID}` for stable single-row UPSERT.
+
+    `device_id` defaults to None so legacy callers (CLI tests, the
+    `inspect` subcommand, dataclass fixtures) keep building alerts
+    without the device row context. When None, we fall back to a
+    constant `device-self` suffix; this still de-dupes for the
+    common single-Mac case but loses cross-device disambiguation —
+    acceptable for the legacy paths since they don't push to the DB.
+    """
     alerts: list[CollectedAlert] = []
     now = datetime.now(timezone.utc).isoformat()
+    device_key = device_id or "device-self"
 
     if device_snapshot.cpu_usage >= 85:
         alerts.append(
             CollectedAlert(
-                alert_id=f"cpu-spike-{int(datetime.now().timestamp())}",
+                # v1.15 fix: stable id so backend UPSERT updates the
+                # existing open row instead of inserting a new one
+                # every helper tick. Parity with
+                # `CLIPulseCore/AlertGenerator.swift:67`.
+                alert_id=f"cpu-spike-{device_key}",
                 type="Usage Spike",
                 severity="Warning",
                 title="Device CPU usage is elevated",

@@ -284,7 +284,7 @@ def sync(_: argparse.Namespace) -> None:
             "grouping_key": f"{item.type}:{item.related_provider or 'system'}",
             "suppression_key": f"{item.type}:{item.related_session_id or 'global'}",
         }
-        for item in collect_alerts(collected_sessions, device_snapshot)
+        for item in collect_alerts(collected_sessions, device_snapshot, device_id=config.device_id)
     ]
 
     provider_quotas = estimate_provider_quotas(collected_sessions)
