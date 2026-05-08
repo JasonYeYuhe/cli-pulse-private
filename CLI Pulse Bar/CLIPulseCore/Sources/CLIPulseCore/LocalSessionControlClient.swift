@@ -386,12 +386,13 @@ public final class LocalSessionControlClient: SessionControlClient {
         )
     }
 
-    public func startClaudeSession(
+    public func startManagedSession(
+        provider: String,
         clientLabel: String?,
         cwdBasename: String?,
         cwdHmac: String?
     ) async throws -> SessionControlStartResult {
-        var params: [String: Any] = ["provider": "claude"]
+        var params: [String: Any] = ["provider": provider]
         if let clientLabel { params["client_label"] = clientLabel }
         if let cwdBasename { params["cwd_basename"] = cwdBasename }
         if let cwdHmac { params["cwd_hmac"] = cwdHmac }

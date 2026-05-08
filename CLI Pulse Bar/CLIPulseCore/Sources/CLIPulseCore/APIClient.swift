@@ -1180,17 +1180,21 @@ public actor APIClient {
     }
 
     /// Request that the helper paired with `deviceId` spawn a new managed
-    /// Claude session. Atomically creates the `remote_sessions` row and
-    /// enqueues the `start` command for the helper poll loop.
-    /// Returns the new session id (so the caller can immediately select
-    /// the row in the UI before the next list refresh).
+    /// session. Atomically creates the `remote_sessions` row and enqueues
+    /// the `start` command for the helper poll loop. Returns the new
+    /// session id (so the caller can immediately select the row in the
+    /// UI before the next list refresh).
     ///
     /// `cwdBasename` / `cwdHmac` are advisory metadata only — the helper
     /// does NOT try to resolve a basename to a full filesystem path
     /// (Phase 1 privacy posture: no full paths leave the device).
-    /// iter 1 only accepts provider == 'claude'.
+    ///
+    /// v1.15: `provider` is settable (was hardcoded `"claude"`). Backend
+    /// migrate_v0.45 accepts `claude`, `codex`, `gemini`. Default stays
+    /// `"claude"` so pre-v1.15 call sites keep working without edits.
     public func remoteRequestSessionStart(
         deviceId: String,
+        provider: String = "claude",
         cwdBasename: String = "",
         cwdHmac: String? = nil,
         clientLabel: String? = nil
@@ -1210,7 +1214,7 @@ public actor APIClient {
             "remote_app_request_session_start",
             params: Params(
                 p_device_id: deviceId,
-                p_provider: "claude",
+                p_provider: provider,
                 p_cwd_basename: cwdBasename,
                 p_cwd_hmac: cwdHmac,
                 p_client_label: clientLabel

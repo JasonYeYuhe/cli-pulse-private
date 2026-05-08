@@ -112,7 +112,8 @@ final class SessionControlClientTests: XCTestCase {
     /// without branching, AND to assert each method is reachable.
     private final class StubClient: SessionControlClient {
         var helloCallCount = 0
-        var startCalls: [(String?, String?, String?)] = []
+        // v1.15: provider is part of the captured tuple now.
+        var startCalls: [(String, String?, String?, String?)] = []
         var listCallCount = 0
         var stopCalls: [String] = []
 
@@ -142,10 +143,11 @@ final class SessionControlClientTests: XCTestCase {
             return helloResult
         }
 
-        func startClaudeSession(
+        func startManagedSession(
+            provider: String,
             clientLabel: String?, cwdBasename: String?, cwdHmac: String?
         ) async throws -> SessionControlStartResult {
-            startCalls.append((clientLabel, cwdBasename, cwdHmac))
+            startCalls.append((provider, clientLabel, cwdBasename, cwdHmac))
             return startResult
         }
 

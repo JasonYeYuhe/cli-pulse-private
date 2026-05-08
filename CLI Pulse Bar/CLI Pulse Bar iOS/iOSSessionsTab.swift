@@ -130,8 +130,24 @@ struct iOSSessionsTab: View {
                     .font(.headline)
                 Spacer()
                 if state.remoteControlEnabled {
-                    Button {
-                        Task { await openManagedClaudeSession() }
+                    // v1.15: provider picker so iOS users can spawn
+                    // Codex / Gemini in addition to Claude.
+                    Menu {
+                        Button {
+                            Task { await openManagedClaudeSession(provider: "claude") }
+                        } label: {
+                            Label("Claude", systemImage: "sparkles")
+                        }
+                        Button {
+                            Task { await openManagedClaudeSession(provider: "codex") }
+                        } label: {
+                            Label("Codex", systemImage: "chevron.left.slash.chevron.right")
+                        }
+                        Button {
+                            Task { await openManagedClaudeSession(provider: "gemini") }
+                        } label: {
+                            Label("Gemini", systemImage: "diamond")
+                        }
                     } label: {
                         Label("New", systemImage: "plus.circle.fill")
                     }
@@ -379,8 +395,23 @@ struct iOSSessionsTab: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if state.remoteControlEnabled {
-                    Button {
-                        Task { await openManagedClaudeSession() }
+                    // v1.15: provider picker, mirrors managedSection.
+                    Menu {
+                        Button {
+                            Task { await openManagedClaudeSession(provider: "claude") }
+                        } label: {
+                            Label("Claude", systemImage: "sparkles")
+                        }
+                        Button {
+                            Task { await openManagedClaudeSession(provider: "codex") }
+                        } label: {
+                            Label("Codex", systemImage: "chevron.left.slash.chevron.right")
+                        }
+                        Button {
+                            Task { await openManagedClaudeSession(provider: "gemini") }
+                        } label: {
+                            Label("Gemini", systemImage: "diamond")
+                        }
                     } label: {
                         Label("New", systemImage: "plus.circle.fill")
                     }
@@ -416,10 +447,11 @@ struct iOSSessionsTab: View {
             .first
     }
 
-    private func openManagedClaudeSession() async {
+    private func openManagedClaudeSession(provider: String = "claude") async {
         guard let device = targetDeviceForStart else { return }
         let id = await state.requestRemoteClaudeSessionStart(
             deviceId: device.id,
+            provider: provider,
             cwdBasename: "",
             cwdHmac: nil,
             clientLabel: device.name

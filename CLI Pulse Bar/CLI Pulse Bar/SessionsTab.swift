@@ -163,19 +163,35 @@ struct SessionsTab: View {
             let canStartRemote = state.remoteControlEnabled && targetDeviceForStart != nil
             let canStartLocal = state.canStartLocalManagedSession
             if canStartRemote || canStartLocal {
-                Button {
-                    Task { await openManagedClaudeSession() }
+                // v1.15: split into a Menu so the user can pick Claude /
+                // Codex / Gemini. Backend (migrate_v0.45) and helper
+                // spawner registry both accept all three; the helper
+                // capability map (Phase 5) will gray out unavailable
+                // entries once it ships, but for now we offer all three
+                // and surface a typed error if the helper rejects.
+                Menu {
+                    Button {
+                        Task { await openManagedClaudeSession(provider: "claude") }
+                    } label: {
+                        Label("Claude", systemImage: "sparkles")
+                    }
+                    Button {
+                        Task { await openManagedClaudeSession(provider: "codex") }
+                    } label: {
+                        Label("Codex", systemImage: "chevron.left.slash.chevron.right")
+                    }
+                    Button {
+                        Task { await openManagedClaudeSession(provider: "gemini") }
+                    } label: {
+                        Label("Gemini", systemImage: "diamond")
+                    }
                 } label: {
-                    // Codex review: "New local Clau..." was still
-                    // truncating at `.small` width. Shortened to
-                    // "New Local" / "New" — both fit cleanly and the
-                    // `.help(...)` tooltip carries the full meaning.
                     Label(canStartLocal ? "New Local" : "New",
                           systemImage: "plus.circle.fill")
                         .font(.system(size: 11, weight: .medium))
                         .lineLimit(1)
                 }
-                .buttonStyle(.borderedProminent)
+                .menuStyle(.borderlessButton)
                 .controlSize(.small)
                 .help(openManagedHelpText(localAvailable: canStartLocal,
                                           remoteAvailable: canStartRemote))
@@ -1112,7 +1128,7 @@ struct SessionsTab: View {
             .first
     }
 
-    private func openManagedClaudeSession() async {
+    private func openManagedClaudeSession(provider: String = "claude") async {
         // Decision tree (Codex-reviewed twice):
         //   1. Local fast path available → UDS start. The local
         //      transport ALWAYS targets THIS Mac; `targetDevice
@@ -1139,13 +1155,15 @@ struct SessionsTab: View {
             // && localControlEnabled`); don't add a redundant
             // device-id-equality gate that re-introduces the
             // store-drift bug.
-            let label = "Local Claude session"
+            let label = "Local \(provider.capitalized) session"
             newSessionId = await state.requestLocalClaudeSessionStart(
+                provider: provider,
                 clientLabel: label
             )
         } else if state.remoteControlEnabled, let device = targetDeviceForStart {
             newSessionId = await state.requestRemoteClaudeSessionStart(
                 deviceId: device.id,
+                provider: provider,
                 cwdBasename: "",
                 cwdHmac: nil,
                 clientLabel: device.name

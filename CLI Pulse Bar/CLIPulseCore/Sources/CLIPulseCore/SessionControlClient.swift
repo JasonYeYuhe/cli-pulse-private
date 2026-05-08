@@ -44,9 +44,14 @@ public protocol SessionControlClient: Sendable {
     /// error if the socket isn't there.
     func hello() async throws -> SessionControlHello
 
-    /// Spawn a new managed Claude session. Phase 3 only supports
-    /// `provider == "claude"`; codex / shell / etc. are out of scope.
-    func startClaudeSession(
+    /// Spawn a new managed session for `provider`. Phase 3 was
+    /// `claude`-only; v1.15 accepts `claude`, `codex`, `gemini` (with
+    /// helper-side spawner availability checked separately via the
+    /// capability map). The legacy `startClaudeSession(...)` shim is
+    /// preserved as a default-implemented forwarder so old call sites
+    /// keep building during the cutover.
+    func startManagedSession(
+        provider: String,
         clientLabel: String?,
         cwdBasename: String?,
         cwdHmac: String?
@@ -78,6 +83,23 @@ public protocol SessionControlClient: Sendable {
 extension SessionControlClient {
     public func sendInput(sessionId: String, payload: String) async throws {
         throw SessionControlError.notImplemented
+    }
+
+    /// Legacy shim — Phase 3 / pre-v1.15 callers used `startClaudeSession`
+    /// with no provider param. Forwards to `startManagedSession` with
+    /// `provider: "claude"`. Kept for back-compat with existing test
+    /// stubs and any source still on the old API.
+    public func startClaudeSession(
+        clientLabel: String?,
+        cwdBasename: String?,
+        cwdHmac: String?
+    ) async throws -> SessionControlStartResult {
+        try await startManagedSession(
+            provider: "claude",
+            clientLabel: clientLabel,
+            cwdBasename: cwdBasename,
+            cwdHmac: cwdHmac
+        )
     }
 }
 

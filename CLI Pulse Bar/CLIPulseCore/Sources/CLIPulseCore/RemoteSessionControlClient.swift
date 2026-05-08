@@ -39,7 +39,8 @@ public final class RemoteSessionControlClient: SessionControlClient {
         )
     }
 
-    public func startClaudeSession(
+    public func startManagedSession(
+        provider: String,
         clientLabel: String?,
         cwdBasename: String?,
         cwdHmac: String?
@@ -47,6 +48,7 @@ public final class RemoteSessionControlClient: SessionControlClient {
         do {
             let result = try await api.remoteRequestSessionStart(
                 deviceId: deviceId,
+                provider: provider,
                 cwdBasename: cwdBasename ?? "",
                 cwdHmac: cwdHmac,
                 clientLabel: clientLabel

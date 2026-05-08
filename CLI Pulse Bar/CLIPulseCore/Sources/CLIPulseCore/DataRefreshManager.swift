@@ -2184,12 +2184,16 @@ extension AppState {
     }
 
     /// Request that the helper paired with `deviceId` spawn a new managed
-    /// Claude session. Returns the freshly-created session row's id (so
-    /// the UI can immediately select it) or nil on failure. Refreshes
-    /// the sessions list on success so the row appears.
+    /// session. Returns the freshly-created session row's id (so the UI
+    /// can immediately select it) or nil on failure. Refreshes the
+    /// sessions list on success so the row appears.
+    ///
+    /// v1.15: `provider` is settable (was hardcoded `"claude"`). Default
+    /// stays `"claude"` for back-compat with pre-v1.15 call sites.
     @discardableResult
     public func requestRemoteClaudeSessionStart(
         deviceId: String,
+        provider: String = "claude",
         cwdBasename: String = "",
         cwdHmac: String? = nil,
         clientLabel: String? = nil
@@ -2201,6 +2205,7 @@ extension AppState {
         do {
             let result = try await api.remoteRequestSessionStart(
                 deviceId: deviceId,
+                provider: provider,
                 cwdBasename: cwdBasename,
                 cwdHmac: cwdHmac,
                 clientLabel: clientLabel
