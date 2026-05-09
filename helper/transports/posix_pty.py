@@ -24,12 +24,27 @@ import logging
 import os
 import select
 import signal
+import struct
 import subprocess
+import termios
 from dataclasses import dataclass
 
 from .base import SessionHandle, SessionTransport, TransportError
 
 logger = logging.getLogger("cli_pulse.transports.posix_pty")
+
+# v1.16.3: default winsize for managed PTYs. `os.openpty()` returns a
+# 0×0 PTY by default — ratatui-based TUIs (Codex) treat that as
+# "1 column wide" and wrap each *double-width* char (every CJK glyph,
+# many emoji) onto its own line. iPhone users then see one Chinese
+# character per row in the transcript view. 120×40 is the de-facto
+# baseline for "real terminal" emulation; matches Apple Terminal's
+# default and gives Codex enough room to lay out without aggressive
+# wrapping. Resize-on-the-fly isn't exposed to clients in v1.16; if
+# we add a SwiftUI client-driven resize control later it'll need a new
+# `SessionTransport.resize(rows, cols)` method + TIOCSWINSZ.
+_DEFAULT_PTY_ROWS = 40
+_DEFAULT_PTY_COLS = 120
 
 
 @dataclass
@@ -74,6 +89,21 @@ class PosixPtyTransport(SessionTransport):
         full_env.setdefault("TERM", "xterm-256color")
 
         master_fd, slave_fd = os.openpty()
+        # v1.16.3: set winsize BEFORE the child inherits the slave fd.
+        # Without this, the kernel reports 0 cols × 0 rows, and Codex's
+        # ratatui TUI wraps every double-width CJK glyph onto its own
+        # line. Done on master_fd (slave is the same kernel object —
+        # ioctl works on either end). Best-effort: if the ioctl somehow
+        # fails on this platform we'd rather still spawn the child than
+        # bail the whole session.
+        try:
+            ws = struct.pack("HHHH", _DEFAULT_PTY_ROWS, _DEFAULT_PTY_COLS, 0, 0)
+            fcntl.ioctl(master_fd, termios.TIOCSWINSZ, ws)
+        except OSError as exc:
+            logger.warning(
+                "TIOCSWINSZ failed for session %s (continuing): %s",
+                session_id, exc,
+            )
         try:
             proc = subprocess.Popen(
                 argv,
