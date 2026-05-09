@@ -115,7 +115,14 @@ public enum AlertGenerator {
             }
 
             // Rule 3: Session requests >= 400 (long-running)
-            if session.requests >= 400 {
+            // v1.16.1 parity with helper/system_collector.py: skip
+            // process-detected (`proc-*`) rows entirely. They're GUI
+            // desktop apps the user keeps open all day, not "agentic CLI
+            // sessions". The synthetic `requests` proxy makes them trip
+            // the threshold within hours of being open. See full analysis
+            // in helper/system_collector.py.
+            let isProcessDetected = session.id.hasPrefix("proc-")
+            if !isProcessDetected, session.requests >= 400 {
                 alerts.append([
                     "id": "session-long-\(sid)",
                     "type": "Session Too Long",
@@ -140,8 +147,19 @@ public enum AlertGenerator {
     /// v1.16 §2.4: stable id suffix combining the session's PID + start
     /// time so PID recycling can't collide. SHA-256 prefix is plenty for
     /// ID-disambiguation at PID-recycling cadence.
+    ///
+    /// v1.16.1 (Codex review): truncate sub-second precision off
+    /// `started_at` before hashing. The Python helper recomputes it as
+    /// `now() - etime` each cycle and `etime` is whole-second only, so
+    /// the ISO timestamp drifted ~hundreds of ms cycle-to-cycle for the
+    /// same process — fracturing the digest, breaking server upserts,
+    /// and producing a fresh alert row every sync. Keep the second-
+    /// precision portion only.
     static func alertSessionIDSuffix(_ session: SessionRecord) -> String {
-        let payload = "\(session.id)|\(session.started_at)"
+        let stableStarted = session.started_at.replacingOccurrences(
+            of: #"\.\d+"#, with: "", options: .regularExpression
+        )
+        let payload = "\(session.id)|\(stableStarted)"
         let digest = sha256Prefix(payload, prefixBytes: 4)
         return "\(session.id)-\(digest)"
     }

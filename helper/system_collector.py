@@ -384,7 +384,20 @@ def collect_alerts(
                     related_provider=session.provider,
                 )
             )
-        if session.requests >= 400:
+        # v1.16.1 hotfix (Codex+Gemini joint review 2026-05-09):
+        # `Session Too Long` was firing constantly for desktop GUI apps
+        # (Claude.app, Gemini.app) because (a) `requests` here is a
+        # synthetic `elapsed_seconds // 45` heuristic — any process up
+        # for ~5 h trips the 400 threshold, and merged worker groups
+        # sum child requests so `+8 workers` trips at ~3 h, and (b)
+        # process-detected rows (session_id starts with `proc-`) are
+        # GUI desktop apps the user keeps open all day, not "agentic
+        # CLI sessions" that should be wrapped up. Skip the alert
+        # entirely for `proc-*` rows; helper-spawned managed sessions
+        # get a real session_id (UUID) and still trip when
+        # intentionally long.
+        is_process_detected = isinstance(session.session_id, str) and session.session_id.startswith("proc-")
+        if not is_process_detected and session.requests >= 400:
             alerts.append(
                 CollectedAlert(
                     alert_id=f"session-long-{sid}",
@@ -407,9 +420,24 @@ def collect_alerts(
 def _alert_session_id_suffix(session: Session) -> str:
     """Stable id suffix combining session_id (PID) + started_at so PID
     recycling cannot collide. (v1.16 §2.4 — earlier Gemini-flagged race
-    on the v1.15 cpu-spike fix.)"""
+    on the v1.15 cpu-spike fix.)
+
+    v1.16.1 (Codex review): `started_at` is recomputed each collection
+    cycle as `datetime.now() - timedelta(seconds=etime)`. Because `now()`
+    has sub-second precision but `etime` only has whole-second precision,
+    the ISO timestamp drifts a few hundred ms cycle-to-cycle for the
+    SAME process. That made the SHA-256 digest unstable, so the alert_id
+    changed every sync — server upserts couldn't dedupe and we ended up
+    inserting fresh rows every cycle, flooding the alerts feed. Truncate
+    `started_at` to whole-second precision before hashing so the digest
+    is actually stable for a given (pid, start-second) pair.
+    """
     import hashlib as _hl
-    digest = _hl.sha256(f"{session.session_id}|{session.started_at}".encode()).hexdigest()
+    import re as _re
+    # Strip any sub-second fraction (".123456") from the ISO string so
+    # cycle-to-cycle clock drift doesn't fracture the digest.
+    stable_started = _re.sub(r"\.\d+", "", session.started_at or "")
+    digest = _hl.sha256(f"{session.session_id}|{stable_started}".encode()).hexdigest()
     # 8-char hex prefix is enough to disambiguate across all realistic
     # PID-recycle windows (PID space is 16-bit on macOS, ~32-bit in
     # practice; collision in 8 hex chars = 1/4B).
