@@ -113,6 +113,43 @@ else
     echo "WARN: $HELPER_DIR/helper.env missing — helper will likely fail with ConfigError"
 fi
 
+# v1.16 hotfix: detect the user's actual PATH so subprocess.Popen(["claude", ...])
+# can find binaries installed via brew / npm / cargo / pipx etc. Default
+# launchd PATH is `/usr/bin:/bin:/usr/sbin:/sbin` which excludes everything
+# user-installed.
+#
+# Strategy: probe the user's login shell via -ilc (interactive + login + cmd)
+# with a marker so we can grep the line containing PATH out of any shell
+# greeting noise. Fallback to a hardcoded list covering common locations
+# (Apple Silicon brew, Intel brew, ~/.local/bin, cargo, npm-global, etc.)
+# if probing fails.
+
+# 1. Detect user's login shell via Directory Service (most reliable on macOS)
+USER_SHELL=$(dscl . -read "/Users/$USER" UserShell 2>/dev/null | awk '{print $2}')
+[ -z "$USER_SHELL" ] || [ ! -x "$USER_SHELL" ] && USER_SHELL=/bin/zsh
+
+# 2. Probe user's actual PATH using a marker so we can extract cleanly
+#    even if .zshrc prints greetings/MOTD/tips/whatever
+PROBED_PATH=""
+PROBED_RAW=$("$USER_SHELL" -ilc 'echo "CLIPULSE_PATH_MARKER:$PATH:CLIPULSE_END"' 2>/dev/null | grep -o 'CLIPULSE_PATH_MARKER:[^:]*\(:[^:]*\)*:CLIPULSE_END' | head -n1 || true)
+if [ -n "$PROBED_RAW" ]; then
+    PROBED_PATH=$(echo "$PROBED_RAW" | sed -E 's/^CLIPULSE_PATH_MARKER://; s/:CLIPULSE_END$//')
+    echo "Probed user PATH from $USER_SHELL: $PROBED_PATH"
+fi
+
+# 3. Static fallback PATH covering common install locations.
+STATIC_PATH="$HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:$HOME/.cargo/bin:$HOME/.npm-global/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# 4. Final PATH = probed (if non-empty) ∪ static fallback (de-dup not strictly
+#    needed; execvp scans left-to-right and ignores duplicates effectively).
+if [ -n "$PROBED_PATH" ]; then
+    HELPER_PATH="$PROBED_PATH:$STATIC_PATH"
+else
+    echo "WARN: could not probe user PATH; falling back to static list"
+    HELPER_PATH="$STATIC_PATH"
+fi
+echo "LaunchAgent PATH: $HELPER_PATH"
+
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -129,6 +166,8 @@ cat > "$PLIST" <<EOF
     <dict>
         <key>HOME</key>
         <string>$HOME</string>
+        <key>PATH</key>
+        <string>$HELPER_PATH</string>
         <key>CLI_PULSE_SUPABASE_URL</key>
         <string>$SUPABASE_URL</string>
         <key>CLI_PULSE_SUPABASE_ANON_KEY</key>
