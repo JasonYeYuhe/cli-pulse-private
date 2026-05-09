@@ -130,4 +130,25 @@ final class AnsiSanitizerTests: XCTestCase {
             "hello world\nline 2"
         )
     }
+
+    /// v1.16.1 regression: DECSCUSR (cursor-style) sequences include an
+    /// intermediate SPACE byte (0x20) before the final byte. Pre-fix
+    /// regex `[0-9;?<>=]*[@-~]` skipped at the space and never matched,
+    /// so `\x1b[0 q` leaked through into Codex iOS transcripts as `[0 q`.
+    /// User-reported on 2026-05-09.
+    func test_strips_csi_with_intermediate_space_byte_DECSCUSR() {
+        // `\x1b[0 q` — Reset cursor style. SPACE is the intermediate byte.
+        let raw = "before\u{1B}[0 qafter"
+        XCTAssertEqual(AnsiSanitizer.strip(raw), "beforeafter")
+        XCTAssertEqual(AnsiSanitizer.stripJoiningWithSpaces(raw), "beforeafter")
+    }
+
+    /// Other DECSCUSR variants (block/underline/bar cursors) all use
+    /// `[N SP q]` form — none should leak.
+    func test_strips_csi_all_DECSCUSR_styles() {
+        for n in [0, 1, 2, 3, 4, 5, 6] {
+            let raw = "x\u{1B}[\(n) qy"
+            XCTAssertEqual(AnsiSanitizer.strip(raw), "xy", "DECSCUSR \(n) should strip cleanly")
+        }
+    }
 }

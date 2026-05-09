@@ -372,9 +372,12 @@ public enum ClaudeConversationPreviewFormatter {
     /// sequence (params are digits / `;:?<>=` only and final byte is
     /// in `@-~`). User text containing `[42]` survives.
     private static let orphanCsiPattern: NSRegularExpression = {
-        // Numeric / semicolon body, then a single final byte. Greedy
-        // body so longer sequences match instead of leaving fragments.
-        let pattern = "\\[[0-9;:?<>=]+[@-~]"
+        // Numeric / semicolon body, optional intermediate bytes (per
+        // ECMA-48 — DECSCUSR and friends use `[N SP q]`), then a single
+        // final byte. Greedy body so longer sequences match instead of
+        // leaving fragments. v1.16.1 added intermediate-byte support
+        // after Codex's `[0 q` orphan leaked into the iOS transcript.
+        let pattern = "\\[[0-9;:?<>=]+[ -/]*[@-~]"
         return try! NSRegularExpression(pattern: pattern, options: [])
     }()
 

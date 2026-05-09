@@ -35,7 +35,14 @@ public enum AnsiSanitizer {
         // Using literal hex because `\u{1B}` inside an NSRegularExpression
         // pattern is rejected by some NSRegularExpression variants on
         // macos-13. Build the pattern with the actual ESC character.
-        let pattern = "\u{1B}\\[[0-9;?<>=]*[@-~]"
+        //
+        // v1.16.1 hotfix: include intermediate bytes (`[ -/]`, U+0020 to
+        // U+002F) per ECMA-48. Codex TUI emits DECSCUSR cursor-style
+        // sequences like `\x1b[0 q` (note the SPACE intermediate byte
+        // before `q`). The pre-fix regex required final byte right after
+        // params, so it skipped at the space, failed to match, and the
+        // raw `[0 q` leaked through to the iOS transcript view.
+        let pattern = "\u{1B}\\[[0-9;?<>=]*[ -/]*[@-~]"
         return try! NSRegularExpression(pattern: pattern, options: [])
     }()
 
@@ -113,7 +120,12 @@ public enum AnsiSanitizer {
     /// region, s/u=save/restore cursor, n=DSR, c=DA, p, q, t, ~, etc.)
     /// fall through to the standard `strip` pass which deletes them.
     private static let cursorMoveCsiPattern: NSRegularExpression = {
-        let pattern = "\u{1B}\\[[0-9;?<>=]*[A-MdefH]"
+        // v1.16.1: include intermediate-byte class per ECMA-48 so DECSCUSR
+        // (`\x1b[0 q` etc.) and other intermediate-using forms are matched
+        // even though their final byte (`q`) is also not in our cursor-
+        // move alphabet — those will fall through to stripCore's strip-
+        // everything CSI regex (also fixed for intermediates).
+        let pattern = "\u{1B}\\[[0-9;?<>=]*[ -/]*[A-MdefH]"
         return try! NSRegularExpression(pattern: pattern, options: [])
     }()
 

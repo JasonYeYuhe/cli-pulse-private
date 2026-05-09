@@ -248,7 +248,10 @@ public enum GeminiConversationPreviewFormatter {
     // MARK: - shared helpers (parity with sibling formatters)
 
     private static let orphanCsiPattern: NSRegularExpression = {
-        let pattern = "\\[[0-9;:?<>=]+[@-~]"
+        // v1.16.1 added `[ -/]*` intermediate-byte slot per ECMA-48 so
+        // DECSCUSR (`[0 q`) and similar forms are stripped instead of
+        // leaking into the rendered transcript.
+        let pattern = "\\[[0-9;:?<>=]+[ -/]*[@-~]"
         return try! NSRegularExpression(pattern: pattern, options: [])
     }()
 

@@ -53,6 +53,7 @@ from typing import Any, Callable
 from local_approvals import ApprovalRegistry
 from local_events import EventBroker
 from local_executor import LocalExecutor
+from ansi_sanitizer import strip as _ansi_strip
 from redaction import redact
 from transports import SessionHandle, SessionTransport, TransportError
 
@@ -1174,7 +1175,18 @@ class RemoteAgentManager:
         """
         if not text:
             return False
-        redacted = redact(text)
+        # v1.16.2: strip ANSI / VT control sequences before everything
+        # else. Without this, raw PTY bytes (CSI cursor moves, OSC
+        # titles, DECSCUSR `\x1b[0 q`) are uploaded to Supabase and
+        # surface as garbage like `[0 q [0 q` on remote viewers (notably
+        # the iOS app whose CLIPulseCore can't be hot-fixed independently
+        # of an App Store build). Local-fast-path consumers also benefit
+        # — the macOS app's client-side AnsiSanitizer becomes a defence
+        # layer instead of the only line of defence. Strip BEFORE
+        # redact() because some control sequences could otherwise hide
+        # token-shape patterns from the secret detector.
+        sanitized = _ansi_strip(text)
+        redacted = redact(sanitized)
         if not redacted:
             return False
         capped = redacted[:_EVENT_PAYLOAD_CAP_CHARS]
