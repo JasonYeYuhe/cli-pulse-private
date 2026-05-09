@@ -1601,25 +1601,39 @@ public actor APIClient {
 
         guard let url = URL(string: "\(supabaseURL)/rest/v1/provider_quotas") else { return }
 
+        // v1.15.1 hotfix: PostgREST `PGRST102 — All object keys must
+        // match` rejects a bulk POST when rows have non-uniform keys.
+        // Pre-fix, optional fields (`quota`, `plan_type`, `reset_time`)
+        // were only added when non-nil — so a batch with both Claude
+        // (reset_time=nil) and Codex (reset_time set) failed and
+        // neither row landed. Always include every key, using
+        // NSNull() for missing optionals so PostgREST sees a uniform
+        // shape and routes the per-row null cleanly to the column.
         var rows: [[String: Any]] = []
         for r in quotaResults {
             let u = r.usage
-            var row: [String: Any] = [
+            let tiersArr: [[String: Any]] = u.tiers.map { t in
+                // Tier entries also need uniform keys across rows
+                // (the column is `jsonb` so inner shape mismatches
+                // don't trigger 102, but consistency is still
+                // hygienic). reset_time is the only optional here.
+                [
+                    "name": t.name,
+                    "quota": t.quota,
+                    "remaining": t.remaining,
+                    "reset_time": t.reset_time as Any? ?? NSNull(),
+                ]
+            }
+            let row: [String: Any] = [
                 "user_id": userId,
                 "provider": u.provider,
                 "remaining": u.remaining ?? 0,
+                "quota": u.quota as Any? ?? NSNull(),
+                "plan_type": u.plan_type as Any? ?? NSNull(),
+                "reset_time": u.reset_time as Any? ?? NSNull(),
+                "tiers": tiersArr,
                 "updated_at": sharedISO8601Formatter.string(from: Date()),
             ]
-            if let q = u.quota { row["quota"] = q }
-            if let pt = u.plan_type { row["plan_type"] = pt }
-            if let rt = u.reset_time { row["reset_time"] = rt }
-
-            let tiersArr: [[String: Any]] = u.tiers.map { t in
-                var d: [String: Any] = ["name": t.name, "quota": t.quota, "remaining": t.remaining]
-                if let rt = t.reset_time { d["reset_time"] = rt }
-                return d
-            }
-            row["tiers"] = tiersArr
             rows.append(row)
         }
 
