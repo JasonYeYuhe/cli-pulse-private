@@ -19,16 +19,27 @@ class TestSGRColours:
 
 
 class TestCursorMoves:
-    def test_cuf_is_stripped(self):
-        # `\x1b[3C` — cursor forward 3
-        assert strip("a\x1b[3Cb") == "ab"
+    """v1.16.2: cursor-move and erase CSIs are SPATIAL — TUIs use them
+    where literal whitespace would have gone, so they're replaced with
+    a single space (which then collapses into adjacent spaces). Without
+    this, "official\\x1b[3CCLI" collapses to "officialCLI" instead of
+    "official CLI". Parity with Swift `stripJoiningWithSpaces`."""
 
-    def test_cup_is_stripped(self):
+    def test_cuf_recovers_word_boundary(self):
+        # `\x1b[3C` — cursor forward 3 → single space (preserve gap)
+        assert strip("a\x1b[3Cb") == "a b"
+
+    def test_cup_recovers_word_boundary(self):
         # `\x1b[2;5H` — cursor position 2,5
-        assert strip("hello\x1b[2;5Hworld") == "helloworld"
+        assert strip("hello\x1b[2;5Hworld") == "hello world"
 
-    def test_erase_line(self):
-        assert strip("before\x1b[Kafter") == "beforeafter"
+    def test_erase_line_treated_as_spatial(self):
+        assert strip("before\x1b[Kafter") == "before after"
+
+    def test_adjacent_cursor_moves_collapse(self):
+        # Multiple consecutive moves shouldn't produce visible
+        # whitespace runs.
+        assert strip("a\x1b[1C\x1b[2D\x1b[3Bb") == "a b"
 
 
 class TestOSC:
@@ -74,9 +85,12 @@ class TestDECSCUSR_v1_16_2_regression:
 
     def test_multiple_decscusr_in_one_payload(self):
         # Mirrors what the user actually saw — Codex repeats the
-        # cursor-style command on every redraw.
+        # cursor-style command on every redraw. DECSCUSR's final byte
+        # `q` is NOT in the cursor-move alphabet so it falls through
+        # to the strip-everything CSI pass; the surrounding inline
+        # spaces then collapse to one.
         raw = "?  \x1b[0 q \x1b[0 q \x1b[0 q\nnext line"
-        assert strip(raw) == "?    \nnext line"
+        assert strip(raw) == "? \nnext line"
 
 
 class TestPasted_hello:

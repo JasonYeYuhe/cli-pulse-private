@@ -32,10 +32,20 @@ from __future__ import annotations
 
 import re
 
-# CSI: ESC [ <params 0x30-0x3F>* <intermediates 0x20-0x2F>* <final 0x40-0x7E>
+# Cursor-move / erase CSIs (final byte ∈ A-M, d/e/f/H, plus the J/K
+# erase ops). Same alphabet as the Swift `cursorMoveCsiPattern`. These
+# are SPATIAL — TUIs use them to lay text out where a normal terminal
+# would have used literal whitespace, so we replace them with a single
+# space to preserve word boundaries (without this, "official\x1b[3CCLI"
+# collapses to "officialCLI" instead of "official CLI").
+_CURSOR_MOVE_CSI_PATTERN = re.compile(r"\x1b\[[0-9;?<>=]*[ -/]*[A-MdefH]")
+
+# General CSI: ESC [ <params 0x30-0x3F>* <intermediates 0x20-0x2F>* <final 0x40-0x7E>
 # v1.16.2: include `[ -/]*` intermediate slot per ECMA-48 so DECSCUSR
 # (`\x1b[0 q`) and similar forms are matched. The pre-fix regex required
 # a final byte right after params and skipped at the SPACE intermediate.
+# Catches everything left over after the cursor-move pass — SGR colors,
+# mode-set, save/restore cursor, DECSCUSR, etc.
 _CSI_PATTERN = re.compile(r"\x1b\[[0-9;?<>=]*[ -/]*[@-~]")
 
 # OSC: ESC ] ... BEL  OR  ESC ] ... ESC \
@@ -46,17 +56,38 @@ _OSC_PATTERN = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 # version's strayEscPattern.
 _STRAY_ESC_PATTERN = re.compile(r"\x1b[7-9=>NOPVWXZ\\]?")
 
+# Two-or-more inline spaces / tabs. Used by `strip` to collapse runs
+# produced by the cursor-move-to-space substitution above. Excludes
+# newlines and CRs so line-break structure survives.
+_INLINE_SPACE_RUN = re.compile(r"[ \t]{2,}")
+
 
 def strip(raw: str) -> str:
-    """Remove ANSI / VT escape sequences from `raw`.
+    """Remove ANSI / VT escape sequences from `raw`, preserving word
+    boundaries that were laid out via cursor-move escapes.
 
-    Returns a string safe to render as plain monospace text. Preserves
-    printable characters, line breaks, tabs, and literal spaces.
+    Returns a string safe to render as plain monospace text. Cursor
+    moves / erases are replaced with a single space (then runs of
+    consecutive inline spaces collapse to one); SGR colors, OSC
+    titles, mode-set, etc. are deleted entirely. Newlines, CRs, and
+    original literal spaces are preserved.
+
     Pure / idempotent — `strip(strip(x)) == strip(x)`.
+
+    This matches the Swift `AnsiSanitizer.stripJoiningWithSpaces`
+    behaviour. Helper-side and client-side stripping are now in
+    lockstep so a sample that round-trips through Supabase reads
+    identically to one consumed via the local fast path.
     """
     if not raw:
         return raw
     s = raw
+    # 1. Cursor moves → single space (preserve word boundaries that
+    #    TUIs implied via positioning rather than literal whitespace).
+    s = _CURSOR_MOVE_CSI_PATTERN.sub(" ", s)
+    # 2. Everything else (SGR, OSC, mode-set, stray ESC, BEL) → drop.
+    #    Order matters: cursor-move pattern was already applied above,
+    #    so the general CSI pattern only sees what survived.
     s = _CSI_PATTERN.sub("", s)
     s = _OSC_PATTERN.sub("", s)
     s = _STRAY_ESC_PATTERN.sub("", s)
@@ -64,4 +95,7 @@ def strip(raw: str) -> str:
     # already consumed, but Codex emits standalone BELs too (status
     # area / activity beeps).
     s = s.replace("\x07", "")
+    # 3. Collapse runs of inline spaces / tabs introduced by step 1.
+    #    Newlines / CRs deliberately preserved.
+    s = _INLINE_SPACE_RUN.sub(" ", s)
     return s
