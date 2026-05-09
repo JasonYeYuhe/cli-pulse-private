@@ -72,6 +72,13 @@ run swiftc -o "$APP_BIN" \
 
 # === Step 3: Codesign ===
 if [[ $SKIP_SIGN -eq 0 ]]; then
+    # v1.16.1 hotfix: strip extended attributes before signing. swiftc
+    # output, Spotlight indexing, or Finder metadata can attach xattrs
+    # (com.apple.quarantine, com.apple.provenance, etc.) that codesign
+    # rejects with "resource fork, Finder information, or similar
+    # detritus not allowed". `set -e` then bails the whole pipeline.
+    # `xattr -cr` clears them recursively without touching the binary.
+    run xattr -cr "$APP_BUNDLE"
     # Single outermost sign — codesign recursively walks the bundle.
     # --options runtime: Hardened Runtime, required for notarization.
     # --timestamp: ensures the signature remains valid past cert expiration.
@@ -79,6 +86,14 @@ if [[ $SKIP_SIGN -eq 0 ]]; then
     # redundant.)
     run codesign --force --timestamp --options runtime \
         --sign "$DEV_ID_APP" "$APP_BUNDLE"
+    # v1.16.1 hotfix: re-strip xattrs after sign. Spotlight's mds
+    # daemon indexes new files in Documents/ within ~ms and attaches
+    # `com.apple.FinderInfo` to the bundle directory, which `codesign
+    # --verify --strict` then rejects with "Disallowed xattr ... found"
+    # even though the signature itself is valid. xattrs are inode
+    # metadata, not file content, so stripping them post-sign does
+    # NOT invalidate the signature.
+    run xattr -cr "$APP_BUNDLE"
     run codesign --verify --strict --verbose=2 "$APP_BUNDLE"
 fi
 
