@@ -386,11 +386,16 @@ public final class LocalSessionControlClient: SessionControlClient {
         // helper.
         let providerAvailability =
             (result["provider_availability"] as? [String]) ?? []
+        // v1.16: optional `helper_version` field. Empty string for
+        // older helpers; HelperInstaller treats "" as "predates 1.16,
+        // could be 1.15 nohup or older".
+        let helperVersion = (result["helper_version"] as? String) ?? ""
         return SessionControlHello(
             protocolVersion: version,
             supportedMethods: Set(methods),
             capabilities: caps,
-            providerAvailability: providerAvailability
+            providerAvailability: providerAvailability,
+            helperVersion: helperVersion
         )
     }
 

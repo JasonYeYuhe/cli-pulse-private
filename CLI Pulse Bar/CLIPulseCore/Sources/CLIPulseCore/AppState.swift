@@ -494,6 +494,14 @@ public final class AppState: ObservableObject {
     @Published public var isLinkingIdentity = false
     @Published public var linkIdentityError: String?
 
+    // MARK: - v1.16 Companion CLI Helper Installer
+    /// Drives the "Install / Update / Uninstall Companion CLI" UI. Lazily
+    /// constructed on first access so unit tests that don't exercise this
+    /// surface don't need to mock URLSession + UDS at all.
+    #if os(macOS)
+    @Published public var helperInstaller: HelperInstaller = HelperInstaller()
+    #endif
+
     // MARK: - Webhook Integration
     @AppStorage("cli_pulse_webhook_enabled") public var webhookEnabled = false
     @AppStorage("cli_pulse_webhook_url") public var webhookURL = ""

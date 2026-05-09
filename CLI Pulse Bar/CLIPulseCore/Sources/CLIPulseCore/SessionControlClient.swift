@@ -115,17 +115,24 @@ public struct SessionControlHello: Sendable, Equatable {
     /// the legacy implicit `[claude]` so users on a still-rolling-out
     /// helper aren't blocked from spawning Claude.
     public let providerAvailability: [String]
+    /// v1.16: helper's reported version string ("1.16.0", "1.15.0", etc.)
+    /// for the HelperInstaller state machine. Empty string means an older
+    /// helper that predates v1.16's surface — treat as ".unknown" / "older
+    /// than 1.16.0" for migration / update prompt logic.
+    public let helperVersion: String
 
     public init(
         protocolVersion: Int,
         supportedMethods: Set<String>,
         capabilities: SessionControlCapabilities,
-        providerAvailability: [String] = []
+        providerAvailability: [String] = [],
+        helperVersion: String = ""
     ) {
         self.protocolVersion = protocolVersion
         self.supportedMethods = supportedMethods
         self.capabilities = capabilities
         self.providerAvailability = providerAvailability
+        self.helperVersion = helperVersion
     }
 }
 

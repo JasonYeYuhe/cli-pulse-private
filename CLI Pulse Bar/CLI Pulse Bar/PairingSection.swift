@@ -66,6 +66,15 @@ struct PairingSection: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.red)
             }
+
+            // v1.16: Companion CLI helper installer. Surface only after
+            // the user has paired (managed-CLI is a post-pairing power
+            // feature; pre-pairing users have nothing for the helper to
+            // do yet).
+            if authState.isPaired {
+                Divider()
+                CompanionCLISection(installer: state.helperInstaller)
+            }
         }
     }
 

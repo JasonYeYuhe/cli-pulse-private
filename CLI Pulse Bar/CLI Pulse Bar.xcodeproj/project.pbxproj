@@ -22,6 +22,7 @@
 		A10043 /* HowItWorksCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10043 /* HowItWorksCard.swift */; };
 		A10044 /* SubscriptionSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10044 /* SubscriptionSection.swift */; };
 		A10045 /* PairingSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10045 /* PairingSection.swift */; };
+		A60011 /* CompanionCLISection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60006 /* CompanionCLISection.swift */; };
 		A10046 /* GeneralSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10046 /* GeneralSection.swift */; };
 		A10047 /* DisplaySection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10047 /* DisplaySection.swift */; };
 		A10048 /* ProviderSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10048 /* ProviderSettingsSection.swift */; };
@@ -182,6 +183,7 @@
 		B10043 /* HowItWorksCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HowItWorksCard.swift; sourceTree = "<group>"; };
 		B10044 /* SubscriptionSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionSection.swift; sourceTree = "<group>"; };
 		B10045 /* PairingSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingSection.swift; sourceTree = "<group>"; };
+		B60006 /* CompanionCLISection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionCLISection.swift; sourceTree = "<group>"; };
 		B10046 /* GeneralSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSection.swift; sourceTree = "<group>"; };
 		B10047 /* DisplaySection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplaySection.swift; sourceTree = "<group>"; };
 		B10048 /* ProviderSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSettingsSection.swift; sourceTree = "<group>"; };
@@ -326,6 +328,7 @@
 				B10043 /* HowItWorksCard.swift */,
 				B10044 /* SubscriptionSection.swift */,
 				B10045 /* PairingSection.swift */,
+				B60006 /* CompanionCLISection.swift */,
 				B10046 /* GeneralSection.swift */,
 				B10047 /* DisplaySection.swift */,
 				B10048 /* ProviderSettingsSection.swift */,
@@ -665,6 +668,7 @@
 				A10043 /* HowItWorksCard.swift in Sources */,
 				A10044 /* SubscriptionSection.swift in Sources */,
 				A10045 /* PairingSection.swift in Sources */,
+				A60011 /* CompanionCLISection.swift in Sources */,
 				A10046 /* GeneralSection.swift in Sources */,
 				A10047 /* DisplaySection.swift in Sources */,
 				A10048 /* ProviderSettingsSection.swift in Sources */,
