@@ -92,9 +92,22 @@ struct SessionsTab: View {
                     // `localOutputPreview`, double-rendering noise.
                     // Codex review on PR #18: gate on
                     // `shouldRouteSessionLocally` first.
-                    if let row = state.displayedManagedSessions.first(where: { $0.id == sid }),
-                       !state.shouldRouteSessionLocally(row) {
-                        await state.refreshRemoteSessionEvents(sessionId: sid)
+                    if let row = state.displayedManagedSessions.first(where: { $0.id == sid }) {
+                        if state.shouldRouteSessionLocally(row) {
+                            // v1.16 hotfix: .onChange(of: showOutput)
+                            // only fires ONCE when the user toggles.
+                            // If `shouldRouteSessionLocally` was false
+                            // at that moment (because list_sessions
+                            // hadn't populated localManagedSessions
+                            // yet), no subscribe was ever kicked off.
+                            // Recovery: every poll tick, if the row
+                            // is now local-routed AND no active
+                            // subscription, start one. subscribeToLocal
+                            // Events is idempotent.
+                            state.subscribeToLocalEvents(sessionId: sid)
+                        } else {
+                            await state.refreshRemoteSessionEvents(sessionId: sid)
+                        }
                     }
                 }
                 if !state.remoteControlEnabled {
@@ -117,6 +130,7 @@ struct SessionsTab: View {
             // this single-arg API, so we cancel ALL local streams
             // (cheap, idempotent). The outer view re-subscribes when
             // showOutput flips back on for the newly-selected row.
+            print("[stream-debug] SessionsTab onChange(selectedManagedSessionId) → \(newId ?? "nil")")
             showOutput = false
             state.unsubscribeAllLocalEvents()
             // When a row gets newly selected and there's already a
@@ -134,6 +148,7 @@ struct SessionsTab: View {
             // currently-selected local-routed row when the user opts
             // into "Show output", and unsubscribe on hide.
             // Subscription is idempotent.
+            print("[stream-debug] SessionsTab onChange(showOutput) → \(newValue) selectedSid=\(selectedManagedSessionId ?? "nil")")
             guard let sid = selectedManagedSessionId else { return }
             // Resolve the row's local-routing decision. If it's a
             // remote-routed row, the existing event-tail polling
@@ -147,12 +162,20 @@ struct SessionsTab: View {
             }
         }
         .onDisappear {
-            // Tab leaves the screen → drop every live local
-            // subscription so the helper doesn't keep streaming
-            // events to a hidden subscriber. The macOS app's other
-            // tabs don't render Sessions output; subscriptions only
-            // matter while this view is visible.
-            state.unsubscribeAllLocalEvents()
+            // v1.16 hotfix: do NOT unsubscribe on disappear. The
+            // menu-bar popup tears down its view tree every time it
+            // loses focus (clicked outside, app switch, screen lock),
+            // so onDisappear fires constantly during normal use. The
+            // pre-fix tear-down here cancelled streams seconds after
+            // they started, hiding Claude's reply behind an empty
+            // preview. Subscriptions are cheap (one UDS connection +
+            // a 32 KB ring buffer per session) and the helper is the
+            // one doing the PTY work — keeping the stream alive across
+            // popup open/close lets the user re-open the popup and
+            // immediately see what arrived while they were elsewhere.
+            // The remaining tear-down sites (selection change, Hide
+            // output, Stop, sign-out) are still authoritative.
+            print("[stream-debug] SessionsTab onDisappear (subs preserved)")
         }
     }
 
@@ -1267,21 +1290,38 @@ struct SessionsTab: View {
         //      → Supabase start.
         //   3. Else: nothing (Open button shouldn't have been
         //      visible).
-        let newSessionId: String?
+        //
+        // v1.16 hotfix — start-race recovery: cold-launch click can
+        // reach this function before the first refreshLocalSessionControl
+        // State tick has set localHelperReachable / localControlEnabled.
+        // canStartLocalManagedSession reads false even though the helper
+        // is in fact running, and we silently fall to the Supabase queue
+        // (cross-cloud round-trip, defeats the "local fast path" promise).
+        //
+        // Strategy: when the user is paired (selfDeviceId set), ATTEMPT
+        // the local UDS start directly. It returns within ~1 s if the
+        // helper is up, or fails fast with a typed error if it's down.
+        // Much better than blocking on the full refreshLocalSessionControl
+        // State probe (hello + status + list_sessions = up to 25 s when
+        // the helper is unreachable on flaky networks). On success, kick
+        // a background refresh so the rest of the UI hydrates from the
+        // now-confirmed-good helper. On failure, fall through to the
+        // remote-queue path so the user still gets a session.
+        var newSessionId: String? = nil
         var startedViaRemote = false
-        if state.canStartLocalManagedSession {
-            // Local start path: implicitly targets THIS Mac.
-            // Trust `canStartLocalManagedSession` (which already
-            // checks `selfDeviceId != nil && localHelperReachable
-            // && localControlEnabled`); don't add a redundant
-            // device-id-equality gate that re-introduces the
-            // store-drift bug.
-            let label = "Local \(ProviderDisplay.displayName(for: provider)) session"
+        let label = "Local \(ProviderDisplay.displayName(for: provider)) session"
+
+        if state.selfDeviceId != nil {
             newSessionId = await state.requestLocalClaudeSessionStart(
                 provider: provider,
                 clientLabel: label
             )
-        } else if state.remoteControlEnabled, let device = targetDeviceForStart {
+            if newSessionId != nil {
+                Task { await state.refreshLocalSessionControlState() }
+            }
+        }
+
+        if newSessionId == nil, state.remoteControlEnabled, let device = targetDeviceForStart {
             guard device.supportsManagedSessionProvider(provider) else {
                 state.remoteSessionsError = unsupportedRemoteProviderMessage(provider: provider, device: device)
                 return
@@ -1295,9 +1335,8 @@ struct SessionsTab: View {
                 cwdHmac: nil,
                 clientLabel: "\(providerName) on \(device.name)"
             )
-        } else {
-            newSessionId = nil
         }
+
         if let id = newSessionId {
             if startedViaRemote {
                 pendingRemoteStartIds.insert(id)

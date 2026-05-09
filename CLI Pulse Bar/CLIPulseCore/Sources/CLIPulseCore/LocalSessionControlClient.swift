@@ -433,7 +433,16 @@ public final class LocalSessionControlClient: SessionControlClient {
     }
 
     public func listSessions() async throws -> [SessionControlSummary] {
-        let result = try await send(method: "list_sessions", params: [:])
+        // v1.16 hotfix: list_sessions on the helper scans running
+        // Claude/Codex/Gemini processes for the `detected` rows; on
+        // a busy Mac that walk can take 1-3 s. Default 5 s
+        // requestTimeout caught the slow tail and surfaced as
+        // "local list_sessions failed: timeout" → empty
+        // localManagedSessions → fast-path subscribe never fires →
+        // user sees "No output yet…" indefinitely. 15 s override
+        // here only; other RPCs keep the tighter default so a real
+        // helper hang surfaces quickly.
+        let result = try await send(method: "list_sessions", params: [:], timeoutOverride: 15)
         // iter 2A reply shape:
         //   { "managed": [...], "detected": [...], "sessions": [...legacy...] }
         // Older helper revisions only return `sessions`. Read both
@@ -725,7 +734,8 @@ public final class LocalSessionControlClient: SessionControlClient {
     private func send(
         method: String,
         params: [String: Any],
-        requireAuth: Bool = true
+        requireAuth: Bool = true,
+        timeoutOverride: TimeInterval? = nil
     ) async throws -> [String: Any] {
         // Build envelope. Auth token re-read each call so a manual
         // helper restart (which rotates the token) takes effect
@@ -749,8 +759,11 @@ public final class LocalSessionControlClient: SessionControlClient {
         defer { conn.cancel() }
         try await sendFrame(conn, body: body)
         // One-shot RPC: missing reply IS a timeout-class error,
-        // so apply the configured requestTimeout watchdog.
-        let reply = try await receiveFrame(conn, timeout: requestTimeout)
+        // so apply the configured requestTimeout watchdog. Per-call
+        // override exists for slow RPCs (`list_sessions` scans
+        // running CLI processes; can take 1-3 s on a busy Mac).
+        let timeout = timeoutOverride ?? requestTimeout
+        let reply = try await receiveFrame(conn, timeout: timeout)
         return try parseReply(reply)
     }
 
@@ -791,6 +804,19 @@ public final class LocalSessionControlClient: SessionControlClient {
         localSessionLog.debug(
             "uds.connect attempt path=\(self.socketPath, privacy: .public) socketExists=\(socketExists, privacy: .public)"
         )
+        // v1.16 hotfix: fast-fail when the socket file is gone (helper
+        // uninstalled, helper crashed without re-binding, install in
+        // progress). Pre-fix, NWConnection.unix() against a missing
+        // path would sit in `.preparing` state for the full
+        // connectTimeout (3 s), and the .task polling loop firing every
+        // 3 s caused a cascade of overlapping connect attempts that
+        // visibly hung the menu-bar UI. Throwing early lets the gate
+        // hydration short-circuit immediately, the diagnostic surface
+        // shows "helper not running," and the next refresh tick is
+        // free to retry once the user finishes installing.
+        if !socketExists {
+            throw SessionControlError.helperNotRunning
+        }
         let endpoint = NWEndpoint.unix(path: socketPath)
         let connection = NWConnection(to: endpoint, using: .tcp)
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in

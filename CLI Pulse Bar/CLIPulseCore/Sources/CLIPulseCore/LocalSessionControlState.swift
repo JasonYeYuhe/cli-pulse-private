@@ -137,8 +137,32 @@ extension AppState {
         if self.localControlEnabled {
             do {
                 let rows = try await client.listSessions()
-                self.localManagedSessions = rows.filter { $0.source == .managed }
+                let serverManaged = rows.filter { $0.source == .managed }
+                let serverIds = Set(serverManaged.map(\.id))
+                let now = Date()
+                // v1.16 hotfix: preserve optimistically-appended ids
+                // that the helper hasn't surfaced yet (register_session
+                // race). Without this, the next reconcile purges the
+                // live stream + preview seconds after start.
+                let preserved = self.localManagedSessions.filter { existing in
+                    if serverIds.contains(existing.id) { return false }
+                    if let appended = self.localOptimisticAppendedAt[existing.id],
+                       now.timeIntervalSince(appended) < AppState.localOptimisticGraceSeconds {
+                        return true
+                    }
+                    return false
+                }
+                if !preserved.isEmpty {
+                    Self.localStateLogger.info("[stream-debug] listSessions returned managedIds=\(Array(serverIds).joined(separator: ","), privacy: .public) preservedOptimistic=\(preserved.map(\.id).joined(separator: ","), privacy: .public)")
+                }
+                self.localManagedSessions = serverManaged + preserved
                 self.localDetectedSessions = rows.filter { $0.source == .detected }
+                // Drop optimistic timestamps once the helper has
+                // confirmed the id, and prune any expired entries.
+                for sid in serverIds { self.localOptimisticAppendedAt.removeValue(forKey: sid) }
+                self.localOptimisticAppendedAt = self.localOptimisticAppendedAt.filter {
+                    now.timeIntervalSince($0.value) < AppState.localOptimisticGraceSeconds
+                }
                 // After updating the authoritative ownership list,
                 // reconcile any per-session UI / streaming state for
                 // ids the current helper no longer owns. Without
@@ -158,6 +182,7 @@ extension AppState {
         } else {
             self.localManagedSessions = []
             self.localDetectedSessions = []
+            self.localOptimisticAppendedAt.removeAll()
             // Gate flipped off (or it was never on): drop every per-
             // session local stream + pending approval. Same
             // reconciliation reasoning as above; the difference is
@@ -178,6 +203,13 @@ extension AppState {
     @MainActor
     public func reconcileLocalStaleSessionState() {
         let owned: Set<String> = Set(localManagedSessions.map(\.id))
+        let activeTaskIds = Set(localEventTasks.keys)
+        let previewIds = Set(localOutputPreview.keys)
+        let staleTasks = activeTaskIds.subtracting(owned)
+        let stalePreview = previewIds.subtracting(owned)
+        if !staleTasks.isEmpty || !stalePreview.isEmpty {
+            Self.localStateLogger.info("[stream-debug] reconcile owned=\(owned.count, privacy: .public) staleTasks=\(staleTasks.count, privacy: .public) stalePreview=\(stalePreview.count, privacy: .public) ownedIds=\(Array(owned).joined(separator: ","), privacy: .public) staleTaskIds=\(Array(staleTasks).joined(separator: ","), privacy: .public)")
+        }
 
         // Cancel + remove subscriptions for stale ids.
         for sid in localEventTasks.keys where !owned.contains(sid) {
@@ -432,6 +464,11 @@ extension AppState {
                     source: .managed
                 ))
             }
+            // v1.16 hotfix: stamp this id so the next refresh poll
+            // doesn't clobber it before the helper's register_session
+            // surfaces it via list_sessions.
+            self.localOptimisticAppendedAt[result.sessionId] = Date()
+            Self.localStateLogger.info("[stream-debug] requestLocalClaudeSessionStart appended sessionId=\(result.sessionId, privacy: .public) provider=\(provider, privacy: .public) optimisticTimestamped=true")
             // Refresh the remote list so iOS / Watch viewers see the
             // session as soon as the helper's register_session RPC
             // lands. Best effort — failure here doesn't change the
@@ -453,6 +490,10 @@ extension AppState {
         let client = LocalSessionControlClient()
         do {
             try await client.stopSession(sessionId: sessionId)
+            // Drop the optimistic timestamp so the next refresh poll
+            // doesn't resurrect this id during the grace window when
+            // list_sessions correctly reports it as gone.
+            self.localOptimisticAppendedAt.removeValue(forKey: sessionId)
             await refreshRemoteSessions()
             return true
         } catch {
@@ -518,6 +559,8 @@ extension AppState {
     /// recovery.
     @MainActor
     public func subscribeToLocalEvents(sessionId: String) {
+        // v1.16 debug instrumentation — remove once stream issue is closed.
+        Self.localStateLogger.info("[stream-debug] subscribeToLocalEvents sessionId=\(sessionId, privacy: .public) reachable=\(self.localHelperReachable, privacy: .public) ctrlEnabled=\(self.localControlEnabled, privacy: .public) caps.subscribe=\(self.localCapabilities?.subscribeEvents ?? false, privacy: .public) inManaged=\(self.localManagedSessions.contains(where: { $0.id == sessionId }), privacy: .public) taskExists=\(self.localEventTasks[sessionId] != nil, privacy: .public)")
         guard localHelperReachable, localControlEnabled else { return }
         guard localCapabilities?.subscribeEvents == true else { return }
         // Refuse to open a stream for a session id the helper
@@ -537,12 +580,30 @@ extension AppState {
         let client = LocalSessionControlClient()
         let task = Task { [weak self, sessionId] in
             do {
+                Self.localStateLogger.info("[stream-debug] task START sessionId=\(sessionId, privacy: .public)")
                 let stream = client.subscribeEvents(sessionId: sessionId)
+                var frameCount = 0
                 for try await event in stream {
                     if Task.isCancelled { break }
+                    frameCount += 1
+                    let kind: String
+                    switch event {
+                    case .subscribed: kind = "subscribed"
+                    case .outputDelta(_, let p, _): kind = "outputDelta(\(p.count)b)"
+                    case .sessionStarted: kind = "sessionStarted"
+                    case .sessionStatus: kind = "sessionStatus"
+                    case .sessionStopped: kind = "sessionStopped"
+                    case .approvalRequested: kind = "approvalRequested"
+                    case .approvalResolved: kind = "approvalResolved"
+                    case .heartbeat: kind = "heartbeat"
+                    case .error(let c, _): kind = "error(\(c))"
+                    case .other(let n, _): kind = "other(\(n))"
+                    }
+                    Self.localStateLogger.info("[stream-debug] frame#\(frameCount, privacy: .public) sessionId=\(sessionId, privacy: .public) kind=\(kind, privacy: .public)")
                     await self?.applyLocalSessionEvent(event, sessionId: sessionId)
                     if case .error = event { break }
                 }
+                Self.localStateLogger.info("[stream-debug] task END sessionId=\(sessionId, privacy: .public) totalFrames=\(frameCount, privacy: .public) cancelled=\(Task.isCancelled, privacy: .public)")
             } catch let err as SessionControlError {
                 Self.localStateLogger.info(
                     "local stream(\(sessionId, privacy: .public)) ended: \(String(describing: err), privacy: .public)"
@@ -563,6 +624,8 @@ extension AppState {
     /// subscription. Idempotent.
     @MainActor
     public func unsubscribeFromLocalEvents(sessionId: String) {
+        let had = localEventTasks[sessionId] != nil
+        Self.localStateLogger.info("[stream-debug] unsubscribeFromLocalEvents sessionId=\(sessionId, privacy: .public) hadTask=\(had, privacy: .public)")
         if let t = localEventTasks.removeValue(forKey: sessionId) {
             t.cancel()
         }
@@ -572,6 +635,7 @@ extension AppState {
     /// and when the user disables Local Session Control mid-session.
     @MainActor
     public func unsubscribeAllLocalEvents() {
+        Self.localStateLogger.info("[stream-debug] unsubscribeAllLocalEvents taskCount=\(self.localEventTasks.count, privacy: .public)")
         let tasks = localEventTasks
         localEventTasks.removeAll()
         for (_, t) in tasks { t.cancel() }
@@ -609,6 +673,7 @@ extension AppState {
             }
         case .outputDelta(_, let payload, _):
             var current = self.localOutputPreview[sessionId] ?? ""
+            let beforeLen = current.count
             current += payload
             let cap = AppState.localOutputPreviewCap
             if current.count > cap {
@@ -617,6 +682,7 @@ extension AppState {
                 current = String(current[start...])
             }
             self.localOutputPreview[sessionId] = current
+            Self.localStateLogger.info("[stream-debug] applyOutputDelta sid=\(sessionId, privacy: .public) delta=\(payload.count, privacy: .public)b before=\(beforeLen, privacy: .public)b after=\(current.count, privacy: .public)b storedKeys=\(self.localOutputPreview.keys.count, privacy: .public)")
         case .approvalRequested(let approval):
             var bucket = self.localPendingApprovals[sessionId] ?? []
             if !bucket.contains(where: { $0.approvalId == approval.approvalId }) {
@@ -636,6 +702,7 @@ extension AppState {
             // Clear local row state when the session ends so a
             // freshly-spawned id with the same uuid (rare) doesn't
             // inherit stale preview text.
+            Self.localStateLogger.info("[stream-debug] sessionStopped sid=\(sessionId, privacy: .public) — wiping preview + approvals")
             self.localPendingApprovals.removeValue(forKey: sessionId)
             self.localOutputPreview.removeValue(forKey: sessionId)
         case .sessionStarted, .sessionStatus, .heartbeat, .other:

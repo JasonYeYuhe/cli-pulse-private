@@ -473,6 +473,23 @@ public final class AppState: ObservableObject {
     /// Internal because the UI binds via @Published — only AppState
     /// itself reads/writes this map.
     internal var localEventTasks: [String: Task<Void, Never>] = [:]
+
+    /// v1.16 hotfix: timestamps for optimistically-appended local
+    /// session ids. The 3 s `refreshLocalSessionControlState` poll can
+    /// race the helper's `register_session` write, returning a
+    /// `list_sessions` response that does NOT include the just-spawned
+    /// id. Without this map the next `reconcileLocalStaleSessionState`
+    /// purges the live stream + preview, causing "no output" after a
+    /// successful start. Entries within `localOptimisticGraceSeconds`
+    /// are preserved across the merge in
+    /// `refreshLocalSessionControlState`.
+    internal var localOptimisticAppendedAt: [String: Date] = [:]
+
+    /// Grace window (seconds) for `localOptimisticAppendedAt`. 30 s is
+    /// conservative; helper register_session should complete in <1 s
+    /// in the common case but Supabase upsert latency under poor
+    /// network can push it higher.
+    public static let localOptimisticGraceSeconds: TimeInterval = 30
     #endif
 
     /// Aggregated per-provider summaries over the currently-selected range.

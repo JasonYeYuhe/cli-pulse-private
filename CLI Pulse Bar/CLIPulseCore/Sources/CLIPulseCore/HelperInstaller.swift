@@ -101,7 +101,22 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
         let base = groupURL?.path ?? NSHomeDirectory()
         self.udsPath = (base as NSString)
             .appendingPathComponent(LocalSessionControlClient.socketFilename)
-        self.helperDir = ("~/Library/CLI-Pulse-Helper" as NSString).expandingTildeInPath
+        // v1.16 hotfix: NSHomeDirectory() / `~` expansion both honour
+        // the App Sandbox redirect, returning
+        // `~/Library/Containers/yyh.CLI-Pulse/Data` instead of the
+        // user's real home. The helper .pkg installs to the REAL
+        // `~/Library/CLI-Pulse-Helper/` (the postinstall script runs
+        // unsandboxed as the user), so the macOS app must look there
+        // too. `getpwuid(getuid())->pw_dir` bypasses the sandbox
+        // redirect on macOS and returns the actual home directory.
+        let realHome: String = {
+            if let pw = getpwuid(getuid()), let cstr = pw.pointee.pw_dir {
+                return String(cString: cstr)
+            }
+            return NSHomeDirectoryForUser(NSUserName()) ?? NSHomeDirectory()
+        }()
+        self.helperDir = (realHome as NSString)
+            .appendingPathComponent("Library/CLI-Pulse-Helper")
     }
 
     // MARK: - Public API
@@ -194,7 +209,19 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
             let resolveOnce: (Bool) -> Void = { value in
                 guard !resolved else { return }
                 resolved = true
-                if let observer { NotificationCenter.default.removeObserver(observer) }
+                // v1.16 hotfix: observer was added to
+                // NSWorkspace.shared.notificationCenter but the pre-fix
+                // path tried to remove it from NotificationCenter.default
+                // (different center) — so removal silently failed and
+                // every install leaked another observer that watched
+                // every app termination forever, flooding the Xcode
+                // console with XPC `<decode: bad range>` warnings as
+                // the system XPC machinery decoded each termination's
+                // userInfo on N orphaned observers. Use the matching
+                // workspace center for removal.
+                if let observer {
+                    NSWorkspace.shared.notificationCenter.removeObserver(observer)
+                }
                 continuation.resume(returning: value)
             }
             observer = NSWorkspace.shared.notificationCenter.addObserver(
@@ -224,10 +251,16 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
         let uninstallerURL = URL(
             fileURLWithPath: helperDir
         ).appendingPathComponent("CLI Pulse Helper Uninstaller.app")
-        guard FileManager.default.fileExists(atPath: uninstallerURL.path) else {
-            state = .error("Uninstaller missing at \(uninstallerURL.path)")
-            return
-        }
+        // v1.16 hotfix: skip the pre-existence FileManager check —
+        // App Sandbox can return false for paths under /Users that
+        // exist on disk but aren't reachable through the container's
+        // POSIX view, even though LaunchServices (used by
+        // openApplication below) ignores those restrictions and can
+        // still launch the app. The pre-check produced a false-
+        // negative "Uninstaller missing" error for installs that were
+        // actually present at ~/Library/CLI-Pulse-Helper/. If the URL
+        // really is missing, openApplication throws below and we fall
+        // through to the Finder-reveal recovery path.
         let cfg = NSWorkspace.OpenConfiguration()
         cfg.activates = true
         do {
