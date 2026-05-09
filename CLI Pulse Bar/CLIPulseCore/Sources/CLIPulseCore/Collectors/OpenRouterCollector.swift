@@ -177,6 +177,13 @@ public enum CollectorError: LocalizedError, Sendable {
     case invalidURL(String)
     case httpError(status: Int, provider: String)
     case parseFailed(String)
+    /// v1.16 §2.2: error that should be skipped silently by the
+    /// collector dispatcher (no error log) — used for repeated OAuth
+    /// refresh failures that fire every collector tick once a refresh
+    /// token has expired. The first failure logs normally; subsequent
+    /// failures within the backoff window (1h) throw this case so the
+    /// dispatcher knows not to spam.
+    case silentBackoff(String)
 
     public var errorDescription: String? {
         switch self {
@@ -184,7 +191,14 @@ public enum CollectorError: LocalizedError, Sendable {
         case .invalidURL(let url): return "Invalid URL: \(url)"
         case .httpError(let status, let provider): return "\(provider) HTTP \(status)"
         case .parseFailed(let msg): return "Parse error: \(msg)"
+        case .silentBackoff(let msg): return msg
         }
+    }
+
+    /// True if this error indicates "skip silently this tick".
+    public var isSilent: Bool {
+        if case .silentBackoff = self { return true }
+        return false
     }
 }
 #endif

@@ -362,10 +362,16 @@ def collect_alerts(
         )
 
     for session in sessions:
+        # v1.16 §2.4: alert_id includes process start_time so PID recycling
+        # doesn't suppress a NEW alert for a NEW process that happens to
+        # land on a recently-resolved PID. The 8-char prefix of SHA-256
+        # over (pid, started_at) is short enough to keep the id readable
+        # but unique enough across realistic time windows.
+        sid = _alert_session_id_suffix(session)
         if session.cpu_usage >= 80:
             alerts.append(
                 CollectedAlert(
-                    alert_id=f"session-spike-{session.session_id}",
+                    alert_id=f"session-spike-{sid}",
                     type="Usage Spike",
                     severity="Warning",
                     title=f"{session.name} is consuming high CPU",
@@ -381,7 +387,7 @@ def collect_alerts(
         if session.requests >= 400:
             alerts.append(
                 CollectedAlert(
-                    alert_id=f"session-long-{session.session_id}",
+                    alert_id=f"session-long-{sid}",
                     type="Session Too Long",
                     severity="Info",
                     title=f"{session.name} has been running for a long time",
@@ -396,6 +402,18 @@ def collect_alerts(
             )
 
     return alerts[:6]
+
+
+def _alert_session_id_suffix(session: Session) -> str:
+    """Stable id suffix combining session_id (PID) + started_at so PID
+    recycling cannot collide. (v1.16 §2.4 — earlier Gemini-flagged race
+    on the v1.15 cpu-spike fix.)"""
+    import hashlib as _hl
+    digest = _hl.sha256(f"{session.session_id}|{session.started_at}".encode()).hexdigest()
+    # 8-char hex prefix is enough to disambiguate across all realistic
+    # PID-recycle windows (PID space is 16-bit on macOS, ~32-bit in
+    # practice; collision in 8 hex chars = 1/4B).
+    return f"{session.session_id}-{digest[:8]}"
 
 
 # NOTE: Budget alerts are evaluated server-side via evaluate_budget_alerts RPC,

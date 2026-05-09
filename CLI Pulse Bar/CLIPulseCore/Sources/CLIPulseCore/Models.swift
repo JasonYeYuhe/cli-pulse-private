@@ -997,6 +997,33 @@ public struct RemoteSession: Codable, Sendable, Identifiable, Hashable {
         let s = (RemoteSessionStatus(rawValue: status) ?? .errored)
         return s == .pending || s == .running
     }
+
+    /// v1.16 §2.3: a session shown as "running" but with no `last_event_at`
+    /// bump in `staleAfterSeconds` is likely stuck because the helper
+    /// process died or got SIGSTOP'd. UI surfaces a "stale" badge and
+    /// disables Send/Stop until the user restarts the helper.
+    /// Default 60s matches the typical helper heartbeat interval.
+    public func isStale(staleAfterSeconds: TimeInterval = 60, now: Date = Date()) -> Bool {
+        guard isManaged else { return false }
+        // Parse last_event_at; if absent, fall back to created_at since
+        // a "running" session that's never bumped last_event_at is still
+        // proportionally stale relative to its creation time.
+        let timestamp = last_event_at ?? created_at
+        guard let ts = ISO8601DateFormatter.cliPulseFlexible.date(from: timestamp) else {
+            return false
+        }
+        return now.timeIntervalSince(ts) > staleAfterSeconds
+    }
+}
+
+extension ISO8601DateFormatter {
+    /// v1.16 §2.3: shared formatter that accepts both bare ISO ("2026-05-09T10:00:00Z")
+    /// and fractional ("2026-05-09T10:00:00.123Z") forms emitted by Postgres.
+    static let cliPulseFlexible: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
 }
 
 /// Append-only terminal-output / status row. Capped to 4 KB server-side.

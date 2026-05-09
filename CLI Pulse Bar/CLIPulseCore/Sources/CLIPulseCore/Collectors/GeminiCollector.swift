@@ -1,6 +1,44 @@
 #if os(macOS)
 import Foundation
 
+/// v1.16 §2.2: 15-minute backoff for repeated refresh failures so we
+/// don't spam the log on every collector tick when the user's
+/// refresh_token is also expired ("Gemini failed: token expired" used
+/// to fire every ~30s).
+///
+/// First failure: logged normally + starts the backoff window.
+/// Subsequent failures within the window: thrown silently (suppressed
+/// by the collector dispatcher).
+/// User-side recovery: when the user reconnects via the macOS OAuth
+/// UI, the next collect() call sees fresh non-expired creds, skips the
+/// refresh path entirely, and `recordSuccess` clears the backoff. So
+/// fixing the credentials self-heals within one collector tick (~30s)
+/// without any explicit reset hook.
+///
+/// Why 15min and not 1h: per Gemini slice review — 1h was too punitive
+/// when transient network errors caused a refresh failure on
+/// already-valid tokens. 15min still suppresses ~30 ticks of per-tick
+/// spam while letting users see the error again if they're actively
+/// debugging.
+actor GeminiRefreshBackoff {
+    static let shared = GeminiRefreshBackoff()
+    private var lastFailureAt: [GeminiCollector.TokenSource: Date] = [:]
+    private let backoffWindow: TimeInterval = 900  // 15 minutes
+
+    func shouldSuppressFailure(source: GeminiCollector.TokenSource) -> Bool {
+        guard let last = lastFailureAt[source] else { return false }
+        return Date().timeIntervalSince(last) < backoffWindow
+    }
+
+    func recordFailure(source: GeminiCollector.TokenSource) {
+        lastFailureAt[source] = Date()
+    }
+
+    func recordSuccess(source: GeminiCollector.TokenSource) {
+        lastFailureAt.removeValue(forKey: source)
+    }
+}
+
 /// Fetches real per-model quota data from Google Gemini via OAuth credentials.
 ///
 /// Auth priority:
@@ -28,17 +66,32 @@ public struct GeminiCollector: ProviderCollector, Sendable {
                 creds = refreshed
                 // Only persist back to file for file-sourced credentials
                 if creds.source == .file { persistCredentials(creds) }
+                await GeminiRefreshBackoff.shared.recordSuccess(source: creds.source)
             } else if creds.source == .keychain {
                 // Keychain refresh failed — fall back to file credentials
                 if let fileCreds = readFileCredentials(), !fileCreds.isExpired {
                     creds = fileCreds
+                    await GeminiRefreshBackoff.shared.recordSuccess(source: .file)
                 }
             }
         }
 
         guard let token = creds.accessToken, !creds.isExpired else {
-            throw CollectorError.missingCredentials("Gemini: token expired — reconnect via CLI Pulse OAuth")
+            // v1.16 §2.2: backoff to avoid log spam every collector tick.
+            // First failure for this source emits the normal error;
+            // subsequent failures within 1h are silently suppressed
+            // (rendered as a CollectorError.silent that the collector
+            // dispatcher treats as "skip this tick, no log").
+            let suppressed = await GeminiRefreshBackoff.shared.shouldSuppressFailure(source: creds.source)
+            if !suppressed {
+                await GeminiRefreshBackoff.shared.recordFailure(source: creds.source)
+                throw CollectorError.missingCredentials("Gemini: token expired — reconnect via CLI Pulse OAuth")
+            } else {
+                throw CollectorError.silentBackoff("Gemini: token expired (silenced for 1h after first error)")
+            }
         }
+        // Reset backoff on successful token use.
+        await GeminiRefreshBackoff.shared.recordSuccess(source: creds.source)
 
         // Fetch tier info for plan detection
         let tierInfo = try? await fetchTierInfo(token: token)
@@ -54,7 +107,7 @@ public struct GeminiCollector: ProviderCollector, Sendable {
 
     // MARK: - Credentials
 
-    enum TokenSource { case keychain, file }
+    enum TokenSource: Sendable, Hashable { case keychain, file }
 
     struct GeminiCreds {
         var accessToken: String?

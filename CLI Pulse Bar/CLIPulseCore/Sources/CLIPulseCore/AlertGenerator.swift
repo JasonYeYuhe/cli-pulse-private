@@ -1,4 +1,5 @@
 import Foundation
+import CommonCrypto
 
 /// Generates alerts from device metrics and session data.
 /// Ports the 3 alert rules from Python's `collect_alerts()`.
@@ -90,10 +91,14 @@ public enum AlertGenerator {
             // high-core-count Macs (80% of 1 core = 5.7% of a 14-core system).
             // Normalize by core count so the threshold represents a meaningful
             // share of total capacity regardless of machine.
+            // v1.16 §2.4: alert_id includes process start_time so PID
+            // recycling can't suppress new alerts when a fresh process
+            // lands on a recently-resolved PID.
+            let sid = AlertGenerator.alertSessionIDSuffix(session)
             if let cpu = sessionCPU[session.id], cpu / systemCapacity >= systemFractionThreshold {
                 let systemPct = Int(round(cpu / systemCapacity * 100))
                 alerts.append([
-                    "id": "session-spike-\(session.id)",
+                    "id": "session-spike-\(sid)",
                     "type": "Usage Spike",
                     "severity": "Warning",
                     "title": "\(session.name) is consuming high CPU",
@@ -105,14 +110,14 @@ public enum AlertGenerator {
                     "related_project_name": session.project,
                     "source_kind": "session",
                     "grouping_key": "Usage Spike:\(session.provider)",
-                    "suppression_key": "Usage Spike:\(session.id)",
+                    "suppression_key": "Usage Spike:\(sid)",
                 ])
             }
 
             // Rule 3: Session requests >= 400 (long-running)
             if session.requests >= 400 {
                 alerts.append([
-                    "id": "session-long-\(session.id)",
+                    "id": "session-long-\(sid)",
                     "type": "Session Too Long",
                     "severity": "Info",
                     "title": "\(session.name) has been running for a long time",
@@ -130,6 +135,25 @@ public enum AlertGenerator {
         }
 
         return Array(alerts.prefix(6))
+    }
+
+    /// v1.16 §2.4: stable id suffix combining the session's PID + start
+    /// time so PID recycling can't collide. SHA-256 prefix is plenty for
+    /// ID-disambiguation at PID-recycling cadence.
+    static func alertSessionIDSuffix(_ session: SessionRecord) -> String {
+        let payload = "\(session.id)|\(session.started_at)"
+        let digest = sha256Prefix(payload, prefixBytes: 4)
+        return "\(session.id)-\(digest)"
+    }
+
+    private static func sha256Prefix(_ s: String, prefixBytes: Int) -> String {
+        guard let data = s.data(using: .utf8) else { return "" }
+        var hash = [UInt8](repeating: 0, count: 32)
+        data.withUnsafeBytes { ptr in
+            let buf = ptr.baseAddress!.assumingMemoryBound(to: UInt8.self)
+            CC_SHA256(buf, CC_LONG(data.count), &hash)
+        }
+        return hash.prefix(prefixBytes).map { String(format: "%02x", $0) }.joined()
     }
     #endif
 

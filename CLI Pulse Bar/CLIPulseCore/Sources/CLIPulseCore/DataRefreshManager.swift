@@ -1010,6 +1010,13 @@ internal final class DataRefreshManager {
     }
 
     nonisolated private static func shouldSilenceCollectorError(kind: ProviderKind, error: Error) -> Bool {
+        // v1.16 §2.2: any collector that uses CollectorError.silentBackoff
+        // (currently Gemini's expired-refresh-token path) is silenced
+        // unconditionally for the backoff duration.
+        if let collectorError = error as? CollectorError, collectorError.isSilent {
+            return true
+        }
+
         guard kind == .ollama else { return false }
 
         let nsError = error as NSError
