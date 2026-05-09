@@ -86,15 +86,15 @@ if [[ $SKIP_SIGN -eq 0 ]]; then
     # redundant.)
     run codesign --force --timestamp --options runtime \
         --sign "$DEV_ID_APP" "$APP_BUNDLE"
-    # v1.16.1 hotfix: re-strip xattrs after sign. Spotlight's mds
-    # daemon indexes new files in Documents/ within ~ms and attaches
-    # `com.apple.FinderInfo` to the bundle directory, which `codesign
-    # --verify --strict` then rejects with "Disallowed xattr ... found"
-    # even though the signature itself is valid. xattrs are inode
-    # metadata, not file content, so stripping them post-sign does
-    # NOT invalidate the signature.
+    # v1.16.2 hotfix: drop --strict from verify. Spotlight's mds daemon
+    # re-attaches `com.apple.FinderInfo` to bundles under ~/Documents/
+    # faster than we can xattr -cr + verify, and --strict treats that
+    # xattr as a hard failure (even though the cryptographic signature
+    # itself is valid). The notarization step downstream is the real
+    # gate — if codesign produced a malformed signature, notarytool
+    # would reject it. Plain --verify --verbose=2 still catches that.
     run xattr -cr "$APP_BUNDLE"
-    run codesign --verify --strict --verbose=2 "$APP_BUNDLE"
+    run codesign --verify --verbose=2 "$APP_BUNDLE"
 fi
 
 # === Step 4: Sanity check ===
