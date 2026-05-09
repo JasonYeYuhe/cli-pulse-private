@@ -272,18 +272,19 @@ class CodexExecTransport(SessionTransport):
         """Construct the `codex exec --json …` argv for one turn.
 
         First turn (no thread_id): `codex exec --json --skip-git-repo-check
-        "<prompt>"`.
+        -s read-only "<prompt>"`. The `-s read-only` policy makes
+        Codex's shell-execution channel deny anything beyond filesystem
+        reads, which matches a chat-style use case where the model
+        shouldn't be running mutating commands without an approval UI
+        we don't have yet.
 
         Subsequent turns use the `resume` subcommand: `codex exec resume
-        --json --skip-git-repo-check <thread_id> "<prompt>"`.
-
-        Why such a minimal flag set: `codex exec` and `codex exec resume`
-        accept *different* flag subsets. `--color` and `-s/--sandbox` are
-        only valid on the bare `exec` form, so passing them on `resume`
-        fails with `error: unexpected argument`. Resume inherits the
-        sandbox policy from the original session anyway, so the
-        first-turn `-c shell_environment_policy.inherit=all` trick is
-        not needed. Stdout is a pipe → Codex auto-disables color.
+        --json --skip-git-repo-check <thread_id> "<prompt>"`. Note that
+        `resume` does NOT accept `-s/--sandbox` or `--color` — passing
+        them yields `error: unexpected argument`. Resume inherits the
+        sandbox policy from the original session, which is why we set
+        it on turn 1 specifically. Stdout is a pipe → Codex auto-
+        disables color, so we don't need `--color never`.
 
         Empirically verified against codex 0.130.x.
         """
@@ -293,7 +294,8 @@ class CodexExecTransport(SessionTransport):
         common_flags = ["--json", "--skip-git-repo-check"]
         if s.thread_id:
             return [*binary, "exec", "resume", *common_flags, s.thread_id, prompt]
-        return [*binary, "exec", *common_flags, prompt]
+        # First turn: also pin the sandbox so resume inherits it.
+        return [*binary, "exec", *common_flags, "-s", "read-only", prompt]
 
     # ── reader thread (JSONL → output queue) ─────────────────
 
@@ -392,8 +394,16 @@ class CodexExecTransport(SessionTransport):
             if kind == "agent_message":
                 text = item.get("text") or ""
                 if text:
-                    out = f"{_AGENT_PREFIX}{text}\n".encode("utf-8")
-                    self._enqueue(s, out)
+                    # Prefix EVERY line. The Codex conversation-preview
+                    # formatter splits on `\n` and applies its
+                    # `shouldKeep` heuristic per-line; without a per-
+                    # line `•` marker, lines after the first only
+                    # survive via the prose-shape fallback (alnum>=8),
+                    # which can drop short replies, code-block
+                    # terminators, etc.
+                    lines = text.splitlines() or [""]
+                    prefixed = "".join(f"{_AGENT_PREFIX}{line}\n" for line in lines)
+                    self._enqueue(s, prefixed.encode("utf-8"))
             elif kind == "command_execution":
                 # Surface the command line so the user sees what Codex
                 # tried to run (read-only sandbox should mostly block

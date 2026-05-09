@@ -132,6 +132,52 @@ class TestJSONLEventHandling:
         assert state.thread_id == "tid-abc"
         t.close(h)
 
+    def test_multi_line_agent_message_prefixes_every_line(self, monkeypatch, tmp_path):
+        events = [
+            json.dumps({"type": "thread.started", "thread_id": "tid-multi"}),
+            json.dumps({
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": "Line one\nLine two\nLine three",
+                },
+            }),
+            json.dumps({"type": "turn.completed"}),
+        ]
+        fake = _make_fake_codex_script(tmp_path, events)
+        monkeypatch.setenv("CLI_PULSE_CODEX_ARGV0", fake)
+        t = CodexExecTransport()
+        h = t.start("s1", ["codex"], env={}, cwd=None)
+        _ = t.read_stdout(h, 4096)
+        t.write_stdin(h, b"hello\n")
+        out = _drain(t, h, deadline_s=3.0, contains="Line three")
+        text = out.decode("utf-8", errors="replace")
+        # Each line must carry the agent prefix.
+        for line_body in ("Line one", "Line two", "Line three"):
+            assert _AGENT_PREFIX + line_body in text, (
+                f"missing agent prefix on {line_body!r} — got {text!r}"
+            )
+        t.close(h)
+
+    def test_first_turn_has_sandbox_flag(self):
+        t = CodexExecTransport()
+        h = t.start("s1", ["codex"], env={}, cwd=None)
+        state = t._payload(h)  # type: ignore[attr-defined]
+        # No thread_id yet → first-turn argv path.
+        argv = t._build_exec_argv(state, "hi")  # type: ignore[attr-defined]
+        # Must include sandbox=read-only on first turn so resume inherits it.
+        assert "-s" in argv and "read-only" in argv, (
+            f"first-turn argv missing sandbox: {argv!r}"
+        )
+        # Must NOT include sandbox after thread_id is captured (resume rejects it).
+        state.thread_id = "tid-fake"
+        argv2 = t._build_exec_argv(state, "next")  # type: ignore[attr-defined]
+        assert "resume" in argv2
+        assert "-s" not in argv2, (
+            f"resume argv should not carry sandbox: {argv2!r}"
+        )
+        t.close(h)
+
     def test_thread_id_is_reused_across_turns(self, monkeypatch, tmp_path):
         # Two sequential calls; verify second invocation uses
         # `resume <thread_id>` — we can't observe argv directly without
