@@ -196,6 +196,14 @@ struct SettingsTab: View {
 
                 SubscriptionSection()
 
+                // v1.16: Companion CLI Helper installer surface. Visible
+                // to every authenticated user (post-pairing) right above
+                // the section picker so it's discoverable without
+                // digging into Advanced. Renders nothing on iOS / Watch
+                // builds — HelperInstaller is macOS-only.
+                Divider()
+                CompanionCLISection(installer: state.helperInstaller)
+
                 Divider()
 
                 // Section picker
