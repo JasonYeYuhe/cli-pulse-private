@@ -145,6 +145,137 @@ final class SubscriptionTierResolutionTests: XCTestCase {
         XCTAssertEqual(TierRefreshErrorCategory.receiptValidatorRejected.rawValue, "receipt-validator-rejected")
         XCTAssertEqual(TierRefreshErrorCategory.serverTierError.rawValue, "server-tier-error")
     }
+
+    // MARK: - v1.14 Pro Lifetime IAP
+
+    /// Lifetime product ID is exposed and the all-products set includes it.
+    /// Pin the constants so an ASC-side rename doesn't silently drop the
+    /// product from `Product.products(for:)`.
+    func testLifetimeProductIDIsRegistered() {
+        XCTAssertEqual(SubscriptionManager.proLifetimeID, "com.clipulse.pro.lifetime")
+    }
+
+    /// `isLifetime` defaults to false and the property is readable. Pinned
+    /// because the paywall surfaces gate the Lifetime tile on this exact
+    /// signal — an accidental rename to `hasLifetime` would silently
+    /// re-show the tile to users who already own it.
+    @MainActor
+    func testIsLifetimeDefaultsToFalse() {
+        let mgr = SubscriptionManager()
+        XCTAssertFalse(mgr.isLifetime, "fresh manager must report isLifetime = false")
+    }
+
+    /// `proLifetime` accessor returns nil when products haven't loaded.
+    /// (Verifying the accessor exists at all is the load-bearing part —
+    /// `manager.proLifetime` is referenced by SubscriptionView, the iOS
+    /// SettingsTab paywall, and SubscriptionSection's inline IAP cards.)
+    @MainActor
+    func testProLifetimeAccessorIsNilBeforeProductsLoad() {
+        let mgr = SubscriptionManager()
+        XCTAssertNil(mgr.proLifetime, "proLifetime must be nil until ASC products list arrives")
+    }
+
+    // MARK: - Codex P1 (PR #41) — Lifetime tie-break in updateCurrentEntitlements
+
+    /// Pro auto-renewable seen first, then Lifetime: Lifetime must win the
+    /// tie so its JWS goes to validate-receipt and the server persists
+    /// `current_period_end = NULL`. This pins the bug Codex caught.
+    func testShouldPromote_LifetimeBeatsRenewableProOnTie() {
+        // Iteration 1: highest=.free, encounter Pro auto-renewable.
+        XCTAssertTrue(
+            SubscriptionManager.shouldPromote(
+                newTier: .pro, newIsLifetime: false,
+                currentTier: .free, currentIsLifetime: false
+            ),
+            "Pro must promote over Free"
+        )
+        // Iteration 2: highest=.pro (auto-renewable), encounter Lifetime.
+        XCTAssertTrue(
+            SubscriptionManager.shouldPromote(
+                newTier: .pro, newIsLifetime: true,
+                currentTier: .pro, currentIsLifetime: false
+            ),
+            "Lifetime must beat Pro auto-renewable on a Pro-rank tie"
+        )
+    }
+
+    /// Lifetime seen first, then Pro auto-renewable: Lifetime must STAY
+    /// (don't trade two Pro-rank transactions where neither is Lifetime,
+    /// and don't displace Lifetime with a renewable on the same rank).
+    func testShouldPromote_LifetimeStaysWhenSeenFirst() {
+        // Iteration 1: highest=.free, encounter Lifetime.
+        XCTAssertTrue(
+            SubscriptionManager.shouldPromote(
+                newTier: .pro, newIsLifetime: true,
+                currentTier: .free, currentIsLifetime: false
+            ),
+            "Lifetime must promote over Free"
+        )
+        // Iteration 2: highest=Lifetime, encounter Pro auto-renewable.
+        XCTAssertFalse(
+            SubscriptionManager.shouldPromote(
+                newTier: .pro, newIsLifetime: false,
+                currentTier: .pro, currentIsLifetime: true
+            ),
+            "Pro auto-renewable must NOT replace an already-elected Lifetime"
+        )
+    }
+
+    /// Team always outranks both Pro variants, regardless of order.
+    func testShouldPromote_TeamOutranksLifetimeAndPro() {
+        // Team replaces Lifetime.
+        XCTAssertTrue(
+            SubscriptionManager.shouldPromote(
+                newTier: .team, newIsLifetime: false,
+                currentTier: .pro, currentIsLifetime: true
+            ),
+            "Team must outrank Lifetime (rank 2 > rank 1)"
+        )
+        // Lifetime does NOT replace Team.
+        XCTAssertFalse(
+            SubscriptionManager.shouldPromote(
+                newTier: .pro, newIsLifetime: true,
+                currentTier: .team, currentIsLifetime: false
+            ),
+            "Lifetime must NOT outrank Team"
+        )
+    }
+
+    /// Two non-Lifetime Pro-rank transactions never swap. Pre-v1.14 had
+    /// a single Pro auto-renewable; this pins the no-behavior-change case.
+    func testShouldPromote_NoSwapBetweenTwoNonLifetimeProTransactions() {
+        XCTAssertFalse(
+            SubscriptionManager.shouldPromote(
+                newTier: .pro, newIsLifetime: false,
+                currentTier: .pro, currentIsLifetime: false
+            ),
+            "Two non-Lifetime Pro transactions must not trade — pre-v1.14 behavior preserved"
+        )
+    }
+
+    /// Lower-rank transactions never promote. (Free can't replace Pro,
+    /// Pro can't replace Team.)
+    func testShouldPromote_LowerRankNeverPromotes() {
+        XCTAssertFalse(
+            SubscriptionManager.shouldPromote(
+                newTier: .free, newIsLifetime: false,
+                currentTier: .pro, currentIsLifetime: false
+            )
+        )
+        XCTAssertFalse(
+            SubscriptionManager.shouldPromote(
+                newTier: .pro, newIsLifetime: false,
+                currentTier: .team, currentIsLifetime: false
+            )
+        )
+        XCTAssertFalse(
+            SubscriptionManager.shouldPromote(
+                newTier: .pro, newIsLifetime: true,
+                currentTier: .team, currentIsLifetime: false
+            ),
+            "Even Lifetime must not displace Team — Team rank is strictly higher"
+        )
+    }
 }
 
 #endif

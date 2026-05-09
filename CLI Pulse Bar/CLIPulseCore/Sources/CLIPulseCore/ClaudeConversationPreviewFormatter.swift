@@ -67,12 +67,23 @@ public enum ClaudeConversationPreviewFormatter {
             whereSeparator: { $0 == "\n" || $0 == "\r" }
         )
         var kept: [String] = []
+        var inAssistantBlock = false
         for raw in rawLines {
             let trimmed = String(raw).trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty { continue }
-            if shouldDropAsHelperChrome(trimmed) { continue }
+            if shouldDropAsHelperChrome(trimmed) {
+                if trimmed.first == "❯" {
+                    inAssistantBlock = false
+                }
+                continue
+            }
             if shouldKeep(trimmed) {
                 kept.append(polishLine(trimmed))
+                inAssistantBlock = trimmed.first == "⏺"
+                continue
+            }
+            if inAssistantBlock, shouldKeepAssistantContinuation(trimmed) {
+                kept.append(polishAssistantContinuation(trimmed))
             }
         }
         // Deduplicate runs of identical lines (TUI repaints emit the
@@ -136,6 +147,110 @@ public enum ClaudeConversationPreviewFormatter {
         shouldDropAsHelperChrome(trimmed)
     }
 
+    /// Claude frequently wraps assistant prose and paths onto physical
+    /// terminal rows that no longer carry the leading `⏺` marker. Keep
+    /// those continuation rows only while we are inside an assistant
+    /// block, and only when the row still looks substantive rather than
+    /// TUI status chrome.
+    private static func shouldKeepAssistantContinuation(_ trimmed: String) -> Bool {
+        if trimmed.isEmpty { return false }
+        if let first = trimmed.first, first == "❯" || first == "⏺" {
+            return false
+        }
+
+        let lower = trimmed.lowercased()
+        for prefix in assistantContinuationChromePrefixes where lower.hasPrefix(prefix) {
+            return false
+        }
+        for marker in assistantContinuationChromeMarkers where lower.contains(marker) {
+            return false
+        }
+        if looksLikeTokenCounter(trimmed) { return false }
+        if looksLikeSpinnerOnly(trimmed) { return false }
+        if isBoxDrawingDominant(trimmed) { return false }
+
+        let alnumCount = trimmed.unicodeScalars.reduce(0) { acc, sc in
+            acc + (CharacterSet.alphanumerics.contains(sc) ? 1 : 0)
+        }
+        return alnumCount >= 8
+    }
+
+    private static let assistantContinuationChromePrefixes: [String] = [
+        "processing",
+        "smooshing",
+        "crunched for",
+        "brewed",
+    ]
+
+    private static let assistantContinuationChromeMarkers: [String] = [
+        // 2026-05-08 production trace fix: Claude TUI emits both
+        //   `running stop hook` AND `running sp hook` depending on the
+        // hook category. Older marker list only had the `sp` variant,
+        // so the `stop hook` chrome flooded the assistant continuation
+        // path on real sessions. Both forms are now caught.
+        "running stop hook",
+        "running sp hook",
+        "running sub hook",
+        "running pre hook",
+        "running post hook",
+        // Crunched/Brewed/etc. status timers without the spinner
+        // sometimes inline with the rest of a misting line.
+        "crunched for",
+        "brewed for",
+        "baked for",
+        "churned for",
+        "esc to interrupt",
+        "/effort",
+        "for shortcuts",
+        "no auto-edits",
+        "shift+tab to cycle",
+        // Inline token counters with downward / upward arrow when
+        // they appear MID-LINE (not as a leading char). Example:
+        //   "✻ Misting… (running stop hook · 2s · ↓ 13 tokens)"
+        // looksLikeTokenCounter() requires `↓`/`↑` first char, so
+        // these slip through. Match the suffix instead.
+        "↓ ",
+        "↑ ",
+    ]
+
+    private static let boxDrawingStart: UInt32 = 0x2500
+    private static let boxDrawingEnd: UInt32 = 0x257F
+    private static let separatorASCII: Set<Character> = ["-", "=", "_"]
+    private static let spinnerGlyphs: Set<Character> = [
+        "·", "•", "✶", "✸", "*", "/", "◉", "◯",
+    ]
+
+    private static func looksLikeTokenCounter(_ trimmed: String) -> Bool {
+        let lower = trimmed.lowercased()
+        return (trimmed.first == "↓" || trimmed.first == "↑")
+            && lower.contains("token")
+    }
+
+    private static func looksLikeSpinnerOnly(_ trimmed: String) -> Bool {
+        let nonWhitespace = trimmed.filter { !$0.isWhitespace }
+        return nonWhitespace.count <= 2
+            && !nonWhitespace.isEmpty
+            && nonWhitespace.allSatisfy { spinnerGlyphs.contains($0) }
+    }
+
+    private static func isBoxDrawingDominant(_ trimmed: String) -> Bool {
+        var nonSpace = 0
+        var border = 0
+        for sc in trimmed.unicodeScalars {
+            if sc.properties.isWhitespace { continue }
+            nonSpace += 1
+            let v = sc.value
+            if v >= boxDrawingStart && v <= boxDrawingEnd {
+                border += 1
+            } else if let ch = Character(String(sc)) as Character?,
+                      separatorASCII.contains(ch) {
+                border += 1
+            }
+        }
+        guard nonSpace > 0 else { return false }
+        return Double(border) / Double(nonSpace) >= 0.70
+    }
+
     // MARK: - polish
 
     /// Conservative spacing repair on a single kept line. Restores
@@ -151,6 +266,13 @@ public enum ClaudeConversationPreviewFormatter {
         if s.first == "⏺" {
             s = applyJoinedWordReplacements(s)
         }
+        return s
+    }
+
+    private static func polishAssistantContinuation(_ line: String) -> String {
+        var s = line
+        s = insertSpaceAfterSentencePunctuation(s)
+        s = applyJoinedWordReplacements(s)
         return s
     }
 

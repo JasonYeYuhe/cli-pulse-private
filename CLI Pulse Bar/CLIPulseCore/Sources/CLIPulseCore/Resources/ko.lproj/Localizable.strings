@@ -207,6 +207,14 @@
 "subscription.switch_pro" = "Pro로 전환";
 "subscription.switch_team" = "팀으로 전환";
 
+/* ── v1.14 평생 IAP ── */
+"subscription.lifetime" = "Pro 평생";
+"subscription.lifetime_description" = "모든 플랫폼에서 Pro 기능을 영구히. 일회성 구매, 자동 갱신 없음.";
+"subscription.lifetime_owned" = "Pro 평생을 소유하고 있습니다";
+"subscription.one_time" = "일회성";
+"subscription.one_time_badge" = "ONE-TIME";
+"subscription.buy_lifetime" = "평생 구매";
+
 /* ── 정보 ── */
 "about.title" = "CLI Pulse Bar 정보";
 "about.description" = "메뉴 바에서 AI 코딩 도구를 모니터링합니다. Claude, Codex, Gemini 등 20+ 공급자의 사용량, 비용, 알림을 추적합니다.";

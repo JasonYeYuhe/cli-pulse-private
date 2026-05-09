@@ -122,7 +122,86 @@ public struct SubscriptionView: View {
                 color: PulseTheme.secondaryAccent,
                 isPopular: false
             )
+
+            // v1.14: Lifetime tile. Hidden when:
+            //   - user is on Team (Team strictly outranks Pro Lifetime)
+            //   - user already owns Lifetime (paywall shows "Owned" pill on
+            //     the Pro tile via the existing currentTier == tier branch;
+            //     a duplicate Lifetime tile would just confuse)
+            if manager.currentTier != .team && !manager.isLifetime {
+                lifetimeCard
+            }
         }
+    }
+
+    /// v1.14 Lifetime tile. Visually distinct from monthly/yearly: gold-ish
+    /// accent, "One-time" badge instead of "save XX%". Tap → purchase.
+    private var lifetimeCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(L10n.subscription.lifetime)
+                    .font(.title3.bold())
+                Text(L10n.subscription.oneTimeBadge)
+                    .font(.system(size: 9, weight: .bold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.orange.opacity(0.2))
+                    .foregroundStyle(Color.orange)
+                    .clipShape(Capsule())
+                Spacer()
+                if let product = manager.proLifetime {
+                    VStack(alignment: .trailing) {
+                        Text(product.displayPrice)
+                            .font(.title3.bold())
+                        Text(L10n.subscription.oneTime)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("--")
+                        .font(.title3)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            Divider()
+
+            Text(L10n.subscription.lifetimeDescription)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            if let product = manager.proLifetime {
+                Button {
+                    Task { await purchaseProduct(product) }
+                } label: {
+                    HStack {
+                        if isPurchasing {
+                            ProgressView().controlSize(.small)
+                        }
+                        Text(L10n.subscription.buyLifetime)
+                            .font(.subheadline.bold())
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.orange)
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                .disabled(isPurchasing)
+            } else {
+                Text(L10n.subscription.notAvailable)
+                    .font(.subheadline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.gray.opacity(0.15))
+                    .foregroundStyle(.secondary)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .padding()
+        .background(PulseTheme.cardBackground.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
     private func planCard(

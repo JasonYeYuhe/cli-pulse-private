@@ -83,6 +83,18 @@ struct iOSOverviewTab: View {
 
                         if state.showCost {
                             costSection
+
+                            // v1.14 (2026-05-08): cross-platform parity with macOS
+                            // Overview. The forecast is computed from cloud
+                            // `daily_usage_metrics` + (where present) the local
+                            // CostUsageScanner override; iOS only has the cloud
+                            // path so its bounds are looser, but the data shape
+                            // is identical — `state.costForecast` is populated
+                            // from the same `refreshCostForecast()` that macOS
+                            // uses (DataRefreshManager.swift:~1786).
+                            if let forecast = state.costForecast {
+                                forecastSection(forecast)
+                            }
                         }
 
                         providerBreakdown(dash)
@@ -344,6 +356,93 @@ struct iOSOverviewTab: View {
 
     private func iOSUtilizationColor(_ percent: Double) -> Color {
         OverviewFormatters.utilizationColor(percent)
+    }
+
+    // MARK: - Cost Forecast (v1.14 iOS parity)
+
+    /// Mirrors macOS `OverviewTab.forecastCard(_:)` (CLI Pulse Bar/OverviewTab.swift)
+    /// at iOS-friendly type sizes. Same `CostForecast` data shape, same labels.
+    private func forecastSection(_ forecast: CostForecast) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.blue)
+                Text(L10n.forecast.title)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(L10n.forecast.estimate)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.blue)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.blue.opacity(0.15))
+                    .clipShape(Capsule())
+            }
+
+            HStack(spacing: 24) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L10n.forecast.monthEnd)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text(CostFormatter.format(forecast.predictedMonthTotal))
+                        .font(.title3.weight(.bold).monospacedDigit())
+                        .foregroundStyle(.blue)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L10n.forecast.soFar)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text(CostFormatter.format(forecast.actualToDate))
+                        .font(.title3.weight(.bold).monospacedDigit())
+                        .foregroundStyle(.green)
+                }
+                Spacer()
+            }
+
+            if forecast.isReliable {
+                HStack(spacing: 4) {
+                    Text(L10n.forecast.confidence)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text("\(CostFormatter.format(forecast.lowerBound)) – \(CostFormatter.format(forecast.upperBound))")
+                        .font(.caption.weight(.medium).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text(L10n.forecast.insufficientData)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+
+            // Progress bar: days elapsed in month
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.blue.opacity(0.1))
+                        .frame(height: 4)
+                    Capsule()
+                        .fill(Color.blue)
+                        .frame(
+                            width: geo.size.width
+                                * CGFloat(forecast.currentDayOfMonth)
+                                / CGFloat(max(forecast.daysInMonth, 1)),
+                            height: 4
+                        )
+                }
+            }
+            .frame(height: 4)
+
+            Text(L10n.cost.dayProgress(forecast.currentDayOfMonth, forecast.daysInMonth))
+                .font(.caption2)
+                .foregroundStyle(.quaternary)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.blue.opacity(0.04))
+        )
+        .padding(.horizontal)
     }
 
     // MARK: - Provider Breakdown

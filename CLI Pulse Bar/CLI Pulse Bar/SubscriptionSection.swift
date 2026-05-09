@@ -183,6 +183,19 @@ struct SubscriptionSection: View {
             if let teamY = subscriptionManager.teamYearly {
                 inlineProductRow(product: teamY, label: "Team Yearly", features: "Save 17%")
             }
+            // v1.14: Pro Lifetime tile — surfaced at the bottom because it's
+            // the largest single payment. Hidden when the user already owns
+            // it (covered by the isProOrAbove branch above for Team users
+            // which never see this card; explicit isLifetime guard for the
+            // edge where a free user just bought lifetime mid-session).
+            if let lifetime = subscriptionManager.proLifetime,
+               !subscriptionManager.isLifetime {
+                inlineProductRow(
+                    product: lifetime,
+                    label: L10n.subscription.lifetime,
+                    features: L10n.subscription.lifetimeDescription
+                )
+            }
         }
     }
 

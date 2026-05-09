@@ -51,7 +51,20 @@ const PRODUCT_TIER_MAP: Record<string, string> = {
   "com.clipulse.pro.yearly": "pro",
   "com.clipulse.team.monthly": "team",
   "com.clipulse.team.yearly": "team",
+  // v1.14: Pro Lifetime — Non-Consumable IAP. expiresDate is undefined,
+  // so the existing `payload.expiresDate && payload.expiresDate < Date.now()`
+  // check skips correctly (falsy short-circuits).
+  "com.clipulse.pro.lifetime": "pro",
 };
+
+// v1.14: product IDs that are one-time Non-Consumable purchases (no
+// expiresDate, no auto-renewal). Used to flag the subscriptions row with
+// is_lifetime=true and to skip any future subscription-status checks that
+// assume an expiresDate. Apple keeps these in `currentEntitlements` until
+// the user requests a refund.
+const LIFETIME_PRODUCT_IDS = new Set<string>([
+  "com.clipulse.pro.lifetime",
+]);
 
 const CORS_ORIGIN = Deno.env.get("CORS_ORIGIN") ?? "https://clipulse.app";
 const CORS_HEADERS = {
@@ -414,12 +427,21 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── Upsert subscriptions record ──
+    // v1.14: Pro Lifetime — Non-Consumable IAPs have no expiry. Persist
+    // NULL `current_period_end` so downstream queries that check
+    // `current_period_end IS NULL OR current_period_end >= now()` recognize
+    // the user as active forever. The lifetime row is identified by
+    // `apple_product_id = 'com.clipulse.pro.lifetime' AND current_period_end IS NULL`
+    // — no schema change required for v1.14 to ship. (PROJECT_PLAN's
+    // optional `is_lifetime` denormalization column can be added in v1.15
+    // if a query path needs the boolean directly.)
+    const isLifetime = LIFETIME_PRODUCT_IDS.has(productId);
     const subRecord: Record<string, unknown> = {
       user_id: user.id,
       tier,
       status: "active",
       platform,
-      current_period_end: expiresDate,
+      current_period_end: isLifetime ? null : expiresDate,
       updated_at: new Date().toISOString(),
     };
     if (platform === "apple") {

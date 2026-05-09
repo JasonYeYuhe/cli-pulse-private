@@ -12,6 +12,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
 import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
@@ -153,7 +155,13 @@ class SupabaseClient(
     // ── Dashboard ────────────────────────────────────────
 
     suspend fun dashboard(): DashboardSummary = withContext(Dispatchers.IO) {
-        val json = rpc("dashboard_summary")
+        // v0.42 (2026-05-08): pass the device's local-TZ today so the server
+        // computes today/30-day windows against the user's wall clock instead
+        // of UTC. Server falls back to current_date if param absent (default
+        // NULL via PostgREST), so callers on older servers still work.
+        val json = rpc("dashboard_summary", JSONObject().apply {
+            put("p_user_today", localTodayKey())
+        })
         DashboardSummary(
             totalUsageToday = json.optInt("today_usage"),
             totalEstimatedCostToday = json.optDouble("today_cost", 0.0),
@@ -169,7 +177,10 @@ class SupabaseClient(
     // ── Providers ────────────────────────────────────────
 
     suspend fun providers(): List<ProviderUsage> = withContext(Dispatchers.IO) {
-        val arr = rpcArray("provider_summary")
+        // v0.42: same local-TZ today fix as dashboard().
+        val arr = rpcArray("provider_summary", JSONObject().apply {
+            put("p_user_today", localTodayKey())
+        })
         (0 until arr.length()).map { i ->
             val p = arr.getJSONObject(i)
             val tiersArr = p.optJSONArray("tiers")
@@ -1011,6 +1022,16 @@ class SupabaseClient(
 
     private fun isoNow(): String =
         DateTimeFormatter.ISO_INSTANT.format(Instant.now())
+
+    /**
+     * v0.42: today as `YYYY-MM-DD` in the device's default timezone.
+     * Sent to dashboard_summary / provider_summary so the server's
+     * `metric_date = current_date` comparison aligns with the user's
+     * wall clock instead of UTC. Same convention as the iOS/macOS
+     * `APIClient.localTodayKey()` helper.
+     */
+    internal fun localTodayKey(zone: ZoneId = ZoneId.systemDefault()): String =
+        LocalDate.now(zone).toString()
 
     private fun isoAt(millis: Long): String =
         DateTimeFormatter.ISO_INSTANT.format(Instant.ofEpochMilli(millis))

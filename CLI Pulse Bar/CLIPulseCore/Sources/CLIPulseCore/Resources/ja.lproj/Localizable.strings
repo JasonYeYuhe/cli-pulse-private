@@ -700,3 +700,11 @@
 
 /* ── サブスクリプション請求切替 ── */
 "subscription.billing" = "請求";
+
+/* ── v1.14 Pro 永久ライセンス IAP ── */
+"subscription.lifetime" = "Pro ライフタイム";
+"subscription.lifetime_description" = "全プラットフォームでProの機能を永久に。買い切り、自動更新なし。";
+"subscription.lifetime_owned" = "Pro ライフタイムを所有しています";
+"subscription.one_time" = "買い切り";
+"subscription.one_time_badge" = "ONE-TIME";
+"subscription.buy_lifetime" = "ライフタイムを購入";

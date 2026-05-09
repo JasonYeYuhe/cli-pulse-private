@@ -362,6 +362,56 @@ final class ClaudeConversationPreviewFormatterTests: XCTestCase {
         )
     }
 
+    func test_keeps_multiline_assistant_continuation() {
+        // iOS screenshot regression: Claude's terminal wraps an assistant
+        // reply onto rows that do not repeat the `⏺` marker. The preview
+        // must keep those rows instead of stopping after the first wrap.
+        let raw = """
+        ❯ What directory are you currently in
+        ⏺ /Users/jason/Documents/cli
+        pulse(branch:
+        dashboard-parity-and-v1.14-lifetime)
+        """
+        let preview = F.format(eventPayloads: [raw])
+        XCTAssertEqual(
+            preview,
+            """
+            ❯ What directory are you currently in
+            ⏺ /Users/jason/Documents/cli
+            pulse(branch:
+            dashboard-parity-and-v1.14-lifetime)
+            """,
+            "assistant continuation rows must survive: \(preview)"
+        )
+    }
+
+    func test_assistant_continuation_still_drops_tui_chrome() {
+        let raw = """
+        ⏺ Here is the answer:
+        Processing...
+        ↓ 142 tokens
+        useful continuation line
+        ─────────────────────────────
+        ❯ next prompt
+        """
+        let preview = F.format(eventPayloads: [raw])
+        XCTAssertTrue(preview.contains("⏺ Here is the answer:"))
+        XCTAssertTrue(preview.contains("useful continuation line"))
+        XCTAssertTrue(preview.contains("❯ next prompt"))
+        XCTAssertFalse(preview.contains("Processing"), "chrome must drop: \(preview)")
+        XCTAssertFalse(preview.contains("142 tokens"), "token counter must drop: \(preview)")
+        XCTAssertFalse(preview.contains("─────"), "separator must drop: \(preview)")
+    }
+
+    func test_assistant_continuation_keeps_tokens_when_prose() {
+        let raw = """
+        ⏺ A quick explanation:
+        background processing uses tokens differently here.
+        """
+        let preview = F.format(eventPayloads: [raw])
+        XCTAssertTrue(preview.contains("background processing uses tokens differently here."))
+    }
+
     func test_aggregates_csi_split_across_events() {
         // `\u{1B}[31m` (red SGR) split across two events. Per-event
         // strip would leave "[31m" in the output. Aggregating first
@@ -372,5 +422,173 @@ final class ClaudeConversationPreviewFormatterTests: XCTestCase {
         XCTAssertTrue(preview.contains("Error: bad input"))
         XCTAssertFalse(preview.contains("[31"),
                        "CSI body split across events must be removed: \(preview)")
+    }
+
+    // MARK: - Multi-turn conversation regression (2026-05-08, iOS user report)
+
+    /// Reported symptom: "first two turns display fine, by the 3rd turn
+    /// nothing shows in the live tail." Pin the formatter against a
+    /// realistic 3-turn TUI repaint trace where each new turn comes in as
+    /// fresh stdout chunks while Claude's TUI repaints earlier turns from
+    /// scrollback. All three user prompts and all three assistant replies
+    /// must survive the format pipeline.
+    func test_three_turn_conversation_keeps_all_messages() {
+        // Turn 1: user types "first question", Claude answers. TUI
+        // repaints the input line several times as the user types.
+        let turn1Echo = "❯ first question\n❯ first question\n❯ first question\n"
+        let turn1Reply = "⏺ Answer to first question.\n"
+        // Turn 2: TUI keeps showing turn-1 history above as the user types
+        // turn-2 input, then renders turn-2's reply. Status chrome lines
+        // (Processing, token counters) interleave per repaint.
+        let turn2Echo = """
+        ❯ first question
+        ⏺ Answer to first question.
+        ❯ second question
+        ❯ second question
+        Processing...
+        ↓ 142 tokens
+        """
+        let turn2Reply = """
+        ❯ first question
+        ⏺ Answer to first question.
+        ❯ second question
+        ⏺ Answer to second question.
+        """
+        // Turn 3: same shape — full history above + new typing + reply.
+        let turn3Echo = """
+        ❯ first question
+        ⏺ Answer to first question.
+        ❯ second question
+        ⏺ Answer to second question.
+        ❯ third question
+        Processing...
+        """
+        let turn3Reply = """
+        ❯ first question
+        ⏺ Answer to first question.
+        ❯ second question
+        ⏺ Answer to second question.
+        ❯ third question
+        ⏺ Answer to third question.
+        """
+        let preview = F.format(eventPayloads: [
+            turn1Echo, turn1Reply, turn2Echo, turn2Reply, turn3Echo, turn3Reply
+        ])
+        XCTAssertTrue(preview.contains("❯ first question"),
+                      "turn 1 user input must survive: \(preview)")
+        XCTAssertTrue(preview.contains("⏺ Answer to first question."),
+                      "turn 1 assistant reply must survive: \(preview)")
+        XCTAssertTrue(preview.contains("❯ second question"),
+                      "turn 2 user input must survive: \(preview)")
+        XCTAssertTrue(preview.contains("⏺ Answer to second question."),
+                      "turn 2 assistant reply must survive: \(preview)")
+        XCTAssertTrue(preview.contains("❯ third question"),
+                      "turn 3 user input must survive: \(preview)")
+        XCTAssertTrue(preview.contains("⏺ Answer to third question."),
+                      "turn 3 assistant reply must survive: \(preview)")
+        XCTAssertFalse(preview.contains("Processing"),
+                       "chrome lines must drop across all turns: \(preview)")
+    }
+
+    /// Same scenario but Claude's TUI scrolls the oldest turn off the
+    /// visible viewport — turn-1 lines stop appearing in later events.
+    /// (Real behavior when terminal height < total transcript length.)
+    /// We must still see all three turns because each came through the
+    /// stream at some earlier point.
+    func test_three_turn_conversation_with_viewport_scroll() {
+        let turn1 = "❯ q1\n⏺ a1\n"
+        // Turn 2: viewport still has both turns visible.
+        let turn2 = "❯ q1\n⏺ a1\n❯ q2\n⏺ a2\n"
+        // Turn 3: turn-1 has scrolled OFF the viewport, only q2/a2 + q3/a3
+        // appear in the latest screen frames. This is the realistic
+        // trace once the visible terminal fills up.
+        let turn3 = "❯ q2\n⏺ a2\n❯ q3\n⏺ a3\n"
+        let preview = F.format(eventPayloads: [turn1, turn2, turn3])
+        XCTAssertTrue(preview.contains("❯ q1"),  "turn 1 user lost: \(preview)")
+        XCTAssertTrue(preview.contains("⏺ a1"),  "turn 1 reply lost: \(preview)")
+        XCTAssertTrue(preview.contains("❯ q2"),  "turn 2 user lost: \(preview)")
+        XCTAssertTrue(preview.contains("⏺ a2"),  "turn 2 reply lost: \(preview)")
+        XCTAssertTrue(preview.contains("❯ q3"),  "turn 3 user lost: \(preview)")
+        XCTAssertTrue(preview.contains("⏺ a3"),  "turn 3 reply lost: \(preview)")
+    }
+
+    /// Stress: when the live-tail ring buffer is near-cap and the
+    /// formatter sees a chatty TUI burst that contains MOSTLY chrome
+    /// events with one substantive `❯`/`⏺` per cycle, the chrome must
+    /// not crowd out the conversational lines. Pre-fix would still have
+    /// passed this — including it as a defense for future refactors.
+    func test_chatty_tui_chrome_does_not_crowd_out_conversation() {
+        var payloads: [String] = []
+        // 50 chrome-only repaint events.
+        for _ in 0..<50 {
+            payloads.append("Processing...\n↓ 100 tokens\nrunning sp hook\n")
+        }
+        // Then a substantive turn at the end.
+        payloads.append("❯ late prompt\n⏺ late reply\n")
+        let preview = F.format(eventPayloads: payloads)
+        XCTAssertTrue(preview.contains("❯ late prompt"))
+        XCTAssertTrue(preview.contains("⏺ late reply"))
+        XCTAssertFalse(preview.contains("Processing"))
+    }
+
+    // MARK: - Production trace 2026-05-08 (assistant continuation drop bug)
+
+    /// Production session 4eb2d46e (user-visible bug):
+    /// Claude TUI emits the assistant response across two visual rows when
+    /// the working-directory path wraps. First row carries `⏺`; second
+    /// row is plain continuation text. User reported only
+    /// `⏺ /Users/jason/Documents/cli pulse(branch:` appearing in iOS
+    /// preview, with `dashboard-parity-and-v1.14-lifetime).` invisible.
+    func test_assistant_response_continuation_after_path_wrap() {
+        let payload = """
+        ❯ What directory are you currently in
+        ⏺ /Users/jason/Documents/cli pulse (branch:
+          dashboard-parity-and-v1.14-lifetime).
+        ✻ Misting… (running stop hook · 2s · ↓ 13 tokens)
+        """
+        let preview = F.format(eventPayloads: [payload])
+        XCTAssertTrue(preview.contains("❯ What directory are you currently in"),
+                      "user prompt must survive: \(preview)")
+        XCTAssertTrue(preview.contains("/Users/jason/Documents/cli pulse"),
+                      "assistant first line must survive: \(preview)")
+        XCTAssertTrue(preview.contains("dashboard-parity-and-v1.14-lifetime"),
+                      "assistant continuation MUST surface — this is the user-reported bug: \(preview)")
+        XCTAssertFalse(preview.contains("running stop hook"),
+                       "stop-hook chrome must drop: \(preview)")
+        XCTAssertFalse(preview.contains("13 tokens"),
+                       "token counter chrome must drop: \(preview)")
+    }
+
+    /// Continuation arriving across event boundary (helper batcher cuts
+    /// between the path and the branch-name row).
+    func test_assistant_continuation_across_event_boundary() {
+        let event1 = "❯ What directory are you currently in\n⏺ /Users/jason/Documents/cli pulse (branch:\r"
+        let event2 = "  dashboard-parity-and-v1.14-lifetime).\n✻ Misting… (running stop hook · 2s)\n"
+        let preview = F.format(eventPayloads: [event1, event2])
+        XCTAssertTrue(preview.contains("/Users/jason/Documents/cli pulse"),
+                      "first half must survive: \(preview)")
+        XCTAssertTrue(preview.contains("dashboard-parity-and-v1.14-lifetime"),
+                      "continuation across event boundary must survive: \(preview)")
+    }
+
+    /// Bullet-list assistant body — Claude often answers with markdown
+    /// bullets. None of the bullet rows carry `⏺`; only the first does.
+    /// All bullets must surface as continuations.
+    func test_assistant_bullet_list_continuations() {
+        let payload = """
+        ❯ summarize the project
+        ⏺ Here's what I see:
+          - CLI Pulse (4 platform commercial app, on dashboard-parity-and-v1.14-lifetime branch)
+          - Backend on Supabase (gkjwsxotmwrgqsvfijzs)
+          - Helper paired as 'CLI Pulse Helper'
+        """
+        let preview = F.format(eventPayloads: [payload])
+        XCTAssertTrue(preview.contains("Here's what I see"))
+        XCTAssertTrue(preview.contains("4 platform commercial app"),
+                      "bullet 1 must surface: \(preview)")
+        XCTAssertTrue(preview.contains("Backend on Supabase"),
+                      "bullet 2 must surface: \(preview)")
+        XCTAssertTrue(preview.contains("Helper paired"),
+                      "bullet 3 must surface: \(preview)")
     }
 }

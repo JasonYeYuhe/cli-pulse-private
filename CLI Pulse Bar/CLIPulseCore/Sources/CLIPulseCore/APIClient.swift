@@ -206,6 +206,26 @@ public actor APIClient {
         let today_sessions: Int?
     }
 
+    /// v0.42: shared param shape for dashboard_summary / provider_summary.
+    /// Encoded as `{"p_user_today": "YYYY-MM-DD"}` per PostgREST RPC contract.
+    struct UserTodayParams: Encodable {
+        let p_user_today: String
+    }
+
+    /// Today as `YYYY-MM-DD` in the device's current calendar.
+    /// Matches the same Calendar.current convention CostUsageScanner uses
+    /// when writing `metric_date` (CostUsageScanner.swift line ~450), so
+    /// the server's date comparison aligns with the writer's intent.
+    static func localTodayKey(now: Date = Date(), calendar: Calendar = .current) -> String {
+        let comps = calendar.dateComponents([.year, .month, .day], from: now)
+        return String(
+            format: "%04d-%02d-%02d",
+            comps.year ?? 1970,
+            comps.month ?? 1,
+            comps.day ?? 1
+        )
+    }
+
     private struct ProviderSummaryPayload: Decodable {
         let provider: String?
         let today_usage: Int?
@@ -501,7 +521,15 @@ public actor APIClient {
     // MARK: - Dashboard
 
     public func dashboard() async throws -> DashboardSummary {
-        let summary: DashboardSummaryPayload = try await rpc("dashboard_summary")
+        // v0.42 (2026-05-08): pass the device's local-TZ today so the server
+        // computes today/30-day windows against the user's wall clock instead
+        // of UTC. Server falls back to current_date if param absent (default
+        // NULL via PostgREST), so callers on older servers still work.
+        // See migrate_v0.42_user_tz_today.sql.
+        let summary: DashboardSummaryPayload = try await rpc(
+            "dashboard_summary",
+            params: UserTodayParams(p_user_today: Self.localTodayKey())
+        )
 
         let todayUsage = summary.today_usage ?? 0
         let todayCost = summary.today_cost ?? 0
@@ -544,7 +572,11 @@ public actor APIClient {
     // MARK: - Providers
 
     public func providers() async throws -> [ProviderUsage] {
-        let providers: [ProviderSummaryPayload] = try await rpc("provider_summary")
+        // v0.42: same local-TZ today fix as dashboard().
+        let providers: [ProviderSummaryPayload] = try await rpc(
+            "provider_summary",
+            params: UserTodayParams(p_user_today: Self.localTodayKey())
+        )
         return providers.map { provider in
             let name = provider.provider ?? ""
             // v1.9.4: attach a minimal metadata so cloud-only rows (provider
@@ -1662,13 +1694,23 @@ public actor APIClient {
         // v0.3.1: send our paired device_id so the row lands under
         // (user_id, device_id, ...) and doesn't race-clobber rows from
         // a Win/Linux Tauri client running on the same account.
-        // HelperConfig.deviceId is populated whenever the user has gone
-        // through register_helper. If somehow nil (rare — pre-pair
-        // transient), omit the param and the server falls back to the
-        // sentinel UUID, which keeps legacy single-device users
-        // working as before.
+        //
+        // 2026-05-08: switched `load()` → `loadIfMatches(authenticatedUserId:)`.
+        // Background: when the user signs into a different Supabase account
+        // while the app-group still holds a paired-helper config from the
+        // previous account, the stale `deviceId` was being sent to the
+        // server. The server's ownership check
+        // (`devices.user_id == auth.uid()` for the supplied id) fails →
+        // raises errcode 42501 → HTTP 403 → every syncDailyUsage upload
+        // bounces and the iPhone sees stale cloud data forever. The
+        // guarded loader returns nil on mismatch so we fall through to
+        // the no-`p_device_id` path (server sentinel UUID; no ownership
+        // check). Re-pairing the helper with the new account refreshes
+        // the config to the matching pair.
         var body: [String: Any] = ["metrics": metrics]
-        if let deviceId = HelperConfig.load()?.deviceId, !deviceId.isEmpty {
+        if let deviceId = HelperConfig.loadIfMatches(
+            authenticatedUserId: userId
+        )?.deviceId, !deviceId.isEmpty {
             body["p_device_id"] = deviceId
         }
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
