@@ -42,7 +42,10 @@ public enum GeminiConversationPreviewFormatter {
     public static func format(eventPayloads: [String]) -> String {
         guard !eventPayloads.isEmpty else { return emptyFallback }
         let blob = eventPayloads.joined()
-        let sanitized = AnsiSanitizer.strip(blob)
+        // v1.16 hotfix: parity with Claude formatter — preserve word
+        // boundaries laid out via cursor-move escapes so multi-word
+        // model output doesn't collapse to `fooCLIbar`.
+        let sanitized = AnsiSanitizer.stripJoiningWithSpaces(blob)
         let scrubbed = stripOrphanCsiBodies(sanitized)
         let rawLines = scrubbed.split(
             omittingEmptySubsequences: false,

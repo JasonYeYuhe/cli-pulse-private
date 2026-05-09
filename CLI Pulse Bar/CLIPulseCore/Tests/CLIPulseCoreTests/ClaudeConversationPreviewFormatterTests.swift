@@ -229,12 +229,32 @@ final class ClaudeConversationPreviewFormatterTests: XCTestCase {
         XCTAssertEqual(F.format(eventPayloads: []), F.emptyFallback)
     }
 
-    func test_only_chrome_returns_fallback() {
+    func test_only_chrome_returns_thinking_fallback_when_processing() {
+        // v1.16 hotfix: chrome that contains an activity marker
+        // ("Processing", "Incubating", "Proofing", etc.) means Claude
+        // is busy producing a reply but hasn't surfaced an `⏺` line
+        // yet. We surface `thinkingFallback` to tell the user that
+        // the helper is alive and a response is in flight, instead
+        // of the static "waiting for output" message which historically
+        // read as "nothing is happening."
         let raw = """
         ╭─────╮
         │ Claude Code v2.1.126 │
         ──────────
         Processing...
+        ↓ 100 tokens
+        """
+        XCTAssertEqual(F.format(eventPayloads: [raw]), F.thinkingFallback)
+    }
+
+    func test_only_chrome_with_no_activity_returns_empty_fallback() {
+        // No activity markers — just static banner + token counter.
+        // Should still fall back, but to the "waiting" copy because
+        // we have no signal that Claude is actively generating.
+        let raw = """
+        ╭─────╮
+        │ Claude Code v2.1.126 │
+        ──────────
         ↓ 100 tokens
         """
         XCTAssertEqual(F.format(eventPayloads: [raw]), F.emptyFallback)

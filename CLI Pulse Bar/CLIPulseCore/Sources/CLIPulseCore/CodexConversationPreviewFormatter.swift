@@ -42,7 +42,11 @@ public enum CodexConversationPreviewFormatter {
     public static func format(eventPayloads: [String]) -> String {
         guard !eventPayloads.isEmpty else { return emptyFallback }
         let blob = eventPayloads.joined()
-        let sanitized = AnsiSanitizer.strip(blob)
+        // v1.16 hotfix: cursor-move-laid-out text would otherwise
+        // collapse adjacent words (`fooCLIbar`). See AnsiSanitizer
+        // .stripJoiningWithSpaces docstring + ClaudeConversation
+        // PreviewFormatter parity comment.
+        let sanitized = AnsiSanitizer.stripJoiningWithSpaces(blob)
         let scrubbed = stripOrphanCsiBodies(sanitized)
         let rawLines = scrubbed.split(
             omittingEmptySubsequences: false,

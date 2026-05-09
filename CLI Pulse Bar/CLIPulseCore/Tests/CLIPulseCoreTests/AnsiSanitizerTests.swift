@@ -74,4 +74,60 @@ final class AnsiSanitizerTests: XCTestCase {
         XCTAssertTrue(cleaned.contains("hello"))
         XCTAssertFalse(cleaned.contains("\u{1B}"))
     }
+
+    // MARK: - stripJoiningWithSpaces
+
+    /// v1.16: Claude TUI lays text out via cursor-move escapes (`\x1b[3C`,
+    /// `\x1b[2A`, etc.) instead of literal whitespace. The default `strip`
+    /// drops them and collapses adjacent words. `stripJoiningWithSpaces`
+    /// replaces cursor-moves with a single space so the word boundary
+    /// survives.
+    func test_stripJoiningWithSpaces_recovers_word_boundary_at_cursor_move() {
+        let raw = "official\u{1B}[3CCLI"
+        XCTAssertEqual(AnsiSanitizer.stripJoiningWithSpaces(raw), "official CLI")
+    }
+
+    /// SGR (color / style) sequences must NOT inject spaces — they're
+    /// purely cosmetic and inserting space inside `myVar` would fracture
+    /// the identifier. (Gemini-flagged regression in v1.16 round 2 review.)
+    func test_stripJoiningWithSpaces_sgr_color_does_not_fracture_word() {
+        let raw = "my\u{1B}[34mVar\u{1B}[0m"
+        XCTAssertEqual(AnsiSanitizer.stripJoiningWithSpaces(raw), "myVar")
+    }
+
+    /// OSC titles (`ESC ] ... BEL`) are also cosmetic — drop them
+    /// without injecting space.
+    func test_stripJoiningWithSpaces_osc_title_does_not_fracture() {
+        let raw = "before\u{1B}]0;Window Title\u{0007}after"
+        XCTAssertEqual(AnsiSanitizer.stripJoiningWithSpaces(raw), "beforeafter")
+    }
+
+    /// Adjacent cursor-moves should collapse to a single space, not
+    /// produce visible runs of whitespace.
+    func test_stripJoiningWithSpaces_collapses_runs_from_adjacent_moves() {
+        let raw = "a\u{1B}[1C\u{1B}[2D\u{1B}[3Bb"
+        XCTAssertEqual(AnsiSanitizer.stripJoiningWithSpaces(raw), "a b")
+    }
+
+    /// Newlines must survive the collapse — only inline spaces / tabs
+    /// get squeezed.
+    func test_stripJoiningWithSpaces_preserves_newlines() {
+        let raw = "line1\u{1B}[2C\nline2"
+        XCTAssertEqual(AnsiSanitizer.stripJoiningWithSpaces(raw), "line1 \nline2")
+    }
+
+    /// Erase / clear-line CSIs (K, J) count as spatial — preserve as
+    /// space so text on the new line doesn't run into the prior tail.
+    func test_stripJoiningWithSpaces_treats_erase_as_spatial() {
+        let raw = "before\u{1B}[Kafter"
+        XCTAssertEqual(AnsiSanitizer.stripJoiningWithSpaces(raw), "before after")
+    }
+
+    /// Plain text round-trips unchanged.
+    func test_stripJoiningWithSpaces_plain_text_unchanged() {
+        XCTAssertEqual(
+            AnsiSanitizer.stripJoiningWithSpaces("hello world\nline 2"),
+            "hello world\nline 2"
+        )
+    }
 }

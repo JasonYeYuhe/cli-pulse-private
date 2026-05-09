@@ -45,17 +45,43 @@ public enum ClaudeConversationPreviewFormatter {
     public static let emptyFallback =
         "Claude is running. Waiting for conversational output…"
 
+    /// v1.16 hotfix: shown when raw payload exists (claude IS emitting
+    /// bytes — spinners, "Incubating…", "Proofing…", token counters)
+    /// but no conversation-meaningful line has surfaced yet. Claude
+    /// opus first-turn responses commonly take 15-30+ seconds; the
+    /// pre-fix fallback ("Waiting for conversational output…") read as
+    /// "nothing is happening" and confused users into thinking the
+    /// helper had hung. This signals "yes, claude is alive — be patient."
+    public static let thinkingFallback =
+        "Claude is thinking… (first reply may take 15-30 s)"
+
+    /// Activity markers Claude TUI emits during processing — used by
+    /// `format` to distinguish "no PTY output at all" from "PTY output
+    /// is all chrome / spinners while claude generates a response".
+    /// Case-insensitive substring match against the sanitized blob.
+    private static let activityMarkers: [String] = [
+        "incubating", "proofing", "smooshing", "crunched",
+        "brewed", "baked", "churned", "running stop hook",
+        "running sp hook", "processing", "thinking",
+    ]
+
     /// Aggregate event payloads in order, sanitize once, extract only
     /// conversation-meaningful lines. Returns a transcript string
-    /// suitable for a monospaced text view, or `emptyFallback` if no
-    /// conversation lines surfaced yet.
+    /// suitable for a monospaced text view, or one of the fallback
+    /// strings if no conversation lines surfaced yet.
     public static func format(eventPayloads: [String]) -> String {
         guard !eventPayloads.isEmpty else { return emptyFallback }
         // Concatenate WITHOUT a separator: text spanning event
         // boundaries reads naturally and CSI sequences split across
         // events get re-assembled for the sanitizer to match.
         let blob = eventPayloads.joined()
-        let sanitized = AnsiSanitizer.strip(blob)
+        // v1.16 hotfix: use the spacing-preserving sanitizer so that
+        // text Claude TUI laid out via cursor moves doesn't collapse
+        // into joined words like `officialCLIforClaude`. Trade-off:
+        // some chrome lines pick up extra inner spaces, but the per-
+        // line trim + chrome-drop heuristics below absorb them, and
+        // the assistant continuation polish reads more naturally.
+        let sanitized = AnsiSanitizer.stripJoiningWithSpaces(blob)
         // Strip orphan ANSI body fragments (e.g. "[38;2;215;119;87m")
         // that survive when the leading ESC was stripped on a prior
         // pass or never present. Standalone bracket-prefixed sequences
@@ -89,7 +115,18 @@ public enum ClaudeConversationPreviewFormatter {
         // Deduplicate runs of identical lines (TUI repaints emit the
         // same `❯ hello` many times as the user types each char).
         let collapsed = collapseConsecutiveDuplicates(kept)
-        if collapsed.isEmpty { return emptyFallback }
+        if collapsed.isEmpty {
+            // v1.16 hotfix: distinguish "nothing happening" from
+            // "claude is processing but only emitting chrome". The
+            // sanitized blob contains the same TUI activity tokens
+            // even with non-Latin terminal output, so a case-insensitive
+            // substring scan is enough.
+            let lowered = sanitized.lowercased()
+            for marker in activityMarkers where lowered.contains(marker) {
+                return thinkingFallback
+            }
+            return emptyFallback
+        }
         return collapsed.joined(separator: "\n")
     }
 
