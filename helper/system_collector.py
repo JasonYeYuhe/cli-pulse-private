@@ -30,7 +30,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 # distinguish "user has the new pkg-installed helper" from "user is still
 # running the v1.15 nohup helper" so the post-install state machine knows
 # whether to offer the migration prompt.
-HELPER_VERSION = "1.16.3"
+HELPER_VERSION = "1.16.4"
 
 logger = logging.getLogger("cli_pulse.collector")
 
