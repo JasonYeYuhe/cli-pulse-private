@@ -50,6 +50,75 @@ final class CodexConversationPreviewFormatterTests: XCTestCase {
         XCTAssertFalse(F.shouldKeep("·"))
     }
 
+    // MARK: - v1.17 codex_exec markers
+
+    /// v1.17 helper emits `• <reply>` for agent_message events. Without
+    /// the explicit prefix match, short replies (`• OK`, `• 是`, `• 2`)
+    /// fall through to `looksLikeAssistantProse` which requires alnum>=8
+    /// and silently drops them. v1.17.2 fix: explicit `•` prefix kept.
+    func test_keeps_short_agent_bullet_reply() {
+        XCTAssertTrue(F.shouldKeep("• OK"))
+        XCTAssertTrue(F.shouldKeep("• 2"))
+        XCTAssertTrue(F.shouldKeep("• PONG"))
+        XCTAssertTrue(F.shouldKeep("• Yes"))
+    }
+
+    func test_keeps_short_agent_bullet_reply_cjk() {
+        // The original bug that drove v1.17 (CJK on iPhone). A bullet-
+        // prefixed Chinese single-line reply must surface even when the
+        // alnum count is 0 (CJK chars aren't in CharacterSet.alphanumerics).
+        XCTAssertTrue(F.shouldKeep("• 是"))
+        XCTAssertTrue(F.shouldKeep("• 你好"))
+    }
+
+    func test_keeps_long_agent_bullet_reply() {
+        XCTAssertTrue(F.shouldKeep("• Hello! How can I help you with cli pulse today?"))
+    }
+
+    func test_drops_bare_bullet_with_only_whitespace() {
+        // Empty bullet line (`• ` from helper splitlines on a blank line)
+        // should still be dropped — chrome filter or shouldKeep, doesn't
+        // matter which. Verify shouldKeep returns false so the contract
+        // is explicit.
+        XCTAssertFalse(F.shouldKeep("•"))
+        XCTAssertFalse(F.shouldKeep("•   "))
+    }
+
+    func test_keeps_info_marker_lines() {
+        XCTAssertTrue(F.shouldKeep("ℹ usage: 100 in / 5 out"))
+        XCTAssertTrue(F.shouldKeep("ℹ codex ran: ls"))
+    }
+
+    func test_keeps_error_marker_lines() {
+        XCTAssertTrue(F.shouldKeep("✗ codex spawn failed: file not found"))
+        XCTAssertTrue(F.shouldKeep("✗ turn timed out"))
+    }
+
+    func test_keeps_warning_marker_line() {
+        // `⚠` appears in Codex's inline TUI output (rate-limit banners
+        // etc.). Even though the v1.17 codex_exec transport doesn't
+        // emit it itself, raw warnings can still surface via Codex's
+        // own stderr / stdin paths.
+        XCTAssertTrue(F.shouldKeep("⚠ rate limit"))
+    }
+
+    func test_drops_empty_bodies_across_all_markers() {
+        // Empty-body consistency for every marker we recognise.
+        XCTAssertFalse(F.shouldKeep("›"))
+        XCTAssertFalse(F.shouldKeep("›   "))
+        XCTAssertFalse(F.shouldKeep("•"))
+        XCTAssertFalse(F.shouldKeep("ℹ"))
+        XCTAssertFalse(F.shouldKeep("✗"))
+        XCTAssertFalse(F.shouldKeep("⚠"))
+    }
+
+    func test_polish_inserts_space_after_bullet() {
+        // helper always emits `• <text>` with a space, but defensive:
+        // if a stray `•reply` ever leaks through, polishLine should fix it.
+        XCTAssertEqual(F.polishLine("•reply"), "• reply")
+        XCTAssertEqual(F.polishLine("ℹsomething"), "ℹ something")
+    }
+
     // MARK: - update wizard chrome
 
     func test_drops_update_available_banner() {

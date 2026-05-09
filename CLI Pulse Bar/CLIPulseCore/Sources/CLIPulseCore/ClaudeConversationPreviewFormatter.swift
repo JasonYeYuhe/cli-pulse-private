@@ -134,6 +134,15 @@ public enum ClaudeConversationPreviewFormatter {
 
     /// True iff the trimmed line should be emitted to the transcript.
     /// Public for tests; production callers use `format`.
+    ///
+    /// Markers come from Claude Code's interactive TUI — `❯` for the
+    /// user-prompt echo and `⏺` for the assistant turn separator.
+    /// TODO(post-v1.17): if Anthropic ships a `claude exec --json`
+    /// equivalent to `codex exec --json`, generalise this in the same
+    /// shape as `CodexConversationPreviewFormatter` (explicit
+    /// `›/•/ℹ/✗/⚠` switch with empty-body drop). Until then, Claude
+    /// managed sessions still go through the persistent PTY + formatter
+    /// pipeline and these are the only markers in play.
     public static func shouldKeep(_ trimmed: String) -> Bool {
         if trimmed.isEmpty { return false }
         if let first = trimmed.first {

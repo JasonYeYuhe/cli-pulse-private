@@ -71,10 +71,28 @@ public enum CodexConversationPreviewFormatter {
     /// True iff the trimmed line should be emitted to the transcript.
     public static func shouldKeep(_ trimmed: String) -> Bool {
         if trimmed.isEmpty { return false }
-        if let first = trimmed.first, first == "›" {
-            // User-prompt echo. The chrome filter has already stripped
-            // numbered-menu rows (`› 1. …`).
-            return true
+        if let first = trimmed.first {
+            // v1.17.2: explicit prefix match for the helper-emitted
+            // markers from `transports/codex_exec.py`. Without these,
+            // short agent replies (`• OK`, `• 是`, `• 2`) get dropped
+            // by the `looksLikeAssistantProse` alnum-≥-8 fallback.
+            // The chrome filter has already eaten numbered-menu rows
+            // (`› 1. …`) and short spinner-only lines (single `•`),
+            // so we can keep these unconditionally here.
+            switch first {
+            case "›", "•", "ℹ", "✗", "⚠":
+                // v1.17.2: every helper-emitted marker keeps the line
+                // iff there's something meaningful after the glyph.
+                // Bare `•` / `›` / `ℹ` / `✗` / `⚠` is chrome, not a
+                // message — the helper occasionally emits empty bullet
+                // lines from `splitlines()` on a blank line in
+                // `agent_message.text`, and we don't want those eating
+                // a transcript row.
+                let body = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
+                return !body.isEmpty
+            default:
+                break
+            }
         }
         let lower = trimmed.lowercased()
         let allowSubstrings = [
@@ -240,9 +258,12 @@ public enum CodexConversationPreviewFormatter {
         insertSpaceAfterMarker(line)
     }
 
-    /// `›hello` → `› hello`.
+    /// `›hello` → `› hello`. v1.17.2: extended to the helper-emitted
+    /// markers (`•` / `ℹ` / `✗` / `⚠`) for consistent rendering when
+    /// upstream formatting drops the trailing space.
+    private static let _markerSet: Set<Character> = ["›", "•", "ℹ", "✗", "⚠"]
     private static func insertSpaceAfterMarker(_ s: String) -> String {
-        guard let first = s.first, first == "›" else { return s }
+        guard let first = s.first, _markerSet.contains(first) else { return s }
         let rest = s.dropFirst()
         guard let next = rest.first, !next.isWhitespace else { return s }
         return "\(first) \(rest)"
