@@ -198,6 +198,21 @@ run cp -R "$HELPER_BUNDLE/." "$STAGING/"
 # without invoking the binary.
 run sh -c "echo '$HELPER_VERSION' > '$STAGING/version.txt'"
 
+# === Step 3b: Build + embed Helper Uninstaller.app ===
+echo
+echo "--- Step 3b: Build + embed Uninstaller.app ---"
+UNINSTALLER_OUT="$OUTPUT_DIR/uninstaller-build"
+UNINSTALLER_FLAGS=(--output-dir "$UNINSTALLER_OUT")
+[[ $SKIP_SIGN -eq 1 ]] && UNINSTALLER_FLAGS+=(--skip-sign)
+[[ $DRY_RUN -eq 1 ]] && UNINSTALLER_FLAGS+=(--dry-run)
+run "$SCRIPT_DIR/build_helper_uninstaller.sh" "${UNINSTALLER_FLAGS[@]}"
+UNINSTALLER_APP="$UNINSTALLER_OUT/CLI Pulse Helper Uninstaller.app"
+if [[ $DRY_RUN -eq 0 ]] && [[ ! -d "$UNINSTALLER_APP" ]]; then
+    echo "error: build_helper_uninstaller.sh did not produce $UNINSTALLER_APP" >&2
+    exit 4
+fi
+run cp -R "$UNINSTALLER_APP" "$STAGING/"
+
 # === Step 4: Sign every Mach-O individually ===
 if [[ $SKIP_SIGN -eq 0 ]]; then
     echo
