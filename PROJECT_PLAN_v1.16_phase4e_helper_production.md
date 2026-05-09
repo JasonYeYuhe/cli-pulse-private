@@ -38,7 +38,7 @@ The ROAD NOT TAKEN — for posterity:
 7. ~3 seconds: pkg payload extracts to `~/Library/CLI-Pulse-Helper/` and `~/Library/LaunchAgents/yyh.cli-pulse.helper.plist`
 8. postinstall.sh detects + gracefully shuts down any prior `nohup`-style helper, then `launchctl bootstrap gui/$UID` the new agent
 9. Installer.app shows "The installation was successful" → close
-10. MAS app's UDS-probe poller detects `~/Library/Group Containers/group.yyh.CLI-Pulse/helper.sock` accepts connections → UI flips to "Managed CLI: Running ✓"
+10. MAS app's UDS-probe poller detects `~/Library/Group Containers/group.yyh.CLI-Pulse/clipulse-helper.sock` accepts connections → UI flips to "Managed CLI: Running ✓"
 
 **Total user interaction**: 3 clicks (Install button + Gatekeeper Open + Installer Install). Zero typing. Zero terminal. Zero admin password. Zero browser navigation.
 
@@ -110,11 +110,18 @@ MACOSX_DEPLOYMENT_TARGET=13.0 \
     --no-cache-dir \
     psutil cryptography requests
 
-# 3b. Build for both architectures. We need a universal .pkg or two separate ones.
-#     Decision: ship two .pkg variants (-arm64 and -x86_64) and have the manifest
-#     declare both URLs; the MAS app picks the matching one via `uname -m`.
-#     Rationale: psutil and cryptography do NOT publish universal2 wheels for all
-#     versions; trying to lipo them post-build is fragile.
+# 3b. Architecture decision (revised during slice 4E.1.1):
+#     - PyInstaller cannot cross-compile when invoked with a .spec file
+#       (it fails with "makespec options not valid when a .spec file is
+#       given"). Each arch must be built on its own host.
+#     - v1.16.0 ships **arm64-only**. Rationale: Apple Silicon has been the
+#       sole Mac architecture since 2020 (5+ years of new sales), and a
+#       v1.16.1 follow-up can add x86_64 once a CI runner is set up.
+#     - The Distribution.xml carries `hostArchitectures="arm64"` — Intel
+#       Macs trying to install will see a system-level "this package can't
+#       run on your hardware" error rather than a post-install crash.
+#     - manifest's latest.json can declare `arch_arm64.url` only for v1.16.0;
+#       v1.16.1+ adds `arch_x86_64.url` and the MAS app picks via `uname -m`.
 
 # 4. Sign EVERY Mach-O individually
 find "$STAGING" -type f \( -name '*.so' -o -name '*.dylib' \) -exec \
@@ -165,7 +172,7 @@ spctl --assess --type install --verbose "build/cli-pulse-helper-1.16.0.pkg"
 # scripts/pkg-scripts/postinstall
 # Runs as the installing user, NOT root, for user-domain pkg
 
-UDS_PATH="$HOME/Library/Group Containers/group.yyh.CLI-Pulse/helper.sock"
+UDS_PATH="$HOME/Library/Group Containers/group.yyh.CLI-Pulse/clipulse-helper.sock"
 LABEL="yyh.cli-pulse.helper"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG="$HOME/Library/Logs/CLI-Pulse-Helper/postinstall.log"
@@ -311,7 +318,7 @@ final class HelperInstaller: ObservableObject {
     private let manifestURL = URL(string: "https://github.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/latest/latest.json")!
     private let udsPath: String = {
         let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.yyh.CLI-Pulse")!
-        return groupURL.appendingPathComponent("helper.sock").path
+        return groupURL.appendingPathComponent("clipulse-helper.sock").path
     }()
 
     /// Liveness probe via Network.framework — cleaner than raw sockaddr_un.

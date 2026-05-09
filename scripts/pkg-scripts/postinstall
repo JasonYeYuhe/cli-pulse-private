@@ -1,0 +1,161 @@
+#!/bin/sh
+# v1.16 cli-pulse-helper.pkg postinstall script.
+#
+# Runs as the installing USER (not root) for user-domain pkgs whose
+# install-location starts with `~/Library/...`. macOS Installer expands
+# `~` to the running user's $HOME at install time. This script must
+# work whether run by macOS Installer.app, by `installer -pkg` from
+# the command line, or by a CI smoke test on a clean VM.
+#
+# Pipeline:
+#   1. Detect any prior cli-pulse helper bound to the UDS at
+#      ~/Library/Group Containers/group.yyh.CLI-Pulse/helper.sock and
+#      gracefully shut it down (SIGTERM → wait → SIGKILL escalation).
+#   2. Bootout any previously-registered launchctl agent with the same
+#      label (idempotent re-install path).
+#   3. Write the LaunchAgent plist with the user's $HOME substituted in.
+#   4. Bootstrap + kickstart the new agent.
+#   5. Wait up to 10s for the helper to bind the UDS, fail with a clear
+#      error if it doesn't (Installer.app surfaces the exit code).
+#
+# Standard pkgbuild postinstall args (we don't currently use them):
+#   $1  full path of the .pkg
+#   $2  install-destination directory (after `~` expansion)
+#   $3  install-destination volume root (e.g. "/")
+#   $4  domain ("U" for user, "S" for system)
+#
+# See PROJECT_PLAN_v1.16_phase4e_helper_production.md §1.5.
+
+set -e
+
+LABEL="yyh.cli-pulse.helper"
+HELPER_DIR="$HOME/Library/CLI-Pulse-Helper"
+HELPER_BIN="$HELPER_DIR/cli_pulse_helper"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+LOG_DIR="$HOME/Library/Logs/CLI-Pulse-Helper"
+LOG="$LOG_DIR/postinstall.log"
+GROUP_CONTAINER="$HOME/Library/Group Containers/group.yyh.CLI-Pulse"
+# Socket filename matches helper/local_session_server.py:SOCK_FILENAME
+UDS_PATH="$GROUP_CONTAINER/clipulse-helper.sock"
+
+mkdir -p "$LOG_DIR" "$(dirname "$PLIST")"
+exec >>"$LOG" 2>&1
+
+echo
+echo "=== postinstall $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+echo "USER=$USER  HOME=$HOME  UID=$(id -u)"
+echo "HELPER_BIN=$HELPER_BIN"
+
+# === Sanity: payload extracted correctly ===
+if [ ! -x "$HELPER_BIN" ]; then
+    echo "FATAL: $HELPER_BIN not found or not executable"
+    echo "Listing $HELPER_DIR:"
+    ls -la "$HELPER_DIR" 2>&1 || echo "(directory missing)"
+    exit 1
+fi
+
+# === Step 1: graceful shutdown of any prior helper ===
+# (Plan §1.6 originally specced a UDS RPC for this; the existing SIGTERM
+# handler in cli_pulse_helper.py:521-528 already drains UDS server →
+# remote_agent_manager → executor → broker, so SIGTERM-first is cleaner.)
+if [ -S "$UDS_PATH" ]; then
+    PID=$(lsof -t "$UDS_PATH" 2>/dev/null | head -n1 || true)
+    if [ -n "$PID" ]; then
+        echo "Found existing helper PID=$PID at $UDS_PATH; sending SIGTERM"
+        kill -TERM "$PID" 2>/dev/null || true
+        # Wait up to 10s for graceful drain (executor.shutdown timeout is
+        # 5s, remote_agent_manager.shutdown drains in-flight PTYs).
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+            if ! kill -0 "$PID" 2>/dev/null; then
+                echo "Old helper exited cleanly after ${i}s"
+                break
+            fi
+            sleep 1
+        done
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "Old helper still alive after SIGTERM+10s; sending SIGKILL"
+            kill -KILL "$PID" 2>/dev/null || true
+            sleep 1
+        fi
+    else
+        # Stale socket file with no listener — pre-emptively unlink so the
+        # new agent's bind() doesn't EADDRINUSE.
+        echo "Stale socket $UDS_PATH (no PID); unlinking"
+        rm -f "$UDS_PATH" || true
+    fi
+fi
+
+# === Step 2: bootout any prior agent (idempotent re-install) ===
+if launchctl list 2>/dev/null | grep -q " $LABEL\$\|	$LABEL\$"; then
+    echo "Bootout existing $LABEL agent"
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+    sleep 1
+fi
+
+# === Step 3: write the LaunchAgent plist with $HOME substituted ===
+# launchd does NOT expand `~` or `$HOME` in plist values; substitute
+# them here at install time. KeepAlive=true so launchd auto-restarts on
+# crash. LimitLoadToSessionType=Aqua so it doesn't run in SSH / non-GUI
+# logins. ProcessType=Background for energy-impact accounting.
+cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$LABEL</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$HELPER_BIN</string>
+        <string>daemon</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>$HOME</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/helper.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/helper.err.log</string>
+</dict>
+</plist>
+EOF
+echo "Wrote $PLIST"
+
+# === Step 4: bootstrap + kickstart ===
+launchctl bootstrap "gui/$(id -u)" "$PLIST" || {
+    rc=$?
+    echo "FATAL: launchctl bootstrap failed (rc=$rc)"
+    echo "Last 20 lines of $LOG_DIR/helper.err.log:"
+    tail -n 20 "$LOG_DIR/helper.err.log" 2>/dev/null || echo "(no log yet)"
+    exit $rc
+}
+launchctl kickstart -k "gui/$(id -u)/$LABEL" || true
+
+# === Step 5: wait for UDS bind ===
+# Helper's local_session_server binds the UDS in the daemon's startup
+# path (after manager init). Typical bind delay: 1-3s. 10s is safe.
+mkdir -p "$GROUP_CONTAINER" 2>/dev/null || true
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    if [ -S "$UDS_PATH" ]; then
+        echo "Helper bound UDS within ${i}s — postinstall done"
+        exit 0
+    fi
+    sleep 1
+done
+
+echo "WARNING: Helper did not bind UDS at $UDS_PATH within 10s"
+echo "  This may be normal if the user is unpaired (helper exits before bind)."
+echo "  Check $LOG_DIR/helper.err.log for diagnostics."
+# Don't fail the install — an unpaired user will pair after install,
+# and the helper will retry on the next launchd KeepAlive restart.
+exit 0
