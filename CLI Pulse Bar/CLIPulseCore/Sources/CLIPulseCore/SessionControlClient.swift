@@ -44,9 +44,14 @@ public protocol SessionControlClient: Sendable {
     /// error if the socket isn't there.
     func hello() async throws -> SessionControlHello
 
-    /// Spawn a new managed Claude session. Phase 3 only supports
-    /// `provider == "claude"`; codex / shell / etc. are out of scope.
-    func startClaudeSession(
+    /// Spawn a new managed session for `provider`. Phase 3 was
+    /// `claude`-only; v1.15 accepts `claude`, `codex`, `gemini` (with
+    /// helper-side spawner availability checked separately via the
+    /// capability map). The legacy `startClaudeSession(...)` shim is
+    /// preserved as a default-implemented forwarder so old call sites
+    /// keep building during the cutover.
+    func startManagedSession(
+        provider: String,
         clientLabel: String?,
         cwdBasename: String?,
         cwdHmac: String?
@@ -79,6 +84,23 @@ extension SessionControlClient {
     public func sendInput(sessionId: String, payload: String) async throws {
         throw SessionControlError.notImplemented
     }
+
+    /// Legacy shim — Phase 3 / pre-v1.15 callers used `startClaudeSession`
+    /// with no provider param. Forwards to `startManagedSession` with
+    /// `provider: "claude"`. Kept for back-compat with existing test
+    /// stubs and any source still on the old API.
+    public func startClaudeSession(
+        clientLabel: String?,
+        cwdBasename: String?,
+        cwdHmac: String?
+    ) async throws -> SessionControlStartResult {
+        try await startManagedSession(
+            provider: "claude",
+            clientLabel: clientLabel,
+            cwdBasename: cwdBasename,
+            cwdHmac: cwdHmac
+        )
+    }
 }
 
 /// Reply payload for `hello`.
@@ -86,15 +108,24 @@ public struct SessionControlHello: Sendable, Equatable {
     public let protocolVersion: Int
     public let supportedMethods: Set<String>
     public let capabilities: SessionControlCapabilities
+    /// v1.15: subset of `["claude","codex","gemini"]` the helper can
+    /// actually spawn on this host. Empty means "helper didn't tell us"
+    /// — older helpers without v1.15 wired in don't ship this field;
+    /// callers should treat empty as "no advertised list, fall back to
+    /// the legacy implicit `[claude]` so users on a still-rolling-out
+    /// helper aren't blocked from spawning Claude.
+    public let providerAvailability: [String]
 
     public init(
         protocolVersion: Int,
         supportedMethods: Set<String>,
-        capabilities: SessionControlCapabilities
+        capabilities: SessionControlCapabilities,
+        providerAvailability: [String] = []
     ) {
         self.protocolVersion = protocolVersion
         self.supportedMethods = supportedMethods
         self.capabilities = capabilities
+        self.providerAvailability = providerAvailability
     }
 }
 
@@ -297,6 +328,18 @@ public enum SessionControlError: Error, Equatable, Sendable, CustomStringConvert
     /// permission requests — extremely rare in normal Claude usage.
     case approvalLimitReached
 
+    /// v1.15 — local UDS reported `ok: false` on `start_session`.
+    /// The helper accepted the request but the spawn itself failed
+    /// (e.g. requested provider's binary not on PATH). Pre-v1.15 this
+    /// case never fired because the only provider was claude and the
+    /// helper short-circuited unsupported names with `notImplemented`;
+    /// v1.15 split that into a "registry lookup" gate (still
+    /// `notImplemented`) vs. an actual spawn failure (`spawnFailed`).
+    /// The associated value is a UI-suitable detail string ("spawn
+    /// failed" without further context if the helper didn't include
+    /// one).
+    case spawnFailed(detail: String)
+
     public var description: String {
         switch self {
         case .helperNotRunning:    return "helper not running"
@@ -314,6 +357,7 @@ public enum SessionControlError: Error, Equatable, Sendable, CustomStringConvert
         case .approvalNotAllowed:  return "approval not allowed for this session"
         case .approvalCapabilityInvalid: return "approval capability invalid"
         case .approvalLimitReached: return "too many pending approvals"
+        case .spawnFailed(let detail):     return "spawn failed: \(detail)"
         case .invalidResponse(let detail): return "invalid response: \(detail)"
         case .internalError(let detail):   return "internal error: \(detail)"
         }

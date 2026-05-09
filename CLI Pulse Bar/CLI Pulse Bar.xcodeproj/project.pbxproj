@@ -30,6 +30,8 @@
 		A10051 /* LocalModeGuideCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10051 /* LocalModeGuideCard.swift */; };
 		A10052 /* WelcomeModeChoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10052 /* WelcomeModeChoice.swift */; };
 		A10012 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10012 /* Assets.xcassets */; };
+		A10060 /* cli_pulse_helper in Embed Helper Binary */ = {isa = PBXBuildFile; fileRef = B10060 /* cli_pulse_helper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		A10062 /* yyh.CLI-Pulse.helper.plist in Embed Helper LaunchAgent */ = {isa = PBXBuildFile; fileRef = B10062 /* yyh.CLI-Pulse.helper.plist */; };
 		A10020 /* ProviderConfigEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10020 /* ProviderConfigEditor.swift */; };
 		A10021 /* NoAutoFillFields.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10021 /* NoAutoFillFields.swift */; };
 		A20001 /* CLIPulseApp_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20001 /* CLIPulseApp_iOS.swift */; };
@@ -142,6 +144,28 @@
 			name = "Embed Login Items";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CP10001 /* Embed Helper Binary */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Helpers";
+			dstSubfolderSpec = 16;
+			files = (
+				A10060 /* cli_pulse_helper in Embed Helper Binary */,
+			);
+			name = "Embed Helper Binary";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CP10002 /* Embed Helper LaunchAgent */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Library/LaunchAgents";
+			dstSubfolderSpec = 16;
+			files = (
+				A10062 /* yyh.CLI-Pulse.helper.plist in Embed Helper LaunchAgent */,
+			);
+			name = "Embed Helper LaunchAgent";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -168,6 +192,8 @@
 		B10012 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B10013 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B10014 /* CLI_Pulse_Bar.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CLI_Pulse_Bar.entitlements; sourceTree = "<group>"; };
+		B10060 /* cli_pulse_helper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; path = "../HelperSwift/.build/release/cli_pulse_helper"; sourceTree = SOURCE_ROOT; };
+		B10062 /* yyh.CLI-Pulse.helper.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "yyh.CLI-Pulse.helper.plist"; sourceTree = "<group>"; };
 		B10020 /* ProviderConfigEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderConfigEditor.swift; sourceTree = "<group>"; };
 		B10021 /* NoAutoFillFields.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoAutoFillFields.swift; sourceTree = "<group>"; };
 		B20001 /* CLIPulseApp_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIPulseApp_iOS.swift; sourceTree = "<group>"; };
@@ -312,6 +338,8 @@
 				B10012 /* Assets.xcassets */,
 				B10013 /* Info.plist */,
 				B10014 /* CLI_Pulse_Bar.entitlements */,
+				B10060 /* cli_pulse_helper */,
+				B10062 /* yyh.CLI-Pulse.helper.plist */,
 			);
 			path = "CLI Pulse Bar";
 			sourceTree = "<group>";
@@ -412,6 +440,9 @@
 				F10002 /* Sources */,
 				D10001 /* Frameworks */,
 				F10003 /* Resources */,
+				SH10001 /* Build Helper Binary (Swift) */,
+				CP10001 /* Embed Helper Binary */,
+				CP10002 /* Embed Helper LaunchAgent */,
 				CP60001 /* Embed Login Items */,
 			);
 			buildRules = (
@@ -594,6 +625,26 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		SH10001 /* Build Helper Binary (Swift) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../HelperSwift/Package.swift",
+			);
+			name = "Build Helper Binary (Swift)";
+			outputPaths = (
+				"$(SRCROOT)/../HelperSwift/.build/release/cli_pulse_helper",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"$SRCROOT/../scripts/build_helper_swift.sh\"";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		F10002 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -746,7 +797,7 @@
 				DEVELOPMENT_TEAM = KHMK6Q3L3K;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_OPTIMIZATION_LEVEL = 0;
@@ -799,7 +850,7 @@
 				DEVELOPMENT_TEAM = KHMK6Q3L3K;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
@@ -822,7 +873,7 @@
 				CODE_SIGN_ENTITLEMENTS = "CLI Pulse Bar/CLI_Pulse_Bar.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "CLI Pulse Bar/Info.plist";
@@ -830,7 +881,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.14.0;
+				MARKETING_VERSION = 1.15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -847,7 +898,7 @@
 				CODE_SIGN_ENTITLEMENTS = "CLI Pulse Bar/CLI_Pulse_Bar.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "CLI Pulse Bar/Info.plist";
@@ -855,7 +906,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.14.0;
+				MARKETING_VERSION = 1.15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -871,7 +922,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "CLI Pulse Bar iOS/CLI_Pulse_iOS.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "CLI Pulse Bar iOS/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -879,7 +930,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.14.0;
+				MARKETING_VERSION = 1.15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse";
 				PRODUCT_NAME = "CLI Pulse";
 				SDKROOT = iphoneos;
@@ -898,7 +949,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "CLI Pulse Bar iOS/CLI_Pulse_iOS.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "CLI Pulse Bar iOS/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -906,7 +957,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.14.0;
+				MARKETING_VERSION = 1.15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse";
 				PRODUCT_NAME = "CLI Pulse";
 				SDKROOT = iphoneos;
@@ -926,14 +977,14 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "CLI Pulse Bar Watch/CLI_Pulse_Watch.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "CLI Pulse Bar Watch/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.14.0;
+				MARKETING_VERSION = 1.15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse.watchkitapp";
 				PRODUCT_NAME = "CLI Pulse Watch";
 				SDKROOT = watchos;
@@ -953,14 +1004,14 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "CLI Pulse Bar Watch/CLI_Pulse_Watch.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "CLI Pulse Bar Watch/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.14.0;
+				MARKETING_VERSION = 1.15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse.watchkitapp";
 				PRODUCT_NAME = "CLI Pulse Watch";
 				SDKROOT = watchos;
@@ -981,7 +1032,7 @@
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = "CLI Pulse Widgets/CLI_Pulse_Widgets.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "CLI Pulse Widgets/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -990,7 +1041,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.14.0;
+				MARKETING_VERSION = 1.15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse.widgets";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1009,7 +1060,7 @@
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = "CLI Pulse Widgets/CLI_Pulse_Widgets.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "CLI Pulse Widgets/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -1018,7 +1069,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.14.0;
+				MARKETING_VERSION = 1.15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse.widgets";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1037,7 +1088,7 @@
 				CODE_SIGN_ENTITLEMENTS = CLIPulseHelper/CLIPulseHelper.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -1046,7 +1097,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.14.0;
+				MARKETING_VERSION = 1.15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse.helper";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1062,7 +1113,7 @@
 				CODE_SIGN_ENTITLEMENTS = CLIPulseHelper/CLIPulseHelper.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -1071,7 +1122,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.14.0;
+				MARKETING_VERSION = 1.15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "yyh.CLI-Pulse.helper";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;

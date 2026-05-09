@@ -644,6 +644,56 @@ public struct DeviceRecord: Codable, Identifiable, Sendable {
     }
 }
 
+public extension DeviceRecord {
+    /// Remote managed-session support is version-gated because paired
+    /// Macs before helper 1.15 only know how to spawn Claude. Sending
+    /// Codex/Gemini start commands to those helpers creates pending
+    /// cloud rows that can never become running.
+    func supportsManagedSessionProvider(_ provider: String) -> Bool {
+        let normalized = provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized {
+        case "claude":
+            return !helper_version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case "codex", "gemini":
+            return helperVersionAtLeast(major: 1, minor: 15, patch: 0)
+        default:
+            return false
+        }
+    }
+
+    var supportsMultiCLIManagedSessions: Bool {
+        helperVersionAtLeast(major: 1, minor: 15, patch: 0)
+    }
+
+    private func helperVersionAtLeast(major requiredMajor: Int, minor requiredMinor: Int, patch requiredPatch: Int) -> Bool {
+        guard let version = Self.firstSemanticVersion(in: helper_version) else { return false }
+        if version.major != requiredMajor { return version.major > requiredMajor }
+        if version.minor != requiredMinor { return version.minor > requiredMinor }
+        return version.patch >= requiredPatch
+    }
+
+    private static func firstSemanticVersion(in raw: String) -> (major: Int, minor: Int, patch: Int)? {
+        let pattern = #"(\d+)\.(\d+)(?:\.(\d+))?"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(raw.startIndex..<raw.endIndex, in: raw)
+        guard let match = regex.firstMatch(in: raw, range: range),
+              let majorRange = Range(match.range(at: 1), in: raw),
+              let minorRange = Range(match.range(at: 2), in: raw),
+              let major = Int(raw[majorRange]),
+              let minor = Int(raw[minorRange])
+        else { return nil }
+
+        let patch: Int
+        if let patchRange = Range(match.range(at: 3), in: raw),
+           let parsedPatch = Int(raw[patchRange]) {
+            patch = parsedPatch
+        } else {
+            patch = 0
+        }
+        return (major, minor, patch)
+    }
+}
+
 // MARK: - Alert
 
 public struct AlertRecord: Codable, Identifiable, Sendable {

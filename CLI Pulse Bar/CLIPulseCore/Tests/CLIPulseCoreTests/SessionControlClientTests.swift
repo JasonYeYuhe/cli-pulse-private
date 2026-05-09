@@ -49,6 +49,87 @@ final class SessionControlClientTests: XCTestCase {
         )
     }
 
+    // MARK: - v1.15 spawn-failed error wiring (Codex review round 2)
+
+    func testSpawnFailed_descriptionIncludesDetail() {
+        // Pre-fix LocalSessionControlClient ignored `ok: false` from
+        // the helper's start_session reply, optimistically appending a
+        // running session that didn't exist. The fix added a
+        // `.spawnFailed(detail:)` case that the client throws when
+        // `result["ok"] == false`. Pin the description shape so any
+        // future enum change has to update the tests intentionally —
+        // the macOS / iOS UI uses `String(describing:)` to render the
+        // helper's reason inline.
+        let err = SessionControlError.spawnFailed(
+            detail: "helper reported start_session ok=false (provider codex)"
+        )
+        XCTAssertTrue(
+            String(describing: err).contains("spawn failed"),
+            "spawnFailed description must lead with 'spawn failed'; got \(err)"
+        )
+        XCTAssertTrue(
+            String(describing: err).contains("provider codex"),
+            "spawnFailed detail must round-trip into description"
+        )
+    }
+
+    func testSpawnFailed_isNotEqualToOtherCases() {
+        // Equatable conformance is auto-synthesized; pin that the new
+        // case is distinct from the existing `notImplemented` (the
+        // earlier failure mode for "helper rejected this provider")
+        // so a test that asserts notImplemented can't accidentally
+        // pass for an actual spawn failure.
+        XCTAssertNotEqual(
+            SessionControlError.spawnFailed(detail: "x"),
+            SessionControlError.notImplemented
+        )
+        XCTAssertEqual(
+            SessionControlError.spawnFailed(detail: "x"),
+            SessionControlError.spawnFailed(detail: "x")
+        )
+        XCTAssertNotEqual(
+            SessionControlError.spawnFailed(detail: "x"),
+            SessionControlError.spawnFailed(detail: "y")
+        )
+    }
+
+    // MARK: - v1.15 provider availability shape
+
+    func testHello_providerAvailability_defaultsEmpty() {
+        // Existing call sites used the 3-arg init before v1.15. The
+        // new providerAvailability field MUST default to an empty
+        // array so a stale caller (e.g. test stubs that haven't been
+        // updated) keeps compiling without a forced relink.
+        let hello = SessionControlHello(
+            protocolVersion: 1,
+            supportedMethods: ["hello"],
+            capabilities: .iter1Local
+        )
+        XCTAssertEqual(hello.providerAvailability, [])
+    }
+
+    func testHello_providerAvailability_roundTrip() {
+        let hello = SessionControlHello(
+            protocolVersion: 1,
+            supportedMethods: ["hello", "start_session"],
+            capabilities: .iter2bLocal,
+            providerAvailability: ["claude", "codex"]
+        )
+        XCTAssertEqual(hello.providerAvailability, ["claude", "codex"])
+        // Equatable conformance must include providerAvailability —
+        // otherwise picker UI tests that compare against expected
+        // shapes will silently pass on stale data.
+        XCTAssertNotEqual(
+            hello,
+            SessionControlHello(
+                protocolVersion: 1,
+                supportedMethods: ["hello", "start_session"],
+                capabilities: .iter2bLocal,
+                providerAvailability: ["claude"]
+            )
+        )
+    }
+
     func testWireCodeMapping_internalAndBadRequest() {
         XCTAssertEqual(
             SessionControlErrorMapping.error(forWireCode: "internal", message: "boom"),
@@ -112,7 +193,8 @@ final class SessionControlClientTests: XCTestCase {
     /// without branching, AND to assert each method is reachable.
     private final class StubClient: SessionControlClient {
         var helloCallCount = 0
-        var startCalls: [(String?, String?, String?)] = []
+        // v1.15: provider is part of the captured tuple now.
+        var startCalls: [(String, String?, String?, String?)] = []
         var listCallCount = 0
         var stopCalls: [String] = []
 
@@ -142,10 +224,11 @@ final class SessionControlClientTests: XCTestCase {
             return helloResult
         }
 
-        func startClaudeSession(
+        func startManagedSession(
+            provider: String,
             clientLabel: String?, cwdBasename: String?, cwdHmac: String?
         ) async throws -> SessionControlStartResult {
-            startCalls.append((clientLabel, cwdBasename, cwdHmac))
+            startCalls.append((provider, clientLabel, cwdBasename, cwdHmac))
             return startResult
         }
 

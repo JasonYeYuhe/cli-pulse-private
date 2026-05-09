@@ -91,8 +91,10 @@ final class SessionControlIter2ATests: XCTestCase {
         func hello() async throws -> SessionControlHello {
             .init(protocolVersion: 0, supportedMethods: [], capabilities: .iter1Local)
         }
-        func startClaudeSession(clientLabel: String?, cwdBasename: String?, cwdHmac: String?)
-            async throws -> SessionControlStartResult { .init(sessionId: "x") }
+        func startManagedSession(
+            provider: String,
+            clientLabel: String?, cwdBasename: String?, cwdHmac: String?
+        ) async throws -> SessionControlStartResult { .init(sessionId: "x") }
         func listSessions() async throws -> [SessionControlSummary] { [] }
         func stopSession(sessionId: String) async throws {}
     }
@@ -126,8 +128,10 @@ final class SessionControlIter2ATests: XCTestCase {
         func hello() async throws -> SessionControlHello {
             .init(protocolVersion: 1, supportedMethods: ["send_input"], capabilities: .iter2aLocal)
         }
-        func startClaudeSession(clientLabel: String?, cwdBasename: String?, cwdHmac: String?)
-            async throws -> SessionControlStartResult { .init(sessionId: "x") }
+        func startManagedSession(
+            provider: String,
+            clientLabel: String?, cwdBasename: String?, cwdHmac: String?
+        ) async throws -> SessionControlStartResult { .init(sessionId: "x") }
         func listSessions() async throws -> [SessionControlSummary] { summaries }
         func stopSession(sessionId: String) async throws {}
         func sendInput(sessionId: String, payload: String) async throws {

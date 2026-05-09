@@ -37,13 +37,13 @@ final class HelperLifecycleManagerTests: XCTestCase {
     }
 
     func testAgentPlistResourceNameIsBaseFileName() {
-        // Bundle.main.url(forResource:withExtension:) takes the
-        // basename without `.plist`. Pin so a future refactor that
-        // changes the bundled file's name updates both halves.
+        // Keep the resource basename aligned with the final
+        // LaunchAgent plist filename copied into
+        // Contents/Library/LaunchAgents.
         XCTAssertEqual(
             HelperLifecycleManager.plistResourceName,
-            "HelperAgent",
-            "template plist resource name must match the actual file in CLI Pulse Bar/Resources/"
+            "yyh.CLI-Pulse.helper",
+            "LaunchAgent resource basename must match the bundled plist filename without .plist"
         )
     }
 

@@ -79,12 +79,36 @@ _EVENT_PAYLOAD_CAP_CHARS = 4000
 _INFO_PAYLOAD_CAP_CHARS = 1024
 
 
+def _known_provider_names() -> list[str]:
+    """v1.15: list every provider the spawner registry knows about.
+
+    Used in error messages when the manager rejects an unknown provider
+    so the operator log shows what's available. Falls back to the
+    legacy single-provider list when the spawner package isn't
+    importable.
+    """
+    try:
+        from provider_spawners import all_provider_names
+        return all_provider_names()
+    except ImportError:
+        return ["claude"]
+
+
+class _LegacyArgvParamsShim:
+    """Minimal stand-in passed to `ProviderSpawner.argv()` from the
+    backward-compat `_argv_for(provider)` helper. Concrete spawners
+    only read `params.extra_env`, which is empty here.
+    """
+
+    extra_env: dict[str, str] = {}
+
+
 @dataclass
 class SessionStartParams:
     """Inputs for `RemoteAgentManager.spawn_session`. All snake_case."""
 
     session_id: str
-    provider: str                              # Always 'claude' in iter 1
+    provider: str                              # 'claude' | 'codex' | 'gemini'
     cwd: str = ""                              # Helper-resolvable path; '' → CWD
     cwd_hmac: str | None = None
     client_label: str | None = None
@@ -254,13 +278,20 @@ class RemoteAgentManager:
             )
             return True
 
-        argv = self._argv_for(params.provider)
-        if argv is None:
+        # v1.15: per-provider spawner registry. Returns None for unknown
+        # providers (legacy `_argv_for` only knew `claude`); the
+        # registry is a superset that lets us add Codex/Gemini without
+        # touching this method again.
+        spawner = self._spawner_for(params.provider)
+        if spawner is None:
             logger.warning(
-                "spawn_session: provider %s is not supported in iter 1",
+                "spawn_session: provider %s has no registered spawner "
+                "(known: %s)",
                 params.provider,
+                ", ".join(_known_provider_names()),
             )
             return False
+        argv = spawner.argv(params)
 
         # Phase 3 Iter 2B: register the session in the approval registry
         # BEFORE spawn so the env we pass to the child carries a valid
@@ -650,13 +681,22 @@ class RemoteAgentManager:
         except (json.JSONDecodeError, TypeError, ValueError):
             return False, "invalid start payload"
 
-        if provider != "claude":
-            return False, f"provider {provider!r} not supported in iter 1"
+        # v1.15: any provider with a registered spawner is acceptable.
+        # `_spawn_session_impl` does the actual `_spawner_for` lookup and
+        # rejects unknown ones with a `kind='info'` event; here we only
+        # surface the gate-level rejection text, which the SQL gate
+        # uses to flip the row to `errored`.
+        if self._spawner_for(provider) is None:
+            return (
+                False,
+                f"provider {provider!r} not supported on this helper "
+                f"(known: {', '.join(_known_provider_names())})",
+            )
 
-        # iter 1: spawn at $HOME (or PWD if HOME is unset). cwd_basename
-        # is metadata-only — we don't try to resolve it to a full path
-        # because that would require the helper to know about the user's
-        # project layout, which is outside Phase 1's privacy posture.
+        # cwd_basename is metadata-only — we don't try to resolve it to
+        # a full path because that would require the helper to know
+        # about the user's project layout, which is outside Phase 1's
+        # privacy posture. Spawn at $HOME (or PWD if HOME is unset).
         params = SessionStartParams(
             session_id=session_id,
             provider=provider,
@@ -794,11 +834,19 @@ class RemoteAgentManager:
     # ── local UDS entry points (Phase 3 Iter 1) ──────────────
 
     def local_start_claude_session(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Start a new managed Claude session on behalf of the local
-        macOS app. The UDS server submits this through the executor
-        (so this body always runs on the writer thread); we generate
-        the session id here, spawn the PTY, and return the id back
-        for the client to track.
+        """Start a new managed session on behalf of the local macOS
+        app. The UDS server submits this through the executor (so this
+        body always runs on the writer thread); we generate the session
+        id here, spawn the PTY, and return the id back for the client
+        to track.
+
+        v1.15: name kept as `local_start_claude_session` for
+        back-compat with HelperKit / Swift call sites, but the
+        `payload['provider']` is now honored — Claude was the only
+        v1.13/v1.14 option, but this path accepts the full registry
+        (claude / codex / gemini) and forwards the choice to
+        `SessionStartParams`. Codex review 2026-05-08 caught the
+        previous hardcoded-claude bug.
 
         Note: we do NOT round-trip through Supabase to "create the
         pending row" first, because that's the latency the local
@@ -817,9 +865,16 @@ class RemoteAgentManager:
         session_id = str(uuid.uuid4())
         client_label = payload.get("client_label")
         cwd_hmac = payload.get("cwd_hmac")
+        # v1.15: read provider from payload (defaulting to claude for
+        # callers older than v1.15 that omit the field). The UDS
+        # server has already validated it against the spawner
+        # registry; here we just plumb it through.
+        provider = payload.get("provider") or "claude"
+        if not isinstance(provider, str) or not provider:
+            provider = "claude"
         params = SessionStartParams(
             session_id=session_id,
-            provider="claude",
+            provider=provider,
             cwd="",
             cwd_hmac=cwd_hmac if isinstance(cwd_hmac, str) else None,
             client_label=client_label if isinstance(client_label, str) else None,
@@ -895,10 +950,61 @@ class RemoteAgentManager:
     # ── helpers ──────────────────────────────────────────────
 
     def _argv_for(self, provider: str) -> list[str] | None:
-        """Resolve argv for a provider. iter 1: claude only."""
-        if provider == "claude":
-            return list(self.CLAUDE_ARGV)
-        return None
+        """Backwards-compatible alias retained for older callers + tests.
+
+        Use `_spawner_for(...)` for new code. v1.15+: argv resolution
+        lives in `helper/provider_spawners/<provider>.py`. Honors the
+        same env-override knobs (`CLI_PULSE_<PROVIDER>_ARGV0`).
+        """
+        spawner = self._spawner_for(provider)
+        if spawner is None:
+            return None
+        # Pass a None-equivalent params shim — the legacy `_argv_for`
+        # caller had no params at all. Concrete spawners only read
+        # `params.extra_env`, which gracefully reads as empty for the
+        # legacy shim.
+        return list(spawner.argv(_LegacyArgvParamsShim()))
+
+    def _spawner_for(self, provider: str):
+        """v1.15: resolve a `ProviderSpawner` for the given provider
+        name. Returns None for unknown providers; caller logs +
+        info-events.
+        """
+        # Lazy import — keeps this module importable on hosts where the
+        # spawner package isn't on the path (e.g. legacy tests using
+        # `sys.path = ['helper']` with no package init traversal).
+        try:
+            from provider_spawners import get_spawner
+        except ImportError:  # pragma: no cover — defensive
+            return self._legacy_claude_spawner_for(provider)
+        return get_spawner(provider)
+
+    def _legacy_claude_spawner_for(self, provider: str):
+        """Fallback used only when the `helper.provider_spawners`
+        package is not importable (extremely old test rigs). Returns a
+        minimal anonymous spawner-shaped object that exposes argv()
+        and reproduces the pre-v1.15 behavior for the `claude`
+        provider.
+        """
+        if provider != "claude":
+            return None
+
+        class _LegacyClaudeSpawner:
+            name = "claude"
+
+            def argv(self, params):  # noqa: ARG002
+                return list(RemoteAgentManager.CLAUDE_ARGV)
+
+            def env_overrides(self, params):  # noqa: ARG002
+                return {}
+
+            def is_available(self):
+                return True
+
+            def supports_remote_approval(self):
+                return True
+
+        return _LegacyClaudeSpawner()
 
     def _build_env(
         self,

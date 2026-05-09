@@ -387,7 +387,39 @@ def test_dispatch_unknown_kind_marks_failed():
     assert "explode" in (completes[0]["p_error"] or "")
 
 
-def test_dispatch_start_rejects_non_claude_provider():
+def test_dispatch_start_rejects_unknown_provider():
+    """v1.15 (was: `_rejects_non_claude_provider`): only rejects
+    providers that have NO registered spawner. Claude / Codex / Gemini
+    are all accepted. Use a clearly-bogus name to assert the
+    rejection path still fires for the unsupported case.
+    """
+    cmd_id = str(uuid.uuid4())
+    sid = str(uuid.uuid4())
+
+    def pull_commands(_params):
+        return [{
+            "id": cmd_id,
+            "session_id": sid,
+            "kind": "start",
+            "payload": _start_payload(provider="totally-not-a-cli"),
+        }]
+
+    mgr, transport, log = _make_manager({
+        "remote_helper_pull_commands": pull_commands,
+    })
+    mgr.tick()
+
+    starts = [c for c in transport.calls if c[0] == "start"]
+    assert starts == []  # spawn refused
+    completes = [p for n, p in log if n == "remote_helper_complete_command"]
+    assert completes and completes[0]["p_status"] == "failed"
+
+
+def test_dispatch_start_accepts_codex_provider():
+    """v1.15: codex is now a first-class spawnable provider. argv
+    resolves to ['codex'] and the spawn proceeds (transport stub
+    captures it without actually exec'ing).
+    """
     cmd_id = str(uuid.uuid4())
     sid = str(uuid.uuid4())
 
@@ -405,9 +437,39 @@ def test_dispatch_start_rejects_non_claude_provider():
     mgr.tick()
 
     starts = [c for c in transport.calls if c[0] == "start"]
-    assert starts == []  # spawn refused
-    completes = [p for n, p in log if n == "remote_helper_complete_command"]
-    assert completes and completes[0]["p_status"] == "failed"
+    assert len(starts) == 1, f"expected 1 spawn for codex, got {starts}"
+    assert starts[0][1]["argv"] == ["codex"], (
+        f"argv must be ['codex'], got {starts[0][1]['argv']}"
+    )
+
+
+def test_dispatch_start_accepts_gemini_provider_default():
+    """v1.15: gemini accepted; default argv is ['gemini'] (no --yolo).
+    The opt-in YOLO flag is exercised separately.
+    """
+    cmd_id = str(uuid.uuid4())
+    sid = str(uuid.uuid4())
+
+    def pull_commands(_params):
+        return [{
+            "id": cmd_id,
+            "session_id": sid,
+            "kind": "start",
+            "payload": _start_payload(provider="gemini"),
+        }]
+
+    mgr, transport, log = _make_manager({
+        "remote_helper_pull_commands": pull_commands,
+    })
+    mgr.tick()
+
+    starts = [c for c in transport.calls if c[0] == "start"]
+    assert len(starts) == 1
+    # Default: NO --yolo. The iOS picker has to opt the user in
+    # explicitly via extra_env / params.extra_env.
+    assert starts[0][1]["argv"] == ["gemini"], (
+        f"default gemini argv must omit --yolo, got {starts[0][1]['argv']}"
+    )
 
 
 def test_shutdown_terminates_running_sessions():

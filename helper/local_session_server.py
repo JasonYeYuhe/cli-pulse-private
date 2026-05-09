@@ -753,6 +753,24 @@ class LocalSessionServer:
                     "version_mismatch",
                     f"helper speaks protocol {PROTOCOL_VERSION}, client requested {requested}",
                 )
+            # v1.15: include the list of providers whose CLI binary
+            # the helper can actually spawn on this host. The macOS /
+            # iOS spawn picker uses this to gray out unavailable
+            # providers in the dropdown so users don't try to start a
+            # Codex session on a Mac that doesn't have Codex installed.
+            # Falls back to a defensive empty list rather than raising,
+            # so a stale `provider_spawners` import doesn't break the
+            # whole hello reply.
+            try:
+                # Bare import (no `helper.` prefix) — CI runs pytest
+                # with helper/ as the working directory, and the helper
+                # daemon itself is invoked from within the helper/ dir
+                # too, so the package-qualified path does not resolve
+                # in either runtime.
+                from provider_spawners import available_providers
+                provider_availability = list(available_providers())
+            except Exception:  # noqa: BLE001
+                provider_availability = ["claude"]
             return {
                 "protocol_version": PROTOCOL_VERSION,
                 "supported_methods": list(SUPPORTED_METHODS),
@@ -773,6 +791,10 @@ class LocalSessionServer:
                     "subscribe_events": self._event_broker is not None,
                     "approvals": self._approval_registry is not None,
                 },
+                # v1.15: array of installed providers (subset of
+                # ['claude','codex','gemini']). UI uses this to disable
+                # menu items for providers whose binary is missing.
+                "provider_availability": provider_availability,
             }
 
         if method == "ping":
@@ -807,10 +829,21 @@ class LocalSessionServer:
             provider = params.get("provider", "claude")
             if not isinstance(provider, str) or not provider:
                 raise _RequestError("bad_request", "'provider' must be a string")
-            if provider != "claude":
+            # v1.15: accept any provider whose helper-side spawner
+            # exists. The check uses the same registry as the remote
+            # path so the two surfaces stay in lockstep — codex review
+            # 2026-05-08 caught the local rejection bug where the
+            # macOS picker would happily send `codex` and the helper
+            # would refuse it with `not_implemented`.
+            try:
+                from provider_spawners import get_spawner
+                allow_provider = get_spawner(provider) is not None
+            except Exception:  # noqa: BLE001
+                allow_provider = (provider == "claude")
+            if not allow_provider:
                 raise _RequestError(
                     "not_implemented",
-                    f"provider {provider!r} not supported in this iteration",
+                    f"provider {provider!r} not supported by this helper",
                 )
             client_label = params.get("client_label")
             cwd_basename = params.get("cwd_basename") or ""

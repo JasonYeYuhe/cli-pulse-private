@@ -284,7 +284,7 @@ def sync(_: argparse.Namespace) -> None:
             "grouping_key": f"{item.type}:{item.related_provider or 'system'}",
             "suppression_key": f"{item.type}:{item.related_session_id or 'global'}",
         }
-        for item in collect_alerts(collected_sessions, device_snapshot)
+        for item in collect_alerts(collected_sessions, device_snapshot, device_id=config.device_id)
     ]
 
     provider_quotas = estimate_provider_quotas(collected_sessions)
@@ -683,7 +683,10 @@ def main() -> None:
     pair_parser.add_argument("--device-name")
     pair_parser.add_argument("--device-type", default="Mac")
     pair_parser.add_argument("--system", default="macOS")
-    pair_parser.add_argument("--helper-version", default="0.1.0")
+    # v1.15 multi-CLI: pair default must be ≥ 1.15.0 so newly-paired
+    # Macs don't trip the iOS / macOS picker's version gate. Existing
+    # paired Macs get bumped via heartbeat (system_collector.HELPER_VERSION).
+    pair_parser.add_argument("--helper-version", default="1.15.0")
     pair_parser.set_defaults(func=pair)
 
     heartbeat_parser = subparsers.add_parser("heartbeat", help="send one heartbeat")

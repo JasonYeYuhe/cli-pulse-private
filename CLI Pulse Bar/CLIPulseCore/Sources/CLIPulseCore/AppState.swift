@@ -384,6 +384,13 @@ public final class AppState: ObservableObject {
     /// the iter-1 server; iter 2A may bump it.
     @Published public var localProtocolVersion: Int = 0
 
+    /// v1.15: subset of `["claude","codex","gemini"]` the helper can
+    /// actually spawn on this Mac, reported in the `hello` reply.
+    /// Empty when the helper hasn't been upgraded to v1.15 yet — the
+    /// spawn picker treats empty as "unknown, allow all" so users on a
+    /// rolling-out helper aren't blocked from spawning Claude.
+    @Published public var localProviderAvailability: [String] = []
+
     /// Last error string from any local-control call, surfaced inline
     /// in the Sessions UI when non-nil. Cleared on a successful
     /// `refreshLocalSessionControlState`.

@@ -126,12 +126,31 @@ struct iOSSessionsTab: View {
     private var managedSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Managed Claude sessions")
+                Text(ProviderDisplay.managedSectionHeader)
                     .font(.headline)
                 Spacer()
                 if state.remoteControlEnabled {
-                    Button {
-                        Task { await openManagedClaudeSession() }
+                    // v1.15: provider picker so iOS users can spawn
+                    // Codex / Gemini in addition to Claude.
+                    Menu {
+                        Button {
+                            Task { await openManagedClaudeSession(provider: "claude") }
+                        } label: {
+                            Label("Claude", systemImage: "sparkles")
+                        }
+                        .disabled(!canStartManagedProvider("claude"))
+                        Button {
+                            Task { await openManagedClaudeSession(provider: "codex") }
+                        } label: {
+                            Label("Codex", systemImage: "chevron.left.slash.chevron.right")
+                        }
+                        .disabled(!canStartManagedProvider("codex"))
+                        Button {
+                            Task { await openManagedClaudeSession(provider: "gemini") }
+                        } label: {
+                            Label("Gemini", systemImage: "diamond")
+                        }
+                        .disabled(!canStartManagedProvider("gemini"))
                     } label: {
                         Label("New", systemImage: "plus.circle.fill")
                     }
@@ -142,17 +161,23 @@ struct iOSSessionsTab: View {
             if !state.remoteControlEnabled {
                 hint(icon: "lock.shield",
                      text: "Remote Control is off. Turn it on in Settings → Privacy.")
-            } else if state.remoteSessions.isEmpty {
-                hint(icon: "terminal.fill",
-                     text: targetDeviceForStart == nil
-                           ? "No paired Mac with the helper installed."
-                           : "Tap New to spawn a Claude session.")
             } else {
-                ForEach(state.remoteSessions) { session in
-                    NavigationLink(value: session) {
-                        managedRow(session)
+                if let upgradeHint = managedProviderUpgradeHint {
+                    hint(icon: "arrow.up.circle",
+                         text: upgradeHint)
+                }
+                if state.remoteSessions.isEmpty {
+                    hint(icon: "terminal.fill",
+                         text: targetDeviceForStart == nil
+                               ? "No paired Mac with the helper installed."
+                               : "Tap New to spawn a managed session.")
+                } else {
+                    ForEach(state.remoteSessions) { session in
+                        NavigationLink(value: session) {
+                            managedRow(session)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
             if let err = state.remoteSessionsError {
@@ -165,9 +190,12 @@ struct iOSSessionsTab: View {
         let pending = state.remotePendingApprovals.first { $0.session_id == session.id }
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Image(systemName: "brain.head.profile")
-                    .foregroundStyle(PulseTheme.providerColor("Claude"))
-                Text(session.client_label ?? "Claude session")
+                // v1.15 round-4: per-provider icon + tint instead of
+                // hardcoded brain/Claude. Codex/Gemini rows had been
+                // showing as orange Claude rows on iOS.
+                Image(systemName: ProviderDisplay.iconSymbol(for: session.provider))
+                    .foregroundStyle(ProviderDisplay.color(for: session.provider))
+                Text(session.client_label ?? ProviderDisplay.defaultLabel(for: session.provider))
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                 Spacer()
@@ -197,8 +225,11 @@ struct iOSSessionsTab: View {
         .background(PulseTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(
+            // v1.15 round-4: card border tints to match the row's
+            // actual provider, so Codex rows get the codex blue and
+            // Gemini rows get the gemini hue rather than orange.
             RoundedRectangle(cornerRadius: 10)
-                .stroke(PulseTheme.providerColor("Claude").opacity(0.2), lineWidth: 1)
+                .stroke(ProviderDisplay.color(for: session.provider).opacity(0.2), lineWidth: 1)
         )
     }
 
@@ -285,7 +316,7 @@ struct iOSSessionsTab: View {
     private var sessionList: some View {
         List {
             if state.remoteControlEnabled || !state.remoteSessions.isEmpty {
-                Section("Managed Claude sessions") {
+                Section(ProviderDisplay.managedSectionHeader) {
                     // Error banner (when RC is on) — render regardless
                     // of whether the list is empty. Without this, a
                     // failed `remote_app_list_sessions` (e.g. 404 on
@@ -299,6 +330,11 @@ struct iOSSessionsTab: View {
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
+                    if let upgradeHint = managedProviderUpgradeHint {
+                        Text(upgradeHint)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     if state.remoteSessions.isEmpty {
                         Text(targetDeviceForStart == nil
                              ? "No paired Mac with the helper installed."
@@ -308,11 +344,13 @@ struct iOSSessionsTab: View {
                     } else {
                         ForEach(state.remoteSessions) { session in
                             HStack(spacing: 10) {
-                                Image(systemName: "brain.head.profile")
-                                    .foregroundStyle(PulseTheme.providerColor("Claude"))
+                                // v1.15 round-4: per-provider glyph
+                                // instead of hardcoded brain/Claude.
+                                Image(systemName: ProviderDisplay.iconSymbol(for: session.provider))
+                                    .foregroundStyle(ProviderDisplay.color(for: session.provider))
                                     .frame(width: 24)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(session.client_label ?? "Claude session")
+                                    Text(session.client_label ?? ProviderDisplay.defaultLabel(for: session.provider))
                                         .font(.subheadline.weight(.medium))
                                         .lineLimit(1)
                                     Text(session.status)
@@ -379,8 +417,26 @@ struct iOSSessionsTab: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if state.remoteControlEnabled {
-                    Button {
-                        Task { await openManagedClaudeSession() }
+                    // v1.15: provider picker, mirrors managedSection.
+                    Menu {
+                        Button {
+                            Task { await openManagedClaudeSession(provider: "claude") }
+                        } label: {
+                            Label("Claude", systemImage: "sparkles")
+                        }
+                        .disabled(!canStartManagedProvider("claude"))
+                        Button {
+                            Task { await openManagedClaudeSession(provider: "codex") }
+                        } label: {
+                            Label("Codex", systemImage: "chevron.left.slash.chevron.right")
+                        }
+                        .disabled(!canStartManagedProvider("codex"))
+                        Button {
+                            Task { await openManagedClaudeSession(provider: "gemini") }
+                        } label: {
+                            Label("Gemini", systemImage: "diamond")
+                        }
+                        .disabled(!canStartManagedProvider("gemini"))
                     } label: {
                         Label("New", systemImage: "plus.circle.fill")
                     }
@@ -416,17 +472,50 @@ struct iOSSessionsTab: View {
             .first
     }
 
-    private func openManagedClaudeSession() async {
+    private func openManagedClaudeSession(provider: String = "claude") async {
         guard let device = targetDeviceForStart else { return }
+        guard device.supportsManagedSessionProvider(provider) else {
+            state.remoteSessionsError = unsupportedRemoteProviderMessage(provider: provider, device: device)
+            return
+        }
+        // v1.15 round-4: include the picked provider in the stored
+        // client_label so the row in the database reads e.g.
+        // "Codex on MacBook" rather than ambiguously matching the
+        // device name. Pre-fix the iPhone screenshot showed "Claude
+        // on CLI Pulse Helper" for a Codex spawn because the label
+        // was just the device name and the renderer fell back to
+        // Claude defaults.
+        let providerName = ProviderDisplay.displayName(for: provider)
+        let label = "\(providerName) on \(device.name)"
         let id = await state.requestRemoteClaudeSessionStart(
             deviceId: device.id,
+            provider: provider,
             cwdBasename: "",
             cwdHmac: nil,
-            clientLabel: device.name
+            clientLabel: label
         )
         if let id, let session = state.remoteSessions.first(where: { $0.id == id }) {
             selectedManagedSession = session
         }
+    }
+
+    private func canStartManagedProvider(_ provider: String) -> Bool {
+        targetDeviceForStart?.supportsManagedSessionProvider(provider) == true
+    }
+
+    private var managedProviderUpgradeHint: String? {
+        guard let device = targetDeviceForStart,
+              !device.supportsMultiCLIManagedSessions else { return nil }
+        let version = device.helper_version.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = version.isEmpty ? "" : " Current helper: \(version)."
+        return "Codex and Gemini sessions require CLI Pulse Helper 1.15 or later on \(device.name). Claude still works.\(suffix)"
+    }
+
+    private func unsupportedRemoteProviderMessage(provider: String, device: DeviceRecord) -> String {
+        let providerName = ProviderDisplay.displayName(for: provider)
+        let version = device.helper_version.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = version.isEmpty ? "" : " Current helper: \(version)."
+        return "\(providerName) sessions require CLI Pulse Helper 1.15 or later on \(device.name). Update the Mac helper and try again.\(suffix)"
     }
 
     private func hint(icon: String, text: String) -> some View {
@@ -497,6 +586,18 @@ struct ManagedSessionDetailView: View {
     /// they're equal by construction (the fallback shares the same id).
     private var currentSession: RemoteSession {
         state.remoteSessions.first(where: { $0.id == session.id }) ?? session
+    }
+
+    private var providerKey: String {
+        currentSession.provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var footerHelpText: String {
+        let providerName = ProviderDisplay.displayName(for: providerKey)
+        if providerKey == "claude" {
+            return "Free-text input is sent verbatim to the spawned Claude. Claude's own permission prompt fires when it tries to run any tool — those approvals appear above when this session is selected."
+        }
+        return "Free-text input is sent verbatim to the spawned \(providerName). CLI Pulse shows best-effort live output for this managed session."
     }
 
     /// True when we have authoritative evidence the session is no longer
@@ -630,6 +731,32 @@ struct ManagedSessionDetailView: View {
                         .foregroundStyle(.orange)
                 }
 
+                // v1.15 codex review (round 2): the spawn-failure
+                // banner has to live OUTSIDE the `if showOutput` gate
+                // so the user can see "spawn failed: codex binary not
+                // on PATH" even when they haven't toggled live output.
+                // Pre-fix the banner only rendered inside outputPanel
+                // and the events were only polled inside the same
+                // gate, so a cold-start spawn failure was invisible.
+                if let info = latestHelperInfoMessage {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(info.lowercased().contains("fail")
+                                             || info.lowercased().contains("error")
+                                             ? Color.red : Color.blue)
+                        Text(info)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 6)
+                    .background(Color.secondary.opacity(0.04))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+
                 Divider()
 
                 showOutputToggle
@@ -637,13 +764,13 @@ struct ManagedSessionDetailView: View {
                     outputPanel
                 }
 
-                Text("Free-text input is sent verbatim to the spawned Claude. Claude's own permission prompt fires when it tries to run any tool — those approvals appear above when this session is selected.")
+                Text(footerHelpText)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
             .padding()
         }
-        .navigationTitle(currentSession.client_label ?? "Claude session")
+        .navigationTitle(currentSession.client_label ?? ProviderDisplay.defaultLabel(for: currentSession.provider))
         .navigationBarTitleDisplayMode(.inline)
         .task {
             // Detail view owns its own refresh loop because SwiftUI may
@@ -660,12 +787,27 @@ struct ManagedSessionDetailView: View {
                 async let _sessions: () = state.refreshRemoteSessions()
                 async let _approvals: () = state.refreshRemoteApprovals()
                 _ = await (_sessions, _approvals)
-                // iter-2 live tail: only fetch events when the user
-                // has explicitly toggled "Show output" on for this
-                // session. Privacy-visible opt-in — helper writes
-                // events while RC is on, but the app doesn't render
-                // them unless asked.
-                if showOutput {
+                // iter-2 live tail: only POLL events on the fast loop
+                // when the user has explicitly toggled "Show output"
+                // on for this session. Privacy-visible opt-in —
+                // helper writes events while RC is on, but the app
+                // doesn't keep refreshing them unless asked.
+                //
+                // v1.15 codex review (round 2): we DO fetch once on
+                // mount (and again whenever the session reaches a
+                // terminal status) so the spawn-failure banner has
+                // data for the cold-start case where the user never
+                // expanded live output. Polling stays gated.
+                // One-shot fetch on mount + on transition to ended,
+                // so the spawn-failure banner sees data even when
+                // showOutput stayed off the whole time. `sessionEnded`
+                // covers errored/stopped/disappeared rows; cheap
+                // because `refreshRemoteSessionEvents` early-outs when
+                // the cache is fresh.
+                let needsOneShotFetch =
+                    !hasRefreshedAtLeastOnce
+                    || (!showOutput && sessionEnded)
+                if showOutput || needsOneShotFetch {
                     await state.refreshRemoteSessionEvents(
                         sessionId: currentSession.id
                     )
@@ -709,6 +851,25 @@ struct ManagedSessionDetailView: View {
         }
     }
 
+    /// v1.15 codex review fix: when the helper rejects a spawn (e.g.
+    /// the picker offered "Codex" but the helper has no codex binary
+    /// on PATH), the only surface that explains why is the helper's
+    /// `kind='info'` event payload. Pre-fix the iOS Sessions panel
+    /// dropped those events on the floor — the user saw an empty
+    /// ended session and had no actionable detail. Returns the most
+    /// recent info-event payload for `currentSession`, or nil if no
+    /// info events have arrived. The macOS panel already shows
+    /// stdout/stderr inline; this banner specifically targets the
+    /// iOS surface for spawn-time failure detail.
+    private var latestHelperInfoMessage: String? {
+        let events = state.remoteSessionEvents[currentSession.id] ?? []
+        guard let payload = events
+            .last(where: { $0.kind == "info" })?
+            .payload else { return nil }
+        let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     @ViewBuilder
     private var outputPanel: some View {
         let events = state.remoteSessionEvents[currentSession.id] ?? []
@@ -721,8 +882,16 @@ struct ManagedSessionDetailView: View {
             .filter { $0.kind == "stdout" || $0.kind == "stderr" }
             .map { $0.payload }
         let stdoutEventCount = stdoutPayloads.count
-        let transcript = ClaudeConversationPreviewFormatter
-            .format(eventPayloads: stdoutPayloads)
+        // v1.15: route by provider so Codex / Gemini sessions get their
+        // own marker recognition + chrome filter.
+        let providerKey = currentSession.provider
+        let transcript = ConversationPreviewRouter.format(
+            provider: providerKey, eventPayloads: stdoutPayloads
+        )
+        let transcriptFallback =
+            ConversationPreviewRouter.emptyFallback(for: providerKey)
+        let transcriptHeader =
+            ConversationPreviewRouter.headerLabel(for: providerKey)
         // 2026-05-08 (user-reported 3rd-turn bug): use the latest event's
         // monotonic id as the scroll trigger, not `events.count`. Once the
         // ring buffer hits cap (`AppState.remoteSessionEventsCap`), count
@@ -735,7 +904,7 @@ struct ManagedSessionDetailView: View {
                 Image(systemName: "bubble.left.and.bubble.right")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                Text("Claude conversation preview")
+                Text(transcriptHeader)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                 Spacer()
@@ -759,7 +928,7 @@ struct ManagedSessionDetailView: View {
                             Text(transcript)
                                 .font(.callout.monospaced())
                                 .foregroundStyle(
-                                    transcript == ClaudeConversationPreviewFormatter.emptyFallback
+                                    transcript == transcriptFallback
                                         ? Color.secondary : Color.primary
                                 )
                                 .textSelection(.enabled)
@@ -779,6 +948,12 @@ struct ManagedSessionDetailView: View {
                 }
             }
 
+            // Note: round-2 had a kind=='info' banner here too, but
+            // round-3 deduplicated — the banner now lives in the
+            // parent body (above the showOutputToggle) so it renders
+            // regardless of the toggle. Keeping a copy here would
+            // double-render when the user opens Show output.
+
             // Diagnostic strip: when the formatter returns the empty
             // fallback but stdout events ARE flowing, surface the raw
             // event count + a "Refresh" button so the user knows the
@@ -786,7 +961,7 @@ struct ManagedSessionDetailView: View {
             // pull markers (Claude TUI scrolled them off, payload
             // truncation, etc.). Also gives a recovery action.
             if !events.isEmpty
-               && transcript == ClaudeConversationPreviewFormatter.emptyFallback {
+               && transcript == transcriptFallback {
                 HStack(spacing: 6) {
                     Image(systemName: "info.circle")
                         .font(.caption2)
@@ -921,15 +1096,20 @@ struct ManagedSessionDetailView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "brain.head.profile")
+        // v1.15 round-4: detail-view header now reflects the session's
+        // actual provider. Pre-fix every row showed the orange brain
+        // glyph + Claude tint regardless of whether it was Codex or
+        // Gemini, which the user reported as confusing.
+        let providerKey = currentSession.provider
+        return HStack(spacing: 12) {
+            Image(systemName: ProviderDisplay.iconSymbol(for: providerKey))
                 .font(.title2)
-                .foregroundStyle(PulseTheme.providerColor("Claude"))
+                .foregroundStyle(ProviderDisplay.color(for: providerKey))
                 .frame(width: 44, height: 44)
-                .background(PulseTheme.providerColor("Claude").opacity(0.12))
+                .background(ProviderDisplay.color(for: providerKey).opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 4) {
-                Text(currentSession.client_label ?? "Claude session")
+                Text(currentSession.client_label ?? ProviderDisplay.defaultLabel(for: providerKey))
                     .font(.title3.weight(.bold))
                 HStack(spacing: 8) {
                     Text(displayStatus)

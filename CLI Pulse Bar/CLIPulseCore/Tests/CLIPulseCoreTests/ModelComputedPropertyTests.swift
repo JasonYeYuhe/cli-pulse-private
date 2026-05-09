@@ -153,4 +153,35 @@ final class ModelComputedPropertyTests: XCTestCase {
     func testDeviceStatusUnknownReturnsNil() {
         XCTAssertNil(makeDevice(status: "Unreachable").deviceStatus)
     }
+
+    func testDeviceManagedProviderSupportVersionGate() {
+        let oldHelper = DeviceRecord(
+            id: "old", name: "Old Mac", type: "Mac", system: "macOS",
+            status: "Online", last_sync_at: nil, helper_version: "1.14.0",
+            current_session_count: 0, cpu_usage: nil, memory_usage: nil
+        )
+        XCTAssertTrue(oldHelper.supportsManagedSessionProvider("claude"))
+        XCTAssertFalse(oldHelper.supportsManagedSessionProvider("codex"))
+        XCTAssertFalse(oldHelper.supportsManagedSessionProvider("gemini"))
+
+        let newHelper = DeviceRecord(
+            id: "new", name: "New Mac", type: "Mac", system: "macOS",
+            status: "Online", last_sync_at: nil, helper_version: "v1.15.0 build 53",
+            current_session_count: 0, cpu_usage: nil, memory_usage: nil
+        )
+        XCTAssertTrue(newHelper.supportsManagedSessionProvider("claude"))
+        XCTAssertTrue(newHelper.supportsManagedSessionProvider("codex"))
+        XCTAssertTrue(newHelper.supportsManagedSessionProvider("gemini"))
+    }
+
+    func testDeviceManagedProviderSupportRejectsUnknownOrUnparseableHelperVersions() {
+        let localSentinel = DeviceRecord(
+            id: "local", name: "Local", type: "Mac", system: "macOS",
+            status: "Online", last_sync_at: nil, helper_version: "local",
+            current_session_count: 0, cpu_usage: nil, memory_usage: nil
+        )
+        XCTAssertTrue(localSentinel.supportsManagedSessionProvider("claude"))
+        XCTAssertFalse(localSentinel.supportsManagedSessionProvider("codex"))
+        XCTAssertFalse(localSentinel.supportsManagedSessionProvider("shell"))
+    }
 }

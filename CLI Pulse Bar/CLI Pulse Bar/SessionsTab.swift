@@ -25,6 +25,11 @@ struct SessionsTab: View {
     /// the user sees that something actually changed instead of
     /// only the banner disappearing.
     @State private var lastInstallHookResult: InstallClaudeHookResult?
+    /// Remote-routed start ids that may disappear from the active
+    /// sessions RPC if the helper immediately marks them errored.
+    /// Keep them long enough to fetch and render the helper's info
+    /// event instead of leaving the UI as a silent pending/start no-op.
+    @State private var pendingRemoteStartIds: Set<String> = []
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
@@ -64,6 +69,7 @@ struct SessionsTab: View {
                 async let _approvals: () = state.refreshRemoteApprovals()
                 async let _local: () = state.refreshLocalSessionControlState()
                 _ = await (_sessions, _approvals, _local)
+                await refreshDisappearedRemoteStartInfo()
                 // Iter 2B: snapshot poll of local pending approvals
                 // is the recovery path when a stream disconnects or
                 // the user wakes the app with the Sessions tab
@@ -154,7 +160,7 @@ struct SessionsTab: View {
 
     private var managedHeader: some View {
         HStack {
-            Text("Managed Claude sessions")
+            Text(ProviderDisplay.managedSectionHeader)
                 .font(.system(size: 14, weight: .bold))
             // Status pill so the user sees local state without
             // having to read logs (Codex review on PR #17).
@@ -163,19 +169,74 @@ struct SessionsTab: View {
             let canStartRemote = state.remoteControlEnabled && targetDeviceForStart != nil
             let canStartLocal = state.canStartLocalManagedSession
             if canStartRemote || canStartLocal {
-                Button {
-                    Task { await openManagedClaudeSession() }
+                // v1.15: pickable Menu for Claude / Codex / Gemini.
+                // The helper advertises which CLIs it can actually
+                // spawn via `localProviderAvailability` (set in
+                // hello).
+                //
+                // Codex review (round 2): the prior empty-fallback
+                // semantic was wrong — empty meant "all three" but
+                // a pre-v1.15 helper only knows Claude. The corrected
+                // semantic: empty list ⇒ the helper is pre-v1.15 (or
+                // the spawner registry import broke); fall back to
+                // CLAUDE-ONLY so we don't gray-bait users into
+                // clicking Codex/Gemini items that the helper will
+                // refuse. Cross-Mac still has no per-provider map, but
+                // it does have helper_version; use that as the hard
+                // compatibility gate until the v1.16 availability
+                // column exists.
+                // IIFE because SwiftUI's @ViewBuilder rejects an
+                // inline if/else assignment block here. Returns a
+                // tuple of (claudeOK, codexOK, geminiOK).
+                let (claudeOK, codexOK, geminiOK): (Bool, Bool, Bool) = {
+                    if !canStartLocal {
+                        guard let device = targetDeviceForStart else {
+                            return (false, false, false)
+                        }
+                        return (
+                            device.supportsManagedSessionProvider("claude"),
+                            device.supportsManagedSessionProvider("codex"),
+                            device.supportsManagedSessionProvider("gemini")
+                        )
+                    }
+                    let avail = state.localProviderAvailability
+                    if avail.isEmpty {
+                        // Local helper but no advertised list ⇒
+                        // pre-v1.15 helper that only knew Claude.
+                        return (true, false, false)
+                    }
+                    return (
+                        avail.contains("claude"),
+                        avail.contains("codex"),
+                        avail.contains("gemini")
+                    )
+                }()
+                Menu {
+                    Button {
+                        Task { await openManagedClaudeSession(provider: "claude") }
+                    } label: {
+                        Label("Claude", systemImage: "sparkles")
+                    }
+                    .disabled(!claudeOK)
+                    Button {
+                        Task { await openManagedClaudeSession(provider: "codex") }
+                    } label: {
+                        Label("Codex", systemImage: "chevron.left.slash.chevron.right")
+                    }
+                    .disabled(!codexOK)
+                    Button {
+                        Task { await openManagedClaudeSession(provider: "gemini") }
+                    } label: {
+                        Label("Gemini", systemImage: "diamond")
+                    }
+                    .disabled(!geminiOK)
                 } label: {
-                    // Codex review: "New local Clau..." was still
-                    // truncating at `.small` width. Shortened to
-                    // "New Local" / "New" — both fit cleanly and the
-                    // `.help(...)` tooltip carries the full meaning.
                     Label(canStartLocal ? "New Local" : "New",
                           systemImage: "plus.circle.fill")
                         .font(.system(size: 11, weight: .medium))
                         .lineLimit(1)
                 }
-                .buttonStyle(.borderedProminent)
+                .menuStyle(.borderlessButton)
                 .controlSize(.small)
                 .help(openManagedHelpText(localAvailable: canStartLocal,
                                           remoteAvailable: canStartRemote))
@@ -299,6 +360,12 @@ struct SessionsTab: View {
             if let err = state.remoteSessionsError {
                 errorHint(err)
             }
+            if let upgradeHint = managedProviderUpgradeHint {
+                inlineHint(icon: "arrow.up.circle", text: upgradeHint)
+            }
+            ForEach(remoteStartFailureMessages, id: \.id) { failure in
+                errorHint(failure.message)
+            }
             if displayed.isEmpty {
                 inlineHint(
                     icon: "terminal.fill",
@@ -395,7 +462,7 @@ struct SessionsTab: View {
 
     private func emptyStateText(localStartAvailable: Bool, remoteUsable: Bool) -> String {
         if localStartAvailable || (remoteUsable && targetDeviceForStart != nil) {
-            return "No managed sessions yet. Click \"Open managed Claude session\" to spawn one."
+            return "No managed sessions yet. Click \"New\" to spawn one."
         }
         return "No paired Mac with the helper installed. Install the helper to open a managed session."
     }
@@ -436,7 +503,7 @@ struct SessionsTab: View {
                 .font(.system(size: 11))
                 .foregroundStyle(PulseTheme.providerColor(row.provider))
             VStack(alignment: .leading, spacing: 2) {
-                Text(row.clientLabel ?? "Claude session")
+                Text(row.clientLabel ?? ProviderDisplay.defaultLabel(for: row.provider))
                     .font(.system(size: 11, weight: .semibold))
                     .lineLimit(1)
                 Text(row.status)
@@ -631,10 +698,26 @@ struct SessionsTab: View {
             hasPendingApproval: hasPendingApproval
         )
         let stopDisabled = isStaleLocal
+        // v1.15 codex review (round 3): pull the latest helper info
+        // event for THIS row so we can surface the spawn-failure
+        // detail above the showOutput gate. Local-routed rows skip
+        // (their info path is the broker, different stream — and the
+        // Local Sessions surface here doesn't render kind=='info'
+        // payloads from the broker yet, so showing them in this banner
+        // would be misleading).
+        let latestInfoMessage: String? = {
+            guard !routesLocally else { return nil }
+            guard let payload = (state.remoteSessionEvents[session.id] ?? [])
+                .last(where: { $0.kind == "info" })?
+                .payload else { return nil }
+            let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }()
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 TextField(
                     promptPlaceholder(
+                        provider: session.provider,
                         isRunning: isRunning,
                         localSendUnsupported: localSendUnsupported,
                         hasPendingApproval: hasPendingApproval
@@ -776,6 +859,30 @@ struct SessionsTab: View {
                 ))
             }
 
+            // v1.15 codex review (round 3): the info-event banner has
+            // to live OUTSIDE the showOutput gate, parity with iOS
+            // round-2 fix. Otherwise the user has no way to see "spawn
+            // failed: codex binary not on PATH" without expanding
+            // live output, and on macOS a remote-routed row can drop
+            // off the active list before the user thinks to expand it.
+            if let info = latestInfoMessage {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(info.lowercased().contains("fail")
+                                         || info.lowercased().contains("error")
+                                         ? Color.red : Color.blue)
+                    Text(info)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.vertical, 3)
+                .padding(.horizontal, 6)
+                .background(Color.secondary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
             if showOutput {
                 outputPanel(for: session)
             }
@@ -783,6 +890,25 @@ struct SessionsTab: View {
         .padding(8)
         .background(Color.accentColor.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+        // v1.15 codex review (round 3): one-shot event fetch when the
+        // row transitions to a terminal state. Pre-fix the macOS
+        // sessions tab only polled events when showOutput=true, so a
+        // remote-routed Codex/Gemini spawn failure was invisible
+        // unless the user happened to expand live output. `.task(id:
+        // session.status)` re-fires whenever the status keying value
+        // changes; we only fetch when entering a terminal state and
+        // the cache is empty so we don't trample fresh polled data.
+        .task(id: session.status) {
+            let lower = session.status.lowercased()
+            let isTerminal = lower == "errored"
+                || lower == "stopped"
+                || lower == "ended"
+            guard isTerminal, !routesLocally else { return }
+            let cached = state.remoteSessionEvents[session.id] ?? []
+            if cached.isEmpty {
+                await state.refreshRemoteSessionEvents(sessionId: session.id)
+            }
+        }
     }
 
     // MARK: - Helpers
@@ -801,29 +927,47 @@ struct SessionsTab: View {
         let stdoutPayloads = events
             .filter { $0.kind == "stdout" || $0.kind == "stderr" }
             .map { $0.payload }
-        // Both paths funnel through the same Claude-aware formatter
-        // so ANSI / CSI / TUI chrome are stripped and the user sees
-        // the same ❯ / ⏺ rendering whether the row came from local
-        // UDS or Supabase. Local previews come from the broker's
-        // already-redacted output_delta payloads. IIFE because the
-        // outer function is `@ViewBuilder` and an if-else assignment
-        // statement would be misinterpreted as a View-producing
-        // branch.
+        // v1.15: route by `session.provider` so Codex / Gemini sessions
+        // get their own marker recognition + chrome filter. Pre-v1.15
+        // claude-only call sites used `ClaudeConversationPreviewFormatter`
+        // directly; the router falls back to claude when the provider
+        // string is unknown so legacy rows keep working.
+        let providerKey = session.provider
+        let transcriptFallback =
+            ConversationPreviewRouter.emptyFallback(for: providerKey)
+        let transcriptHeader =
+            ConversationPreviewRouter.headerLabel(for: providerKey)
+        // Both paths funnel through the same provider-aware router so
+        // ANSI / CSI / TUI chrome are stripped and the user sees a
+        // per-CLI marker rendering whether the row came from local UDS
+        // or Supabase. Local previews come from the broker's already-
+        // redacted output_delta payloads. IIFE because the outer
+        // function is `@ViewBuilder` and an if-else assignment
+        // statement would be misinterpreted as a View-producing branch.
         let transcript: String = {
             if routesLocally {
                 return localPreviewRaw.isEmpty
-                    ? ClaudeConversationPreviewFormatter.emptyFallback
-                    : ClaudeConversationPreviewFormatter.format(eventPayloads: [localPreviewRaw])
+                    ? transcriptFallback
+                    : ConversationPreviewRouter.format(
+                        provider: providerKey,
+                        eventPayloads: [localPreviewRaw]
+                    )
             }
-            return ClaudeConversationPreviewFormatter
-                .format(eventPayloads: stdoutPayloads)
+            return ConversationPreviewRouter.format(
+                provider: providerKey, eventPayloads: stdoutPayloads
+            )
         }()
         let hasContent = routesLocally ? !localPreviewRaw.isEmpty : !events.isEmpty
+        // Note: round-2 added a kind=='info' banner here, but round-3
+        // moved it to the parent `commandBar(for:)` so the banner is
+        // visible without expanding Show output. The duplicate copy
+        // inside outputPanel was removed — keep ONE banner per card.
+
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 9))
                     .foregroundStyle(.tertiary)
-                Text("Claude conversation preview")
+                Text(transcriptHeader)
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                 Spacer()
@@ -843,7 +987,7 @@ struct SessionsTab: View {
                             Text(transcript)
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundStyle(
-                                    transcript == ClaudeConversationPreviewFormatter.emptyFallback
+                                    transcript == transcriptFallback
                                         ? Color.secondary : Color.primary
                                 )
                                 .textSelection(.enabled)
@@ -946,6 +1090,7 @@ struct SessionsTab: View {
     }
 
     private func promptPlaceholder(
+        provider: String,
         isRunning: Bool,
         localSendUnsupported: Bool,
         hasPendingApproval: Bool
@@ -965,7 +1110,11 @@ struct SessionsTab: View {
             // decision and its PTY shows the native prompt.
             return "Resolve the pending permission request first (Approve or Reject)."
         }
-        return "Prompt for Claude…"
+        // v1.15 round-5: provider-aware placeholder. Pre-fix this
+        // hardcoded "Prompt for Claude…" for every row regardless
+        // of the actual session's provider — confusing when the
+        // user just spawned Codex / Gemini.
+        return "Prompt for \(ProviderDisplay.displayName(for: provider))…"
     }
 
     /// Status-line text under the prompt input. Branches on:
@@ -1099,7 +1248,7 @@ struct SessionsTab: View {
             .first
     }
 
-    private func openManagedClaudeSession() async {
+    private func openManagedClaudeSession(provider: String = "claude") async {
         // Decision tree (Codex-reviewed twice):
         //   1. Local fast path available → UDS start. The local
         //      transport ALWAYS targets THIS Mac; `targetDevice
@@ -1119,6 +1268,7 @@ struct SessionsTab: View {
         //   3. Else: nothing (Open button shouldn't have been
         //      visible).
         let newSessionId: String?
+        var startedViaRemote = false
         if state.canStartLocalManagedSession {
             // Local start path: implicitly targets THIS Mac.
             // Trust `canStartLocalManagedSession` (which already
@@ -1126,24 +1276,87 @@ struct SessionsTab: View {
             // && localControlEnabled`); don't add a redundant
             // device-id-equality gate that re-introduces the
             // store-drift bug.
-            let label = "Local Claude session"
+            let label = "Local \(ProviderDisplay.displayName(for: provider)) session"
             newSessionId = await state.requestLocalClaudeSessionStart(
+                provider: provider,
                 clientLabel: label
             )
         } else if state.remoteControlEnabled, let device = targetDeviceForStart {
+            guard device.supportsManagedSessionProvider(provider) else {
+                state.remoteSessionsError = unsupportedRemoteProviderMessage(provider: provider, device: device)
+                return
+            }
+            startedViaRemote = true
+            let providerName = ProviderDisplay.displayName(for: provider)
             newSessionId = await state.requestRemoteClaudeSessionStart(
                 deviceId: device.id,
+                provider: provider,
                 cwdBasename: "",
                 cwdHmac: nil,
-                clientLabel: device.name
+                clientLabel: "\(providerName) on \(device.name)"
             )
         } else {
             newSessionId = nil
         }
         if let id = newSessionId {
+            if startedViaRemote {
+                pendingRemoteStartIds.insert(id)
+            }
             selectedManagedSessionId = id
             promptText = ""
         }
+    }
+
+    private var remoteStartFailureMessages: [(id: String, message: String)] {
+        let activeIds = Set(state.displayedManagedSessions.map(\.id))
+        return pendingRemoteStartIds.compactMap { id in
+            guard !activeIds.contains(id),
+                  let message = latestRemoteInfoMessage(sessionId: id)
+            else { return nil }
+            return (id: id, message: message)
+        }
+        .sorted { $0.id < $1.id }
+    }
+
+    private var managedProviderUpgradeHint: String? {
+        guard !state.canStartLocalManagedSession,
+              state.remoteControlEnabled,
+              let device = targetDeviceForStart,
+              !device.supportsMultiCLIManagedSessions
+        else { return nil }
+        let version = device.helper_version.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = version.isEmpty ? "" : " Current helper: \(version)."
+        return "Codex and Gemini sessions require CLI Pulse Helper 1.15 or later on \(device.name). Claude still works.\(suffix)"
+    }
+
+    @MainActor
+    private func refreshDisappearedRemoteStartInfo() async {
+        guard state.remoteControlEnabled, !pendingRemoteStartIds.isEmpty else { return }
+        let activeIds = Set(state.displayedManagedSessions.map(\.id))
+        for id in pendingRemoteStartIds where !activeIds.contains(id) {
+            let cached = state.remoteSessionEvents[id] ?? []
+            if cached.isEmpty {
+                await state.refreshRemoteSessionEvents(sessionId: id)
+            }
+        }
+        pendingRemoteStartIds = pendingRemoteStartIds.filter { id in
+            activeIds.contains(id) || latestRemoteInfoMessage(sessionId: id) != nil
+        }
+    }
+
+    private func latestRemoteInfoMessage(sessionId: String) -> String? {
+        guard let payload = (state.remoteSessionEvents[sessionId] ?? [])
+            .last(where: { $0.kind == "info" })?
+            .payload else { return nil }
+        let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func unsupportedRemoteProviderMessage(provider: String, device: DeviceRecord) -> String {
+        let providerName = ProviderDisplay.displayName(for: provider)
+        let version = device.helper_version.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = version.isEmpty ? "" : " Current helper: \(version)."
+        return "\(providerName) sessions require CLI Pulse Helper 1.15 or later on \(device.name). Update the Mac helper and try again.\(suffix)"
     }
 
     /// True when this Mac has a paired helper but its UDS socket
@@ -1541,7 +1754,7 @@ struct SessionsTab: View {
                     .font(.system(size: 11, weight: .semibold))
                 Text(state.localControlEnabled
                      ? "Same-device sessions go through the local helper socket — no Supabase round-trip."
-                     : "Off by default. Turn on to spawn and stop same-device Claude sessions through the local helper socket instead of the cloud.")
+                     : "Off by default. Turn on to spawn and stop same-device managed sessions through the local helper socket instead of the cloud.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1591,11 +1804,15 @@ private struct ManagedSessionRow: View {
     private var displayLabel: String {
         let label = session.client_label?.trimmingCharacters(in: .whitespaces) ?? ""
         let device = session.device_name?.trimmingCharacters(in: .whitespaces) ?? ""
-        if label.isEmpty { return "Claude session" }
-        // If label and device are the same string, the second column
-        // would just repeat — collapse to a single line.
+        // v1.15 round-4: provider-aware fallback / "X on <device>"
+        // formatting. Pre-fix this hardcoded "Claude" so a Codex
+        // session with no client_label rendered as "Claude session"
+        // and a Codex row whose label collapsed-with-device-name
+        // rendered as "Claude on Mac" instead of "Codex on Mac".
+        let providerName = ProviderDisplay.displayName(for: session.provider)
+        if label.isEmpty { return "\(providerName) session" }
         if !device.isEmpty && label.caseInsensitiveCompare(device) == .orderedSame {
-            return "Claude on \(device)"
+            return "\(providerName) on \(device)"
         }
         return label
     }
@@ -1610,9 +1827,12 @@ private struct ManagedSessionRow: View {
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 8) {
-                Image(systemName: "brain.head.profile")
+                // v1.15 round-4: per-provider glyph + tint. Pre-fix
+                // every row got the orange Claude brain icon even for
+                // Codex/Gemini.
+                Image(systemName: ProviderDisplay.iconSymbol(for: session.provider))
                     .font(.system(size: 11))
-                    .foregroundStyle(PulseTheme.providerColor("Claude"))
+                    .foregroundStyle(ProviderDisplay.color(for: session.provider))
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(displayLabel)

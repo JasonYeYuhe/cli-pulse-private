@@ -84,6 +84,7 @@ extension AppState {
             self.localHelperReachable = true
             self.localCapabilities = hello.capabilities
             self.localProtocolVersion = hello.protocolVersion
+            self.localProviderAvailability = hello.providerAvailability
             self.localHelperError = nil
         } catch let err as SessionControlError {
             self.localHelperReachable = false
@@ -387,14 +388,22 @@ extension AppState {
         )
     }
 
-    /// Try to start a Claude session via the local UDS fast path.
+    /// Try to start a managed session via the local UDS fast path.
     /// Returns the new session id on success, or nil on any failure
     /// (the caller should fall back to the remote path).
+    ///
+    /// v1.15: `provider` is settable (was hardcoded `"claude"`). The
+    /// helper UDS server already accepts the param via Phase 1's
+    /// spawner registry; we just plumb the user's pick through.
     @MainActor
-    public func requestLocalClaudeSessionStart(clientLabel: String?) async -> String? {
+    public func requestLocalClaudeSessionStart(
+        provider: String = "claude",
+        clientLabel: String?
+    ) async -> String? {
         let client = LocalSessionControlClient()
         do {
-            let result = try await client.startClaudeSession(
+            let result = try await client.startManagedSession(
+                provider: provider,
                 clientLabel: clientLabel,
                 cwdBasename: nil,
                 cwdHmac: nil
@@ -416,7 +425,7 @@ extension AppState {
             if !localManagedSessions.contains(where: { $0.id == result.sessionId }) {
                 localManagedSessions.append(.init(
                     id: result.sessionId,
-                    provider: "claude",
+                    provider: provider,
                     clientLabel: clientLabel,
                     status: "running",
                     controllable: true,

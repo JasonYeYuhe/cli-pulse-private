@@ -379,25 +379,50 @@ public final class LocalSessionControlClient: SessionControlClient {
             subscribeEvents: (capsRaw["subscribe_events"] as? Bool) ?? false,
             approvals: (capsRaw["approvals"] as? Bool) ?? false
         )
+        // v1.15: optional `provider_availability` field. Older helpers
+        // omit it entirely; treat that as "no advertised list" so the
+        // UI falls back to the legacy implicit Claude default rather
+        // than blanking out every Menu item on a not-yet-upgraded
+        // helper.
+        let providerAvailability =
+            (result["provider_availability"] as? [String]) ?? []
         return SessionControlHello(
             protocolVersion: version,
             supportedMethods: Set(methods),
-            capabilities: caps
+            capabilities: caps,
+            providerAvailability: providerAvailability
         )
     }
 
-    public func startClaudeSession(
+    public func startManagedSession(
+        provider: String,
         clientLabel: String?,
         cwdBasename: String?,
         cwdHmac: String?
     ) async throws -> SessionControlStartResult {
-        var params: [String: Any] = ["provider": "claude"]
+        var params: [String: Any] = ["provider": provider]
         if let clientLabel { params["client_label"] = clientLabel }
         if let cwdBasename { params["cwd_basename"] = cwdBasename }
         if let cwdHmac { params["cwd_hmac"] = cwdHmac }
         let result = try await send(method: "start_session", params: params)
         guard let sid = result["session_id"] as? String, !sid.isEmpty else {
             throw SessionControlError.invalidResponse("start_session: missing session_id")
+        }
+        // v1.15 codex review (round 2): the helper's
+        // `_local_start_claude_session_impl` returns
+        //   { "session_id": <uuid>, "ok": <bool> }
+        // where `ok=false` indicates the spawn itself failed (e.g. the
+        // requested provider's binary was not on PATH). Pre-fix the
+        // Swift caller only checked `session_id`, treated the call as
+        // success, and the optimistic-append path in
+        // `LocalSessionControlState` registered a phantom "running"
+        // session that never existed. Surface the failure as a typed
+        // error so the caller can show it AND skip the optimistic
+        // append.
+        if let ok = result["ok"] as? Bool, !ok {
+            throw SessionControlError.spawnFailed(
+                detail: "helper reported start_session ok=false (provider \(provider))"
+            )
         }
         return SessionControlStartResult(sessionId: sid, commandId: nil)
     }
