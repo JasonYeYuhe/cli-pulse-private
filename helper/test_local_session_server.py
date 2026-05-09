@@ -259,6 +259,16 @@ def test_hello_returns_caps_without_auth(short_sock_dir):
         assert set(result["provider_availability"]).issubset(
             {"claude", "codex", "gemini"}
         )
+        # v1.16: helper_version is exposed in hello so the MAS app's
+        # HelperInstaller state machine can distinguish a v1.15 nohup
+        # helper (1.15.0) from a v1.16 pkg-installed helper (1.16.0+).
+        assert "helper_version" in result
+        assert isinstance(result["helper_version"], str)
+        # Format: semver-ish "MAJOR.MINOR.PATCH". Loose check; the
+        # actual value comes from helper.system_collector.HELPER_VERSION.
+        parts = result["helper_version"].split(".")
+        assert len(parts) >= 2
+        assert all(p.isdigit() for p in parts[:2])
     finally:
         server.stop()
 

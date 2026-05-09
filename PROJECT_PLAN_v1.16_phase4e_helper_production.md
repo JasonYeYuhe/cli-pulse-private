@@ -178,24 +178,29 @@ if launchctl list | grep -q "$LABEL"; then
     launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 fi
 
-# Detect and gracefully shut down any prior nohup-style helper bound to the UDS
+# Detect any prior nohup-style helper bound to the UDS and SIGTERM it.
+# (Implementation note: §1.6's originally-planned graceful_shutdown UDS RPC
+# was dropped during slice 4E.2.1+2.2 because the existing SIGTERM handler
+# in cli_pulse_helper.py:521-635 already does the full drain — UDS server
+# stop → remote_agent_manager shutdown → local_executor shutdown → broker
+# close — and the UDS protocol is length-prefixed + auth-required, so a
+# shell-script `nc -U` request was infeasible. SIGTERM-first is cleaner.)
 if [ -S "$UDS_PATH" ]; then
     PID=$(lsof -t "$UDS_PATH" 2>/dev/null | head -n1)
     if [ -n "$PID" ]; then
-        echo "Found existing helper PID $PID at $UDS_PATH; sending graceful_shutdown"
-        printf '{"command":"graceful_shutdown"}\n' | nc -U -w 2 "$UDS_PATH" || true
-        for i in 1 2 3 4 5; do
+        echo "Found existing helper PID $PID at $UDS_PATH; sending SIGTERM"
+        kill -TERM "$PID" 2>/dev/null || true
+        # Wait up to 10s for graceful drain (executor.shutdown timeout is 5s,
+        # remote_agent_manager.shutdown drains in-flight PTYs; 10s leaves
+        # headroom for several active managed sessions)
+        for i in 1 2 3 4 5 6 7 8 9 10; do
             kill -0 "$PID" 2>/dev/null || break
             sleep 1
         done
         if kill -0 "$PID" 2>/dev/null; then
-            echo "Helper still alive; sending TERM"
-            kill -TERM "$PID"
-            sleep 2
-        fi
-        if kill -0 "$PID" 2>/dev/null; then
-            echo "Helper hung; sending KILL"
-            kill -KILL "$PID"
+            echo "Helper still alive after SIGTERM+10s; sending SIGKILL"
+            kill -KILL "$PID" 2>/dev/null || true
+            sleep 1
         fi
     fi
 fi
@@ -254,23 +259,18 @@ else
 fi
 ```
 
-### §1.6 — New helper RPC: `graceful_shutdown`
+### §1.6 — Helper version surface in `hello` reply
 
-The postinstall.sh sends `{"command":"graceful_shutdown"}\n` over UDS. **Wire protocol on the UDS is newline-delimited JSON** — each request is a single JSON object terminated by `\n`, replies follow the same convention. This matches the existing `local_session_server.py` framing; the new command just adds a code path. Add to `helper/local_session_server.py`:
+(Originally specced as a new `graceful_shutdown` UDS RPC; **dropped during slice 4E.2.1+2.2** because the existing SIGTERM handler at `helper/cli_pulse_helper.py:521-528` + the daemon's `finally` block at lines 608-634 already perform the full drain: `local_uds_server.stop()` → `remote_agent_manager.shutdown()` (terminates child PTYs) → `local_executor.shutdown(wait=True, timeout=5.0)` → `local_event_broker.close()`. The UDS protocol is also length-prefixed + auth-required (see `helper/local_session_server.py:1-120`), so a shell-script `nc -U` request from postinstall.sh was infeasible without re-implementing the binary frame + reading the rotating auth_token. SIGTERM is cleaner.)
 
-```python
-async def _handle_command(self, payload: dict) -> dict:
-    cmd = payload.get("command")
-    if cmd == "graceful_shutdown":
-        # Drain any in-flight managed sessions, close their PTYs cleanly,
-        # then asyncio.get_event_loop().stop()
-        await self._drain_managed_sessions(timeout=10.0)
-        self._loop.call_soon(self._loop.stop)
-        return {"ok": True}
-    # ... existing command handling
-```
+What this slice ACTUALLY does:
 
-This is required for clean v1.15 → v1.16 migration; without it the postinstall falls back to SIGTERM → SIGKILL.
+- Bumps `helper/system_collector.py:HELPER_VERSION` to `"1.16.0"`
+- Bumps `helper/cli_pulse_helper.py` pair-time default `--helper-version` to `"1.16.0"` to match
+- Adds `helper_version` to the `hello` reply payload in `helper/local_session_server.py:_handle_method` (sourced from `HELPER_VERSION` with defensive `"0.0.0"` fallback). This lets the MAS app's HelperInstaller distinguish v1.15 nohup helper from v1.16 pkg-installed helper for migration UX.
+- Test added in `helper/test_local_session_server.py`: `test_hello_returns_caps_without_auth` extended to assert `helper_version` is present + semver-shaped.
+
+Existing 38 UDS server tests still pass.
 
 ### §1.7 — Hosting and manifest
 

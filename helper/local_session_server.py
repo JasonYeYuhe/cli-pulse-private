@@ -771,10 +771,20 @@ class LocalSessionServer:
                 provider_availability = list(available_providers())
             except Exception:  # noqa: BLE001
                 provider_availability = ["claude"]
+            # v1.16: expose helper_version in the hello reply so the MAS
+            # app's HelperInstaller state machine can distinguish
+            # "v1.15 nohup helper" from "v1.16 pkg-installed helper" and
+            # decide whether to offer the migration prompt.
+            try:
+                from system_collector import HELPER_VERSION as _hv
+                helper_version = _hv
+            except Exception:  # noqa: BLE001
+                helper_version = "0.0.0"
             return {
                 "protocol_version": PROTOCOL_VERSION,
                 "supported_methods": list(SUPPORTED_METHODS),
                 "helper_pid": os.getpid(),
+                "helper_version": helper_version,
                 # Capability flags the UI uses to decide what to show.
                 # send_input lights up this iteration — managed Claude
                 # sessions accept stdin via the executor → same code
