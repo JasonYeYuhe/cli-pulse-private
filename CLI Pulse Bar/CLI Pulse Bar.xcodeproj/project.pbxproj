@@ -14,6 +14,7 @@
 		A10007 /* OverviewTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10007 /* OverviewTab.swift */; };
 		A10099 /* YieldScoreCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10099 /* YieldScoreCard.swift */; };
 		A10008 /* ProvidersTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10008 /* ProvidersTab.swift */; };
+		A10100 /* ClaudePeakFooter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10100 /* ClaudePeakFooter.swift */; };
 		A10009 /* SessionsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10009 /* SessionsTab.swift */; };
 		A10010 /* AlertsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10010 /* AlertsTab.swift */; };
 		A10011 /* SettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10011 /* SettingsTab.swift */; };
@@ -175,6 +176,7 @@
 		B10007 /* OverviewTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewTab.swift; sourceTree = "<group>"; };
 		B10099 /* YieldScoreCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YieldScoreCard.swift; sourceTree = "<group>"; };
 		B10008 /* ProvidersTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProvidersTab.swift; sourceTree = "<group>"; };
+		B10100 /* ClaudePeakFooter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudePeakFooter.swift; sourceTree = "<group>"; };
 		B10009 /* SessionsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsTab.swift; sourceTree = "<group>"; };
 		B10010 /* AlertsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertsTab.swift; sourceTree = "<group>"; };
 		B10011 /* SettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTab.swift; sourceTree = "<group>"; };
@@ -320,6 +322,7 @@
 				B10007 /* OverviewTab.swift */,
 				B10099 /* YieldScoreCard.swift */,
 				B10008 /* ProvidersTab.swift */,
+				B10100 /* ClaudePeakFooter.swift */,
 				B10009 /* SessionsTab.swift */,
 				B10010 /* AlertsTab.swift */,
 				B10011 /* SettingsTab.swift */,
@@ -660,6 +663,7 @@
 				A10007 /* OverviewTab.swift in Sources */,
 				A10099 /* YieldScoreCard.swift in Sources */,
 				A10008 /* ProvidersTab.swift in Sources */,
+				A10100 /* ClaudePeakFooter.swift in Sources */,
 				A10009 /* SessionsTab.swift in Sources */,
 				A10010 /* AlertsTab.swift in Sources */,
 				A10011 /* SettingsTab.swift in Sources */,
