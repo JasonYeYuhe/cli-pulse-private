@@ -198,6 +198,25 @@ run cp -R "$HELPER_BUNDLE/." "$STAGING/"
 # without invoking the binary.
 run sh -c "echo '$HELPER_VERSION' > '$STAGING/version.txt'"
 
+# Bundle helper/.env so the LaunchAgent can read CLI_PULSE_SUPABASE_URL and
+# CLI_PULSE_SUPABASE_ANON_KEY at runtime. Both values are PUBLIC (the anon
+# JWT is intended for client code; row-level security on the server gates
+# data access). The same JWT is already shipped in the macOS app's
+# Info.plist (Bundle.main.infoDictionary["SUPABASE_ANON_KEY"]). Bundling
+# in this pkg adds no new leak surface; it just lets the postinstall
+# script inject the values into the LaunchAgent EnvironmentVariables so
+# the helper binary doesn't crash with `ConfigError: Supabase
+# credentials not configured`.
+ENV_SOURCE="$PROJECT_ROOT/helper/.env"
+if [[ -f "$ENV_SOURCE" ]]; then
+    run cp "$ENV_SOURCE" "$STAGING/helper.env"
+    if [[ $DRY_RUN -eq 0 ]]; then
+        chmod 600 "$STAGING/helper.env"
+    fi
+else
+    echo "warn: $ENV_SOURCE not found — helper will fail to authenticate at runtime"
+fi
+
 # === Step 3b: Build + embed Helper Uninstaller.app ===
 echo
 echo "--- Step 3b: Build + embed Uninstaller.app ---"
@@ -244,9 +263,18 @@ echo "--- Step 5a: pkgbuild (component) ---"
 # trigger an admin password prompt). The productbuild wrapper overrides
 # this via Distribution.xml's pkg-ref auth="none" + domains element so the
 # user gets a no-admin-password install in Installer.app.
+#
+# CRITICAL: --install-location must be RELATIVE (no leading `~/`).
+# Apple's Installer does NOT expand `~` in install-location; it treats it
+# as a literal path component. With `enable_currentUserHome="true"` in
+# the Distribution.xml, the relative path is automatically prefixed with
+# the user's home at install time. (First v1.16 install attempt failed
+# because we wrote `~/Library/CLI-Pulse-Helper`, which produced an
+# invalid path under the user-home domain — postinstall ran but the
+# install dir was never created.)
 run pkgbuild \
     --root "$STAGING" \
-    --install-location "~/Library/CLI-Pulse-Helper" \
+    --install-location "Library/CLI-Pulse-Helper" \
     --scripts "$PKG_SCRIPTS_DIR" \
     --identifier "$PKG_IDENTIFIER" \
     --version "$HELPER_VERSION" \

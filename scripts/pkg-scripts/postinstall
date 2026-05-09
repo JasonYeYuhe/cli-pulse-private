@@ -97,6 +97,22 @@ fi
 # them here at install time. KeepAlive=true so launchd auto-restarts on
 # crash. LimitLoadToSessionType=Aqua so it doesn't run in SSH / non-GUI
 # logins. ProcessType=Background for energy-impact accounting.
+
+# Pull CLI_PULSE_SUPABASE_URL + CLI_PULSE_SUPABASE_ANON_KEY out of the
+# bundled .env (placed by build_helper_pkg.sh). Both are PUBLIC values
+# already shipped in the macOS app's Info.plist; we mirror them into the
+# LaunchAgent's EnvironmentVariables so the helper binary can read them
+# via os.environ.get without crashing.
+SUPABASE_URL=""
+SUPABASE_ANON_KEY=""
+if [ -f "$HELPER_DIR/helper.env" ]; then
+    SUPABASE_URL=$(grep '^CLI_PULSE_SUPABASE_URL=' "$HELPER_DIR/helper.env" | cut -d= -f2-)
+    SUPABASE_ANON_KEY=$(grep '^CLI_PULSE_SUPABASE_ANON_KEY=' "$HELPER_DIR/helper.env" | cut -d= -f2-)
+    echo "Loaded Supabase env from $HELPER_DIR/helper.env (URL=${SUPABASE_URL:0:40}…, KEY=${SUPABASE_ANON_KEY:0:20}…)"
+else
+    echo "WARN: $HELPER_DIR/helper.env missing — helper will likely fail with ConfigError"
+fi
+
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -113,6 +129,10 @@ cat > "$PLIST" <<EOF
     <dict>
         <key>HOME</key>
         <string>$HOME</string>
+        <key>CLI_PULSE_SUPABASE_URL</key>
+        <string>$SUPABASE_URL</string>
+        <key>CLI_PULSE_SUPABASE_ANON_KEY</key>
+        <string>$SUPABASE_ANON_KEY</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
