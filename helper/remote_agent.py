@@ -246,8 +246,16 @@ class RemoteAgentManager:
         # Lazy import so the helper package can still be imported on a
         # Windows host (the desktop track may want to import this module
         # for typing / discovery without instantiating the manager).
+        # v1.17: wrap PosixPty + CodexExec in a multiplex so Codex
+        # sessions bypass the ratatui TUI entirely (see
+        # transports/codex_exec.py docstring for the full story).
         from transports.posix_pty import PosixPtyTransport
-        return PosixPtyTransport()
+        from transports.codex_exec import CodexExecTransport
+        from transports.multiplex import MultiplexTransport
+        return MultiplexTransport(
+            pty_transport=PosixPtyTransport(),
+            codex_exec_transport=CodexExecTransport(),
+        )
 
     # ── executor routing ─────────────────────────────────────
 

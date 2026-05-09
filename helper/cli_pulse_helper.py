@@ -686,7 +686,7 @@ def main() -> None:
     # v1.15 multi-CLI: pair default must be ≥ 1.15.0 so newly-paired
     # Macs don't trip the iOS / macOS picker's version gate. Existing
     # paired Macs get bumped via heartbeat (system_collector.HELPER_VERSION).
-    pair_parser.add_argument("--helper-version", default="1.16.3")
+    pair_parser.add_argument("--helper-version", default="1.17.0")
     pair_parser.set_defaults(func=pair)
 
     heartbeat_parser = subparsers.add_parser("heartbeat", help="send one heartbeat")

@@ -48,10 +48,13 @@ a = Analysis(
         "provider_adapters.claude",
         "provider_adapters.codex",
         "provider_adapters.shell",
-        # transports package — POSIX PTY path on macOS.
+        # transports package — POSIX PTY path on macOS, plus v1.17
+        # CodexExec subprocess-per-turn path + multiplex router.
         "transports",
         "transports.base",
         "transports.posix_pty",
+        "transports.codex_exec",
+        "transports.multiplex",
         # cryptography backends loaded by name in system_collector.py
         # (PBKDF2HMAC, AES). PyInstaller's hook bundles the OpenSSL
         # bindings when these are referenced explicitly.
