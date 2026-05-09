@@ -72,6 +72,15 @@ def test_codex_argv_default():
     assert CodexSpawner().argv(_EMPTY) == ["codex"]
 
 
+def test_codex_env_overrides_enables_rust_backtrace():
+    """v1.16 §2.1: Codex defensive hardening — RUST_BACKTRACE=1 is set
+    by default so when Codex's TUI panics on startup with exit_code=101,
+    the panic message lands in stderr (and thus in the session's PTY
+    output stream) rather than only the bare exit code."""
+    env = CodexSpawner().env_overrides(_EMPTY)
+    assert env.get("RUST_BACKTRACE") == "1"
+
+
 def test_gemini_argv_default_omits_yolo():
     assert GeminiSpawner().argv(_EMPTY) == ["gemini"]
 
@@ -134,12 +143,14 @@ def test_gemini_yolo_compounds_with_argv0_override(monkeypatch):
 
 
 def test_env_overrides_default_empty():
-    """No spawner needs provider-specific env beyond what the manager
-    already injects (CLI_PULSE_REMOTE_SESSION_ID, capability token).
-    Pinned to flag if a future change accidentally adds a leak.
+    """v1.16 §2.1: only CodexSpawner adds env (RUST_BACKTRACE=1 for
+    panic diagnostics). Claude + Gemini stay empty. Pinned to flag if a
+    future change accidentally adds a leak.
     """
-    for spawner in (ClaudeSpawner(), CodexSpawner(), GeminiSpawner()):
-        assert spawner.env_overrides(_EMPTY) == {}
+    assert ClaudeSpawner().env_overrides(_EMPTY) == {}
+    assert GeminiSpawner().env_overrides(_EMPTY) == {}
+    # Codex: RUST_BACKTRACE=1 only; nothing else.
+    assert CodexSpawner().env_overrides(_EMPTY) == {"RUST_BACKTRACE": "1"}
 
 
 # ── approval-surface contract ───────────────────────────────

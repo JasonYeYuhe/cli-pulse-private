@@ -35,10 +35,14 @@ class CodexSpawner:
         return ["codex"]
 
     def env_overrides(self, params: Any) -> dict[str, str]:  # noqa: ARG002
-        # No Codex-specific env required for the spawn. The iOS picker
-        # may want to forward a model preference in the future via
-        # `params.extra_env`, which the manager already merges.
-        return {}
+        # v1.16 §2.1 defensive hardening: enable Rust backtrace by default
+        # so when Codex's TUI panics on startup with the dreaded exit_code=101
+        # we can capture WHY in stderr instead of seeing only the bare exit.
+        # User can override by setting RUST_BACKTRACE=0 in their shell
+        # profile (which is read by the parent helper's env-merge step).
+        return {
+            "RUST_BACKTRACE": "1",
+        }
 
     def is_available(self) -> bool:
         override = os.environ.get("CLI_PULSE_CODEX_ARGV0")
