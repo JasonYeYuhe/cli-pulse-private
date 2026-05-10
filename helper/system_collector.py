@@ -417,7 +417,7 @@ def collect_alerts(
     return alerts[:6]
 
 
-def _alert_session_id_suffix(session: Session) -> str:
+def _alert_session_id_suffix(session: CollectedSession) -> str:
     """Stable id suffix combining session_id (PID) + started_at so PID
     recycling cannot collide. (v1.16 §2.4 — earlier Gemini-flagged race
     on the v1.15 cpu-spike fix.)
