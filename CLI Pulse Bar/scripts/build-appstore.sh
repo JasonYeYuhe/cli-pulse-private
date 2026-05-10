@@ -206,16 +206,49 @@ verify_mas_archive_has_no_launchagent() {
         return 1
     fi
 
+    # v1.18.0: the project's "Embed Helper Binary" + "Embed Helper
+    # LaunchAgent" copy-files build phases run on every archive (they're
+    # required for the Developer ID DMG flow), so the unsandboxed Swift
+    # helper + plist always show up here. For the MAS archive we strip
+    # them and re-sign the .app with Apple Distribution while preserving
+    # entitlements. The strip is idempotent — `rm -f` on a missing path
+    # is a no-op, and absent the helper this whole function is just the
+    # LoginItem-sandbox-entitlement assertion below.
+    local NEEDS_RESIGN=0
     if [[ -e "$APP_PATH/Contents/Helpers/cli_pulse_helper" ]]; then
-        echo "  ERROR: MAS archive contains unsandboxed Swift helper at Contents/Helpers/cli_pulse_helper" >&2
-        echo "  Mac App Store rejects this with ITMS-90296. Use Developer ID distribution for the LaunchAgent runtime." >&2
-        return 1
+        echo "  Stripping unsandboxed helper for MAS submission..."
+        rm -f "$APP_PATH/Contents/Helpers/cli_pulse_helper"
+        rmdir "$APP_PATH/Contents/Helpers" 2>/dev/null || true
+        NEEDS_RESIGN=1
     fi
-
     if [[ -e "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist" ]]; then
-        echo "  ERROR: MAS archive contains LaunchAgent plist at Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist" >&2
-        echo "  Mac App Store builds must ship without the unsandboxed LaunchAgent helper." >&2
-        return 1
+        echo "  Stripping LaunchAgent plist for MAS submission..."
+        rm -f "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+        rmdir "$APP_PATH/Contents/Library/LaunchAgents" 2>/dev/null || true
+        NEEDS_RESIGN=1
+    fi
+    if [[ "$NEEDS_RESIGN" == "1" ]]; then
+        # The strip invalidates the .app's Sealed Resources hash — re-sign
+        # with the Apple Distribution identity, preserving Xcode-emitted
+        # entitlements + provisioning profile binding.
+        local DIST_IDENTITY
+        DIST_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+            | sed -n 's/.*"\(Apple Distribution: .*\)"/\1/p' | head -n 1)
+        if [[ -z "$DIST_IDENTITY" ]]; then
+            echo "  ERROR: no Apple Distribution identity found in keychain — can't re-sign after strip" >&2
+            return 1
+        fi
+        echo "  Re-signing $APP_PATH with $DIST_IDENTITY..."
+        codesign --force --sign "$DIST_IDENTITY" \
+            --preserve-metadata=entitlements,requirements,flags \
+            --options runtime --timestamp "$APP_PATH" || {
+            echo "  ERROR: codesign re-sign failed after strip" >&2
+            return 1
+        }
+        codesign --verify --deep --strict "$APP_PATH" || {
+            echo "  ERROR: codesign verify failed after re-sign" >&2
+            return 1
+        }
     fi
 
     # Codex review (PR #39): assert every nested executable inside the MAS
@@ -253,13 +286,16 @@ verify_mas_archive_has_no_launchagent() {
         echo "  Mac App Store rejects unsandboxed nested binaries with ITMS-90296." >&2
         return 1
     fi
-    # Confirm it's set to <true/>, not just present.
-    if ! awk '
-        /<key>com.apple.security.app-sandbox<\/key>/ { found=1; next }
-        found && /<true\/>/ { print "ok"; exit }
-        found && /<false\/>/ { exit }
-    ' <<< "$LOGIN_ITEM_ENT" | grep -q ok; then
+    # Confirm it's set to <true/>, not just present. v1.18.0: codesign
+    # in macOS 14+ emits the plist as a single line, so the previous
+    # awk-line-state approach (which expected key on one line and value
+    # on the next) reported false-negatives. Use a simple substring
+    # check for `<key>app-sandbox</key><true/>` against the whole blob,
+    # tolerant of whitespace between the elements.
+    if ! grep -qE "<key>com\.apple\.security\.app-sandbox</key>[[:space:]]*<true/>" <<< "$LOGIN_ITEM_ENT"; then
         echo "  ERROR: CLIPulseHelper LoginItem app-sandbox entitlement is not <true/>" >&2
+        echo "  Entitlements were:" >&2
+        echo "$LOGIN_ITEM_ENT" >&2 | head -3
         return 1
     fi
 }
@@ -463,7 +499,12 @@ case "$PLATFORM" in
     all)
         build_macos
         build_ios
-        build_watchos
+        # v1.18.0: standalone watchOS upload is redundant — the Watch
+        # app already ships embedded inside `CLI Pulse.app/Watch/` from
+        # the iOS archive, so ASC receives it as part of the iOS build.
+        # The standalone path also breaks on newer Xcode (`method` no
+        # longer accepts `app-store-connect`). Pass `watchos` explicitly
+        # if you really want to test the standalone build.
         ;;
     *)
         echo "Usage: $0 [macos|ios|watchos|all] [--upload]"
