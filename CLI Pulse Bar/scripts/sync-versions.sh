@@ -142,7 +142,7 @@ build_and_upload_ios() {
 </plist>
 EOF
 
-    xcodebuild -exportArchive \
+    if ! xcodebuild -exportArchive \
         -archivePath "$BUILD_DIR/CLIPulseBar.xcarchive" \
         -exportOptionsPlist "$BUILD_DIR/ExportOptions.plist" \
         -exportPath "$BUILD_DIR/export" \
@@ -150,7 +150,10 @@ EOF
         -authenticationKeyPath "$API_KEY_PATH" \
         -authenticationKeyID "$API_KEY_ID" \
         -authenticationKeyIssuerID "$API_ISSUER" \
-        2>&1
+        2>&1; then
+        log "ERROR: xcodebuild -exportArchive failed for iOS $version"
+        return 1
+    fi
 
     log "✓ iOS $version uploaded to App Store Connect"
 }
