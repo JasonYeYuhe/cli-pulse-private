@@ -1002,9 +1002,15 @@ def _fetch_claude_cli(plan_type: str | None) -> dict | None:
         return None
     # Claude Code v2.x: `/usage` is not a valid command.
     # Keep this path for future compatibility but don't expect it to work.
+    # `stdin=DEVNULL` is defensive: if a future `claude` build prompts
+    # for confirmation on an unknown subcommand, we'd block on the
+    # 15-second `timeout` instead of returning instantly. Other CLIs
+    # under collect_all (security/ps/vm_stat) don't read stdin so they
+    # don't need the same guard.
     try:
         proc = subprocess.run(
             [binary, "/usage"],
+            stdin=subprocess.DEVNULL,
             capture_output=True, text=True, timeout=15,
             env={**os.environ, "NO_COLOR": "1"},
         )
