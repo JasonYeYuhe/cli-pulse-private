@@ -584,6 +584,54 @@ class TestV182P1Defenses:
         )
         t.close(h)
 
+    def test_turn_failed_event_suppresses_generic_failure_marker(
+        self, monkeypatch, tmp_path,
+    ):
+        """Item A: when codex emits `turn.failed`, _handle_event already
+        surfaces the human-readable error. The reader's finally must
+        suppress the generic `codex exec failed: exit code 1` marker
+        to avoid double-reporting the same failure to the user.
+
+        Session-reset append must still fire when applicable (no
+        thread_id captured before the failure), so we use a fresh
+        first-turn flow with no thread.started event.
+        """
+        events = [
+            json.dumps({
+                "type": "turn.failed",
+                "error": {"message": "Rate limit exceeded — retry in 60s"},
+            }),
+        ]
+        fake = _make_fake_codex_script(
+            tmp_path, events, rc=1,
+            stderr_lines=["http 429: rate limited"],
+        )
+        monkeypatch.setenv("CLI_PULSE_CODEX_ARGV0", fake)
+        t = CodexExecTransport()
+        h = t.start("s1", ["codex"], env={}, cwd=None)
+        _ = t.read_stdout(h, 4096)
+        t.write_stdin(h, b"hello\n")
+        # Drain enough to see both the turn.failed marker and what
+        # follows (whether or not the generic failure marker fires).
+        out = _drain(t, h, deadline_s=3.0, contains="Session reset")
+        text = out.decode("utf-8", errors="replace")
+        # Codex-side error message must surface (this is _handle_event's job).
+        assert "Rate limit exceeded" in text, (
+            f"turn.failed event marker missing: {text!r}"
+        )
+        # Generic finally marker must NOT fire when turn.failed already
+        # explained the failure (Item A dedup).
+        assert "codex exec failed" not in text, (
+            f"generic failure marker leaked despite turn.failed event: "
+            f"{text!r}"
+        )
+        # Session-reset must still appear because no thread.started was
+        # seen — the next prompt would silently start a new conversation.
+        assert "Session reset" in text, (
+            f"session-reset suppressed by turn.failed dedup — bug: {text!r}"
+        )
+        t.close(h)
+
     def test_no_session_reset_marker_when_thread_started_seen(
         self, monkeypatch, tmp_path,
     ):

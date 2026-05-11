@@ -457,6 +457,7 @@ class CodexExecTransport(SessionTransport):
         blocks indefinitely waiting for data that never arrives.
         """
         agent_text_emitted = False
+        turn_failed_emitted = False
         try:
             assert proc.stdout is not None
             for raw_line in proc.stdout:
@@ -486,10 +487,18 @@ class CodexExecTransport(SessionTransport):
                     )
                     continue
                 self._handle_event(s, event)
-                if event.get("type") == "item.completed":
+                ev_type = event.get("type")
+                if ev_type == "item.completed":
                     item = event.get("item") or {}
                     if item.get("type") == "agent_message":
                         agent_text_emitted = True
+                elif ev_type == "turn.failed":
+                    # _handle_event already surfaced the codex-side
+                    # error message. Track this so the finally block
+                    # can suppress the duplicate generic
+                    # `codex exec failed` marker while still firing
+                    # the session-reset append rule when applicable.
+                    turn_failed_emitted = True
         except Exception as exc:  # noqa: BLE001 — last-resort safety net
             logger.warning(
                 "codex_exec reader crashed session=%s: %s",
@@ -538,8 +547,10 @@ class CodexExecTransport(SessionTransport):
                 thread_captured = s.thread_id is not None
                 s.timed_out = False
                 s.cancel_pending = False
-            # Marker precedence (DEV_PLAN_v1.18.2.md decision table):
-            #   timed_out > cancel > failure path > happy path.
+            # Marker precedence (DEV_PLAN_v1.18.2.md decision table +
+            # Item A turn.failed dedup):
+            #   timed_out > cancel > turn_failed (suppress dup) >
+            #   failure path > happy path.
             primary_failure = False
             if timed_out:
                 self._enqueue(
@@ -550,6 +561,12 @@ class CodexExecTransport(SessionTransport):
                 self._enqueue(
                     s, f"{_ERROR_PREFIX}codex turn cancelled\n".encode("utf-8")
                 )
+                primary_failure = True
+            elif turn_failed_emitted:
+                # _handle_event already surfaced the codex-side error.
+                # Don't double-up with `codex exec failed: exit code 1`.
+                # primary_failure still fires so session-reset append
+                # rule can run if no thread_id was captured.
                 primary_failure = True
             elif not agent_text_emitted and rc != 0:
                 detail = stderr_text.strip() or f"exit code {rc}"
