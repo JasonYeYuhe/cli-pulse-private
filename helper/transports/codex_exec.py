@@ -524,9 +524,15 @@ class CodexExecTransport(SessionTransport):
                 drainer = s.stderr_drainer_thread
             if drainer is not None:
                 drainer.join(timeout=1.0)
-            # Now safe to read the buffer without a lock (drainer dead).
-            stderr_text = bytes(s.stderr_buf).decode("utf-8", errors="replace")
+            # Read stderr + consume per-turn flags under lock so we
+            # never race the drainer if join() above timed out (e.g.
+            # codex spawned a long-running child that inherited the
+            # stderr fd — pre-existing risk Gemini final-patch review
+            # flagged as CRITICAL).
             with s.lock:
+                stderr_text = bytes(s.stderr_buf).decode(
+                    "utf-8", errors="replace"
+                )
                 timed_out = s.timed_out
                 cancel = s.cancel_pending
                 thread_captured = s.thread_id is not None
