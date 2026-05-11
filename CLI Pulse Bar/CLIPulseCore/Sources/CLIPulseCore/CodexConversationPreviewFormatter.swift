@@ -272,14 +272,19 @@ public enum CodexConversationPreviewFormatter {
     // MARK: - shared helpers (parity with Claude formatter)
 
     private static let orphanCsiPattern: NSRegularExpression = {
-        // v1.16.1 added `[ -/]*` intermediate-byte slot per ECMA-48 so
-        // DECSCUSR (`[0 q`) and similar forms are stripped instead of
-        // leaking into the rendered transcript.
-        let pattern = "\\[[0-9;:?<>=]+[ -/]*[@-~]"
+        // Terminator narrowed to `[a-zA-Z]` (was `[@-~]`) + trailing
+        // `(?!\])` lookahead in v1.18.1. See ClaudeConversationPreview
+        // Formatter for the full rationale; in short, alpha-only term
+        // covers every real-world CSI final byte, and the lookahead
+        // catches the `[1a]`-style footnote false-positive class.
+        let pattern = "\\[[0-9;:?<>=]+[ -/]*[a-zA-Z](?!\\])"
         return try! NSRegularExpression(pattern: pattern, options: [])
     }()
 
-    private static func stripOrphanCsiBodies(_ s: String) -> String {
+    /// Internal (not private) so the orphan-CSI false-positive
+    /// regression tests can target this helper directly without
+    /// being confounded by the full `format()` pipeline.
+    internal static func stripOrphanCsiBodies(_ s: String) -> String {
         guard !s.isEmpty else { return s }
         let range = NSRange(s.startIndex..<s.endIndex, in: s)
         return orphanCsiPattern.stringByReplacingMatches(

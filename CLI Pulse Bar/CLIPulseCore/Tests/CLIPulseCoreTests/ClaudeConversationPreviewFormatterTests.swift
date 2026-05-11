@@ -73,6 +73,71 @@ final class ClaudeConversationPreviewFormatterTests: XCTestCase {
         XCTAssertEqual(preview, F.emptyFallback)
     }
 
+    // MARK: - v1.18.1 orphan-CSI false-positive regression
+    //
+    // The pre-v1.18.1 regex `\[[0-9;:?<>=]+[ -/]*[@-~]` used the full
+    // ECMA-48 final-byte range as the terminator class. Because `]`
+    // (ASCII 93) falls inside `@-~`, user text like `arr[0]`, `[42]`,
+    // and `[1] footnote` matched the regex and was silently stripped
+    // from rendered transcripts. v1.18.1 narrows the terminator class
+    // to `[a-zA-Z]` which covers every real-world CSI final byte
+    // without overlapping bracketed user content.
+
+    func test_stripOrphanCsi_preserves_array_index() {
+        XCTAssertEqual(
+            F.stripOrphanCsiBodies("arr[0] = 5; arr[1] = 7"),
+            "arr[0] = 5; arr[1] = 7"
+        )
+    }
+
+    func test_stripOrphanCsi_preserves_markdown_reference() {
+        XCTAssertEqual(
+            F.stripOrphanCsiBodies("see [42] for the relevant section"),
+            "see [42] for the relevant section"
+        )
+    }
+
+    func test_stripOrphanCsi_preserves_bracket_footnote_at_line_start() {
+        XCTAssertEqual(
+            F.stripOrphanCsiBodies("[1] first footnote\n[2] second"),
+            "[1] first footnote\n[2] second"
+        )
+    }
+
+    func test_stripOrphanCsi_preserves_plain_bracket_word() {
+        XCTAssertEqual(
+            F.stripOrphanCsiBodies("Hello [world] and [bar]"),
+            "Hello [world] and [bar]"
+        )
+    }
+
+    func test_stripOrphanCsi_preserves_alpha_suffixed_footnote() {
+        // Secondary false-positive class without the `(?!\])`
+        // lookahead: `[1a]` would have matched as body `1` + alpha
+        // terminator `a`, eating `[1a` and leaving a dangling `]`.
+        XCTAssertEqual(
+            F.stripOrphanCsiBodies("[1a] one\n[1b] two\n[1c] three"),
+            "[1a] one\n[1b] two\n[1c] three"
+        )
+    }
+
+    func test_stripOrphanCsi_still_strips_orphan_decscusr() {
+        // DECSCUSR cursor-style with intermediate space, no ESC prefix
+        // (the v1.16.1 case that motivated `[ -/]*` in the body).
+        XCTAssertEqual(
+            F.stripOrphanCsiBodies("prefix[0 qtail"),
+            "prefixtail"
+        )
+    }
+
+    func test_stripOrphanCsi_still_strips_orphan_private_mode() {
+        // `[?25l` (hide cursor) — `?` in body, `l` is alpha terminator.
+        XCTAssertEqual(
+            F.stripOrphanCsiBodies("[?25lhidden output"),
+            "hidden output"
+        )
+    }
+
     // MARK: - placeholder filter / bare marker drop
 
     func test_drops_claude_input_placeholder_with_quote_space() {

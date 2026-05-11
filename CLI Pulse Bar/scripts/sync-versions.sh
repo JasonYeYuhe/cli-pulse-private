@@ -113,10 +113,16 @@ build_and_upload_ios() {
     rm -rf "$BUILD_DIR"
     mkdir -p "$BUILD_DIR"
 
-    # Archive
+    # Archive — explicit iOS scheme + destination. Pre-v1.18.1 this
+    # used `-scheme "CLI Pulse Bar"` (the macOS scheme) and omitted
+    # `-destination`, which silently archived the macOS app under the
+    # iOS submission path. The CLI Pulse iOS scheme is the iPhone /
+    # iPad target; `generic/platform=iOS` resolves to an unattached
+    # device build suitable for App Store distribution.
     xcodebuild archive \
         -project "CLI Pulse Bar.xcodeproj" \
-        -scheme "CLI Pulse Bar" \
+        -scheme "CLI Pulse iOS" \
+        -destination "generic/platform=iOS" \
         -configuration Release \
         -archivePath "$BUILD_DIR/CLIPulseBar.xcarchive" \
         -quiet \

@@ -375,22 +375,37 @@ public enum ClaudeConversationPreviewFormatter {
 
     /// Removes orphan CSI bodies — `[<params>...<final>` sequences
     /// that survive when the leading ESC is stripped or split across
-    /// an event boundary. Matches the same final-byte alphabet as
-    /// `AnsiSanitizer`'s CSI regex but without the ESC anchor.
-    /// Conservative: only strips if the body looks like a pure ANSI
-    /// sequence (params are digits / `;:?<>=` only and final byte is
-    /// in `@-~`). User text containing `[42]` survives.
+    /// an event boundary.
+    ///
+    /// Terminator class is restricted to `[a-zA-Z]` (was `[@-~]` in
+    /// v1.18.0 and earlier). That's narrower than the ECMA-48 spec but
+    /// covers every real-world CSI terminator in CLI output:
+    ///   - `m` (SGR / color)
+    ///   - `K` `J` (erase line / display)
+    ///   - `H` `f` `A`-`D` `G` (cursor positioning)
+    ///   - `n` (DSR query)
+    ///   - `l` `h` (private-mode toggles, with `?` in body)
+    ///   - `q` (DECSCUSR cursor style, with ` ` intermediate byte)
+    ///
+    /// Why narrower: the previous `[@-~]` accepted `]` (ASCII 93) as a
+    /// terminator, which caused user text like `arr[0]`, `[42]`, and
+    /// `[1] footnote` to be silently stripped from rendered transcripts
+    /// (v1.18.0 regression, fixed in v1.18.1).
+    ///
+    /// The trailing negative lookahead `(?!\])` covers the secondary
+    /// false-positive class where the alpha terminator is itself
+    /// followed by a closing bracket — e.g. `[1a] item` (footnote
+    /// enumeration). Without the lookahead, the regex would happily
+    /// consume `[1a` and leave a dangling `]`.
     private static let orphanCsiPattern: NSRegularExpression = {
-        // Numeric / semicolon body, optional intermediate bytes (per
-        // ECMA-48 — DECSCUSR and friends use `[N SP q]`), then a single
-        // final byte. Greedy body so longer sequences match instead of
-        // leaving fragments. v1.16.1 added intermediate-byte support
-        // after Codex's `[0 q` orphan leaked into the iOS transcript.
-        let pattern = "\\[[0-9;:?<>=]+[ -/]*[@-~]"
+        let pattern = "\\[[0-9;:?<>=]+[ -/]*[a-zA-Z](?!\\])"
         return try! NSRegularExpression(pattern: pattern, options: [])
     }()
 
-    private static func stripOrphanCsiBodies(_ s: String) -> String {
+    /// Internal (not private) so the orphan-CSI false-positive
+    /// regression tests can target this helper directly without
+    /// being confounded by the full `format()` pipeline.
+    internal static func stripOrphanCsiBodies(_ s: String) -> String {
         guard !s.isEmpty else { return s }
         let range = NSRange(s.startIndex..<s.endIndex, in: s)
         return orphanCsiPattern.stringByReplacingMatches(

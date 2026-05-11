@@ -177,6 +177,110 @@ class TestJSONLEventHandling:
         )
         t.close(h)
 
+    def test_first_turn_argv_uses_double_dash_before_prompt(self):
+        t = CodexExecTransport()
+        h = t.start("s1", ["codex"], env={}, cwd=None)
+        state = t._payload(h)  # type: ignore[attr-defined]
+        argv = t._build_exec_argv(state, "hello world")  # type: ignore[attr-defined]
+        # Prompt must be last positional, immediately preceded by "--".
+        assert argv[-1] == "hello world", argv
+        assert argv[-2] == "--", (
+            f"first-turn argv missing '--' separator before prompt: {argv!r}"
+        )
+        t.close(h)
+
+    def test_resume_argv_uses_double_dash_before_positionals(self):
+        """Resume path: `--` must precede BOTH thread_id and prompt so
+        that a dash-leading thread_id (from corrupted session state)
+        can't sneak in as a flag either.
+        """
+        t = CodexExecTransport()
+        h = t.start("s1", ["codex"], env={}, cwd=None)
+        state = t._payload(h)  # type: ignore[attr-defined]
+        state.thread_id = "tid-resume"
+        argv = t._build_exec_argv(state, "follow up")  # type: ignore[attr-defined]
+        assert argv[-1] == "follow up", argv
+        assert argv[-2] == "tid-resume", argv
+        assert argv[-3] == "--", (
+            f"resume argv must have '--' immediately before thread_id "
+            f"and prompt to defend against dash-leading positionals: {argv!r}"
+        )
+        t.close(h)
+
+    def test_resume_argv_quarantines_dash_leading_thread_id(self):
+        """Defense-in-depth: even if thread_id starts with a dash (e.g.
+        corrupted local session state), it must not be parsed as a flag.
+        """
+        t = CodexExecTransport()
+        h = t.start("s1", ["codex"], env={}, cwd=None)
+        state = t._payload(h)  # type: ignore[attr-defined]
+        state.thread_id = "--sandbox=danger-full-access"
+        argv = t._build_exec_argv(state, "follow up")  # type: ignore[attr-defined]
+        dash_idx = argv.index("--")
+        # Everything after "--" is positional. Both thread_id and prompt
+        # must live there.
+        positional_tail = argv[dash_idx + 1 :]
+        assert "--sandbox=danger-full-access" in positional_tail, argv
+        assert "follow up" in positional_tail, argv
+        t.close(h)
+
+    def test_argv_quarantines_flag_lookalike_prompt(self):
+        """If a user types a prompt that starts with `-`, it MUST be
+        passed as positional after `--` so Codex's clap parser cannot
+        re-interpret it as a flag (sandbox-bypass surface).
+        """
+        t = CodexExecTransport()
+        h = t.start("s1", ["codex"], env={}, cwd=None)
+        state = t._payload(h)  # type: ignore[attr-defined]
+        sneaky = "--sandbox=danger-full-access"
+        argv = t._build_exec_argv(state, sneaky)  # type: ignore[attr-defined]
+        assert argv[-1] == sneaky, argv
+        assert argv[-2] == "--", (
+            f"flag-lookalike prompt not quarantined behind '--': {argv!r}"
+        )
+        # Sanity: the legitimate -s read-only is still present and appears
+        # BEFORE the "--" separator (i.e. parsed as a real flag).
+        dash_idx = argv.index("--")
+        assert "-s" in argv[:dash_idx], (
+            f"-s read-only must be before '--': {argv!r}"
+        )
+        t.close(h)
+
+    def test_reader_survives_non_object_json_lines(self, monkeypatch, tmp_path):
+        """Codex CLI schema drift could conceivably emit a valid JSON
+        primitive (null / true / number / array). The reader thread
+        must not crash with AttributeError — it should log + skip,
+        then continue processing legit dict events.
+        """
+        events = [
+            "null",
+            "true",
+            "42",
+            '"a string"',
+            "[1, 2, 3]",
+            json.dumps({"type": "thread.started", "thread_id": "tid-survive"}),
+            json.dumps({
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": "survived"},
+            }),
+            json.dumps({"type": "turn.completed"}),
+        ]
+        fake = _make_fake_codex_script(tmp_path, events)
+        monkeypatch.setenv("CLI_PULSE_CODEX_ARGV0", fake)
+
+        t = CodexExecTransport()
+        h = t.start("s1", ["codex"], env={}, cwd=None)
+        _ = t.read_stdout(h, 4096)
+        t.write_stdin(h, b"go\n")
+        out = _drain(t, h, deadline_s=3.0, contains="survived")
+        assert b"survived" in out, (
+            f"reader should keep processing past non-dict JSON: {out!r}"
+        )
+        # And the legit thread.started should have populated state.
+        state = t._payload(h)  # type: ignore[attr-defined]
+        assert state.thread_id == "tid-survive"
+        t.close(h)
+
     def test_thread_id_is_reused_across_turns(self, monkeypatch, tmp_path):
         # Two sequential calls; verify second invocation uses
         # `resume <thread_id>` — we can't observe argv directly without

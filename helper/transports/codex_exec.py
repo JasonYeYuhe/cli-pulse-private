@@ -286,15 +286,24 @@ class CodexExecTransport(SessionTransport):
         disables color, so we don't need `--color never`.
 
         Empirically verified against codex 0.130.x.
+
+        The `"--"` is the POSIX end-of-options sentinel and is placed
+        BEFORE every variable positional argument (prompt on first
+        turn; thread_id + prompt on resume). Without it, any value
+        starting with a dash — a user prompt like
+        `--sandbox=danger-full-access`, or a thread_id corrupted via
+        on-disk session state — would be parsed by Codex CLI's `clap`
+        argument parser as a flag and could override the `-s read-only`
+        policy we pin here, yielding a sandbox escape.
         """
         binary = os.environ.get("CLI_PULSE_CODEX_ARGV0", "codex").split()
         if not binary:
             binary = ["codex"]
         common_flags = ["--json", "--skip-git-repo-check"]
         if s.thread_id:
-            return [*binary, "exec", "resume", *common_flags, s.thread_id, prompt]
+            return [*binary, "exec", "resume", *common_flags, "--", s.thread_id, prompt]
         # First turn: also pin the sandbox so resume inherits it.
-        return [*binary, "exec", *common_flags, "-s", "read-only", prompt]
+        return [*binary, "exec", *common_flags, "-s", "read-only", "--", prompt]
 
     # ── reader thread (JSONL → output queue) ─────────────────
 
@@ -331,6 +340,17 @@ class CodexExecTransport(SessionTransport):
                     logger.debug(
                         "codex_exec dropping non-JSON line session=%s: %r",
                         s.session_id, raw_line[:120],
+                    )
+                    continue
+                if not isinstance(event, dict):
+                    # JSON parsed but is a primitive (null / true / number /
+                    # string) or array. _handle_event calls .get() and would
+                    # AttributeError on these, crashing the reader thread
+                    # silently. Drop with a warning so Codex CLI schema
+                    # drift is visible in the helper log.
+                    logger.warning(
+                        "codex_exec dropping non-object JSON line session=%s: %r",
+                        s.session_id, line[:120],
                     )
                     continue
                 self._handle_event(s, event)
