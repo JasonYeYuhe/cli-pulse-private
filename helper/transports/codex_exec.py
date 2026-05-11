@@ -109,6 +109,16 @@ class _CodexExecState:
     # 32KB. Read once in reader's finally block after the drainer has
     # finished. Always cleared at the start of a turn.
     stderr_buf: bytearray = field(default_factory=bytearray)
+    # Watchdog Timer that SIGTERMs the proc after `_TURN_TIMEOUT_SEC`.
+    # Replaces the previous in-reader-loop deadline check, which was
+    # ineffective on silent network hangs because `for raw_line in
+    # proc.stdout:` blocks indefinitely waiting for data that never
+    # arrives. Armed at spawn, cancelled in reader's finally.
+    timeout_timer: Optional[threading.Timer] = None
+    # Set by `_timeout_kill` when the watchdog fires. Reader's finally
+    # consults this so it can emit a precise "codex turn timed out"
+    # marker instead of a misleading "exit code -15".
+    timed_out: bool = False
     # Mutex protecting `output_queue` + `pending_prompts` + `current_proc`
     # + `stderr_buf` writes by the drainer.
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -263,8 +273,9 @@ class CodexExecTransport(SessionTransport):
                 s.session_id, exc,
             )
             return
-        # Fresh stderr buffer for this turn.
+        # Fresh stderr buffer + flags for this turn.
         s.stderr_buf.clear()
+        s.timed_out = False
         # Stderr drainer must start BEFORE the reader so the codex
         # process can never block on a full stderr pipe.
         s.stderr_drainer_thread = threading.Thread(
@@ -274,6 +285,15 @@ class CodexExecTransport(SessionTransport):
             daemon=True,
         )
         s.stderr_drainer_thread.start()
+        # Arm watchdog Timer (P1-C). Fires after _TURN_TIMEOUT_SEC if
+        # still alive — reader's finally cancels this on normal exit.
+        s.timeout_timer = threading.Timer(
+            self._TURN_TIMEOUT_SEC,
+            self._timeout_kill,
+            args=(s, s.current_proc),
+        )
+        s.timeout_timer.daemon = True
+        s.timeout_timer.start()
         # Reader thread parses JSONL and queues output. Daemonized so
         # the helper can exit cleanly without joining.
         s.reader_thread = threading.Thread(
@@ -362,6 +382,36 @@ class CodexExecTransport(SessionTransport):
                 s.session_id, exc,
             )
 
+    def _timeout_kill(
+        self,
+        s: _CodexExecState,
+        proc: subprocess.Popen,
+    ) -> None:
+        """Watchdog target — SIGTERM the proc if still alive when the
+        Timer fires. Sets `s.timed_out` so the reader's finally block
+        can emit a clear `codex turn timed out` marker instead of a
+        generic `exit code -15`.
+
+        Race with normal exit is benign: signal to a dead pgid yields
+        ProcessLookupError (caught); a flag set redundantly does no
+        harm because the reader clears it after consumption.
+        """
+        try:
+            if proc.poll() is not None:
+                return
+            with s.lock:
+                s.timed_out = True
+            try:
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "codex_exec timeout_kill swallowed exc session=%s: %s",
+                s.session_id, exc,
+            )
+
     @staticmethod
     def _close_proc_pipes(proc: subprocess.Popen) -> None:
         """Idempotently close `proc.stdout` and `proc.stderr` fds.
@@ -392,15 +442,17 @@ class CodexExecTransport(SessionTransport):
         `s.lock` only when mutating shared state — the line-by-line
         read happens lock-free because the file handle is private to
         this thread.
+
+        Turn timeout is enforced externally by the `_timeout_kill`
+        watchdog Timer armed in `_maybe_flush_next_turn` (P1-C). The
+        previous in-loop `if time.time() > deadline` check was a no-op
+        on silent network hangs because `for raw_line in proc.stdout:`
+        blocks indefinitely waiting for data that never arrives.
         """
-        deadline = time.time() + self._TURN_TIMEOUT_SEC
         agent_text_emitted = False
         try:
             assert proc.stdout is not None
             for raw_line in proc.stdout:
-                if time.time() > deadline:
-                    self._enqueue(s, f"{_ERROR_PREFIX}turn timed out\n".encode("utf-8"))
-                    break
                 line = raw_line.strip()
                 if not line:
                     continue
@@ -440,11 +492,18 @@ class CodexExecTransport(SessionTransport):
         finally:
             # Cleanup order is load-bearing — see DEV_PLAN_v1.18.2.md
             # Gemini CRITICAL fix:
-            #   ① reap the process first (forces stderr EOF)
-            #   ② join drainer (now instant since EOF reached)
-            #   ③ read stderr_buf lock-free (drainer is dead)
-            #   ④ close fds (P1-A: avoid fd leak per turn)
-            #   ⑤ release current_proc slot under lock + flush next
+            #   ① disarm watchdog Timer (idempotent if already fired)
+            #   ② reap the process (forces stderr EOF)
+            #   ③ join drainer (now instant since EOF reached)
+            #   ④ read stderr_buf lock-free (drainer is dead)
+            #   ⑤ consume per-turn flags under lock
+            #   ⑥ pick marker
+            #   ⑦ close fds (P1-A: avoid fd leak per turn)
+            #   ⑧ release current_proc slot under lock + flush next
+            with s.lock:
+                timer = s.timeout_timer
+            if timer is not None:
+                timer.cancel()
             try:
                 rc = proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
@@ -460,9 +519,18 @@ class CodexExecTransport(SessionTransport):
                 drainer.join(timeout=1.0)
             # Now safe to read the buffer without a lock (drainer dead).
             stderr_text = bytes(s.stderr_buf).decode("utf-8", errors="replace")
-            # If we never got an agent_message but the proc errored,
-            # surface stderr so the user sees rate limit / auth errors.
-            if not agent_text_emitted and rc != 0:
+            with s.lock:
+                timed_out = s.timed_out
+                s.timed_out = False
+            # Marker precedence (Gemini plan-review SHOULD_FIX 1):
+            #   timed_out  → "codex turn timed out"
+            #   (cancel and session-reset cases land in commits 3 + 4)
+            #   otherwise generic failure surfaces stderr.
+            if timed_out:
+                self._enqueue(
+                    s, f"{_ERROR_PREFIX}codex turn timed out\n".encode("utf-8")
+                )
+            elif not agent_text_emitted and rc != 0:
                 detail = stderr_text.strip() or f"exit code {rc}"
                 self._enqueue(
                     s, f"{_ERROR_PREFIX}codex exec failed: {detail[:500]}\n".encode("utf-8")
@@ -476,8 +544,8 @@ class CodexExecTransport(SessionTransport):
                     s.current_proc = None
                 self._maybe_flush_next_turn(s)
             logger.info(
-                "codex_exec turn ended session=%s rc=%s thread_id=%s",
-                s.session_id, rc, s.thread_id,
+                "codex_exec turn ended session=%s rc=%s thread_id=%s timed_out=%s",
+                s.session_id, rc, s.thread_id, timed_out,
             )
 
     def _handle_event(self, s: _CodexExecState, event: dict) -> None:
