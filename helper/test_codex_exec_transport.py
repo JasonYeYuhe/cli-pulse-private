@@ -518,12 +518,46 @@ class TestV182P1Defenses:
         )
         t.close(h)
 
+    def test_terminate_emits_cancelled_marker_like_interrupt(
+        self, monkeypatch, tmp_path,
+    ):
+        """P1-D symmetry: `terminate()` (SIGTERM) is also a
+        user-initiated cancel and must surface as
+        `codex turn cancelled`, not the generic
+        `codex exec failed: exit code -15`.
+        """
+        fake = _make_fake_codex_script(
+            tmp_path, [], rc=0, sleep_before_exit=3.0,
+        )
+        monkeypatch.setenv("CLI_PULSE_CODEX_ARGV0", fake)
+        t = CodexExecTransport()
+        h = t.start("s1", ["codex"], env={}, cwd=None)
+        _ = t.read_stdout(h, 4096)
+        t.write_stdin(h, b"slow\n")
+        time.sleep(0.3)
+        t.terminate(h)
+        out = _drain(t, h, deadline_s=3.0, contains="cancelled")
+        text = out.decode("utf-8", errors="replace")
+        assert "codex turn cancelled" in text, (
+            f"terminate didn't produce cancel marker — got: {text!r}"
+        )
+        assert "codex exec failed" not in text, (
+            f"terminate path produced generic failure marker: {text!r}"
+        )
+        t.close(h)
+
     def test_first_turn_crash_emits_session_reset_marker(
         self, monkeypatch, tmp_path,
     ):
         """P1-E: a first-turn crash with no `thread.started` means the
         next prompt silently opens a new conversation. Emit a
-        `Session reset` warning so the user isn't surprised."""
+        `Session reset` warning so the user isn't surprised.
+
+        Also validates (P1-B downstream) that stderr emitted by codex
+        actually surfaces in the failure marker — without the drainer
+        the buffer would be empty and the marker would degrade to
+        `exit code 1` with no diagnostic detail.
+        """
         # Empty JSONL + rc=1 → no thread_id captured + failure path.
         fake = _make_fake_codex_script(
             tmp_path, [], rc=1,
@@ -538,6 +572,12 @@ class TestV182P1Defenses:
         text = out.decode("utf-8", errors="replace")
         assert "codex exec failed" in text, (
             f"primary failure marker missing: {text!r}"
+        )
+        # Stderr content must surface in the failure marker so the
+        # user sees WHY codex died, not just `exit code 1`.
+        assert "auth: token expired" in text, (
+            f"stderr content failed to surface in marker — drainer/lock "
+            f"path is broken: {text!r}"
         )
         assert "Session reset" in text, (
             f"session-reset marker missing on first-turn crash: {text!r}"

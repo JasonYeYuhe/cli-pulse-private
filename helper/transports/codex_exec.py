@@ -707,6 +707,12 @@ class CodexExecTransport(SessionTransport):
         with s.lock:
             proc = s.current_proc
             s.pending_prompts.clear()
+            # Symmetry with interrupt(): a user-initiated terminate
+            # should also surface as `codex turn cancelled` rather
+            # than `codex exec failed: exit code -15`. The reader's
+            # finally consumes this flag.
+            if proc is not None and proc.poll() is None:
+                s.cancel_pending = True
         if proc is not None and proc.poll() is None:
             try:
                 pgid = os.getpgid(proc.pid)
@@ -758,6 +764,12 @@ class CodexExecTransport(SessionTransport):
             proc = s.current_proc
             s.pending_prompts.clear()
             s.closed = True
+            # Disarm the watchdog Timer so it doesn't fire later and
+            # send a moot SIGTERM to a dead/recycled pid. Cancel is
+            # idempotent — safe even if the timer already fired.
+            timer = s.timeout_timer
+        if timer is not None:
+            timer.cancel()
         if proc is not None and proc.poll() is None:
             try:
                 pgid = os.getpgid(proc.pid)
