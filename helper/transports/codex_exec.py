@@ -119,6 +119,11 @@ class _CodexExecState:
     # consults this so it can emit a precise "codex turn timed out"
     # marker instead of a misleading "exit code -15".
     timed_out: bool = False
+    # Set by `interrupt()` under lock when a turn is killed via SIGINT.
+    # Reader's finally consults this so it can emit "codex turn
+    # cancelled" instead of "codex exec failed: exit code -2", which
+    # made the user's own cancel look like a codex bug (P1-D).
+    cancel_pending: bool = False
     # Mutex protecting `output_queue` + `pending_prompts` + `current_proc`
     # + `stderr_buf` writes by the drainer.
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -276,6 +281,7 @@ class CodexExecTransport(SessionTransport):
         # Fresh stderr buffer + flags for this turn.
         s.stderr_buf.clear()
         s.timed_out = False
+        s.cancel_pending = False
         # Stderr drainer must start BEFORE the reader so the codex
         # process can never block on a full stderr pipe.
         s.stderr_drainer_thread = threading.Thread(
@@ -521,14 +527,19 @@ class CodexExecTransport(SessionTransport):
             stderr_text = bytes(s.stderr_buf).decode("utf-8", errors="replace")
             with s.lock:
                 timed_out = s.timed_out
+                cancel = s.cancel_pending
                 s.timed_out = False
-            # Marker precedence (Gemini plan-review SHOULD_FIX 1):
-            #   timed_out  → "codex turn timed out"
-            #   (cancel and session-reset cases land in commits 3 + 4)
-            #   otherwise generic failure surfaces stderr.
+                s.cancel_pending = False
+            # Marker precedence (DEV_PLAN_v1.18.2.md decision table):
+            #   timed_out > cancel > failure path > happy path.
+            # (session-reset is an orthogonal append landing in commit 4.)
             if timed_out:
                 self._enqueue(
                     s, f"{_ERROR_PREFIX}codex turn timed out\n".encode("utf-8")
+                )
+            elif cancel:
+                self._enqueue(
+                    s, f"{_ERROR_PREFIX}codex turn cancelled\n".encode("utf-8")
                 )
             elif not agent_text_emitted and rc != 0:
                 detail = stderr_text.strip() or f"exit code {rc}"
@@ -544,8 +555,9 @@ class CodexExecTransport(SessionTransport):
                     s.current_proc = None
                 self._maybe_flush_next_turn(s)
             logger.info(
-                "codex_exec turn ended session=%s rc=%s thread_id=%s timed_out=%s",
-                s.session_id, rc, s.thread_id, timed_out,
+                "codex_exec turn ended session=%s rc=%s thread_id=%s "
+                "timed_out=%s cancelled=%s",
+                s.session_id, rc, s.thread_id, timed_out, cancel,
             )
 
     def _handle_event(self, s: _CodexExecState, event: dict) -> None:
@@ -640,6 +652,12 @@ class CodexExecTransport(SessionTransport):
             # actually halts the whole turn pipeline rather than just
             # the current one.
             s.pending_prompts.clear()
+            # Signal the reader's finally to emit a "cancelled" marker
+            # rather than a generic "exec failed: exit code -2" (P1-D).
+            # Lock-guarded so it can't race with the next-turn spawn
+            # that clears the flag.
+            if proc is not None and proc.poll() is None:
+                s.cancel_pending = True
         if proc is not None and proc.poll() is None:
             try:
                 pgid = os.getpgid(proc.pid)
