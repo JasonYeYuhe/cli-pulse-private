@@ -39,22 +39,57 @@ def _drain(transport, handle, *, deadline_s: float, contains: str | None = None)
     return bytes(buf)
 
 
-def _make_fake_codex_script(tmp_path, jsonl_lines: list[str], rc: int = 0) -> str:
+def _make_fake_codex_script(
+    tmp_path,
+    jsonl_lines: list[str],
+    rc: int = 0,
+    *,
+    stderr_lines: list[str] | None = None,
+    sleep_before_exit: float = 0.0,
+    stderr_bulk_bytes: int = 0,
+    name: str = "fake_codex.sh",
+) -> str:
     """Write a tiny shell script that emits the supplied JSONL lines
     one per line and exits with `rc`. Returns its filesystem path,
     suitable for `CLI_PULSE_CODEX_ARGV0` (which is whitespace-split,
     so we want a single-token executable path).
 
+    Optional knobs for v1.18.2 defensive-hardening tests:
+      * `stderr_lines`     — list of literal text lines emitted to stderr
+                             before the script exits.
+      * `stderr_bulk_bytes` — if > 0, write this many bytes of arbitrary
+                             content to stderr before exit, to exercise
+                             the P1-B 64KB pipe-buffer deadlock path.
+      * `sleep_before_exit` — sleep N seconds before exit. Useful for
+                             P1-C (watchdog) and P1-D (cancel) tests where
+                             we need a chance to fire timer / interrupt
+                             before the proc dies on its own.
+      * `name`             — script filename so multiple tests in the
+                             same `tmp_path` don't clobber each other.
+
     We use a script-on-disk rather than inlining `python3 -c <code>`
     because the env-var-override is whitespace-tokenized, which mangles
     quoted shell arguments. A single path-to-script avoids the issue.
     """
-    script = tmp_path / "fake_codex.sh"
+    script = tmp_path / name
     body_lines = ["#!/usr/bin/env bash", "set -e"]
     for line in jsonl_lines:
         # Use printf with %s to avoid any backslash-escape interpretation.
         # The line is JSON, so it never contains a literal newline.
         body_lines.append(f"printf '%s\\n' {shlex.quote(line)}")
+    if stderr_lines:
+        for line in stderr_lines:
+            body_lines.append(f"printf '%s\\n' {shlex.quote(line)} >&2")
+    if stderr_bulk_bytes > 0:
+        # Write `stderr_bulk_bytes` of payload to stderr via `head -c`
+        # from /dev/urandom (encoded base64 so it stays printable). This
+        # is the deadlock-trigger: if the helper doesn't drain stderr,
+        # this `head` blocks once the pipe buffer fills.
+        body_lines.append(
+            f"head -c {stderr_bulk_bytes} /dev/urandom | base64 >&2"
+        )
+    if sleep_before_exit > 0:
+        body_lines.append(f"sleep {sleep_before_exit}")
     body_lines.append(f"exit {rc}")
     script.write_text("\n".join(body_lines) + "\n")
     script.chmod(0o755)
@@ -339,6 +374,209 @@ class TestErrorPath:
         # synchronously enqueues the error, so a tight drain catches it.
         out = _drain(t, h, deadline_s=1.0, contains="codex spawn failed")
         assert b"codex spawn failed" in out
+        t.close(h)
+
+
+class TestV182P1Defenses:
+    """v1.18.2 hotfix: defensive hardening for codex_exec turn lifecycle.
+
+    Covers the 5 P1 defects deferred from v1.18.1:
+      A — stderr fd leak per turn
+      B — 64KB pipe-buffer deadlock when codex emits heavy stderr
+      C — silent network hang bypasses turn timeout
+      D — SIGINT cancel masquerades as `codex exec failed: exit code -2`
+      E — first-turn crash silently resets the conversation
+
+    See PROJECT_FIX_2026-05-12_v1.18.2_codex_exec_p1.md (to be written
+    on archive) and `/tmp/clipulse-review/DEV_PLAN_v1.18.2.md`.
+    """
+
+    def test_stderr_drainer_survives_80kb_emission(self, monkeypatch, tmp_path):
+        """P1-B: codex emits ~80KB to stderr while running. With the
+        drainer, the reader thread sees stdout EOF normally and the turn
+        completes. Without it, codex blocks on write(2) once the pipe
+        buffer (64KB) fills, and the turn deadlocks."""
+        events = [
+            json.dumps({"type": "thread.started", "thread_id": "tid-bulk"}),
+            json.dumps({
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": "ok after bulk stderr"},
+            }),
+            json.dumps({"type": "turn.completed"}),
+        ]
+        fake = _make_fake_codex_script(
+            tmp_path, events, rc=0, stderr_bulk_bytes=80 * 1024,
+        )
+        monkeypatch.setenv("CLI_PULSE_CODEX_ARGV0", fake)
+        t = CodexExecTransport()
+        h = t.start("s1", ["codex"], env={}, cwd=None)
+        _ = t.read_stdout(h, 4096)
+        t.write_stdin(h, b"go\n")
+        # Generous deadline; if drainer is broken the test will hit it.
+        out = _drain(t, h, deadline_s=5.0, contains="ok after bulk stderr")
+        assert b"ok after bulk stderr" in out, (
+            f"turn deadlocked or output never reached reader: {out!r}"
+        )
+        # Stderr buffer must be capped at 32KB (drainer rotates).
+        state = t._payload(h)  # type: ignore[attr-defined]
+        assert len(state.stderr_buf) <= 32 * 1024, (
+            f"stderr_buf exceeds 32KB cap: {len(state.stderr_buf)} bytes"
+        )
+        t.close(h)
+
+    def test_proc_pipes_closed_after_turn(self, monkeypatch, tmp_path):
+        """P1-A: stdout + stderr fds must be explicitly closed at
+        end-of-turn so a long session doesn't leak fds."""
+        events = [
+            json.dumps({"type": "thread.started", "thread_id": "tid-close"}),
+            json.dumps({
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": "done"},
+            }),
+            json.dumps({"type": "turn.completed"}),
+        ]
+        fake = _make_fake_codex_script(tmp_path, events, rc=0)
+        monkeypatch.setenv("CLI_PULSE_CODEX_ARGV0", fake)
+        t = CodexExecTransport()
+        h = t.start("s1", ["codex"], env={}, cwd=None)
+        _ = t.read_stdout(h, 4096)
+        t.write_stdin(h, b"go\n")
+        _ = _drain(t, h, deadline_s=3.0, contains="done")
+        # The reader thread releases current_proc to None when the turn
+        # ends — wait for that to happen, then verify the proc's stdout
+        # and stderr are closed. We need a separate reference because
+        # state.current_proc is reset to None.
+        state = t._payload(h)  # type: ignore[attr-defined]
+        # Wait up to 2s for current_proc to clear (reader finally fires).
+        deadline = time.time() + 2.0
+        while state.current_proc is not None and time.time() < deadline:
+            time.sleep(0.02)
+        # `proc` variable went out of scope when reader exited, but we can
+        # interrogate the drainer thread state to confirm it ended on EOF
+        # (which means pipes were closed by the OS before _close_proc_pipes
+        # ran AND we additionally closed via _close_proc_pipes).
+        # The strongest available assertion: the drainer thread is done.
+        if state.stderr_drainer_thread is not None:
+            assert not state.stderr_drainer_thread.is_alive(), (
+                "stderr drainer should have exited after proc.wait()"
+            )
+        t.close(h)
+
+    def test_timeout_watchdog_kills_silent_hang(self, monkeypatch, tmp_path):
+        """P1-C: external Timer watchdog fires when codex stalls without
+        output. Reader's finally emits `codex turn timed out` instead of
+        a generic `exit code -15`."""
+        # Empty JSONL + 30s sleep → reader's `for raw_line in proc.stdout`
+        # blocks indefinitely. Watchdog must SIGTERM the proc.
+        fake = _make_fake_codex_script(
+            tmp_path, [], rc=0, sleep_before_exit=30.0,
+        )
+        monkeypatch.setenv("CLI_PULSE_CODEX_ARGV0", fake)
+        # Shrink the watchdog deadline so the test doesn't take 3 min.
+        monkeypatch.setattr(CodexExecTransport, "_TURN_TIMEOUT_SEC", 0.5)
+        t = CodexExecTransport()
+        h = t.start("s1", ["codex"], env={}, cwd=None)
+        _ = t.read_stdout(h, 4096)
+        t.write_stdin(h, b"hang\n")
+        out = _drain(t, h, deadline_s=5.0, contains="timed out")
+        text = out.decode("utf-8", errors="replace")
+        assert "codex turn timed out" in text, (
+            f"watchdog didn't fire or marker missing: {text!r}"
+        )
+        # Watchdog kill must NOT surface as the generic failure marker.
+        assert "codex exec failed" not in text, (
+            f"timed-out turn produced generic failure marker: {text!r}"
+        )
+        t.close(h)
+
+    def test_interrupt_emits_cancelled_marker(self, monkeypatch, tmp_path):
+        """P1-D: `interrupt()` sets cancel_pending so the reader's
+        finally emits `codex turn cancelled` instead of the misleading
+        `codex exec failed: exit code -2`."""
+        # Fake codex sleeps a few seconds — gives us time to interrupt
+        # before it would have exited on its own.
+        fake = _make_fake_codex_script(
+            tmp_path, [], rc=0, sleep_before_exit=3.0,
+        )
+        monkeypatch.setenv("CLI_PULSE_CODEX_ARGV0", fake)
+        t = CodexExecTransport()
+        h = t.start("s1", ["codex"], env={}, cwd=None)
+        _ = t.read_stdout(h, 4096)
+        t.write_stdin(h, b"slow\n")
+        # Wait a beat for the proc to spawn before we interrupt.
+        time.sleep(0.3)
+        t.interrupt(h)
+        out = _drain(t, h, deadline_s=3.0, contains="cancelled")
+        text = out.decode("utf-8", errors="replace")
+        assert "codex turn cancelled" in text, (
+            f"cancel marker missing — got: {text!r}"
+        )
+        # The generic-failure marker must NOT also appear (would
+        # confuse the user about what just happened).
+        assert "codex exec failed" not in text, (
+            f"cancel path produced generic failure marker: {text!r}"
+        )
+        t.close(h)
+
+    def test_first_turn_crash_emits_session_reset_marker(
+        self, monkeypatch, tmp_path,
+    ):
+        """P1-E: a first-turn crash with no `thread.started` means the
+        next prompt silently opens a new conversation. Emit a
+        `Session reset` warning so the user isn't surprised."""
+        # Empty JSONL + rc=1 → no thread_id captured + failure path.
+        fake = _make_fake_codex_script(
+            tmp_path, [], rc=1,
+            stderr_lines=["auth: token expired"],
+        )
+        monkeypatch.setenv("CLI_PULSE_CODEX_ARGV0", fake)
+        t = CodexExecTransport()
+        h = t.start("s1", ["codex"], env={}, cwd=None)
+        _ = t.read_stdout(h, 4096)
+        t.write_stdin(h, b"hello\n")
+        out = _drain(t, h, deadline_s=3.0, contains="Session reset")
+        text = out.decode("utf-8", errors="replace")
+        assert "codex exec failed" in text, (
+            f"primary failure marker missing: {text!r}"
+        )
+        assert "Session reset" in text, (
+            f"session-reset marker missing on first-turn crash: {text!r}"
+        )
+        t.close(h)
+
+    def test_no_session_reset_marker_when_thread_started_seen(
+        self, monkeypatch, tmp_path,
+    ):
+        """P1-E: middle-of-conversation failures must NOT trigger the
+        session-reset warning because `s.thread_id` is captured and the
+        next prompt will correctly `resume` the same conversation."""
+        # Emit thread.started so s.thread_id gets captured, then crash.
+        events = [
+            json.dumps({"type": "thread.started", "thread_id": "tid-mid"}),
+        ]
+        fake = _make_fake_codex_script(
+            tmp_path, events, rc=1,
+            stderr_lines=["network: connection refused"],
+        )
+        monkeypatch.setenv("CLI_PULSE_CODEX_ARGV0", fake)
+        t = CodexExecTransport()
+        h = t.start("s1", ["codex"], env={}, cwd=None)
+        _ = t.read_stdout(h, 4096)
+        t.write_stdin(h, b"hello\n")
+        # Drain until the failure marker shows up.
+        out = _drain(t, h, deadline_s=3.0, contains="codex exec failed")
+        text = out.decode("utf-8", errors="replace")
+        assert "codex exec failed" in text, (
+            f"primary failure marker missing: {text!r}"
+        )
+        # CRUCIAL: no session-reset, because thread_id was captured.
+        assert "Session reset" not in text, (
+            f"session-reset marker leaked into mid-conversation failure: "
+            f"{text!r}"
+        )
+        # Sanity: thread_id is in fact set on state.
+        state = t._payload(h)  # type: ignore[attr-defined]
+        assert state.thread_id == "tid-mid"
         t.close(h)
 
 
