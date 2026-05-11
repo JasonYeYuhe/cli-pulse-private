@@ -100,7 +100,17 @@ class _CodexExecState:
     current_proc: Optional[subprocess.Popen] = None
     # Background reader thread for `current_proc.stdout`.
     reader_thread: Optional[threading.Thread] = None
-    # Mutex protecting `output_queue` + `pending_prompts` + `current_proc`.
+    # Background drainer thread for `current_proc.stderr`. Without this,
+    # any codex stderr emission > pipe buffer (64KB on Linux, 16-64KB
+    # dynamic on macOS) blocks codex on write(2) and the reader never
+    # sees stdout EOF — turn deadlocks until the helper is killed.
+    stderr_drainer_thread: Optional[threading.Thread] = None
+    # Accumulating stderr collected by the drainer thread, capped at
+    # 32KB. Read once in reader's finally block after the drainer has
+    # finished. Always cleared at the start of a turn.
+    stderr_buf: bytearray = field(default_factory=bytearray)
+    # Mutex protecting `output_queue` + `pending_prompts` + `current_proc`
+    # + `stderr_buf` writes by the drainer.
     lock: threading.Lock = field(default_factory=threading.Lock)
     # True once `close()` has been called. Subsequent operations no-op.
     closed: bool = False
@@ -253,6 +263,17 @@ class CodexExecTransport(SessionTransport):
                 s.session_id, exc,
             )
             return
+        # Fresh stderr buffer for this turn.
+        s.stderr_buf.clear()
+        # Stderr drainer must start BEFORE the reader so the codex
+        # process can never block on a full stderr pipe.
+        s.stderr_drainer_thread = threading.Thread(
+            target=self._stderr_drainer,
+            args=(s, s.current_proc),
+            name=f"codex-exec-stderr-{s.session_id[:8]}",
+            daemon=True,
+        )
+        s.stderr_drainer_thread.start()
         # Reader thread parses JSONL and queues output. Daemonized so
         # the helper can exit cleanly without joining.
         s.reader_thread = threading.Thread(
@@ -304,6 +325,58 @@ class CodexExecTransport(SessionTransport):
             return [*binary, "exec", "resume", *common_flags, "--", s.thread_id, prompt]
         # First turn: also pin the sandbox so resume inherits it.
         return [*binary, "exec", *common_flags, "-s", "read-only", "--", prompt]
+
+    # ── stderr drainer + pipe cleanup ────────────────────────
+
+    def _stderr_drainer(
+        self,
+        s: _CodexExecState,
+        proc: subprocess.Popen,
+    ) -> None:
+        """Drain `proc.stderr` into `s.stderr_buf` until EOF.
+
+        Runs on its own daemon thread, started by `_maybe_flush_next_turn`
+        before the reader. Without this, a verbose stderr (> pipe-buffer
+        size; 64KB Linux, 16-64KB macOS) blocks codex on `write(2)` and
+        the reader never sees stdout EOF — the entire turn deadlocks.
+
+        Buffer is capped at 32KB; anything past that tail-rotates so a
+        runaway stderr can't OOM the helper. Reader's finally block reads
+        the buffer lock-free AFTER waiting for proc death + joining this
+        thread, so the bytearray is guaranteed stable at read time.
+        """
+        try:
+            assert proc.stderr is not None
+            while True:
+                chunk = proc.stderr.read(4096)
+                if not chunk:
+                    break
+                with s.lock:
+                    s.stderr_buf.extend(chunk)
+                    overflow = len(s.stderr_buf) - 32 * 1024
+                    if overflow > 0:
+                        del s.stderr_buf[:overflow]
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "codex_exec stderr drainer ended session=%s: %s",
+                s.session_id, exc,
+            )
+
+    @staticmethod
+    def _close_proc_pipes(proc: subprocess.Popen) -> None:
+        """Idempotently close `proc.stdout` and `proc.stderr` fds.
+
+        Without this, each turn leaks one stdout fd + one stderr fd
+        because `subprocess.Popen` file-objects are GC-finalized at
+        unpredictable points. Long sessions (100+ turns) can exhaust
+        the helper's ulimit. Tolerates already-closed streams."""
+        for stream in (proc.stdout, proc.stderr):
+            if stream is None:
+                continue
+            try:
+                stream.close()
+            except Exception:  # noqa: BLE001 — best-effort close
+                pass
 
     # ── reader thread (JSONL → output queue) ─────────────────
 
@@ -365,24 +438,38 @@ class CodexExecTransport(SessionTransport):
             )
             self._enqueue(s, f"{_ERROR_PREFIX}reader crashed: {exc}\n".encode("utf-8"))
         finally:
+            # Cleanup order is load-bearing — see DEV_PLAN_v1.18.2.md
+            # Gemini CRITICAL fix:
+            #   ① reap the process first (forces stderr EOF)
+            #   ② join drainer (now instant since EOF reached)
+            #   ③ read stderr_buf lock-free (drainer is dead)
+            #   ④ close fds (P1-A: avoid fd leak per turn)
+            #   ⑤ release current_proc slot under lock + flush next
             try:
                 rc = proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 rc = proc.wait()
+            # Drainer should have exited on stderr EOF when the proc
+            # died. join(1.0) is a bounded safety belt — if it ever
+            # times out, the daemon thread is still safe to leave alive
+            # because the helper exit doesn't depend on it.
+            with s.lock:
+                drainer = s.stderr_drainer_thread
+            if drainer is not None:
+                drainer.join(timeout=1.0)
+            # Now safe to read the buffer without a lock (drainer dead).
+            stderr_text = bytes(s.stderr_buf).decode("utf-8", errors="replace")
             # If we never got an agent_message but the proc errored,
             # surface stderr so the user sees rate limit / auth errors.
             if not agent_text_emitted and rc != 0:
-                err_text = ""
-                try:
-                    if proc.stderr is not None:
-                        err_text = proc.stderr.read().decode("utf-8", errors="replace")
-                except Exception:  # noqa: BLE001
-                    pass
-                detail = err_text.strip() or f"exit code {rc}"
+                detail = stderr_text.strip() or f"exit code {rc}"
                 self._enqueue(
                     s, f"{_ERROR_PREFIX}codex exec failed: {detail[:500]}\n".encode("utf-8")
                 )
+            # Explicitly close pipes so fds are released NOW rather
+            # than at GC time (P1-A).
+            self._close_proc_pipes(proc)
             # Flush next pending turn if any.
             with s.lock:
                 if s.current_proc is proc:
