@@ -73,6 +73,7 @@ _USER_PREFIX = "› "
 _AGENT_PREFIX = "• "
 _INFO_PREFIX = "ℹ "
 _ERROR_PREFIX = "✗ "
+_WARN_PREFIX = "⚠ "
 _WORKING = "• Working…\n"
 
 
@@ -528,23 +529,45 @@ class CodexExecTransport(SessionTransport):
             with s.lock:
                 timed_out = s.timed_out
                 cancel = s.cancel_pending
+                thread_captured = s.thread_id is not None
                 s.timed_out = False
                 s.cancel_pending = False
             # Marker precedence (DEV_PLAN_v1.18.2.md decision table):
             #   timed_out > cancel > failure path > happy path.
-            # (session-reset is an orthogonal append landing in commit 4.)
+            primary_failure = False
             if timed_out:
                 self._enqueue(
                     s, f"{_ERROR_PREFIX}codex turn timed out\n".encode("utf-8")
                 )
+                primary_failure = True
             elif cancel:
                 self._enqueue(
                     s, f"{_ERROR_PREFIX}codex turn cancelled\n".encode("utf-8")
                 )
+                primary_failure = True
             elif not agent_text_emitted and rc != 0:
                 detail = stderr_text.strip() or f"exit code {rc}"
                 self._enqueue(
                     s, f"{_ERROR_PREFIX}codex exec failed: {detail[:500]}\n".encode("utf-8")
+                )
+                primary_failure = True
+            elif not agent_text_emitted and rc == 0:
+                # Edge: codex exited cleanly but emitted no agent text
+                # (corrupt JSONL, unsupported event types, etc.). Tell
+                # the user so they don't stare at silence.
+                self._enqueue(
+                    s, f"{_WARN_PREFIX}codex exited without reply\n".encode("utf-8")
+                )
+                primary_failure = True
+            # Session-reset append (P1-E + Gemini SHOULD_FIX 2): if the
+            # turn ended on any non-happy path AND no thread_id was ever
+            # captured this session, the next prompt will silently start
+            # a new conversation. Warn explicitly.
+            if primary_failure and not thread_captured:
+                self._enqueue(
+                    s,
+                    f"{_WARN_PREFIX}Session reset — your next prompt will start "
+                    "a new conversation\n".encode("utf-8"),
                 )
             # Explicitly close pipes so fds are released NOW rather
             # than at GC time (P1-A).
