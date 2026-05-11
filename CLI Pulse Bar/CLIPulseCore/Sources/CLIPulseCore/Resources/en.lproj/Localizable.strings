@@ -706,3 +706,8 @@
 "subscription.one_time" = "one-time";
 "subscription.one_time_badge" = "ONE-TIME";
 "subscription.buy_lifetime" = "Buy Lifetime";
+
+/* ── v1.18.2 D-2: Anthropic peak-window indicator on Claude provider card ── */
+"claude.peak_hours.peak_ends_in" = "Peak · ends in %@";
+"claude.peak_hours.off_peak_in" = "Off-peak · peak in %@";
+"claude.peak_hours.off_peak_fallback" = "Off-peak";

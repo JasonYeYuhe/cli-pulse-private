@@ -1,17 +1,46 @@
-// MIT License — derived from steipete/CodexBar
+// Derived from steipete/CodexBar
 // Sources/CodexBarCore/Providers/Claude/ClaudePeakHours.swift
-// (https://github.com/steipete/CodexBar, commit ~2026-05). Original
-// Copyright (c) 2026 Peter Steinberger. The peak-window definition
-// (weekdays 08:00–14:00 America/New_York) is empirical of Anthropic's
-// pricing schedule documented at https://anthropic.com (subject to
-// change without notice). When Anthropic ships a structured peak field
-// in `/api/account` or the OAuth window response, switch this to read
-// it instead of hard-coding.
+// (https://github.com/steipete/CodexBar). Vendored verbatim except for
+// the project-style adjustments noted below + v1.18.2 i18n routing.
+//
+// The peak-window definition (weekdays 08:00–14:00 America/New_York)
+// is empirical of Anthropic's pricing schedule documented at
+// https://anthropic.com (subject to change without notice). When
+// Anthropic ships a structured peak field in `/api/account` or the
+// OAuth window response, switch this to read it instead of hard-coding.
 //
 // We deliberately keep the public surface 1:1 with CodexBar's so that
-// future cherry-picks remain low-effort. The only divergence is that
-// our copy lives in CLIPulseCore (shared by macOS + iOS targets) and
-// the file uses our project's UTF-8 BOM-free / 4-space style.
+// future cherry-picks remain low-effort. The only divergences are:
+//   * file lives in CLIPulseCore (shared macOS + iOS + watchOS)
+//   * UTF-8 BOM-free / 4-space style
+//   * `Status.label` strings routed through L10n.claudePeakHours.*
+//     so the in-app language switcher works
+//
+// ─── MIT License (full notice required by upstream) ───────────────
+//
+// MIT License
+//
+// Copyright (c) 2026 Peter Steinberger
+//
+// Permission is hereby granted, free of charge, to any person
+// obtaining a copy of this software and associated documentation
+// files (the "Software"), to deal in the Software without
+// restriction, including without limitation the rights to use, copy,
+// modify, merge, publish, distribute, sublicense, and/or sell copies
+// of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be
+// included in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+// OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+// HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+// WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+// OTHER DEALINGS IN THE SOFTWARE.
 
 import Foundation
 
@@ -33,6 +62,13 @@ public enum ClaudePeakHours: Sendable {
     /// Compute the current peak/off-peak status for a given moment.
     /// Default argument is `Date()` so the UI can call without arguments;
     /// tests inject a fixed Date.
+    ///
+    /// `Status.label` strings are routed through `L10n.claudePeakHours.*`
+    /// so the in-app language switcher works (v1.18.2 Item D-2). The
+    /// duration formatting itself stays English-style ("2h 30m") — locale-
+    /// neutral and matches the upstream CodexBar convention; format-string
+    /// placement within the surrounding sentence is what each locale's
+    /// translation handles.
     public static func status(at date: Date = Date()) -> Status {
         let calendar = self.calendar()
         let date = calendar.dateInterval(of: .minute, for: date)?.start ?? date
@@ -42,7 +78,7 @@ public enum ClaudePeakHours: Sendable {
               let minute = components.minute,
               let weekday = components.weekday
         else {
-            return Status(isPeak: false, label: "Off-peak")
+            return Status(isPeak: false, label: L10n.claudePeakHours.offPeakFallback)
         }
 
         // Calendar.weekday: 1 = Sunday, 7 = Saturday. Mon–Fri = 2–6.
@@ -56,7 +92,7 @@ public enum ClaudePeakHours: Sendable {
             let remaining = peakEndMinutes - nowMinutes
             return Status(
                 isPeak: true,
-                label: "Peak · ends in \(self.formatDuration(minutes: remaining))")
+                label: L10n.claudePeakHours.peakEndsIn(self.formatDuration(minutes: remaining)))
         }
 
         let nextPeak = self.nextPeakStart(after: date, calendar: calendar)
@@ -64,7 +100,7 @@ public enum ClaudePeakHours: Sendable {
         let minutes = max(Int(seconds / 60), 0)
         return Status(
             isPeak: false,
-            label: "Off-peak · peak in \(self.formatDuration(minutes: minutes))")
+            label: L10n.claudePeakHours.offPeakIn(self.formatDuration(minutes: minutes)))
     }
 
     private static func nextPeakStart(after date: Date, calendar: Calendar) -> Date {
