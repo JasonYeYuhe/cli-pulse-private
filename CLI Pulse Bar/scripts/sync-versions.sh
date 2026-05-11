@@ -14,6 +14,22 @@ REPO_ROOT="$(dirname "$PROJECT_DIR")"
 ANDROID_DIR="$REPO_ROOT/android"
 PBXPROJ="$PROJECT_DIR/CLI Pulse Bar.xcodeproj/project.pbxproj"
 GRADLE_FILE="$ANDROID_DIR/app/build.gradle.kts"
+# All five Info.plists that ship in the iOS-bound archive. They each
+# carry hardcoded CFBundleShortVersionString + CFBundleVersion (not
+# $(MARKETING_VERSION) substitution), so the bump path MUST update
+# every one of them — otherwise the version pbxproj reports diverges
+# from what ASC actually receives. Per `feedback_archive_embedding_gap.md`
+# helper Info.plist is the easiest one to forget.
+IOS_PLIST_PATHS=(
+    "$PROJECT_DIR/CLI Pulse Bar iOS/Info.plist"
+    "$PROJECT_DIR/CLI Pulse Bar/Info.plist"
+    "$PROJECT_DIR/CLI Pulse Bar Watch/Info.plist"
+    "$PROJECT_DIR/CLI Pulse Widgets/Info.plist"
+    "$PROJECT_DIR/CLIPulseHelper/Info.plist"
+)
+# Source-of-truth Info.plist for read functions (the iOS app target —
+# it's what ASC's iOS submission consumes).
+IOS_INFO_PLIST="$PROJECT_DIR/CLI Pulse Bar iOS/Info.plist"
 
 # App Store Connect credentials — set via environment or .env file
 API_KEY_ID="${ASC_API_KEY_ID:?Set ASC_API_KEY_ID environment variable}"
@@ -40,11 +56,17 @@ log() { echo "[$(date '+%H:%M:%S')] $*"; }
 # ============================================================
 
 read_ios_version() {
-    grep "MARKETING_VERSION" "$PBXPROJ" | head -1 | sed 's/.*= //;s/;//;s/ //g'
+    # Read from Info.plist (source of truth for what ASC sees) rather
+    # than `grep MARKETING_VERSION | head -1` of pbxproj. The pbxproj
+    # has 40+ MARKETING_VERSION lines across targets; if they ever
+    # drift out of sync `head -1` returns whichever sorts first by
+    # file order (per feedback_sync_versions_script.md the 2026-05-11
+    # incident read 1.16.0 while iOS app was actually at 1.18.0).
+    plutil -extract CFBundleShortVersionString raw "$IOS_INFO_PLIST"
 }
 
 read_ios_build() {
-    grep "CURRENT_PROJECT_VERSION" "$PBXPROJ" | head -1 | sed 's/.*= //;s/;//;s/ //g'
+    plutil -extract CFBundleVersion raw "$IOS_INFO_PLIST"
 }
 
 read_android_version() {
@@ -82,8 +104,25 @@ bump_ios_version() {
     log "Bumping iOS: $(read_ios_version) (build $old_build) → $new_version (build $new_build)"
     if $DRY_RUN; then return; fi
 
+    # pbxproj sed kept for `agvtool what-marketing-version` and any
+    # tooling that reads build settings.
     sed -i '' "s/MARKETING_VERSION = .*/MARKETING_VERSION = $new_version;/g" "$PBXPROJ"
     sed -i '' "s/CURRENT_PROJECT_VERSION = .*/CURRENT_PROJECT_VERSION = $new_build;/g" "$PBXPROJ"
+
+    # Critical: the 5 Info.plists carry HARDCODED CFBundleShortVersionString
+    # + CFBundleVersion strings, not $(MARKETING_VERSION) substitution.
+    # Without writing them, the bump above is invisible to the actual
+    # archive shipped to ASC. plutil -replace creates the key if it's
+    # somehow missing, which is safer than a sed pattern.
+    for plist in "${IOS_PLIST_PATHS[@]}"; do
+        if [[ ! -f "$plist" ]]; then
+            log "  ⚠ Skipping missing Info.plist: $plist"
+            continue
+        fi
+        plutil -replace CFBundleShortVersionString -string "$new_version" "$plist"
+        plutil -replace CFBundleVersion -string "$new_build" "$plist"
+        log "  ✓ Bumped $(basename "$(dirname "$plist")")/Info.plist"
+    done
 }
 
 bump_android_version() {
@@ -108,56 +147,49 @@ build_and_upload_ios() {
     log "Building iOS $version for App Store..."
     if $DRY_RUN; then log "[DRY RUN] Would build and upload iOS"; return 0; fi
 
-    cd "$PROJECT_DIR"
-    local BUILD_DIR="$PROJECT_DIR/build/sync-release"
-    rm -rf "$BUILD_DIR"
-    mkdir -p "$BUILD_DIR"
+    # Delegate to build-appstore.sh rather than reimplementing the
+    # archive + export pipeline inline. The shared script handles:
+    #   * MAS helper strip (ITMS-90296 — feedback_mas_vs_devid_helper.md)
+    #   * Sentry dSYM upload + release finalize
+    #   * Correct ExportOptions plist (`app-store` not the deprecated
+    #     `app-store-connect`)
+    #   * MAS-archive-no-LaunchAgent verification (Phase 4D fallout)
+    #
+    # Capture output AND exit code without letting `set -e` fire on
+    # build-appstore.sh's non-zero (Gemini plan-review SHOULD_FIX:
+    # we need both the output and the chance to grep for closed-train
+    # patterns before the script aborts).
+    local build_output
+    local build_exit_code=0
+    build_output=$("$SCRIPT_DIR/build-appstore.sh" ios --upload 2>&1) \
+        || build_exit_code=$?
 
-    # Archive — explicit iOS scheme + destination. Pre-v1.18.1 this
-    # used `-scheme "CLI Pulse Bar"` (the macOS scheme) and omitted
-    # `-destination`, which silently archived the macOS app under the
-    # iOS submission path. The CLI Pulse iOS scheme is the iPhone /
-    # iPad target; `generic/platform=iOS` resolves to an unattached
-    # device build suitable for App Store distribution.
-    xcodebuild archive \
-        -project "CLI Pulse Bar.xcodeproj" \
-        -scheme "CLI Pulse iOS" \
-        -destination "generic/platform=iOS" \
-        -configuration Release \
-        -archivePath "$BUILD_DIR/CLIPulseBar.xcarchive" \
-        -quiet \
-        -allowProvisioningUpdates \
-        DEVELOPMENT_TEAM="$TEAM_ID" \
-        CODE_SIGN_STYLE=Automatic
+    # Echo through the captured output so the daily log captures the
+    # full xcodebuild + upload trail (debugging breaks otherwise).
+    echo "$build_output"
 
-    # Upload
-    cat > "$BUILD_DIR/ExportOptions.plist" << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>method</key>
-    <string>app-store-connect</string>
-    <key>teamID</key>
-    <string>KHMK6Q3L3K</string>
-    <key>destination</key>
-    <string>upload</string>
-    <key>signingStyle</key>
-    <string>automatic</string>
-</dict>
-</plist>
-EOF
-
-    if ! xcodebuild -exportArchive \
-        -archivePath "$BUILD_DIR/CLIPulseBar.xcarchive" \
-        -exportOptionsPlist "$BUILD_DIR/ExportOptions.plist" \
-        -exportPath "$BUILD_DIR/export" \
-        -allowProvisioningUpdates \
-        -authenticationKeyPath "$API_KEY_PATH" \
-        -authenticationKeyID "$API_KEY_ID" \
-        -authenticationKeyIssuerID "$API_ISSUER" \
-        2>&1; then
-        log "ERROR: xcodebuild -exportArchive failed for iOS $version"
+    if [[ "$build_exit_code" -ne 0 ]]; then
+        log "ERROR: build-appstore.sh ios --upload failed (exit $build_exit_code)"
+        # Closed-train detection (Gap 2): ASC returns these when we try
+        # to upload to a version that's already approved or in review.
+        # Auto-bump-and-retry would risk infinite cascade if ASC
+        # misclassifies, so we surface a clear instruction instead.
+        if grep -qE "ITMS-90186|ITMS-90062|already submitted|Invalid Pre-Release Train|must contain a higher version" <<< "$build_output"; then
+            log ""
+            log "════════════════════════════════════════════════════"
+            log "  CLOSED TRAIN — manual bump required"
+            log ""
+            log "  ASC has rejected v$version because the build is"
+            log "  already submitted, in review, or otherwise closed."
+            log "  Auto-bumping is suppressed to avoid version cascade."
+            log ""
+            log "  To unblock the daily sync:"
+            log "    1. Bump iOS Info.plists past the submitted version"
+            log "       (e.g. 1.18.1 → 1.19.0) on a hotfix branch"
+            log "    2. Re-run sync-versions.sh manually to verify"
+            log "    3. Merge the bump commit when ASC accepts"
+            log "════════════════════════════════════════════════════"
+        fi
         return 1
     fi
 
@@ -282,23 +314,34 @@ elif [[ "$CMP" == "2" ]]; then
     fi
 fi
 
+# Build the list of files touched by the bump path. The 5 Info.plists
+# are each only added if they exist on disk (avoids `git add` /
+# `git checkout` pathspec errors per Gemini SHOULD_FIX).
+BUMP_FILES=("$PBXPROJ" "$GRADLE_FILE")
+for plist in "${IOS_PLIST_PATHS[@]}"; do
+    [[ -f "$plist" ]] && BUMP_FILES+=("$plist")
+done
+
 # Only commit + push the version bump if the build/upload actually succeeded.
 # Otherwise we'd be advertising a synced version that doesn't exist on the
 # distribution channel.
 if $SYNC_OK && ! $DRY_RUN; then
     cd "$REPO_ROOT"
-    if [[ -n "$(git status --porcelain "$PBXPROJ" "$GRADLE_FILE" 2>/dev/null)" ]]; then
-        git add "$PBXPROJ" "$GRADLE_FILE"
+    if [[ -n "$(git status --porcelain "${BUMP_FILES[@]}" 2>/dev/null)" ]]; then
+        git add "${BUMP_FILES[@]}"
         git commit -m "chore: sync versions to v$TARGET_VERSION (iOS ↔ Android)"
         git push origin main
         log "✓ Version bump committed and pushed"
     fi
 elif ! $SYNC_OK && ! $DRY_RUN; then
-    # Roll back the local version bump so a future sync run will retry.
+    # Roll back ALL bumped files (pbxproj + gradle + 5 Info.plists)
+    # so a future sync run will retry from a clean state. Without
+    # this the Info.plists carry the failed-upload version on disk
+    # and confuse the next read pass (Gemini CRITICAL fix).
     cd "$REPO_ROOT"
-    if [[ -n "$(git status --porcelain "$PBXPROJ" "$GRADLE_FILE" 2>/dev/null)" ]]; then
+    if [[ -n "$(git status --porcelain "${BUMP_FILES[@]}" 2>/dev/null)" ]]; then
         log "Rolling back local version-file changes (build failed)"
-        git checkout -- "$PBXPROJ" "$GRADLE_FILE"
+        git checkout -- "${BUMP_FILES[@]}"
     fi
     log "=== Sync FAILED ==="
     exit 1
