@@ -92,6 +92,86 @@ compare_versions() {
 }
 
 # ============================================================
+# Android no-op-release guard
+# ============================================================
+#
+# Why this guard exists: 2026-05-12 09:27 JST the daily sync fired on
+# an iOS-only hotfix train (v1.18.1) and published a no-op Android
+# release with zero source changes. Catches that class of mistake
+# without requiring per-train manual intervention.
+#
+# Mechanism: compare the most-recent-commit-touching-Android-source
+# timestamp against the most-recent-published-android-v*-release
+# timestamp. If source was touched AFTER the release, proceed; if not,
+# the iOS bump is hotfix-only and rebuilding Android would publish a
+# byte-identical APK (just versionCode++).
+#
+# Why timestamps not git-diff-vs-tag: android-v* tags are created on
+# the PUBLIC distribution repo (cli-pulse), not this private dev repo.
+# `gh release create` tags the public repo's HEAD, which doesn't track
+# our dev-commit history at all. So `git diff android-v1.18.1 HEAD --
+# android/app/src/` reports nonsense because the tag points to the
+# unrelated distribution-only commit (e.g. 5d15080 `docs: add
+# .nojekyll`). Timestamps sidestep this entirely.
+#
+# What's checked: `android/app/src/` + `android/app/proguard-rules.pro`.
+# Excludes build.gradle.kts (the version file this script bumps),
+# schemas/, .gitignore, AGENTS.md.
+#
+# Failure-safe defaults: any of (no prior release / gh API down /
+# date parse failure / no prior android-touching commit) → return TRUE
+# (proceed with publish). Conservatism over false-skipping.
+android_source_changed_since_last_release() {
+    # Last android-v* release publish timestamp from public repo.
+    # IMPORTANT: gh's `createdAt` is the underlying commit date (e.g.
+    # the public distribution-only commit 5d15080); `publishedAt` is
+    # the actual release publish time. We want publishedAt.
+    local release_iso release_epoch
+    release_iso=$(gh release list --repo "$PUBLIC_REPO" --limit 50 \
+        --json tagName,publishedAt 2>/dev/null \
+        | jq -r '[.[] | select(.tagName | startswith("android-v"))]
+                 | sort_by(.publishedAt) | last | .publishedAt // empty' \
+        2>/dev/null)
+    if [[ -z "$release_iso" || "$release_iso" == "null" ]]; then
+        return 0  # no prior release — always proceed
+    fi
+    release_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$release_iso" "+%s" \
+        2>/dev/null) || release_epoch=""
+    if [[ -z "$release_epoch" ]]; then
+        return 0  # couldn't parse — proceed (conservative)
+    fi
+
+    # Most-recent commit touching tracked Android source (Unix epoch).
+    local source_epoch
+    source_epoch=$(git -C "$REPO_ROOT" log -1 --format='%ct' -- \
+        'android/app/src/' 'android/app/proguard-rules.pro' 2>/dev/null)
+    if [[ -z "$source_epoch" ]]; then
+        return 0  # no history of Android commits — proceed (conservative)
+    fi
+
+    # If the most recent Android commit is strictly newer than the last
+    # release, there's real source to publish. Equal timestamps are
+    # treated as "no new source" — exact equality is rare and almost
+    # always means we already shipped that commit.
+    if (( source_epoch > release_epoch )); then
+        return 0
+    fi
+    return 1
+}
+
+# Echoes a short human-readable description of the most recent
+# android-v* release for log messages.
+last_android_release_description() {
+    gh release list --repo "$PUBLIC_REPO" --limit 50 \
+        --json tagName,publishedAt 2>/dev/null \
+        | jq -r '[.[] | select(.tagName | startswith("android-v"))]
+                 | sort_by(.publishedAt) | last
+                 | "\(.tagName) (\(.publishedAt))" // "(no prior release)"' \
+        2>/dev/null \
+        || echo "(unknown — gh API failed)"
+}
+
+# ============================================================
 # Version bumping
 # ============================================================
 
@@ -289,6 +369,38 @@ if [[ "$CMP" == "1" ]]; then
     # iOS is ahead — bump Android
     log "iOS ($IOS_VERSION) is ahead of Android ($ANDROID_VERSION)"
     TARGET_VERSION="$IOS_VERSION"
+
+    # B5 guard: skip if no Android source touched since last release.
+    # Suppresses 2026-05-12 09:27-class no-op releases where an iOS
+    # hotfix train would otherwise trigger a byte-identical-binary
+    # Android publish. Uses commit-timestamp vs release-timestamp
+    # comparison (NOT git-diff-against-tag — android-v* tags live on
+    # the public distribution repo and don't track this dev history).
+    if ! android_source_changed_since_last_release; then
+        LAST_DESC=$(last_android_release_description)
+        log ""
+        log "════════════════════════════════════════════════════"
+        log "  SKIPPING Android sync — no source changes"
+        log ""
+        log "  Last release: $LAST_DESC"
+        log "  No commits under android/app/src/ or"
+        log "  android/app/proguard-rules.pro since then."
+        log ""
+        log "  The iOS bump to v$TARGET_VERSION appears to be a"
+        log "  Mac/iOS-only hotfix train; rebuilding Android would"
+        log "  publish a versionCode-only release with byte-"
+        log "  identical APK."
+        log ""
+        log "  To force a rebuild (signing-key rotation, build-"
+        log "  system change), commit a no-op touch to"
+        log "  android/app/proguard-rules.pro first, OR invoke"
+        log "  gradle assembleRelease + gh release create"
+        log "  manually."
+        log "════════════════════════════════════════════════════"
+        log "=== Sync skipped (Android no-op guard) ==="
+        exit 0
+    fi
+
     bump_android_version "$TARGET_VERSION"
 
     # Build and publish Android
