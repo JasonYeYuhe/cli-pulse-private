@@ -249,12 +249,16 @@ class RemoteAgentManager:
         # v1.17: wrap PosixPty + CodexExec in a multiplex so Codex
         # sessions bypass the ratatui TUI entirely (see
         # transports/codex_exec.py docstring for the full story).
+        # v1.19: GeminiExec added — gemini CLI has the same TUI-vs-
+        # stream-json choice. See transports/gemini_exec.py.
         from transports.posix_pty import PosixPtyTransport
         from transports.codex_exec import CodexExecTransport
+        from transports.gemini_exec import GeminiExecTransport
         from transports.multiplex import MultiplexTransport
         return MultiplexTransport(
             pty_transport=PosixPtyTransport(),
             codex_exec_transport=CodexExecTransport(),
+            gemini_exec_transport=GeminiExecTransport(),
         )
 
     # ── executor routing ─────────────────────────────────────
