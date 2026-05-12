@@ -81,6 +81,7 @@
 		A60003 /* HelperDaemon.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60003 /* HelperDaemon.swift */; };
 		A60010 /* CLIPulseHelper.app in Embed Login Items */ = {isa = PBXBuildFile; fileRef = C60001 /* CLIPulseHelper.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A60011 /* CompanionCLISection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60006 /* CompanionCLISection.swift */; };
+		CE9C5A560EFC6CC22716D4CD /* AppUpdaterSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = C420EAEAF8AC7DB112700AF8 /* AppUpdaterSection.swift */; };
 		PKG00004 /* CLIPulseCore in Frameworks */ = {isa = PBXBuildFile; productRef = PKG00002 /* CLIPulseCore */; };
 		PKG00005 /* CLIPulseCore in Frameworks */ = {isa = PBXBuildFile; productRef = PKG00003 /* CLIPulseCore */; };
 		PKG00007 /* CLIPulseCore in Frameworks */ = {isa = PBXBuildFile; productRef = PKG00006 /* CLIPulseCore */; };
@@ -250,6 +251,7 @@
 		C20001 /* CLI Pulse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "CLI Pulse.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		C30001 /* CLI Pulse Watch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "CLI Pulse Watch.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		C40001 /* CLI Pulse Widgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "CLI Pulse Widgets.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		C420EAEAF8AC7DB112700AF8 /* AppUpdaterSection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppUpdaterSection.swift; sourceTree = "<group>"; };
 		C60001 /* CLIPulseHelper.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CLIPulseHelper.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -343,6 +345,7 @@
 				B10014 /* CLI_Pulse_Bar.entitlements */,
 				B10060 /* cli_pulse_helper */,
 				B10062 /* yyh.CLI-Pulse.helper.agent.plist */,
+				C420EAEAF8AC7DB112700AF8 /* AppUpdaterSection.swift */,
 			);
 			path = "CLI Pulse Bar";
 			sourceTree = "<group>";
@@ -678,6 +681,7 @@
 				A10052 /* WelcomeModeChoice.swift in Sources */,
 				A10020 /* ProviderConfigEditor.swift in Sources */,
 				A10021 /* NoAutoFillFields.swift in Sources */,
+				CE9C5A560EFC6CC22716D4CD /* AppUpdaterSection.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

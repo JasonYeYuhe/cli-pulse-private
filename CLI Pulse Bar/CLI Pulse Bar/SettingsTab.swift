@@ -204,6 +204,19 @@ struct SettingsTab: View {
                 Divider()
                 CompanionCLISection(installer: state.helperInstaller)
 
+                // v1.19: Developer ID DMG channel updater. Only present
+                // in DEVID builds — MAS users get updates via the App
+                // Store. The section also surfaces a G5 banner reminding
+                // beta users to disable MAS automatic updates so the
+                // App Store version doesn't silently overwrite the beta.
+                #if DEVID_BUILD
+                Divider()
+                AppUpdaterSection(
+                    updater: state.appUpdater,
+                    permMigration: state.permissionMigrationChecker
+                )
+                #endif
+
                 Divider()
 
                 // Section picker

@@ -527,6 +527,16 @@ public final class AppState: ObservableObject {
     @Published public var appUpdater: AppUpdater = AppUpdater()
     #endif
 
+    // MARK: - v1.19 G1 permission migration checker
+    /// Detects TCC permission revocations on the MAS → DEVID migration
+    /// path and surfaces a banner for re-granting. Snapshot writer runs
+    /// on BOTH MAS and DEVID launches (same call); only DEVID builds
+    /// trigger the comparison + nudge logic. Caller must invoke
+    /// `runOnLaunch()` early in app init.
+    #if os(macOS)
+    @Published public var permissionMigrationChecker: AppPermissionMigrationChecker = AppPermissionMigrationChecker()
+    #endif
+
     // MARK: - Webhook Integration
     @AppStorage("cli_pulse_webhook_enabled") public var webhookEnabled = false
     @AppStorage("cli_pulse_webhook_url") public var webhookURL = ""
@@ -655,6 +665,17 @@ public final class AppState: ObservableObject {
             await MainActor.run {
                 self.helperAgentStatus = status
             }
+        }
+
+        // v1.19 G1: write a TCC permission snapshot to app-group
+        // UserDefaults from BOTH MAS and DEVID builds (the same call
+        // path). DEVID builds additionally compare against the
+        // previous snapshot and surface a banner if permissions look
+        // reverted. Read-only — does not request authorization (that
+        // remains owned by DataRefreshManager).
+        Task { [weak self] in
+            guard let self else { return }
+            await self.permissionMigrationChecker.runOnLaunch()
         }
         #endif
     }
