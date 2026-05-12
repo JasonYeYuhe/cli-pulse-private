@@ -49,7 +49,7 @@ import OSLog
 ///     `StandardErrorPath` keys — launchd does NOT expand `~` in
 ///     those keys (Phase 4E e2e 2026-05-07 finding) and any tilde
 ///     would crash the helper with EX_CONFIG. Helper logging goes
-///     through `Logger(subsystem: "yyh.CLI-Pulse.helper", ...)`
+///     through `Logger(subsystem: "yyh.CLI-Pulse.helper.agent", ...)`
 ///     os_log, viewable via `log show --predicate "process ==
 ///     'cli_pulse_helper'"`. Don't reintroduce path-based logging
 ///     keys; the embed_helper_in_archive.sh + verify-archive-
@@ -91,13 +91,21 @@ public actor HelperLifecycleManager {
     /// `Label` field of the LaunchAgent plist; MUST match the
     /// filename in `Contents/Library/LaunchAgents/` (Apple's
     /// resolver pairs them by exact match).
-    public static let agentLabel = "yyh.CLI-Pulse.helper"
-    public static let agentPlistName = "yyh.CLI-Pulse.helper.plist"
+    ///
+    /// **Important:** disambiguated from the MAS LoginItem identifier
+    /// `yyh.CLI-Pulse.helper` (`CLIPulseHelper.app` bundle ID, claimed
+    /// by `HelperLogin` via `SMAppService.loginItem(identifier:)`).
+    /// Pre-fix both occupied the same launchd label slot — MAS-strip-
+    /// inert (the agent plist is removed from MAS archives) but a P1
+    /// for any Developer ID DMG distribution. See
+    /// `feedback_loginitem_launchagent_collision.md`.
+    public static let agentLabel = "yyh.CLI-Pulse.helper.agent"
+    public static let agentPlistName = "yyh.CLI-Pulse.helper.agent.plist"
 
     /// Bundled LaunchAgent plist basename. The macOS app target's
     /// "Embed Helper LaunchAgent" Copy Files phase ships this file
     /// to `Contents/Library/LaunchAgents/`.
-    public static let plistResourceName = "yyh.CLI-Pulse.helper"
+    public static let plistResourceName = "yyh.CLI-Pulse.helper.agent"
 
     private var lastKnownStatus: Status = .notRegistered
 
@@ -112,9 +120,9 @@ public actor HelperLifecycleManager {
     ///
     /// Phase 4D P1.4 (Codex): does NOT mutate the signed app
     /// bundle anymore. The plist already lives at
-    /// `Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist`
+    /// `Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist`
     /// in shippable form (BundleProgram only — no log paths;
-    /// see yyh.CLI-Pulse.helper.plist comments for why). SMAppService.
+    /// see yyh.CLI-Pulse.helper.agent.plist comments for why). SMAppService.
     /// register reads it directly without any runtime substitution.
     @discardableResult
     public func ensureRegistered() async -> Status {
@@ -184,7 +192,7 @@ public actor HelperLifecycleManager {
         //     Contents/
         //       MacOS/CLI Pulse Bar         ← Bundle.main.executableURL
         //       Helpers/cli_pulse_helper    ← what we want
-        //       Library/LaunchAgents/yyh.CLI-Pulse.helper.plist
+        //       Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist
         guard let contents = appContentsDir() else { return nil }
         let helper = contents
             .appendingPathComponent("Helpers", isDirectory: true)

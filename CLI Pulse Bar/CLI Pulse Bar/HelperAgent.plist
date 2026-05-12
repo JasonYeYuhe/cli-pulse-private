@@ -16,7 +16,7 @@
        containing .app bundle automatically. We don't need to
        know the user's install path.
 
-    2. Logging goes via `Logger(subsystem: "yyh.CLI-Pulse.helper",
+    2. Logging goes via `Logger(subsystem: "yyh.CLI-Pulse.helper.agent",
        ...)` os_log — visible via `log show --predicate
        "process == 'cli_pulse_helper'"`. The plist had
        `StandardOutPath` / `StandardErrorPath` keys with `~/Library/
@@ -53,7 +53,10 @@
 
   Bundle identifier scheme:
     * The agent's Label MUST match the plist filename minus `.plist`,
-      so `yyh.CLI-Pulse.helper.plist` → label `yyh.CLI-Pulse.helper`.
+      so `yyh.CLI-Pulse.helper.agent.plist` → label `yyh.CLI-Pulse.helper.agent`.
+      Renamed from `yyh.CLI-Pulse.helper` to disambiguate from the
+      MAS LoginItem (CLIPulseHelper.app, bundle ID `yyh.CLI-Pulse.helper`)
+      which previously claimed the same launchd label slot.
     * SMAppService.agent(plistName:) resolves the plist relative to
       the calling app's Contents/Library/LaunchAgents/ — no absolute
       path needed at the SMAppService API surface.
@@ -70,7 +73,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>yyh.CLI-Pulse.helper</string>
+    <string>yyh.CLI-Pulse.helper.agent</string>
 
     <!--
       Phase 4D P1.4: BundleProgram is the launchd-blessed way to

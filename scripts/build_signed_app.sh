@@ -16,7 +16,7 @@
 #   3. Copy `HelperSwift/.build/release/cli_pulse_helper` into
 #      `<App>/Contents/Helpers/cli_pulse_helper`.
 #   4. Copy `CLI Pulse Bar/CLI Pulse Bar/HelperAgent.plist` into
-#      `<App>/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist`.
+#      `<App>/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist`.
 #   5. Codesign the embedded helper binary with the app's signing
 #      identity (so SMAppService.register accepts it).
 #   6. Re-sign the .app so the additions are part of the
@@ -97,7 +97,7 @@ chmod +x "$APP_PATH/Contents/Helpers/cli_pulse_helper"
 # 4. Copy LaunchAgent plist into Contents/Library/LaunchAgents/.
 echo "==> [4/7] Embedding LaunchAgent plist at Contents/Library/LaunchAgents/ ..."
 mkdir -p "$APP_PATH/Contents/Library/LaunchAgents"
-cp "$PLIST_TEMPLATE" "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+cp "$PLIST_TEMPLATE" "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
 
 # 5. Resolve signing identity + capture original app entitlements
 #    BEFORE we touch the bundle. Codex P1.C review: the previous
@@ -185,7 +185,7 @@ codesign --force --options runtime --timestamp=none \
 # 7. Verify.
 echo "==> [7/7] Verifying bundle ..."
 test -x "$APP_PATH/Contents/Helpers/cli_pulse_helper"
-test -f "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+test -f "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
 codesign --verify --deep --strict "$APP_PATH"
 
 # Codex P1.C: explicitly prove app entitlements survived re-sign.
@@ -217,7 +217,7 @@ if ! grep -q "group.yyh.CLI-Pulse" <<< "$HELPER_ENT_AFTER"; then
 fi
 # Phase 4E e2e fix (2026-05-07): tilde paths in plist break
 # launchd. Reject so the bug can't ship.
-PLIST_PATH="$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+PLIST_PATH="$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
 if [[ -f "$PLIST_PATH" ]]; then
     if /usr/libexec/PlistBuddy -c "Print :StandardOutPath" "$PLIST_PATH" 2>/dev/null | grep -q "~"; then
         echo "error: plist StandardOutPath contains '~' — launchd will not expand it" >&2
@@ -233,7 +233,7 @@ echo "    OK: $APP_PATH is signed; entitlements verified (sandbox + group preser
 echo ""
 echo "Final layout:"
 echo "  $APP_PATH/Contents/Helpers/cli_pulse_helper                       # Mach-O helper, signed"
-echo "  $APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist # LaunchAgent plist"
+echo "  $APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist # LaunchAgent plist"
 echo ""
 echo "Open the .app with Finder to test, or run:"
 echo "  open '$APP_PATH'"

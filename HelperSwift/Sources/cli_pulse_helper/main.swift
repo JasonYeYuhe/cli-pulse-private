@@ -120,7 +120,7 @@ case "daemon":
         binary will not start cloud sync this session. To run the
         Python daemon directly:
 
-          launchctl unload ~/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist
+          launchctl unload ~/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist
           python3 helper/cli_pulse_helper.py daemon --interval 120
 
         Remove `--legacy-python` from the plist + reload to flip back.

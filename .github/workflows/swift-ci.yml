@@ -208,7 +208,7 @@ jobs:
       - name: Verify embedded LaunchAgent plist
         run: |
           set -o pipefail
-          PLIST="build_app_output/DerivedData/Build/Products/Debug/CLI Pulse Bar.app/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+          PLIST="build_app_output/DerivedData/Build/Products/Debug/CLI Pulse Bar.app/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
           test -f "$PLIST" \
             || (echo "::error::LaunchAgent plist missing" && exit 1)
           # BundleProgram MUST be present (P1.4 contract) — relative
@@ -355,7 +355,7 @@ jobs:
           set -o pipefail
           ARCHIVE="build/ci-archive/CLIPulse-macOS.xcarchive"
           APP="$ARCHIVE/Products/Applications/CLI Pulse Bar.app"
-          PLIST="$APP/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+          PLIST="$APP/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
 
           echo "=== check 1: no Swift LaunchAgent helper Mach-O ==="
           ! test -e "$APP/Contents/Helpers/cli_pulse_helper" \

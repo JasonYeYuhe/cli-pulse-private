@@ -221,9 +221,9 @@ verify_mas_archive_has_no_launchagent() {
         rmdir "$APP_PATH/Contents/Helpers" 2>/dev/null || true
         NEEDS_RESIGN=1
     fi
-    if [[ -e "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist" ]]; then
+    if [[ -e "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist" ]]; then
         echo "  Stripping LaunchAgent plist for MAS submission..."
-        rm -f "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+        rm -f "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
         rmdir "$APP_PATH/Contents/Library/LaunchAgents" 2>/dev/null || true
         NEEDS_RESIGN=1
     fi
