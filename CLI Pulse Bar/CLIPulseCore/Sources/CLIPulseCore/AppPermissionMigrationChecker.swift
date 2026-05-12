@@ -146,7 +146,36 @@ public final class AppPermissionMigrationChecker: ObservableObject, @unchecked S
     /// READ-ONLY — does NOT request authorization. Notification probe
     /// is async because UNUserNotificationCenter's settings come back
     /// on a callback.
+    ///
+    /// xctest defense: `UNUserNotificationCenter.current()` calls into
+    /// `bundleProxyForCurrentProcess`, which raises
+    /// `NSInternalInconsistencyException` when `Bundle.main` points
+    /// at an xctest runner (`/Applications/Xcode.app/Contents/Developer
+    /// /usr/bin/`) instead of a normal `.app` bundle. Test contexts get
+    /// a defaults-only snapshot so the test suite can exercise the
+    /// surrounding state-comparison logic without crashing.
     private static func captureCurrentSnapshot() async -> Snapshot {
+        // Two flavours of test context to dodge:
+        //   - Xcode-launched xctest:  XCTestConfigurationFilePath env set
+        //   - swift-pm test runner:   Bundle.main.bundleURL points into
+        //     `/usr/bin/`, `/.build/`, or `xctest`-suffixed runner paths
+        //     (no .app wrapper); UNUserNotificationCenter blows up
+        //     trying to materialize a bundle proxy for that path.
+        let envIsXctest =
+            ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        let bundlePath = Bundle.main.bundleURL.path
+        let pathLooksLikeTestRunner =
+            bundlePath.contains("/usr/bin")
+            || bundlePath.contains("/.build/")
+            || bundlePath.hasSuffix(".xctest")
+            || bundlePath.contains(".xctest/")
+        if envIsXctest || pathLooksLikeTestRunner {
+            return Snapshot(
+                notificationsGranted: false,
+                accessibilityGranted: false,
+                capturedAt: Date()
+            )
+        }
         let notifGranted = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
             UNUserNotificationCenter.current().getNotificationSettings { settings in
                 cont.resume(returning: settings.authorizationStatus == .authorized)
