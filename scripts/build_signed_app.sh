@@ -186,14 +186,30 @@ for root, dirs, _files in os.walk(app_path):
 # Sort by path length descending → deepest first.
 matches.sort(key=lambda p: -len(p))
 for p in matches:
-    subprocess.call([
+    # v1.19 macOS 26.5 SDK: signing an inner framework regenerates
+    # _CodeSignature/CodeResources on the parent bundle and the
+    # parent picks up com.apple.provenance + com.apple.FinderInfo
+    # xattrs from the macOS file-creation path. The top-of-script
+    # xattr -cr does not help because those xattrs come BACK after
+    # each nested sign. Strip immediately before each codesign call
+    # so the bundle being signed never has detritus.
+    subprocess.call(["xattr", "-cr", p], stderr=subprocess.DEVNULL)
+    rc = subprocess.call([
         "codesign", "--force", "--options", "runtime", sys.argv[3],
         "--sign", sign_identity, p,
     ])
+    if rc != 0:
+        # Surface the failure clearly so the outer shell sees a
+        # non-zero exit. The original subprocess.call swallowed
+        # codesign errors silently, letting builds proceed past
+        # broken signatures into notarize failures.
+        sys.stderr.write(f"codesign failed for {p} (rc={rc})\n")
+        sys.exit(rc)
 PYEOF
 # Helper: NOT sandboxed (it's a LaunchAgent), but Hardened Runtime
 # is on (--options runtime) for notarisation. Entitlements file is
 # intentionally minimal.
+xattr -cr "$APP_PATH/Contents/Helpers/cli_pulse_helper" 2>/dev/null || true
 codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
     --entitlements "$HELPER_ENTITLEMENTS" \
     --sign "$SIGN_IDENTITY" \
@@ -203,6 +219,7 @@ codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
 # (.xcent file we located above). NOT --deep — that would re-sign
 # every nested binary with our top-level entitlements (overwriting
 # the helper's just-applied minimal set).
+xattr -cr "$APP_PATH" 2>/dev/null || true
 codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
     --entitlements "$APP_ENTITLEMENTS_SAVED" \
     --sign "$SIGN_IDENTITY" \
