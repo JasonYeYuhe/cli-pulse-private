@@ -1060,7 +1060,14 @@ class RemoteAgentManager:
         payload = getattr(handle, "payload", None)
         if payload is None:
             return None
-        proc = getattr(payload, "proc", None)
+        # PosixPty state exposes the long-lived child as `proc`. The
+        # exec-mode transports (CodexExec / GeminiExec, v1.17 / v1.19)
+        # store the per-turn subprocess as `current_proc` and have no
+        # `proc` attribute, so this used to silently return None for
+        # all exec sessions — breaking PID-based descent verification
+        # in the approval hook. Fall back to `current_proc` so both
+        # transport families register.
+        proc = getattr(payload, "proc", None) or getattr(payload, "current_proc", None)
         if proc is None:
             return None
         pid = getattr(proc, "pid", None)

@@ -67,33 +67,38 @@ public final class AppPermissionMigrationChecker: ObservableObject, @unchecked S
     /// Idempotent — re-runs do not re-show the nudge once dismissed.
     @MainActor
     public func runOnLaunch() async {
-        let current = await Self.captureCurrentSnapshot()
         let defaults = Self.appGroupDefaults()
 
-        // Always write the latest snapshot. Both MAS and DEVID builds
-        // do this, so whichever ships first creates the baseline; the
-        // other reads it.
+        // Read the existing snapshot FIRST so the diff below compares
+        // current state against the previous launch's state, not
+        // against itself. (Fix for the v1.19 self-comparison bug
+        // surfaced by the audit: previously we wrote the current
+        // snapshot before reading, so the read always got the value
+        // we just wrote and the migration nudge silently no-op'd.)
+        let previousSnapshotData = defaults?.data(forKey: Self.snapshotDefaultsKey)
+        let previous: Snapshot? = previousSnapshotData
+            .flatMap { try? JSONDecoder().decode(Snapshot.self, from: $0) }
+
+        let current = await Self.captureCurrentSnapshot()
+
+        // Write the new snapshot after we've captured `previous`.
+        // Both MAS and DEVID builds do this so whichever channel
+        // launches first creates the baseline; the other reads it.
         if let data = try? JSONEncoder().encode(current) {
             defaults?.set(data, forKey: Self.snapshotDefaultsKey)
         }
 
         #if DEVID_BUILD
-        // Compare against the previous snapshot — if permissions look
-        // reverted, set the nudge flag (unless the user has already
-        // dismissed it in this DEVID install).
+        // Compare current vs previous — if permissions look reverted,
+        // set the nudge flag (unless the user has already dismissed
+        // it in this DEVID install).
         let nudgeAlreadyShown = defaults?.bool(forKey: Self.nudgeShownDefaultsKey) ?? false
         if nudgeAlreadyShown {
             permMigrationLog.info("perm migration nudge already dismissed; skipping")
             return
         }
 
-        let snapshotData = defaults?.data(forKey: Self.snapshotDefaultsKey)
-        guard let snapshotData,
-              let previous = try? JSONDecoder().decode(Snapshot.self, from: snapshotData),
-              // If the snapshot we just wrote IS the previous one
-              // (first run, no prior data), skip the diff.
-              abs(previous.capturedAt.timeIntervalSinceNow) > 1.0
-        else {
+        guard let previous else {
             permMigrationLog.info("no prior snapshot to compare against")
             return
         }

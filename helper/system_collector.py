@@ -30,7 +30,13 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 # distinguish "user has the new pkg-installed helper" from "user is still
 # running the v1.15 nohup helper" so the post-install state machine knows
 # whether to offer the migration prompt.
-HELPER_VERSION = "1.17.3"
+#
+# v1.18.0 (2026-05-12): adds gemini_exec subprocess-per-turn transport
+# (helper/transports/gemini_exec.py), routing argv0=gemini through
+# stream-json instead of PTY. Mirrors codex_exec carve-out from v1.17.
+# Bump from 1.17.3 → 1.18.0 so the HelperInstaller UI surfaces the
+# update prompt for users who'd benefit from the Gemini transport.
+HELPER_VERSION = "1.18.0"
 
 logger = logging.getLogger("cli_pulse.collector")
 

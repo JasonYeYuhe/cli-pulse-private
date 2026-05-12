@@ -42,6 +42,20 @@ public enum GeminiConversationPreviewFormatter {
     public static func format(eventPayloads: [String]) -> String {
         guard !eventPayloads.isEmpty else { return emptyFallback }
         let blob = eventPayloads.joined()
+
+        // v1.19: gemini_exec subprocess-per-turn transport emits
+        // already-structured lines prefixed with `› ` (user), `• `
+        // (agent), `ℹ ` (info/usage), `✗ ` (error), `⚠ ` (warn). When
+        // the blob contains these markers, skip the TUI heuristics
+        // entirely — the bytes are plain text from the exec
+        // transport, not ratatui chrome to be unscrambled. Without
+        // this branch, the TUI heuristics drop the `•`/`›` markers
+        // (treating them as bullets), so the assistant reply renders
+        // bare and the user echo vanishes from the transcript.
+        if looksLikeExecMode(blob) {
+            return formatExecMode(blob)
+        }
+
         // v1.16 hotfix: parity with Claude formatter — preserve word
         // boundaries laid out via cursor-move escapes so multi-word
         // model output doesn't collapse to `fooCLIbar`.
@@ -59,6 +73,47 @@ public enum GeminiConversationPreviewFormatter {
             if shouldKeep(trimmed) {
                 kept.append(polishLine(trimmed))
             }
+        }
+        let collapsed = collapseConsecutiveDuplicates(kept)
+        if collapsed.isEmpty { return emptyFallback }
+        return collapsed.joined(separator: "\n")
+    }
+
+    // MARK: - v1.19 exec-mode passthrough
+
+    /// True when the payload contains exec-mode markers emitted by
+    /// `helper/transports/gemini_exec.py`. Detection is intentionally
+    /// lenient: any line starting with one of the canonical glyphs
+    /// counts. Mixed-mode (some PTY lines + some exec lines) goes
+    /// through the exec path because exec markers should not appear
+    /// in legitimate PTY output.
+    public static func looksLikeExecMode(_ blob: String) -> Bool {
+        // Single-character lookahead for any of the markers, anywhere.
+        // We don't anchor to line start because the first chunk of
+        // payload may carry partial preamble before the first marker.
+        let markers: [String] = ["› ", "• ", "ℹ ", "✗ ", "⚠ "]
+        for marker in markers where blob.contains(marker) {
+            return true
+        }
+        return false
+    }
+
+    /// Format exec-mode output. The transport has already done all
+    /// the work — we just split on newlines, drop the transient
+    /// `Working…` placeholder (real-time progress hint, not transcript
+    /// material), and join.
+    public static func formatExecMode(_ blob: String) -> String {
+        let lines = blob.split(
+            omittingEmptySubsequences: false,
+            whereSeparator: { $0 == "\n" || $0 == "\r" }
+        )
+        var kept: [String] = []
+        for raw in lines {
+            let trimmed = String(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { continue }
+            // Drop the working-spinner line — it's transient UX.
+            if trimmed == "• Working…" { continue }
+            kept.append(trimmed)
         }
         let collapsed = collapseConsecutiveDuplicates(kept)
         if collapsed.isEmpty { return emptyFallback }

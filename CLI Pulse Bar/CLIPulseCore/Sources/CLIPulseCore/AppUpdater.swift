@@ -96,6 +96,12 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
 
     private let manifestURL: URL
     private let urlSession: URLSession
+    /// Manifest captured by the most recent `refresh()`. `download()`
+    /// reuses this to avoid a TOCTOU race where a new release could
+    /// publish between the user seeing "v1.19.1 available" and
+    /// clicking "Download Update", leaving the version label out of
+    /// sync with the downloaded artifact. Cleared on error.
+    private var cachedManifest: Manifest?
 
     public static let defaultManifestURL = URL(string:
         "https://github.com/JasonYeYuhe/cli-pulse-distrib/releases/download/latest/latest.json"
@@ -137,9 +143,14 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
         do {
             try Self.assertArchitectureMatches(m)
         } catch {
+            cachedManifest = nil
             state = .error(error.localizedDescription)
             return
         }
+
+        // Cache so `download()` can use the same manifest the user saw
+        // in the "update available" prompt.
+        cachedManifest = m
 
         if Self.compareVersions(installed, m.version) < 0 {
             state = .updateAvailable(installed: installed, latest: m.version)
@@ -148,18 +159,28 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// Download the update .dmg. On success transitions to
-    /// `.readyToInstall(dmgURL:)`; the user then triggers `install()`.
+    /// Download the update .dmg. Reuses the manifest captured by the
+    /// most recent `refresh()` so the downloaded artifact matches the
+    /// version the user saw in the UI (avoids a TOCTOU where a new
+    /// release publishes mid-click). Falls back to a fresh fetch only
+    /// if no cached manifest exists (e.g., direct `download()` call
+    /// without a prior `refresh()`).
     @MainActor
     public func download() async {
         state = .downloading(progress: 0)
         do {
-            let manifest = try await fetchManifest()
+            let manifest: Manifest
+            if let cached = cachedManifest {
+                manifest = cached
+            } else {
+                manifest = try await fetchManifest()
+            }
             try Self.assertArchitectureMatches(manifest)
             let dmgURL = try await downloadDmg(manifest: manifest)
             state = .readyToInstall(dmgURL: dmgURL)
         } catch {
             appUpdaterLog.error("download failed: \(error.localizedDescription, privacy: .public)")
+            cachedManifest = nil
             state = .error(error.localizedDescription)
         }
     }
