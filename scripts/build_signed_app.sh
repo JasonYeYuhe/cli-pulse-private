@@ -46,6 +46,19 @@ set -euo pipefail
 CONFIGURATION="${1:-Debug}"
 OUTPUT_DIR="${2:-$PWD/build_app_output}"
 
+# v1.19: opt-in flag for the Developer ID DMG pipeline.
+# Notarization REQUIRES a timestamped signature (Apple's timestamp
+# service), but the ad-hoc/dev path uses --timestamp=none for speed
+# (CI runs hit this path; an Apple-side timestamp call adds 5-15s per
+# nested binary and can fail transiently). Default keeps the historical
+# behaviour; build_devid_dmg.sh sets CODESIGN_TIMESTAMP=1 before
+# invoking this script.
+if [[ -n "${CODESIGN_TIMESTAMP:-}" ]]; then
+    CODESIGN_TIMESTAMP_FLAG="--timestamp"
+else
+    CODESIGN_TIMESTAMP_FLAG="--timestamp=none"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SWIFT_PKG_DIR="$PROJECT_ROOT/HelperSwift"
@@ -73,6 +86,18 @@ cd "$PROJECT_ROOT/CLI Pulse Bar"
 # similar detritus not allowed"). xattr returns 0 even when nothing
 # matches, so the `|| true` is defensive.
 find . -name ".DS_Store" -exec rm -f {} + 2>/dev/null || true
+
+# v1.19: opt-in compilation flags for the Developer ID DMG pipeline.
+# DEVID_BUILD_FLAG=1 sets SWIFT_ACTIVE_COMPILATION_CONDITIONS to include
+# DEVID_BUILD so Swift code can `#if DEVID_BUILD` to gate the AppUpdater,
+# subscription bypass, MAS-auto-update banner, etc. Default empty =
+# Release/Debug builds behave exactly as before (MAS-equivalent
+# compilation). build_devid_dmg.sh sets DEVID_BUILD_FLAG=1.
+EXTRA_XCODEBUILD_SETTINGS=()
+if [[ -n "${DEVID_BUILD_FLAG:-}" ]]; then
+    EXTRA_XCODEBUILD_SETTINGS+=("SWIFT_ACTIVE_COMPILATION_CONDITIONS=\$(inherited) DEVID_BUILD")
+fi
+
 xcodebuild \
     -project "$APP_PROJECT" \
     -scheme "$APP_SCHEME" \
@@ -82,7 +107,8 @@ xcodebuild \
     CODE_SIGNING_ALLOWED=NO \
     CODE_SIGN_IDENTITY="" \
     CODE_SIGN_STYLE=Manual \
-    DEVELOPMENT_TEAM=""
+    DEVELOPMENT_TEAM="" \
+    ${EXTRA_XCODEBUILD_SETTINGS[@]+"${EXTRA_XCODEBUILD_SETTINGS[@]}"}
 
 APP_PATH="$DERIVED_DATA/Build/Products/$CONFIGURATION/CLI Pulse Bar.app"
 [[ -d "$APP_PATH" ]] || { echo "error: built .app not found at $APP_PATH" >&2; exit 1; }
@@ -149,7 +175,7 @@ xattr -cr "$APP_PATH" 2>/dev/null || true
 # would get group-container). The bottom-up walk lets each
 # bundle keep its own entitlements.
 echo "    re-signing nested bundles bottom-up ..."
-python3 - <<PYEOF "$APP_PATH" "$SIGN_IDENTITY"
+python3 - <<PYEOF "$APP_PATH" "$SIGN_IDENTITY" "$CODESIGN_TIMESTAMP_FLAG"
 import os, sys, subprocess
 app_path, sign_identity = sys.argv[1], sys.argv[2]
 matches = []
@@ -161,14 +187,14 @@ for root, dirs, _files in os.walk(app_path):
 matches.sort(key=lambda p: -len(p))
 for p in matches:
     subprocess.call([
-        "codesign", "--force", "--options", "runtime", "--timestamp=none",
+        "codesign", "--force", "--options", "runtime", sys.argv[3],
         "--sign", sign_identity, p,
     ])
 PYEOF
 # Helper: NOT sandboxed (it's a LaunchAgent), but Hardened Runtime
 # is on (--options runtime) for notarisation. Entitlements file is
 # intentionally minimal.
-codesign --force --options runtime --timestamp=none \
+codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
     --entitlements "$HELPER_ENTITLEMENTS" \
     --sign "$SIGN_IDENTITY" \
     "$APP_PATH/Contents/Helpers/cli_pulse_helper"
@@ -177,7 +203,7 @@ codesign --force --options runtime --timestamp=none \
 # (.xcent file we located above). NOT --deep — that would re-sign
 # every nested binary with our top-level entitlements (overwriting
 # the helper's just-applied minimal set).
-codesign --force --options runtime --timestamp=none \
+codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
     --entitlements "$APP_ENTITLEMENTS_SAVED" \
     --sign "$SIGN_IDENTITY" \
     "$APP_PATH"

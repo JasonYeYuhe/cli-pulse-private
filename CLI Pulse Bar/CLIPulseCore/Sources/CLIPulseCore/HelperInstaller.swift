@@ -331,7 +331,13 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
     // MARK: - Internals
 
     private func fetchManifest() async throws -> Manifest {
-        let (data, response) = try await urlSession.data(from: manifestURL)
+        // v1.19 G7: default URLSession cache can hide newly-published
+        // manifests for hours. Force a network round-trip every time
+        // so users see new helper releases as soon as we publish them.
+        var request = URLRequest(url: manifestURL)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 15
+        let (data, response) = try await urlSession.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw NSError(
                 domain: "HelperInstaller",

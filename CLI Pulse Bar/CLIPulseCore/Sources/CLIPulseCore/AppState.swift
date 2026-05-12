@@ -519,6 +519,14 @@ public final class AppState: ObservableObject {
     @Published public var helperInstaller: HelperInstaller = HelperInstaller()
     #endif
 
+    // MARK: - v1.19 Developer ID App Updater
+    /// Drives the "Check for Updates / Install Update" UI for the
+    /// Developer ID DMG distribution channel. Only present in DEVID
+    /// builds (MAS users get App Store updates via appstoreagent).
+    #if os(macOS) && DEVID_BUILD
+    @Published public var appUpdater: AppUpdater = AppUpdater()
+    #endif
+
     // MARK: - Webhook Integration
     @AppStorage("cli_pulse_webhook_enabled") public var webhookEnabled = false
     @AppStorage("cli_pulse_webhook_url") public var webhookURL = ""
