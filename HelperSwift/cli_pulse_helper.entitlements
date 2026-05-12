@@ -24,6 +24,26 @@
     <array>
         <string>group.yyh.CLI-Pulse</string>
     </array>
+    <!--
+      B3-bis (2026-05-12): added to let the daemon read the
+      `helper_secret` keychain entry the macOS app writes during
+      pairing (`KeychainHelper.save(..., accessGroup: "group.yyh.CLI-Pulse")`
+      in CLIPulseCore). Without this entitlement, `SecItemCopyMatching`
+      with `kSecAttrAccessGroup` returns `errSecMissingEntitlement`
+      and the daemon falls through to the legacy JSON path even when
+      modern UserDefaults pairing is populated — the very bug B3-bis
+      fixes.
+
+      `$(AppIdentifierPrefix)` expands at codesign time to the team
+      ID prefix (`KHMK6Q3L3K.`), producing the keychain access-group
+      string macOS uses internally. The literal `group.yyh.CLI-Pulse`
+      (no prefix) is what `AppGroupConfigReader.readPairing()` passes
+      at query time — Apple's keychain APIs auto-prepend the prefix.
+    -->
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)group.yyh.CLI-Pulse</string>
+    </array>
     <key>com.apple.developer.team-identifier</key>
     <string>KHMK6Q3L3K</string>
 </dict>
