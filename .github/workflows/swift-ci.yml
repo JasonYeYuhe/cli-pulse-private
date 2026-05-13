@@ -350,6 +350,32 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM=""
 
+      - name: Strip Swift LaunchAgent helper from MAS archive
+        # v1.20 post-Phase 4D: the `Build Helper Binary (Swift)` build
+        # phase now always embeds `Contents/Helpers/cli_pulse_helper`
+        # in the raw `xcodebuild archive` output, because the same
+        # archive is also reused for DEVID DMG builds where the helper
+        # IS shipped. For MAS submission, build-appstore.sh strips
+        # helper + plist post-archive (its lines 218-227). CI mirrors
+        # that strip here so the verify step below operates on the
+        # same artifact ASC actually receives — protecting against
+        # the real ITMS-90296 rejection class, not the (now-spurious)
+        # "did Build Helper Binary land helper in archive" assertion.
+        run: |
+          set -o pipefail
+          APP="build/ci-archive/CLIPulse-macOS.xcarchive/Products/Applications/CLI Pulse Bar.app"
+          if [[ -e "$APP/Contents/Helpers/cli_pulse_helper" ]]; then
+            rm -f "$APP/Contents/Helpers/cli_pulse_helper"
+            rmdir "$APP/Contents/Helpers" 2>/dev/null || true
+            echo "Stripped unsandboxed helper binary from MAS archive"
+          fi
+          PLIST="$APP/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
+          if [[ -e "$PLIST" ]]; then
+            rm -f "$PLIST"
+            rmdir "$APP/Contents/Library/LaunchAgents" 2>/dev/null || true
+            echo "Stripped LaunchAgent plist from MAS archive"
+          fi
+
       - name: Verify MAS archive does not contain Swift LaunchAgent helper
         run: |
           set -o pipefail
@@ -359,11 +385,11 @@ jobs:
 
           echo "=== check 1: no Swift LaunchAgent helper Mach-O ==="
           ! test -e "$APP/Contents/Helpers/cli_pulse_helper" \
-            || (echo "::error::MAS archive contains unsandboxed Swift helper" && exit 1)
+            || (echo "::error::MAS archive contains unsandboxed Swift helper after strip" && exit 1)
 
           echo "=== check 2: no LaunchAgent plist ==="
           ! test -e "$PLIST" \
-            || (echo "::error::MAS archive contains LaunchAgent plist" && exit 1)
+            || (echo "::error::MAS archive contains LaunchAgent plist after strip" && exit 1)
 
           echo "=== check 3: LoginItem remains present for MAS runtime ==="
           test -d "$APP/Contents/Library/LoginItems/CLIPulseHelper.app" \
