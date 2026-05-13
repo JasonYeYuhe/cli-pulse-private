@@ -56,17 +56,19 @@ log() { echo "[$(date '+%H:%M:%S')] $*"; }
 # ============================================================
 
 read_ios_version() {
-    # Read from Info.plist (source of truth for what ASC sees) rather
-    # than `grep MARKETING_VERSION | head -1` of pbxproj. The pbxproj
-    # has 40+ MARKETING_VERSION lines across targets; if they ever
-    # drift out of sync `head -1` returns whichever sorts first by
-    # file order (per feedback_sync_versions_script.md the 2026-05-11
-    # incident read 1.16.0 while iOS app was actually at 1.18.0).
-    plutil -extract CFBundleShortVersionString raw "$IOS_INFO_PLIST"
+    # v1.20 A8: source plists now use $(MARKETING_VERSION) substitution,
+    # so plutil -extract on the raw plist returns the literal `$(MARKETING_VERSION)`.
+    # Read from xcodebuild -showBuildSettings instead — resolves the
+    # build settings the same way an actual archive does, AND avoids the
+    # `grep MARKETING_VERSION | head -1` drift problem from the 2026-05-11
+    # incident (per feedback_sync_versions_script.md).
+    xcodebuild -project "$PBXPROJ/.." -target "CLI Pulse iOS" -configuration Release -showBuildSettings -json 2>/dev/null \
+        | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['buildSettings'].get('MARKETING_VERSION',''))"
 }
 
 read_ios_build() {
-    plutil -extract CFBundleVersion raw "$IOS_INFO_PLIST"
+    xcodebuild -project "$PBXPROJ/.." -target "CLI Pulse iOS" -configuration Release -showBuildSettings -json 2>/dev/null \
+        | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['buildSettings'].get('CURRENT_PROJECT_VERSION',''))"
 }
 
 read_android_version() {
@@ -184,25 +186,15 @@ bump_ios_version() {
     log "Bumping iOS: $(read_ios_version) (build $old_build) → $new_version (build $new_build)"
     if $DRY_RUN; then return; fi
 
-    # pbxproj sed kept for `agvtool what-marketing-version` and any
-    # tooling that reads build settings.
+    # v1.20 A8: pbxproj is now the single source of truth for version.
+    # The 5 Info.plist files use $(MARKETING_VERSION) +
+    # $(CURRENT_PROJECT_VERSION) substitutions, so updating pbxproj
+    # alone is sufficient — xcodebuild expands the substitutions at
+    # build time. Do NOT also rewrite the plists; doing so would
+    # re-introduce the hardcoded literals and defeat A8.
     sed -i '' "s/MARKETING_VERSION = .*/MARKETING_VERSION = $new_version;/g" "$PBXPROJ"
     sed -i '' "s/CURRENT_PROJECT_VERSION = .*/CURRENT_PROJECT_VERSION = $new_build;/g" "$PBXPROJ"
-
-    # Critical: the 5 Info.plists carry HARDCODED CFBundleShortVersionString
-    # + CFBundleVersion strings, not $(MARKETING_VERSION) substitution.
-    # Without writing them, the bump above is invisible to the actual
-    # archive shipped to ASC. plutil -replace creates the key if it's
-    # somehow missing, which is safer than a sed pattern.
-    for plist in "${IOS_PLIST_PATHS[@]}"; do
-        if [[ ! -f "$plist" ]]; then
-            log "  ⚠ Skipping missing Info.plist: $plist"
-            continue
-        fi
-        plutil -replace CFBundleShortVersionString -string "$new_version" "$plist"
-        plutil -replace CFBundleVersion -string "$new_build" "$plist"
-        log "  ✓ Bumped $(basename "$(dirname "$plist")")/Info.plist"
-    done
+    log "  ✓ Bumped pbxproj MARKETING_VERSION + CURRENT_PROJECT_VERSION (substitution-driven plists pick this up at archive time)"
 }
 
 bump_android_version() {

@@ -30,8 +30,19 @@ if [[ "${2:-}" == "--upload" ]] || [[ "${1:-}" == "--upload" ]]; then
     fi
 fi
 
-VERSION=$(defaults read "$PROJECT_DIR/CLI Pulse Bar/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "0.1.0")
-BUILD_NUM=$(defaults read "$PROJECT_DIR/CLI Pulse Bar/Info.plist" CFBundleVersion 2>/dev/null || echo "0")
+# v1.20 A8: source plists now use $(MARKETING_VERSION) /
+# $(CURRENT_PROJECT_VERSION) substitutions, so `defaults read` on the
+# raw plist would return the literal `$(MARKETING_VERSION)` string.
+# Read from xcodebuild -showBuildSettings instead, which resolves the
+# build settings the same way an actual archive does.
+_read_build_setting() {
+    xcodebuild -project "$PROJECT" -target "CLI Pulse Bar" -configuration Release -showBuildSettings -json 2>/dev/null \
+        | python3 -c "import sys,json; data=json.load(sys.stdin); print(data[0]['buildSettings'].get('$1',''))"
+}
+VERSION="$(_read_build_setting MARKETING_VERSION)"
+BUILD_NUM="$(_read_build_setting CURRENT_PROJECT_VERSION)"
+[[ -z "$VERSION" ]] && VERSION="0.1.0"
+[[ -z "$BUILD_NUM" ]] && BUILD_NUM="0"
 
 # --- Sentry dSYM upload config ---
 # Auth token is stored outside the repo in the standard CLI Pulse secrets dir
