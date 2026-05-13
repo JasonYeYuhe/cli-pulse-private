@@ -141,6 +141,61 @@ final class GeminiConversationPreviewFormatterTests: XCTestCase {
         XCTAssertEqual(preview, F.emptyFallback)
     }
 
+    // MARK: - v1.18.1 orphan-CSI false-positive regression
+    //
+    // See ClaudeConversationPreviewFormatterTests for the rationale —
+    // all three formatters share the same orphan-CSI helper, so the
+    // regression coverage is mirrored across them.
+
+    func test_stripOrphanCsi_preserves_array_index() {
+        XCTAssertEqual(
+            F.stripOrphanCsiBodies("arr[0] = 5; arr[1] = 7"),
+            "arr[0] = 5; arr[1] = 7"
+        )
+    }
+
+    func test_stripOrphanCsi_preserves_markdown_reference() {
+        XCTAssertEqual(
+            F.stripOrphanCsiBodies("see [42] for the relevant section"),
+            "see [42] for the relevant section"
+        )
+    }
+
+    func test_stripOrphanCsi_preserves_bracket_footnote_at_line_start() {
+        XCTAssertEqual(
+            F.stripOrphanCsiBodies("[1] first footnote\n[2] second"),
+            "[1] first footnote\n[2] second"
+        )
+    }
+
+    func test_stripOrphanCsi_preserves_plain_bracket_word() {
+        XCTAssertEqual(
+            F.stripOrphanCsiBodies("Hello [world] and [bar]"),
+            "Hello [world] and [bar]"
+        )
+    }
+
+    func test_stripOrphanCsi_preserves_alpha_suffixed_footnote() {
+        XCTAssertEqual(
+            F.stripOrphanCsiBodies("[1a] one\n[1b] two\n[1c] three"),
+            "[1a] one\n[1b] two\n[1c] three"
+        )
+    }
+
+    func test_stripOrphanCsi_still_strips_orphan_decscusr() {
+        XCTAssertEqual(
+            F.stripOrphanCsiBodies("prefix[0 qtail"),
+            "prefixtail"
+        )
+    }
+
+    func test_stripOrphanCsi_still_strips_orphan_private_mode() {
+        XCTAssertEqual(
+            F.stripOrphanCsiBodies("[?25lhidden output"),
+            "hidden output"
+        )
+    }
+
     func test_format_empty_payload_returns_fallback() {
         XCTAssertEqual(F.format(eventPayloads: [""]), F.emptyFallback)
     }

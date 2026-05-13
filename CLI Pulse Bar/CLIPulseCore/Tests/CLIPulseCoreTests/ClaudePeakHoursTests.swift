@@ -1,11 +1,29 @@
 // XCTest port of steipete/CodexBar's ClaudePeakHoursTests (MIT). Keeps
 // fixture coverage 1:1 so future cherry-picks of upstream test cases
 // stay drop-in.
+//
+// v1.18.2 Item D-2: peak/off-peak labels now route through L10n.
+// setUp() pins the in-app locale override to "en" so these
+// English-literal assertions remain deterministic regardless of
+// the host machine's preferred language. tearDown() restores the
+// previous override so we don't leak state into other tests.
 import XCTest
 @testable import CLIPulseCore
 
 final class ClaudePeakHoursTests: XCTestCase {
     private static let eastern = TimeZone(identifier: "America/New_York")!
+    private var savedLocaleOverride: String?
+
+    override func setUp() {
+        super.setUp()
+        savedLocaleOverride = LocaleOverrideStore.shared.override
+        LocaleOverrideStore.shared.set("en")
+    }
+
+    override func tearDown() {
+        LocaleOverrideStore.shared.set(savedLocaleOverride)
+        super.tearDown()
+    }
 
     private func date(
         year: Int = 2026,

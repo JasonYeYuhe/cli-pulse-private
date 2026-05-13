@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>yyh.CLI-Pulse.helper</string>
+    <string>yyh.CLI-Pulse.helper.agent</string>
 
     <key>BundleProgram</key>
     <string>Contents/Helpers/cli_pulse_helper</string>

@@ -101,4 +101,157 @@ final class HelperConfigStoreTests: XCTestCase {
         XCTAssertEqual(mode & 0o777, 0o600,
                        "config file must be 0600 — same as Python writer")
     }
+
+    // MARK: - B3-bis cloudConfigSnapshot three-layer fallback
+
+    private static let fakeSupabase = SupabaseConfigResolver.Resolved(
+        url: "https://test.supabase.co",
+        anonKey: "test-anon-key"
+    )
+
+    func testCloudConfigSnapshot_readsFromUserDefaults_whenAvailable() {
+        let store = makeStore()
+        let snapshot = store.cloudConfigSnapshot(
+            appGroupReader: {
+                AppGroupConfigReader.AppPairing(
+                    deviceId: "modern-device-id",
+                    helperSecret: "modern-secret"
+                )
+            },
+            supabaseResolver: { Self.fakeSupabase },
+            legacyJSON: { (deviceId: "should-be-ignored", helperSecret: "ignored") }
+        )
+        XCTAssertEqual(snapshot.deviceId, "modern-device-id")
+        XCTAssertEqual(snapshot.helperSecret, "modern-secret")
+        XCTAssertEqual(snapshot.supabaseURL, "https://test.supabase.co")
+        XCTAssertEqual(snapshot.supabaseAnonKey, "test-anon-key")
+        XCTAssertTrue(snapshot.isPaired)
+    }
+
+    func testCloudConfigSnapshot_fallsBackToJSON_whenUserDefaultsEmpty() throws {
+        // Seed the legacy JSON file with paired state
+        let path = tmp.appendingPathComponent("cfg.json")
+        let seed: [String: Any] = [
+            "device_id": "legacy-device",
+            "helper_secret": "legacy-secret",
+        ]
+        try JSONSerialization.data(withJSONObject: seed).write(to: path)
+        let store = HelperConfigStore(path: path)
+
+        let snapshot = store.cloudConfigSnapshot(
+            appGroupReader: { nil },
+            supabaseResolver: { Self.fakeSupabase },
+            legacyJSON: nil  // use real readLegacyJSONPairing()
+        )
+        XCTAssertEqual(snapshot.deviceId, "legacy-device")
+        XCTAssertEqual(snapshot.helperSecret, "legacy-secret")
+        XCTAssertEqual(snapshot.supabaseURL, "https://test.supabase.co")
+        XCTAssertTrue(snapshot.isPaired)
+    }
+
+    func testCloudConfigSnapshot_unpairedWhenBothEmpty() {
+        let store = makeStore()
+        let snapshot = store.cloudConfigSnapshot(
+            appGroupReader: { nil },
+            supabaseResolver: { Self.fakeSupabase },
+            legacyJSON: { (deviceId: "", helperSecret: "") }
+        )
+        XCTAssertEqual(snapshot.deviceId, "")
+        XCTAssertEqual(snapshot.helperSecret, "")
+        // Supabase URL still populated — daemon can reach Supabase
+        // but has no pairing credentials, so cloud RPCs skip.
+        XCTAssertEqual(snapshot.supabaseURL, "https://test.supabase.co")
+        XCTAssertFalse(snapshot.isPaired)
+    }
+
+    func testCloudConfigSnapshot_unpairedWhenSupabaseResolverFails() {
+        let store = makeStore()
+        let snapshot = store.cloudConfigSnapshot(
+            appGroupReader: {
+                // Even with valid pairing, no Supabase = cannot dispatch
+                AppGroupConfigReader.AppPairing(
+                    deviceId: "x", helperSecret: "y"
+                )
+            },
+            supabaseResolver: { nil },
+            legacyJSON: nil
+        )
+        // All four fields empty — Supabase unreachable
+        XCTAssertEqual(snapshot.supabaseURL, "")
+        XCTAssertEqual(snapshot.supabaseAnonKey, "")
+        XCTAssertEqual(snapshot.deviceId, "")
+        XCTAssertFalse(snapshot.isPaired)
+    }
+
+    func testCloudConfigSnapshot_preferences_modernOverLegacy() throws {
+        // Both modern + legacy populated; modern wins.
+        let path = tmp.appendingPathComponent("cfg.json")
+        let seed: [String: Any] = [
+            "device_id": "legacy-device",
+            "helper_secret": "legacy-secret",
+        ]
+        try JSONSerialization.data(withJSONObject: seed).write(to: path)
+        let store = HelperConfigStore(path: path)
+
+        let snapshot = store.cloudConfigSnapshot(
+            appGroupReader: {
+                AppGroupConfigReader.AppPairing(
+                    deviceId: "modern-device",
+                    helperSecret: "modern-secret"
+                )
+            },
+            supabaseResolver: { Self.fakeSupabase },
+            legacyJSON: nil
+        )
+        XCTAssertEqual(snapshot.deviceId, "modern-device",
+                       "modern UserDefaults takes precedence over legacy JSON")
+        XCTAssertEqual(snapshot.helperSecret, "modern-secret")
+    }
+
+    // MARK: - StoredConfig schema parity check
+
+    func testStoredConfigSchemaMatchesAppEncoding() throws {
+        // Round-trip a payload encoded the way the macOS app's
+        // CLIPulseCore.HelperConfig.StoredConfig encodes. If the
+        // app's StoredConfig adds/removes a field without updating
+        // HelperKit's mirror, this test breaks the bridge before
+        // ship.
+        //
+        // Golden JSON matches the app's StoredConfig field set:
+        // deviceId, userId (optional), deviceName (optional),
+        // helperVersion (optional).
+        let goldenJSON = """
+        {
+            "deviceId": "abc-123",
+            "userId": "user-456",
+            "deviceName": "Test Mac",
+            "helperVersion": "1.17.3"
+        }
+        """
+        let data = goldenJSON.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(
+            AppGroupConfigReader.StoredConfig.self,
+            from: data
+        )
+        XCTAssertEqual(decoded.deviceId, "abc-123")
+        XCTAssertEqual(decoded.userId, "user-456")
+        XCTAssertEqual(decoded.deviceName, "Test Mac")
+        XCTAssertEqual(decoded.helperVersion, "1.17.3")
+    }
+
+    func testStoredConfigSchema_tolerates_missingOptionals() throws {
+        // The macOS app may write a StoredConfig with userId /
+        // deviceName / helperVersion absent (Codable encodes nil as
+        // missing key by default). The mirror must decode this case.
+        let minimalJSON = #"{"deviceId":"only-the-required-field"}"#
+        let data = minimalJSON.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(
+            AppGroupConfigReader.StoredConfig.self,
+            from: data
+        )
+        XCTAssertEqual(decoded.deviceId, "only-the-required-field")
+        XCTAssertNil(decoded.userId)
+        XCTAssertNil(decoded.deviceName)
+        XCTAssertNil(decoded.helperVersion)
+    }
 }

@@ -249,12 +249,16 @@ class RemoteAgentManager:
         # v1.17: wrap PosixPty + CodexExec in a multiplex so Codex
         # sessions bypass the ratatui TUI entirely (see
         # transports/codex_exec.py docstring for the full story).
+        # v1.19: GeminiExec added — gemini CLI has the same TUI-vs-
+        # stream-json choice. See transports/gemini_exec.py.
         from transports.posix_pty import PosixPtyTransport
         from transports.codex_exec import CodexExecTransport
+        from transports.gemini_exec import GeminiExecTransport
         from transports.multiplex import MultiplexTransport
         return MultiplexTransport(
             pty_transport=PosixPtyTransport(),
             codex_exec_transport=CodexExecTransport(),
+            gemini_exec_transport=GeminiExecTransport(),
         )
 
     # ── executor routing ─────────────────────────────────────
@@ -1056,7 +1060,14 @@ class RemoteAgentManager:
         payload = getattr(handle, "payload", None)
         if payload is None:
             return None
-        proc = getattr(payload, "proc", None)
+        # PosixPty state exposes the long-lived child as `proc`. The
+        # exec-mode transports (CodexExec / GeminiExec, v1.17 / v1.19)
+        # store the per-turn subprocess as `current_proc` and have no
+        # `proc` attribute, so this used to silently return None for
+        # all exec sessions — breaking PID-based descent verification
+        # in the approval hook. Fall back to `current_proc` so both
+        # transport families register.
+        proc = getattr(payload, "proc", None) or getattr(payload, "current_proc", None)
         if proc is None:
             return None
         pid = getattr(proc, "pid", None)

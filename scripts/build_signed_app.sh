@@ -16,7 +16,7 @@
 #   3. Copy `HelperSwift/.build/release/cli_pulse_helper` into
 #      `<App>/Contents/Helpers/cli_pulse_helper`.
 #   4. Copy `CLI Pulse Bar/CLI Pulse Bar/HelperAgent.plist` into
-#      `<App>/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist`.
+#      `<App>/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist`.
 #   5. Codesign the embedded helper binary with the app's signing
 #      identity (so SMAppService.register accepts it).
 #   6. Re-sign the .app so the additions are part of the
@@ -46,6 +46,19 @@ set -euo pipefail
 CONFIGURATION="${1:-Debug}"
 OUTPUT_DIR="${2:-$PWD/build_app_output}"
 
+# v1.19: opt-in flag for the Developer ID DMG pipeline.
+# Notarization REQUIRES a timestamped signature (Apple's timestamp
+# service), but the ad-hoc/dev path uses --timestamp=none for speed
+# (CI runs hit this path; an Apple-side timestamp call adds 5-15s per
+# nested binary and can fail transiently). Default keeps the historical
+# behaviour; build_devid_dmg.sh sets CODESIGN_TIMESTAMP=1 before
+# invoking this script.
+if [[ -n "${CODESIGN_TIMESTAMP:-}" ]]; then
+    CODESIGN_TIMESTAMP_FLAG="--timestamp"
+else
+    CODESIGN_TIMESTAMP_FLAG="--timestamp=none"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SWIFT_PKG_DIR="$PROJECT_ROOT/HelperSwift"
@@ -73,6 +86,18 @@ cd "$PROJECT_ROOT/CLI Pulse Bar"
 # similar detritus not allowed"). xattr returns 0 even when nothing
 # matches, so the `|| true` is defensive.
 find . -name ".DS_Store" -exec rm -f {} + 2>/dev/null || true
+
+# v1.19: opt-in compilation flags for the Developer ID DMG pipeline.
+# DEVID_BUILD_FLAG=1 sets SWIFT_ACTIVE_COMPILATION_CONDITIONS to include
+# DEVID_BUILD so Swift code can `#if DEVID_BUILD` to gate the AppUpdater,
+# subscription bypass, MAS-auto-update banner, etc. Default empty =
+# Release/Debug builds behave exactly as before (MAS-equivalent
+# compilation). build_devid_dmg.sh sets DEVID_BUILD_FLAG=1.
+EXTRA_XCODEBUILD_SETTINGS=()
+if [[ -n "${DEVID_BUILD_FLAG:-}" ]]; then
+    EXTRA_XCODEBUILD_SETTINGS+=("SWIFT_ACTIVE_COMPILATION_CONDITIONS=\$(inherited) DEVID_BUILD")
+fi
+
 xcodebuild \
     -project "$APP_PROJECT" \
     -scheme "$APP_SCHEME" \
@@ -82,7 +107,8 @@ xcodebuild \
     CODE_SIGNING_ALLOWED=NO \
     CODE_SIGN_IDENTITY="" \
     CODE_SIGN_STYLE=Manual \
-    DEVELOPMENT_TEAM=""
+    DEVELOPMENT_TEAM="" \
+    ${EXTRA_XCODEBUILD_SETTINGS[@]+"${EXTRA_XCODEBUILD_SETTINGS[@]}"}
 
 APP_PATH="$DERIVED_DATA/Build/Products/$CONFIGURATION/CLI Pulse Bar.app"
 [[ -d "$APP_PATH" ]] || { echo "error: built .app not found at $APP_PATH" >&2; exit 1; }
@@ -97,7 +123,7 @@ chmod +x "$APP_PATH/Contents/Helpers/cli_pulse_helper"
 # 4. Copy LaunchAgent plist into Contents/Library/LaunchAgents/.
 echo "==> [4/7] Embedding LaunchAgent plist at Contents/Library/LaunchAgents/ ..."
 mkdir -p "$APP_PATH/Contents/Library/LaunchAgents"
-cp "$PLIST_TEMPLATE" "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+cp "$PLIST_TEMPLATE" "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
 
 # 5. Resolve signing identity + capture original app entitlements
 #    BEFORE we touch the bundle. Codex P1.C review: the previous
@@ -149,7 +175,7 @@ xattr -cr "$APP_PATH" 2>/dev/null || true
 # would get group-container). The bottom-up walk lets each
 # bundle keep its own entitlements.
 echo "    re-signing nested bundles bottom-up ..."
-python3 - <<PYEOF "$APP_PATH" "$SIGN_IDENTITY"
+python3 - <<PYEOF "$APP_PATH" "$SIGN_IDENTITY" "$CODESIGN_TIMESTAMP_FLAG"
 import os, sys, subprocess
 app_path, sign_identity = sys.argv[1], sys.argv[2]
 matches = []
@@ -160,15 +186,31 @@ for root, dirs, _files in os.walk(app_path):
 # Sort by path length descending → deepest first.
 matches.sort(key=lambda p: -len(p))
 for p in matches:
-    subprocess.call([
-        "codesign", "--force", "--options", "runtime", "--timestamp=none",
+    # v1.19 macOS 26.5 SDK: signing an inner framework regenerates
+    # _CodeSignature/CodeResources on the parent bundle and the
+    # parent picks up com.apple.provenance + com.apple.FinderInfo
+    # xattrs from the macOS file-creation path. The top-of-script
+    # xattr -cr does not help because those xattrs come BACK after
+    # each nested sign. Strip immediately before each codesign call
+    # so the bundle being signed never has detritus.
+    subprocess.call(["xattr", "-cr", p], stderr=subprocess.DEVNULL)
+    rc = subprocess.call([
+        "codesign", "--force", "--options", "runtime", sys.argv[3],
         "--sign", sign_identity, p,
     ])
+    if rc != 0:
+        # Surface the failure clearly so the outer shell sees a
+        # non-zero exit. The original subprocess.call swallowed
+        # codesign errors silently, letting builds proceed past
+        # broken signatures into notarize failures.
+        sys.stderr.write(f"codesign failed for {p} (rc={rc})\n")
+        sys.exit(rc)
 PYEOF
 # Helper: NOT sandboxed (it's a LaunchAgent), but Hardened Runtime
 # is on (--options runtime) for notarisation. Entitlements file is
 # intentionally minimal.
-codesign --force --options runtime --timestamp=none \
+xattr -cr "$APP_PATH/Contents/Helpers/cli_pulse_helper" 2>/dev/null || true
+codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
     --entitlements "$HELPER_ENTITLEMENTS" \
     --sign "$SIGN_IDENTITY" \
     "$APP_PATH/Contents/Helpers/cli_pulse_helper"
@@ -177,7 +219,8 @@ codesign --force --options runtime --timestamp=none \
 # (.xcent file we located above). NOT --deep — that would re-sign
 # every nested binary with our top-level entitlements (overwriting
 # the helper's just-applied minimal set).
-codesign --force --options runtime --timestamp=none \
+xattr -cr "$APP_PATH" 2>/dev/null || true
+codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
     --entitlements "$APP_ENTITLEMENTS_SAVED" \
     --sign "$SIGN_IDENTITY" \
     "$APP_PATH"
@@ -185,7 +228,7 @@ codesign --force --options runtime --timestamp=none \
 # 7. Verify.
 echo "==> [7/7] Verifying bundle ..."
 test -x "$APP_PATH/Contents/Helpers/cli_pulse_helper"
-test -f "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+test -f "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
 codesign --verify --deep --strict "$APP_PATH"
 
 # Codex P1.C: explicitly prove app entitlements survived re-sign.
@@ -217,7 +260,7 @@ if ! grep -q "group.yyh.CLI-Pulse" <<< "$HELPER_ENT_AFTER"; then
 fi
 # Phase 4E e2e fix (2026-05-07): tilde paths in plist break
 # launchd. Reject so the bug can't ship.
-PLIST_PATH="$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+PLIST_PATH="$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
 if [[ -f "$PLIST_PATH" ]]; then
     if /usr/libexec/PlistBuddy -c "Print :StandardOutPath" "$PLIST_PATH" 2>/dev/null | grep -q "~"; then
         echo "error: plist StandardOutPath contains '~' — launchd will not expand it" >&2
@@ -233,7 +276,7 @@ echo "    OK: $APP_PATH is signed; entitlements verified (sandbox + group preser
 echo ""
 echo "Final layout:"
 echo "  $APP_PATH/Contents/Helpers/cli_pulse_helper                       # Mach-O helper, signed"
-echo "  $APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist # LaunchAgent plist"
+echo "  $APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist # LaunchAgent plist"
 echo ""
 echo "Open the .app with Finder to test, or run:"
 echo "  open '$APP_PATH'"

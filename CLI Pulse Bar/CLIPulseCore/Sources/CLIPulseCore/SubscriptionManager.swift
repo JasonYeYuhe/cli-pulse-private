@@ -230,6 +230,30 @@ public final class SubscriptionManager: ObservableObject {
     }
 
     public func updateCurrentEntitlements() async {
+        // v1.19 SR1: Developer ID Beta channel users have no Mac App
+        // Store receipt — StoreKit's currentEntitlements stream is
+        // empty for them. Without this short-circuit, the rest of
+        // this function would fall through to `.free`, hiding all
+        // premium features. The DEVID DMG is positioned as a power-
+        // user / dev-community beta tier, so we treat all DEVID
+        // installs as Pro Lifetime locally.
+        //
+        // Server-side endpoints that validate the MAS receipt will
+        // still reject DEVID requests until v1.19.1 adds an
+        // `X-CLI-Pulse-Channel: beta` allow-list (gated on backend
+        // schema-change user authorization per
+        // feedback_cli_pulse_autonomy §"When to flag" #1). Cloud-
+        // dependent premium features therefore degrade gracefully
+        // until that lands.
+        #if DEVID_BUILD
+        self.currentTier = .pro
+        self.isLifetime = true
+        self.tierResolutionState = .resolvedConfirmed
+        self.lastTierRefreshSource = "devid-beta-channel"
+        self.lastTierRefreshError = nil
+        return
+        #endif
+
         var activeSubs: [StoreKit.Transaction] = []
         var highestTier: SubscriptionTier = .free
         var highestJWS: String?

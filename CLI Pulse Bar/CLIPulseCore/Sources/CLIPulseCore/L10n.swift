@@ -875,6 +875,22 @@ public enum L10n {
         public static var configurationErrorTitle: String { tr("a11y.configuration_error_title") }
         public static var configurationErrorBody: String { tr("a11y.configuration_error_body") }
     }
+
+    /// v1.18.2 Item D-2: Anthropic peak-window indicator on the Claude
+    /// provider card. Strings carry a `%@` placeholder for the
+    /// pre-formatted duration (e.g. "2h 30m") so the verb-final order
+    /// in JA / particle order in CN can both read naturally.
+    public enum claudePeakHours {
+        public static func peakEndsIn(_ duration: String) -> String {
+            tr("claude.peak_hours.peak_ends_in", duration)
+        }
+        public static func offPeakIn(_ duration: String) -> String {
+            tr("claude.peak_hours.off_peak_in", duration)
+        }
+        public static var offPeakFallback: String {
+            tr("claude.peak_hours.off_peak_fallback")
+        }
+    }
 }
 
 #if !SWIFT_PACKAGE

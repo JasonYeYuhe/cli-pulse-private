@@ -42,8 +42,31 @@ final class HelperLifecycleManagerTests: XCTestCase {
         // Contents/Library/LaunchAgents.
         XCTAssertEqual(
             HelperLifecycleManager.plistResourceName,
-            "yyh.CLI-Pulse.helper",
+            "yyh.CLI-Pulse.helper.agent",
             "LaunchAgent resource basename must match the bundled plist filename without .plist"
+        )
+    }
+
+    // MARK: - B3 collision-disambiguation invariants
+
+    func testAgentLabelDisambiguatedFromLoginItemIdentifier() {
+        // The MAS LoginItem (CLIPulseHelper.app) bundle ID is
+        // `yyh.CLI-Pulse.helper` (see CLIPulseBarApp.swift HelperLogin).
+        // `SMAppService.loginItem(identifier:)` claims that string as
+        // a launchd label slot. The LaunchAgent MUST use a different
+        // label — pre-fix they collided, causing undefined launchd
+        // behavior when both registrations ran on Developer ID
+        // distribution (MAS-strip made it inert). See
+        // `feedback_loginitem_launchagent_collision.md`.
+        XCTAssertNotEqual(
+            HelperLifecycleManager.agentLabel,
+            "yyh.CLI-Pulse.helper",
+            "agent label must NOT match LoginItem identifier — they share launchd's label namespace"
+        )
+        XCTAssertEqual(
+            HelperLifecycleManager.agentLabel,
+            "yyh.CLI-Pulse.helper.agent",
+            "agent label fixed to the disambiguated value documented in feedback_loginitem_launchagent_collision.md"
         )
     }
 

@@ -260,6 +260,15 @@ struct iOSEnhancedProviderCard: View {
                         detail: remainingText
                     )
                 }
+
+                // v1.18.2 D-1: Anthropic peak / off-peak window
+                // indicator. Shared with the macOS providers tab via
+                // CLIPulseCore.ClaudePeakFooter; kept inside the
+                // `config.isEnabled` block so disabled cards stay
+                // visually quiet.
+                if detail.config.kind == .claude {
+                    ClaudePeakFooter()
+                }
             }
         }
         .padding()

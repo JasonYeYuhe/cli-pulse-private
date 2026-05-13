@@ -102,7 +102,7 @@ chmod +x "$APP_PATH/Contents/Helpers/cli_pulse_helper"
 
 # Embed LaunchAgent plist at Contents/Library/LaunchAgents/.
 mkdir -p "$APP_PATH/Contents/Library/LaunchAgents"
-cp "$PLIST_TEMPLATE" "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+cp "$PLIST_TEMPLATE" "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
 
 # Strip xattrs that codesign rejects on nested helper targets.
 xattr -cr "$APP_PATH" 2>/dev/null || true
@@ -185,7 +185,7 @@ fi
 # Verify.
 echo "==> [5/5] Verifying bundle ..."
 test -x "$APP_PATH/Contents/Helpers/cli_pulse_helper" || { echo "missing helper" >&2; exit 1; }
-test -f "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist" || { echo "missing plist" >&2; exit 1; }
+test -f "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist" || { echo "missing plist" >&2; exit 1; }
 codesign --verify --deep --strict "$APP_PATH" || { echo "codesign verify failed" >&2; exit 1; }
 
 # Pin sandbox + app-group on the parent app's entitlements.
@@ -212,7 +212,7 @@ fi
 # embedded helper path. If the plist drifts away from
 # "Contents/Helpers/cli_pulse_helper" the runtime registration
 # will silently no-op.
-PLIST="$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+PLIST="$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
 BUNDLE_PROGRAM="$(/usr/libexec/PlistBuddy -c 'Print :BundleProgram' "$PLIST" 2>/dev/null || true)"
 if [[ "$BUNDLE_PROGRAM" != "Contents/Helpers/cli_pulse_helper" ]]; then
     echo "error: plist BundleProgram is '$BUNDLE_PROGRAM', expected 'Contents/Helpers/cli_pulse_helper'" >&2
@@ -249,4 +249,4 @@ fi
 
 echo "    OK: archive $ARCHIVE_PATH now contains:"
 echo "    - $APP_PATH/Contents/Helpers/cli_pulse_helper (signed)"
-echo "    - $APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+echo "    - $APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"

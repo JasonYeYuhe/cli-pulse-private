@@ -34,7 +34,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ARCHIVE="${1:-/tmp/v1.13.x-e2e/CLIPulse-macOS.xcarchive}"
 SOCKET="$HOME/Library/Group Containers/group.yyh.CLI-Pulse/clipulse-helper.sock"
-PLIST_USER="$HOME/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+PLIST_USER="$HOME/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
 LABEL="yyh.CLI-Pulse.helper"
 
 cleanup() {
@@ -67,7 +67,7 @@ fi
 
 APP="$ARCHIVE/Products/Applications/CLI Pulse Bar.app"
 HELPER="$APP/Contents/Helpers/cli_pulse_helper"
-PLIST_BUNDLED="$APP/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.plist"
+PLIST_BUNDLED="$APP/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
 
 echo
 echo "==> [1/4] sanity check archive contents"

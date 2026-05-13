@@ -73,6 +73,7 @@ _USER_PREFIX = "› "
 _AGENT_PREFIX = "• "
 _INFO_PREFIX = "ℹ "
 _ERROR_PREFIX = "✗ "
+_WARN_PREFIX = "⚠ "
 _WORKING = "• Working…\n"
 
 
@@ -100,7 +101,32 @@ class _CodexExecState:
     current_proc: Optional[subprocess.Popen] = None
     # Background reader thread for `current_proc.stdout`.
     reader_thread: Optional[threading.Thread] = None
-    # Mutex protecting `output_queue` + `pending_prompts` + `current_proc`.
+    # Background drainer thread for `current_proc.stderr`. Without this,
+    # any codex stderr emission > pipe buffer (64KB on Linux, 16-64KB
+    # dynamic on macOS) blocks codex on write(2) and the reader never
+    # sees stdout EOF — turn deadlocks until the helper is killed.
+    stderr_drainer_thread: Optional[threading.Thread] = None
+    # Accumulating stderr collected by the drainer thread, capped at
+    # 32KB. Read once in reader's finally block after the drainer has
+    # finished. Always cleared at the start of a turn.
+    stderr_buf: bytearray = field(default_factory=bytearray)
+    # Watchdog Timer that SIGTERMs the proc after `_TURN_TIMEOUT_SEC`.
+    # Replaces the previous in-reader-loop deadline check, which was
+    # ineffective on silent network hangs because `for raw_line in
+    # proc.stdout:` blocks indefinitely waiting for data that never
+    # arrives. Armed at spawn, cancelled in reader's finally.
+    timeout_timer: Optional[threading.Timer] = None
+    # Set by `_timeout_kill` when the watchdog fires. Reader's finally
+    # consults this so it can emit a precise "codex turn timed out"
+    # marker instead of a misleading "exit code -15".
+    timed_out: bool = False
+    # Set by `interrupt()` under lock when a turn is killed via SIGINT.
+    # Reader's finally consults this so it can emit "codex turn
+    # cancelled" instead of "codex exec failed: exit code -2", which
+    # made the user's own cancel look like a codex bug (P1-D).
+    cancel_pending: bool = False
+    # Mutex protecting `output_queue` + `pending_prompts` + `current_proc`
+    # + `stderr_buf` writes by the drainer.
     lock: threading.Lock = field(default_factory=threading.Lock)
     # True once `close()` has been called. Subsequent operations no-op.
     closed: bool = False
@@ -253,6 +279,28 @@ class CodexExecTransport(SessionTransport):
                 s.session_id, exc,
             )
             return
+        # Fresh stderr buffer + flags for this turn.
+        s.stderr_buf.clear()
+        s.timed_out = False
+        s.cancel_pending = False
+        # Stderr drainer must start BEFORE the reader so the codex
+        # process can never block on a full stderr pipe.
+        s.stderr_drainer_thread = threading.Thread(
+            target=self._stderr_drainer,
+            args=(s, s.current_proc),
+            name=f"codex-exec-stderr-{s.session_id[:8]}",
+            daemon=True,
+        )
+        s.stderr_drainer_thread.start()
+        # Arm watchdog Timer (P1-C). Fires after _TURN_TIMEOUT_SEC if
+        # still alive — reader's finally cancels this on normal exit.
+        s.timeout_timer = threading.Timer(
+            self._TURN_TIMEOUT_SEC,
+            self._timeout_kill,
+            args=(s, s.current_proc),
+        )
+        s.timeout_timer.daemon = True
+        s.timeout_timer.start()
         # Reader thread parses JSONL and queues output. Daemonized so
         # the helper can exit cleanly without joining.
         s.reader_thread = threading.Thread(
@@ -286,15 +334,106 @@ class CodexExecTransport(SessionTransport):
         disables color, so we don't need `--color never`.
 
         Empirically verified against codex 0.130.x.
+
+        The `"--"` is the POSIX end-of-options sentinel and is placed
+        BEFORE every variable positional argument (prompt on first
+        turn; thread_id + prompt on resume). Without it, any value
+        starting with a dash — a user prompt like
+        `--sandbox=danger-full-access`, or a thread_id corrupted via
+        on-disk session state — would be parsed by Codex CLI's `clap`
+        argument parser as a flag and could override the `-s read-only`
+        policy we pin here, yielding a sandbox escape.
         """
         binary = os.environ.get("CLI_PULSE_CODEX_ARGV0", "codex").split()
         if not binary:
             binary = ["codex"]
         common_flags = ["--json", "--skip-git-repo-check"]
         if s.thread_id:
-            return [*binary, "exec", "resume", *common_flags, s.thread_id, prompt]
+            return [*binary, "exec", "resume", *common_flags, "--", s.thread_id, prompt]
         # First turn: also pin the sandbox so resume inherits it.
-        return [*binary, "exec", *common_flags, "-s", "read-only", prompt]
+        return [*binary, "exec", *common_flags, "-s", "read-only", "--", prompt]
+
+    # ── stderr drainer + pipe cleanup ────────────────────────
+
+    def _stderr_drainer(
+        self,
+        s: _CodexExecState,
+        proc: subprocess.Popen,
+    ) -> None:
+        """Drain `proc.stderr` into `s.stderr_buf` until EOF.
+
+        Runs on its own daemon thread, started by `_maybe_flush_next_turn`
+        before the reader. Without this, a verbose stderr (> pipe-buffer
+        size; 64KB Linux, 16-64KB macOS) blocks codex on `write(2)` and
+        the reader never sees stdout EOF — the entire turn deadlocks.
+
+        Buffer is capped at 32KB; anything past that tail-rotates so a
+        runaway stderr can't OOM the helper. Reader's finally block reads
+        the buffer lock-free AFTER waiting for proc death + joining this
+        thread, so the bytearray is guaranteed stable at read time.
+        """
+        try:
+            assert proc.stderr is not None
+            while True:
+                chunk = proc.stderr.read(4096)
+                if not chunk:
+                    break
+                with s.lock:
+                    s.stderr_buf.extend(chunk)
+                    overflow = len(s.stderr_buf) - 32 * 1024
+                    if overflow > 0:
+                        del s.stderr_buf[:overflow]
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "codex_exec stderr drainer ended session=%s: %s",
+                s.session_id, exc,
+            )
+
+    def _timeout_kill(
+        self,
+        s: _CodexExecState,
+        proc: subprocess.Popen,
+    ) -> None:
+        """Watchdog target — SIGTERM the proc if still alive when the
+        Timer fires. Sets `s.timed_out` so the reader's finally block
+        can emit a clear `codex turn timed out` marker instead of a
+        generic `exit code -15`.
+
+        Race with normal exit is benign: signal to a dead pgid yields
+        ProcessLookupError (caught); a flag set redundantly does no
+        harm because the reader clears it after consumption.
+        """
+        try:
+            if proc.poll() is not None:
+                return
+            with s.lock:
+                s.timed_out = True
+            try:
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "codex_exec timeout_kill swallowed exc session=%s: %s",
+                s.session_id, exc,
+            )
+
+    @staticmethod
+    def _close_proc_pipes(proc: subprocess.Popen) -> None:
+        """Idempotently close `proc.stdout` and `proc.stderr` fds.
+
+        Without this, each turn leaks one stdout fd + one stderr fd
+        because `subprocess.Popen` file-objects are GC-finalized at
+        unpredictable points. Long sessions (100+ turns) can exhaust
+        the helper's ulimit. Tolerates already-closed streams."""
+        for stream in (proc.stdout, proc.stderr):
+            if stream is None:
+                continue
+            try:
+                stream.close()
+            except Exception:  # noqa: BLE001 — best-effort close
+                pass
 
     # ── reader thread (JSONL → output queue) ─────────────────
 
@@ -310,15 +449,18 @@ class CodexExecTransport(SessionTransport):
         `s.lock` only when mutating shared state — the line-by-line
         read happens lock-free because the file handle is private to
         this thread.
+
+        Turn timeout is enforced externally by the `_timeout_kill`
+        watchdog Timer armed in `_maybe_flush_next_turn` (P1-C). The
+        previous in-loop `if time.time() > deadline` check was a no-op
+        on silent network hangs because `for raw_line in proc.stdout:`
+        blocks indefinitely waiting for data that never arrives.
         """
-        deadline = time.time() + self._TURN_TIMEOUT_SEC
         agent_text_emitted = False
+        turn_failed_emitted = False
         try:
             assert proc.stdout is not None
             for raw_line in proc.stdout:
-                if time.time() > deadline:
-                    self._enqueue(s, f"{_ERROR_PREFIX}turn timed out\n".encode("utf-8"))
-                    break
                 line = raw_line.strip()
                 if not line:
                     continue
@@ -333,11 +475,30 @@ class CodexExecTransport(SessionTransport):
                         s.session_id, raw_line[:120],
                     )
                     continue
+                if not isinstance(event, dict):
+                    # JSON parsed but is a primitive (null / true / number /
+                    # string) or array. _handle_event calls .get() and would
+                    # AttributeError on these, crashing the reader thread
+                    # silently. Drop with a warning so Codex CLI schema
+                    # drift is visible in the helper log.
+                    logger.warning(
+                        "codex_exec dropping non-object JSON line session=%s: %r",
+                        s.session_id, line[:120],
+                    )
+                    continue
                 self._handle_event(s, event)
-                if event.get("type") == "item.completed":
+                ev_type = event.get("type")
+                if ev_type == "item.completed":
                     item = event.get("item") or {}
                     if item.get("type") == "agent_message":
                         agent_text_emitted = True
+                elif ev_type == "turn.failed":
+                    # _handle_event already surfaced the codex-side
+                    # error message. Track this so the finally block
+                    # can suppress the duplicate generic
+                    # `codex exec failed` marker while still firing
+                    # the session-reset append rule when applicable.
+                    turn_failed_emitted = True
         except Exception as exc:  # noqa: BLE001 — last-resort safety net
             logger.warning(
                 "codex_exec reader crashed session=%s: %s",
@@ -345,32 +506,104 @@ class CodexExecTransport(SessionTransport):
             )
             self._enqueue(s, f"{_ERROR_PREFIX}reader crashed: {exc}\n".encode("utf-8"))
         finally:
+            # Cleanup order is load-bearing — see DEV_PLAN_v1.18.2.md
+            # Gemini CRITICAL fix:
+            #   ① disarm watchdog Timer (idempotent if already fired)
+            #   ② reap the process (forces stderr EOF)
+            #   ③ join drainer (now instant since EOF reached)
+            #   ④ read stderr_buf lock-free (drainer is dead)
+            #   ⑤ consume per-turn flags under lock
+            #   ⑥ pick marker
+            #   ⑦ close fds (P1-A: avoid fd leak per turn)
+            #   ⑧ release current_proc slot under lock + flush next
+            with s.lock:
+                timer = s.timeout_timer
+            if timer is not None:
+                timer.cancel()
             try:
                 rc = proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 rc = proc.wait()
-            # If we never got an agent_message but the proc errored,
-            # surface stderr so the user sees rate limit / auth errors.
-            if not agent_text_emitted and rc != 0:
-                err_text = ""
-                try:
-                    if proc.stderr is not None:
-                        err_text = proc.stderr.read().decode("utf-8", errors="replace")
-                except Exception:  # noqa: BLE001
-                    pass
-                detail = err_text.strip() or f"exit code {rc}"
+            # Drainer should have exited on stderr EOF when the proc
+            # died. join(1.0) is a bounded safety belt — if it ever
+            # times out, the daemon thread is still safe to leave alive
+            # because the helper exit doesn't depend on it.
+            with s.lock:
+                drainer = s.stderr_drainer_thread
+            if drainer is not None:
+                drainer.join(timeout=1.0)
+            # Read stderr + consume per-turn flags under lock so we
+            # never race the drainer if join() above timed out (e.g.
+            # codex spawned a long-running child that inherited the
+            # stderr fd — pre-existing risk Gemini final-patch review
+            # flagged as CRITICAL).
+            with s.lock:
+                stderr_text = bytes(s.stderr_buf).decode(
+                    "utf-8", errors="replace"
+                )
+                timed_out = s.timed_out
+                cancel = s.cancel_pending
+                thread_captured = s.thread_id is not None
+                s.timed_out = False
+                s.cancel_pending = False
+            # Marker precedence (DEV_PLAN_v1.18.2.md decision table +
+            # Item A turn.failed dedup):
+            #   timed_out > cancel > turn_failed (suppress dup) >
+            #   failure path > happy path.
+            primary_failure = False
+            if timed_out:
+                self._enqueue(
+                    s, f"{_ERROR_PREFIX}codex turn timed out\n".encode("utf-8")
+                )
+                primary_failure = True
+            elif cancel:
+                self._enqueue(
+                    s, f"{_ERROR_PREFIX}codex turn cancelled\n".encode("utf-8")
+                )
+                primary_failure = True
+            elif turn_failed_emitted:
+                # _handle_event already surfaced the codex-side error.
+                # Don't double-up with `codex exec failed: exit code 1`.
+                # primary_failure still fires so session-reset append
+                # rule can run if no thread_id was captured.
+                primary_failure = True
+            elif not agent_text_emitted and rc != 0:
+                detail = stderr_text.strip() or f"exit code {rc}"
                 self._enqueue(
                     s, f"{_ERROR_PREFIX}codex exec failed: {detail[:500]}\n".encode("utf-8")
                 )
+                primary_failure = True
+            elif not agent_text_emitted and rc == 0:
+                # Edge: codex exited cleanly but emitted no agent text
+                # (corrupt JSONL, unsupported event types, etc.). Tell
+                # the user so they don't stare at silence.
+                self._enqueue(
+                    s, f"{_WARN_PREFIX}codex exited without reply\n".encode("utf-8")
+                )
+                primary_failure = True
+            # Session-reset append (P1-E + Gemini SHOULD_FIX 2): if the
+            # turn ended on any non-happy path AND no thread_id was ever
+            # captured this session, the next prompt will silently start
+            # a new conversation. Warn explicitly.
+            if primary_failure and not thread_captured:
+                self._enqueue(
+                    s,
+                    f"{_WARN_PREFIX}Session reset — your next prompt will start "
+                    "a new conversation\n".encode("utf-8"),
+                )
+            # Explicitly close pipes so fds are released NOW rather
+            # than at GC time (P1-A).
+            self._close_proc_pipes(proc)
             # Flush next pending turn if any.
             with s.lock:
                 if s.current_proc is proc:
                     s.current_proc = None
                 self._maybe_flush_next_turn(s)
             logger.info(
-                "codex_exec turn ended session=%s rc=%s thread_id=%s",
-                s.session_id, rc, s.thread_id,
+                "codex_exec turn ended session=%s rc=%s thread_id=%s "
+                "timed_out=%s cancelled=%s",
+                s.session_id, rc, s.thread_id, timed_out, cancel,
             )
 
     def _handle_event(self, s: _CodexExecState, event: dict) -> None:
@@ -465,6 +698,12 @@ class CodexExecTransport(SessionTransport):
             # actually halts the whole turn pipeline rather than just
             # the current one.
             s.pending_prompts.clear()
+            # Signal the reader's finally to emit a "cancelled" marker
+            # rather than a generic "exec failed: exit code -2" (P1-D).
+            # Lock-guarded so it can't race with the next-turn spawn
+            # that clears the flag.
+            if proc is not None and proc.poll() is None:
+                s.cancel_pending = True
         if proc is not None and proc.poll() is None:
             try:
                 pgid = os.getpgid(proc.pid)
@@ -485,6 +724,12 @@ class CodexExecTransport(SessionTransport):
         with s.lock:
             proc = s.current_proc
             s.pending_prompts.clear()
+            # Symmetry with interrupt(): a user-initiated terminate
+            # should also surface as `codex turn cancelled` rather
+            # than `codex exec failed: exit code -15`. The reader's
+            # finally consumes this flag.
+            if proc is not None and proc.poll() is None:
+                s.cancel_pending = True
         if proc is not None and proc.poll() is None:
             try:
                 pgid = os.getpgid(proc.pid)
@@ -536,6 +781,12 @@ class CodexExecTransport(SessionTransport):
             proc = s.current_proc
             s.pending_prompts.clear()
             s.closed = True
+            # Disarm the watchdog Timer so it doesn't fire later and
+            # send a moot SIGTERM to a dead/recycled pid. Cancel is
+            # idempotent — safe even if the timer already fired.
+            timer = s.timeout_timer
+        if timer is not None:
+            timer.cancel()
         if proc is not None and proc.poll() is None:
             try:
                 pgid = os.getpgid(proc.pid)

@@ -116,14 +116,92 @@ public final class HelperConfigStore: @unchecked Sendable {
         }
     }
 
-    public func cloudConfigSnapshot() -> CloudConfig {
-        lock.lock(); defer { lock.unlock() }
+    /// Three-layer fallback (B3-bis, 2026-05-12):
+    ///
+    ///   1. **Modern** — `AppGroupConfigReader` reads `deviceId` from
+    ///      UserDefaults `(suiteName: "group.yyh.CLI-Pulse")` and
+    ///      `helperSecret` from the keychain access-group; Supabase
+    ///      URL+anonKey come from the sibling app's Info.plist via
+    ///      `SupabaseConfigResolver`. This is the canonical source
+    ///      of truth for fresh MAS users — the macOS app's pairing
+    ///      flow writes these locations.
+    ///
+    ///   2. **Legacy JSON** — `~/.cli-pulse-helper.json`, the path
+    ///      the pre-Phase-4D Python helper paired to. Kept for
+    ///      backward compatibility with users who haven't re-paired
+    ///      in the modern macOS app since upgrading.
+    ///
+    ///   3. **Unpaired** — neither source produced both `deviceId`
+    ///      and `helperSecret`. Returns a `CloudConfig` whose
+    ///      `isPaired` evaluates to false so callers skip cloud
+    ///      RPCs. Diagnostic logged so the unpaired state is
+    ///      visible in `helper.err.log` rather than silently no-op.
+    ///
+    /// Supabase URL + anonKey are resolved ONCE per snapshot (not
+    /// per-source). If `SupabaseConfigResolver.resolve()` returns
+    /// nil the daemon can't reach Supabase regardless of pairing
+    /// state, so we surface that distinctly.
+    ///
+    /// Test-injectable: pass `appGroupReader`, `supabaseResolver`,
+    /// `legacyJSON` for fixture-driven tests. Defaults use the real
+    /// production sources.
+    public func cloudConfigSnapshot(
+        appGroupReader: () -> AppGroupConfigReader.AppPairing? = AppGroupConfigReader.readPairing,
+        supabaseResolver: () -> SupabaseConfigResolver.Resolved? = SupabaseConfigResolver.resolve,
+        legacyJSON: (() -> (deviceId: String, helperSecret: String))? = nil
+    ) -> CloudConfig {
+        guard let supabase = supabaseResolver() else {
+            warn("cloudConfigSnapshot: SupabaseConfigResolver returned nil — daemon cannot reach Supabase. Verify app bundle Info.plist has SUPABASE_URL + SUPABASE_ANON_KEY, or set CLI_PULSE_SUPABASE_URL/ANON_KEY env vars.")
+            return CloudConfig(
+                deviceId: "", helperSecret: "",
+                supabaseURL: "", supabaseAnonKey: ""
+            )
+        }
+
+        // Layer 1: modern UserDefaults + Keychain
+        if let pairing = appGroupReader() {
+            return CloudConfig(
+                deviceId: pairing.deviceId,
+                helperSecret: pairing.helperSecret,
+                supabaseURL: supabase.url,
+                supabaseAnonKey: supabase.anonKey
+            )
+        }
+
+        // Layer 2: legacy ~/.cli-pulse-helper.json
+        let legacy = legacyJSON?() ?? readLegacyJSONPairing()
+        if !legacy.deviceId.isEmpty && !legacy.helperSecret.isEmpty {
+            warn("cloudConfigSnapshot: paired via legacy ~/.cli-pulse-helper.json. Re-pair in the macOS app to migrate to UserDefaults storage.")
+            return CloudConfig(
+                deviceId: legacy.deviceId,
+                helperSecret: legacy.helperSecret,
+                supabaseURL: supabase.url,
+                supabaseAnonKey: supabase.anonKey
+            )
+        }
+
+        // Layer 3: unpaired — surface why
+        warn("cloudConfigSnapshot: unpaired. UserDefaults helper_config missing or deviceId empty; legacy JSON missing or deviceId/helper_secret empty. Pair the device in the macOS app to enable cloud sync.")
         return CloudConfig(
-            deviceId: (raw["device_id"] as? String) ?? "",
-            helperSecret: (raw["helper_secret"] as? String) ?? "",
-            supabaseURL: (raw["supabase_url"] as? String) ?? "",
-            supabaseAnonKey: (raw["supabase_anon_key"] as? String) ?? ""
+            deviceId: "", helperSecret: "",
+            supabaseURL: supabase.url,
+            supabaseAnonKey: supabase.anonKey
         )
+    }
+
+    /// Private legacy reader. Returns ("", "") on missing/unreadable.
+    private func readLegacyJSONPairing() -> (deviceId: String, helperSecret: String) {
+        lock.lock(); defer { lock.unlock() }
+        return (
+            deviceId: (raw["device_id"] as? String) ?? "",
+            helperSecret: (raw["helper_secret"] as? String) ?? ""
+        )
+    }
+
+    private func warn(_ message: String) {
+        FileHandle.standardError.write(Data(
+            "warn[HelperConfigStore]: \(message)\n".utf8
+        ))
     }
 
     /// Flip the kill switch and persist. Atomic write so a
