@@ -19,6 +19,19 @@ public enum SentryLogger {
     ]
 
     public static func start(platform: SentryPlatform) {
+        // v1.20 A7: skip Sentry initialization in DEBUG builds. The
+        // production project's "All Events" view used to fill with
+        // noise from local dev sessions (each iteration triggered
+        // crash-loop-style breadcrumbs against the prod DSN, even
+        // though `environment` was tagged "debug"). Filtering after
+        // the fact wastes quota; not sending in the first place is
+        // cheaper. If DEBUG-mode telemetry is ever needed (e.g. for
+        // CI smoke runs), wire a separate DSN here behind another
+        // compile-time flag.
+        #if DEBUG
+        return
+        #endif
+
         guard let dsn = Bundle.main.object(forInfoDictionaryKey: "SENTRY_DSN") as? String,
               !dsn.isEmpty,
               dsn.hasPrefix("https://") else {
