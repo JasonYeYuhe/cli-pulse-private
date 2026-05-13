@@ -376,6 +376,43 @@ jobs:
             echo "Stripped LaunchAgent plist from MAS archive"
           fi
 
+      - name: Verify Info.plist version substitution (v1.20 A8)
+        # Per PLAN_v1.20_2026-05-13 §A8 + Gemini round 1 review CRITICAL:
+        # the 5 Info.plist files use $(MARKETING_VERSION) +
+        # $(CURRENT_PROJECT_VERSION) substitution instead of hardcoded
+        # values. If Xcode build settings ever fail to propagate
+        # MARKETING_VERSION to one of the targets, the literal
+        # "$(MARKETING_VERSION)" string lands in the shipped Info.plist
+        # and ASC ingestion hard-rejects with an invalid version format.
+        # CHECK THE COMPILED PLIST (in the built .app), not the source —
+        # source legitimately contains the literal var.
+        run: |
+          set -o pipefail
+          ARCHIVE="build/ci-archive/CLIPulse-macOS.xcarchive"
+          APP="$ARCHIVE/Products/Applications/CLI Pulse Bar.app"
+          INFOS=(
+            "$APP/Contents/Info.plist"
+            "$APP/Contents/Library/LoginItems/CLIPulseHelper.app/Contents/Info.plist"
+          )
+          for plist in "${INFOS[@]}"; do
+            if [[ ! -f "$plist" ]]; then
+              echo "::error::compiled Info.plist missing: $plist" >&2
+              exit 1
+            fi
+            short=$(plutil -extract CFBundleShortVersionString raw -o - "$plist" 2>/dev/null || echo "")
+            build=$(plutil -extract CFBundleVersion raw -o - "$plist" 2>/dev/null || echo "")
+            if [[ -z "$short" || "$short" == *'$('* ]]; then
+              echo "::error::CFBundleShortVersionString unexpanded in $plist (got: '$short')" >&2
+              echo "::error::Build settings did not propagate MARKETING_VERSION to this target — ASC will hard-reject" >&2
+              exit 1
+            fi
+            if [[ -z "$build" || "$build" == *'$('* ]]; then
+              echo "::error::CFBundleVersion unexpanded in $plist (got: '$build')" >&2
+              exit 1
+            fi
+            echo "  $plist: $short ($build) — OK"
+          done
+
       - name: Verify MAS archive does not contain Swift LaunchAgent helper
         run: |
           set -o pipefail
