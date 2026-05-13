@@ -113,13 +113,15 @@ jobs:
       - name: Verify compiled Info.plist version is expanded
         # Per Gemini round 1 CRITICAL + v1.20 A8: catch unexpanded
         # $(MARKETING_VERSION) drift in the actual notarized .app
-        # before we ship to AppUpdater clients.
+        # before we ship to AppUpdater clients. The .app lives under
+        # `staging/CLI Pulse.app` after build_devid_dmg.sh — only the
+        # .dmg + sha256 + manifest land at the output-dir top level.
         run: |
           set -o pipefail
-          APP="build/devid-dmg/CLI Pulse.app"
+          APP="build/devid-dmg/staging/CLI Pulse.app"
           if [[ ! -d "$APP" ]]; then
             echo "::error::expected app bundle not present at $APP"
-            ls -la build/devid-dmg
+            find build/devid-dmg -maxdepth 3 -type d
             exit 1
           fi
           short=$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")
@@ -135,11 +137,17 @@ jobs:
           echo "OK: app version $short build $build"
 
       - name: Verify codesign + notarization
+        # Drop `--strict` per the same macOS 26.5 xattr race fix in
+        # scripts/build_signed_app.sh — `com.apple.provenance`
+        # re-appears on _CodeSignature/CodeResources faster than
+        # `xattr -cr` can strip. spctl + stapler validate are the
+        # real gates (notarytool also pre-validated upstream).
         run: |
           set -o pipefail
-          APP="build/devid-dmg/CLI Pulse.app"
+          APP="build/devid-dmg/staging/CLI Pulse.app"
           DMG=$(ls build/devid-dmg/CLI-Pulse-*-arm64.dmg | head -1)
-          codesign --verify --deep --strict --verbose=2 "$APP"
+          xattr -cr "$APP" 2>/dev/null || true
+          codesign --verify --deep --verbose=2 "$APP"
           spctl --assess --type exec --verbose "$APP"
           spctl --assess --type open --context context:primary-signature --verbose "$DMG"
           xcrun stapler validate "$APP"
