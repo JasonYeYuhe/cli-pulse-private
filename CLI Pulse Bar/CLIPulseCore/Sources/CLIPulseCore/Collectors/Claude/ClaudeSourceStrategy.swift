@@ -332,7 +332,9 @@ public enum ClaudeCredentials {
         if let fileCreds = readCredentialsFile() {
             return (fileCreds.accessToken, fileCreds.rateLimitTier)
         }
-        if let keychainCreds = readKeychainCredentials() {
+        if !PrivacySettings.shared.skipClaudeKeychain,
+           let keychainCreds = readKeychainCredentials()
+        {
             return (keychainCreds.accessToken, keychainCreds.rateLimitTier)
         }
         return ("", nil)

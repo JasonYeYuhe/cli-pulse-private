@@ -217,6 +217,13 @@ struct SettingsTab: View {
                 )
                 #endif
 
+                // v1.19.1: in-app privacy toggles (skip Claude Code
+                // cross-app keychain read + master local-only mode).
+                // Cross-channel — visible to MAS and DEVID builds alike
+                // since the underlying keychain bug affects both.
+                Divider()
+                PrivacySettingsSection()
+
                 Divider()
 
                 // Section picker
