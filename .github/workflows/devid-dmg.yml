@@ -1,0 +1,191 @@
+name: DEVID DMG ship
+
+# v1.20 A9 — automated Developer ID DMG build for the cli-pulse-distrib
+# Beta channel. Manual-trigger only (workflow_dispatch + push-to-tag) so
+# accidental main pushes don't cut a release. Mirrors the local
+# `scripts/build_devid_dmg.sh` pipeline used through v1.19.0 (per
+# docs/v1.19_DEVID_CHANNEL.md) but on macos-14 GitHub-hosted runners
+# with an ephemeral keychain so codesign + notarytool work headless.
+#
+# Triggers:
+#   - workflow_dispatch (manual): build only; user inspects the
+#     uploaded artifact before promoting.
+#   - push tag `app-v*` (e.g. app-v1.20.0): build + upload to
+#     cli-pulse-distrib release matching the tag.
+#
+# Required GitHub repo secrets (set via `gh secret set <NAME>` once):
+#   APPLE_DISTRIBUTION_P12_BASE64  — base64-encoded Developer ID
+#                                    Application .p12 from
+#                                    ~/Library/Application Support/CLI-Pulse-Secrets/
+#                                    Generate: `base64 -i cert.p12 | pbcopy`
+#   APPLE_DISTRIBUTION_P12_PASSWORD — passphrase for the .p12
+#   APPLE_NOTARY_USER              — Apple ID (Apple-issued, e.g.
+#                                    yyyyy.yeyuhe@icloud.com)
+#   APPLE_NOTARY_APP_PASSWORD      — app-specific password from
+#                                    appleid.apple.com (16-hex format)
+#   APPLE_TEAM_ID                  — KHMK6Q3L3K
+#   DEV_ID_APP                     — Identity name, e.g.
+#                                    "Developer ID Application: Yuhe Ye (KHMK6Q3L3K)"
+#   DISTRIB_REPO_PAT               — GitHub PAT with `repo` scope for
+#                                    JasonYeYuhe/cli-pulse-distrib pushes
+#                                    (only needed for upload-on-tag path)
+
+on:
+  workflow_dispatch:
+    inputs:
+      promote_to_latest:
+        description: "Promote uploaded build to `latest` manifest after upload"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+  push:
+    tags:
+      - 'app-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build + notarize Developer ID DMG
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun --version
+          xcrun notarytool --version
+
+      - name: Set up ephemeral signing keychain
+        # Per Gemini round 1 CRITICAL: macos-14 runners cannot pull a
+        # raw .p12 into the default keychain; you must create a build
+        # keychain, unlock it, import with -T allowing the relevant
+        # tools, and set-key-partition-list so codesign can use the
+        # private key non-interactively. Skipping any of these four
+        # steps lands codesign in a "no identity found" failure mode
+        # that's hard to diagnose from logs alone.
+        env:
+          P12_B64: ${{ secrets.APPLE_DISTRIBUTION_P12_BASE64 }}
+          P12_PW: ${{ secrets.APPLE_DISTRIBUTION_P12_PASSWORD }}
+        run: |
+          set -o pipefail
+          if [[ -z "$P12_B64" ]]; then
+            echo "::error::APPLE_DISTRIBUTION_P12_BASE64 secret not set — see workflow header for setup instructions"
+            exit 1
+          fi
+          RUNNER_PW="$(uuidgen)"
+          KEYCHAIN="build.keychain"
+          security create-keychain -p "$RUNNER_PW" "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p "$RUNNER_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          P12_PATH="$RUNNER_TEMP/devid.p12"
+          echo "$P12_B64" | base64 -d > "$P12_PATH"
+          security import "$P12_PATH" -k "$KEYCHAIN" -P "$P12_PW" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S 'apple-tool:,apple:,codesign:' -s -k "$RUNNER_PW" "$KEYCHAIN"
+          rm -f "$P12_PATH"
+          security list-keychains -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
+      - name: Build + notarize DMG
+        env:
+          DEV_ID_APP: ${{ secrets.DEV_ID_APP }}
+          APPLE_NOTARY_USER: ${{ secrets.APPLE_NOTARY_USER }}
+          APPLE_NOTARY_APP_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -o pipefail
+          if [[ -z "${DEV_ID_APP:-}" ]]; then
+            echo "::error::DEV_ID_APP secret not set"; exit 1
+          fi
+          mkdir -p build/devid-dmg
+          ./scripts/build_devid_dmg.sh --output-dir "$PWD/build/devid-dmg" --arch arm64
+
+      - name: List outputs
+        run: ls -la build/devid-dmg
+
+      - name: Verify compiled Info.plist version is expanded
+        # Per Gemini round 1 CRITICAL + v1.20 A8: catch unexpanded
+        # $(MARKETING_VERSION) drift in the actual notarized .app
+        # before we ship to AppUpdater clients.
+        run: |
+          set -o pipefail
+          APP="build/devid-dmg/CLI Pulse.app"
+          if [[ ! -d "$APP" ]]; then
+            echo "::error::expected app bundle not present at $APP"
+            ls -la build/devid-dmg
+            exit 1
+          fi
+          short=$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")
+          build=$(plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")
+          if [[ -z "$short" || "$short" == *'$('* ]]; then
+            echo "::error::CFBundleShortVersionString unexpanded: $short"
+            exit 1
+          fi
+          if [[ -z "$build" || "$build" == *'$('* ]]; then
+            echo "::error::CFBundleVersion unexpanded: $build"
+            exit 1
+          fi
+          echo "OK: app version $short build $build"
+
+      - name: Verify codesign + notarization
+        run: |
+          set -o pipefail
+          APP="build/devid-dmg/CLI Pulse.app"
+          DMG=$(ls build/devid-dmg/CLI-Pulse-*-arm64.dmg | head -1)
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          spctl --assess --type exec --verbose "$APP"
+          spctl --assess --type open --context context:primary-signature --verbose "$DMG"
+          xcrun stapler validate "$APP"
+          xcrun stapler validate "$DMG"
+
+      - name: Tar archive (act as build artifact)
+        run: |
+          cd build/devid-dmg
+          tar -cJf "../devid-dmg-artifact.tar.xz" .
+          ls -la ../devid-dmg-artifact.tar.xz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devid-dmg-${{ github.run_id }}
+          path: build/devid-dmg-artifact.tar.xz
+          retention-days: 30
+
+      - name: Publish to cli-pulse-distrib (tag push only)
+        # On a push to tag `app-v1.20.0` etc., upload the DMG to the
+        # cli-pulse-distrib repo's matching release. We do NOT promote
+        # to the `latest` manifest in this step — that's a manual
+        # post-smoke action per docs/v1.19_DEVID_CHANNEL.md.
+        if: startsWith(github.ref, 'refs/tags/app-v')
+        env:
+          GH_TOKEN: ${{ secrets.DISTRIB_REPO_PAT }}
+        run: |
+          set -o pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::DISTRIB_REPO_PAT secret not set; cannot upload to cli-pulse-distrib"
+            exit 1
+          fi
+          TAG="${GITHUB_REF##*/}"
+          DMG=$(ls build/devid-dmg/CLI-Pulse-*-arm64.dmg | head -1)
+          SHA="${DMG}.sha256"
+          MANIFEST=$(ls build/devid-dmg/manifest-fragment-*.json | head -1)
+          # Create release if missing (idempotent)
+          if ! gh release view "$TAG" --repo JasonYeYuhe/cli-pulse-distrib >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo JasonYeYuhe/cli-pulse-distrib \
+              --title "CLI Pulse Mac ${TAG#app-v} (Developer ID Beta)" \
+              --notes "Built by GitHub Actions ($(date -u +%FT%TZ)). Awaiting clean-Mac smoke + manual promotion to \`latest\` manifest."
+          fi
+          gh release upload "$TAG" \
+            --repo JasonYeYuhe/cli-pulse-distrib \
+            --clobber \
+            "$DMG" \
+            "$SHA" \
+            "$MANIFEST"
+          echo "Uploaded artifacts to $TAG. Manual `latest` promotion still required after clean-Mac smoke."
