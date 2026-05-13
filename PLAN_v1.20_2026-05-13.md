@@ -63,12 +63,13 @@ code at 1.18.0 unshipped.
 
 **Train shape**: ship v1.19.1 as a fast patch first (privacy settings + key bug fixes), then v1.20 as the main train.
 
-### 2.1 v1.19.1 (patch, ~3 hr) — ship first
+### 2.1 v1.19.1 (patch, ~2 hr) — ship first
 
 | # | Item | Why | Effort | Risk |
 |---|---|---|---|---|
 | P1 | **Privacy Settings (2-tier toggle)** — spec'd at `~/.claude/plans/v1.19.1-privacy-settings-spec.md` | macOS 26.x Keychain Agent bug blocks user; spec is detailed (3 guard sites, 1 UI section, tests) | M | Low. Default OFF preserves current behavior. |
-| P2 | **CopilotDeviceFlow infinite-loop fix** — add iteration cap + URLRequest timeout | CRITICAL real bug | S | Touches one well-tested OAuth path. **Unit test MUST inject a mocked URLSession** (not hit live GitHub endpoint) so the cap is deterministically pinned. |
+
+~~**P2 (CopilotDeviceFlow infinite-loop fix) — DROPPED**~~ — Discovered during implementation: `CLI Pulse Bar/codexbar/` is in `.gitignore` (frozen vendored CodexBar upstream snapshot per `reference_codexbar_upstream` memory) and is NOT referenced by `CLI Pulse Bar.xcodeproj/project.pbxproj`. Zero production impact. In-tree Copilot path is `CLIPulseCore/Collectors/CopilotCollector.swift` which uses direct API-token auth, no OAuth device flow. Audit agent confused vendored reference with active code.
 
 ~~**P3 (iOS URL force-unwrap) — DROPPED** per Gemini review~~ — `iOSSettingsTab.swift:429,437` URLs are static literals, force-unwrap is compile-time-safe. Audit agent false positive.
 
@@ -82,10 +83,10 @@ code at 1.18.0 unshipped.
 |---|---|---|---|---|
 | A1 | **Helper .pkg v1.18.0 publish** | Code ready (`HELPER_VERSION=1.18.0`); existing helper users miss `gemini_exec` | M | Helper releases repo writes are public-repo activity (`feedback_cli_pulse_autonomy` §3) → flag before publish. Manifest fragment first; promote `latest` only after clean-Mac smoke. |
 | A2 | **iOS PrivacyInfo.xcprivacy manifest** | Apple-required; missing today | S | Per Gemini: must include specific **Reason Codes** (e.g. `CA92.1` for UserDefaults, `C617.1` for file timestamps, `35F9.1` for system boot time), not just category declarations. Apple Review flags incomplete reason codes. Audit actual API surface first via `git grep "UserDefaults\|.timeIntervalSinceReferenceDate\|CFAbsoluteTimeGetCurrent\|systemUptime"`. |
-| A3 | **Token store force-unwrap defensive fixes (6 stores)** | Crash hardening | S | Pattern is `guard let data = cleaned.data(using: .utf8) else { return }`. Mechanical. |
-| A4 | **APIClient error logging (logout + syncProviderQuotas)** | Observability — silent failure today | S | Just log+Sentry-breadcrumb, don't change semantics. |
-| A5 | **ClaudeOAuth SecurityCLIReader off main thread** | UI hang risk | S | Wrap the Thread.sleep poll loop in DispatchQueue.global(.userInitiated). Verify with `Thread.isMainThread` assert in DEBUG. |
-| A6 | **gemini_exec Timer TOCTOU lock** | Race condition could kill wrong session | S | Wrap `s.timeout_timer` access in `_state_lock` (already on the state). |
+| ~~A3~~ | ~~Token store force-unwrap defensive fixes~~ — **DROPPED** | All 6 token stores live under `CLI Pulse Bar/codexbar/` (gitignored, not in Xcode build) — false positive | — | — |
+| A4 | **APIClient error logging (logout + syncProviderQuotas)** | Observability — silent failure today | S | Just log+Sentry-breadcrumb, don't change semantics. `CLIPulseCore/APIClient.swift:116` and `:1640`. |
+| ~~A5~~ | ~~ClaudeOAuth SecurityCLIReader off main thread~~ — **DROPPED** | Path is `codexbar/Sources/CodexBarCore/Providers/Claude/ClaudeOAuth/ClaudeOAuthCredentials+SecurityCLIReader.swift` — codexbar/ gitignored, false positive | — | — |
+| A6 | **gemini_exec Timer TOCTOU lock** | Race condition could kill wrong session | S | Wrap `s.timeout_timer` access in `_state_lock` (already on the state). `helper/transports/gemini_exec.py:269-305`. |
 | A7 | **Sentry env separation (DEBUG vs Release)** — promoted from B2 per Gemini | DEVID + helper publish growing real prod scale; DEBUG noise + CI runs pollute prod issue tracker and burn quota | S | Generate new Sentry DSN in Sentry UI (browser-mediated, per autonomy contract). DEBUG builds use the new DSN; Release uses existing. `SentryLogger.start()` reads DSN at compile time via `#if DEBUG`. Old DEFAULT key disable timing per autonomy contract §2 (wait for adoption). |
 | A8 | **MARKETING_VERSION substitution in 5 plists** | Future bumps just edit Xcode setting | M | Xcode-level refactor: replace literals with `$(MARKETING_VERSION)` in `CLI Pulse Bar Watch`, `Widgets`, Helper plists. **Critical per Gemini**: CI check must inspect **compiled** Info.plist inside the built `.app` bundle via `plutil -extract CFBundleShortVersionString raw -o - "Build/Products/Release/Foo.app/Contents/Info.plist"`, NOT the source plist (source legitimately contains `$(MARKETING_VERSION)`). If unexpanded var lands in the build artifact, ASC ingestion **hard-rejects**. |
 | A9 | **CI workflow for DEVID DMG builds** — must depend on A8 verified | Removes manual ship friction | L (revised from M per Gemini) | GitHub Actions on private repo (`cli-pulse`) with `macos-14` runner. **Ephemeral keychain pattern** (per Gemini, non-negotiable on Mac runners): `security create-keychain -p "$RUNNER_PW" build.keychain` → `security default-keychain -s build.keychain` → `security unlock-keychain -p "$RUNNER_PW" build.keychain` → `security import cert.p12 -k build.keychain -P "$P12_PW" -T /usr/bin/codesign` → `security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$RUNNER_PW" build.keychain`. Then notarytool inline env vars (per `feedback_keychain_notary_vanished`). Smoke gate: `plutil` version verify (from A8) + `spctl assess` + `codesign --verify --deep --strict`. Publish to `cli-pulse-distrib` via workflow secret `GH_PAT`. |
@@ -135,10 +136,9 @@ WEEK 1 — patch + foundation
 
 WEEK 2 — v1.20 main train
   Day 2 (audit-fix cluster — atomic commits, can land any order):
-    ├── A3 6 token store force-unwrap fixes
-    ├── A4 APIClient error logging
-    ├── A5 ClaudeOAuth off-main
-    └── A6 gemini_exec Timer lock
+    ├── A4 APIClient error logging (logout + syncProviderQuotas)
+    └── A6 gemini_exec Timer TOCTOU lock
+    (A3 + A5 dropped — codexbar/ false positives)
   Day 3:
     ├── A2 iOS PrivacyInfo.xcprivacy (with reason codes verified)
     ├── A7 Sentry env separation — generate new DEBUG DSN, wire #if DEBUG path
