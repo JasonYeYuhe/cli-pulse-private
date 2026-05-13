@@ -108,6 +108,77 @@ credentials" cross-app keychain read: queued for v1.19.1 as the
 Privacy Settings toggle (spec at
 `~/.claude/plans/v1.19.1-privacy-settings-spec.md`).
 
+## Full multi-platform ship completed (2026-05-13 afternoon)
+
+After this archive was initially written, the same session continued
+on to land v1.19.0 across all four distribution channels:
+
+### Mac App Store v1.19.0 build 58
+
+- `xcodebuild archive` via `CLI Pulse Bar/scripts/build-appstore.sh
+  macos --upload` (after re-issuing Apple Distribution cert — see
+  "Keychain post-mortem" below)
+- `xcodebuild -exportArchive` uploaded to ASC at ~15:46 PDT
+- Apple processing completed in ~3 min (TestFlight tab confirmed
+  Ready to Submit at ~15:50)
+- ASC web submission via Chrome MCP: created macOS version 1.19.0,
+  filled What's New (Gemini exec transport, DEVID Beta channel
+  description, AppPermissionMigrationChecker, audit fix-pack, helper
+  v1.18.0 bump), attached build 58, submitted for review at ~16:05
+- Status: **Waiting for Review**
+
+### iOS App Store v1.19.0 build 58
+
+- Same flow as macOS — `build-appstore.sh ios --upload`
+- Includes embedded Watch + Widgets extension
+- Apple processing completed in ~5 min
+- ASC submission via Chrome MCP: created iOS version 1.19.0, filled
+  iOS-tailored What's New (focused on Gemini session improvements +
+  compatibility with latest Claude/Codex/Gemini CLI), attached build
+  58, submitted at ~15:58
+- Status: **Waiting for Review**
+
+### Android Play Store v1.19.0 versionCode 28
+
+- `gradle :app:bundleRelease` produced `app-release.aab` (8 MB,
+  signed with `cli-pulse-upload.jks`)
+- Path: `android/app/build/outputs/bundle/release/app-release.aab`
+- Play Console: AAB upload + "Apply for access to production" form
+  filled (closed test recruitment / engagement / feedback / changes
+  from prior round / production readiness)
+- Production access pending Google review (delayed last time, this
+  round's answers were rewritten to explicitly show feedback → action
+  loop — should pass)
+
+## Keychain post-mortem (mid-ship 2026-05-13)
+
+A separate failure mode interrupted the MAS build flow: macOS renamed
+`login.keychain-db` to `login_renamed_1.keychain-db` during user's
+post-reboot login. The fresh `login.keychain-db` had no Apple
+Distribution private key, so codesign failed with
+`errSecInternalComponent`.
+
+Audit confirmed **zero past Claude sessions ran any keychain-password-
+modifying commands** (`set-keychain-password`, `create-keychain`, etc.
+all checked across all session transcripts). Root cause: macOS 26.4.1
+Keychain Agent autofill regression caused enough SecurityAgent crashes
+during repeated failed Allow dialogs that file-level corruption
+manifested on next boot. The renamed keychain is unrecoverable
+(file-level encryption metadata damage, not password divergence).
+Saved to `~/Library/Keychains-backup/login_renamed_1.keychain-db`
+for forensics; 710 KB, never deleted.
+
+Recovery: generated new Apple Distribution CSR via OpenSSL
+(non-Keychain Access path to avoid autofill bug), uploaded to Apple
+Developer portal, downloaded new `distribution.cer`, imported via
+CLI `security import` with explicit codesign trust. Build flow then
+worked first try. All artifacts saved at
+`~/Library/Application Support/CLI-Pulse-Secrets/apple-distribution-2026-05-13/`.
+
+User upgraded macOS 26.4.1 → 26.5 mid-session in attempt to recover
+keychain (did not auto-recover — file corruption requires either
+re-issue or Time Machine restore).
+
 ## Known issues / follow-ups
 
 - **v1.19.1 Privacy Settings** — opt-in toggle to skip the Claude
