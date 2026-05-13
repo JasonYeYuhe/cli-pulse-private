@@ -533,33 +533,27 @@ class GeminiExecTransport(SessionTransport):
 
             # Marker precedence: timed_out > cancel > turn_failed
             # (suppress dup) > failure path > happy path.
-            primary_failure = False
             if timed_out:
                 self._enqueue(
                     s, f"{_ERROR_PREFIX}gemini turn timed out\n".encode("utf-8")
                 )
-                primary_failure = True
             elif cancel:
                 self._enqueue(
                     s, f"{_ERROR_PREFIX}gemini turn cancelled\n".encode("utf-8")
                 )
-                primary_failure = True
             elif turn_failed_emitted:
                 # `_handle_event` already surfaced the gemini-side
-                # error. Skip the generic `exit code` marker but
-                # still track for session-reset append below.
-                primary_failure = True
+                # error. Skip the generic `exit code` marker.
+                pass
             elif not agent_text_emitted and rc != 0:
                 detail = stderr_text.strip() or f"exit code {rc}"
                 self._enqueue(
                     s, f"{_ERROR_PREFIX}gemini exec failed: {detail[:500]}\n".encode("utf-8")
                 )
-                primary_failure = True
             elif not agent_text_emitted and rc == 0:
                 self._enqueue(
                     s, f"{_WARN_PREFIX}gemini exited without reply\n".encode("utf-8")
                 )
-                primary_failure = True
             else:
                 # Happy path: mark this session as having captured a
                 # prior turn so subsequent turns use --resume latest.

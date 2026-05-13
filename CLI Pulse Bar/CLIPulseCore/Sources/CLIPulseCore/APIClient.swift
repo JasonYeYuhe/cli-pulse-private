@@ -113,7 +113,20 @@ public actor APIClient {
         request.httpMethod = "POST"
         request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(tokenToRevoke)", forHTTPHeaderField: "Authorization")
-        _ = try? await session.data(for: request)
+        do {
+            let (_, response) = try await session.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if !(200...299).contains(status) {
+                // v1.20 A4: surface revocation failures so we don't silently
+                // leave stale tokens valid server-side. Local state has
+                // already been cleared above (accessToken/refreshToken/userId
+                // → nil), so this is informational only — sign-out still
+                // completes from the user's perspective.
+                apiLogger.warning("supabase logout returned HTTP \(status)")
+            }
+        } catch {
+            apiLogger.warning("supabase logout failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     // MARK: - UUID Validation
@@ -1637,7 +1650,19 @@ public actor APIClient {
             rows.append(row)
         }
 
-        guard let body = try? JSONSerialization.data(withJSONObject: rows) else { return }
+        let body: Data
+        do {
+            body = try JSONSerialization.data(withJSONObject: rows)
+        } catch {
+            // v1.20 A4: previously we silently dropped the whole batch on
+            // serialization failure (`guard let body = try? ... else
+            // { return }`). Log so we can spot recurring failures (typically
+            // an unexpected NSNull in the row dict).
+            apiLogger.warning(
+                "syncProviderQuotas serialization failed (\(rows.count) rows dropped): \(error.localizedDescription, privacy: .public)"
+            )
+            return
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

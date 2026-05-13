@@ -21,7 +21,6 @@ from transports.gemini_exec import (
     GeminiExecTransport,
     _AGENT_PREFIX,
     _ERROR_PREFIX,
-    _INFO_PREFIX,
     _USER_PREFIX,
     _WARN_PREFIX,
 )
