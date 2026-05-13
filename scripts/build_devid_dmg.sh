@@ -110,18 +110,24 @@ fi
 # === Read app version from build settings (v1.20 A8) ===
 # Source plist uses $(MARKETING_VERSION) / $(CURRENT_PROJECT_VERSION)
 # substitutions; `defaults read` returns the literal `$(MARKETING_VERSION)`
-# string. Resolve via xcodebuild -showBuildSettings instead.
+# string. Resolve via pbxproj grep — `xcodebuild -showBuildSettings`
+# was tried but fails on macos-14 GitHub Actions runners with empty
+# output (json.load → JSONDecodeError) when no signing identity is set
+# up yet. The pbxproj grep is portable across local + CI, and
+# sync-versions.sh keeps all 10 target × config entries in sync so
+# `head -1` always returns the canonical value.
 XCODE_PROJECT="$PROJECT_ROOT/CLI Pulse Bar/CLI Pulse Bar.xcodeproj"
+PBXPROJ="$XCODE_PROJECT/project.pbxproj"
 read_build_setting() {
-    xcodebuild -project "$XCODE_PROJECT" -target "CLI Pulse Bar" -configuration Release -showBuildSettings -json 2>/dev/null \
-        | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['buildSettings'].get('$1',''))"
+    grep -E "^\s+$1 = " "$PBXPROJ" | head -1 | sed -E "s/.*$1 = ([^;]+);.*/\1/" | tr -d ' \t'
 }
 APP_VERSION="$(read_build_setting MARKETING_VERSION)"
 APP_BUILD="$(read_build_setting CURRENT_PROJECT_VERSION)"
 if [[ -z "$APP_VERSION" ]] || [[ -z "$APP_BUILD" ]]; then
-    echo "error: could not read MARKETING_VERSION / CURRENT_PROJECT_VERSION via xcodebuild -showBuildSettings" >&2
+    echo "error: could not read MARKETING_VERSION / CURRENT_PROJECT_VERSION from $PBXPROJ" >&2
     exit 2
 fi
+echo "Resolved version $APP_VERSION build $APP_BUILD from pbxproj"
 
 DMG_NAME="CLI-Pulse-${APP_VERSION}-${ARCH}.dmg"
 DMG_OUT="$OUTPUT_DIR/$DMG_NAME"
