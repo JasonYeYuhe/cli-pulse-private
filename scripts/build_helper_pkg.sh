@@ -145,8 +145,20 @@ if [[ $SKIP_SIGN -eq 0 ]]; then
     : "${DEV_ID_APP:?Set DEV_ID_APP env (e.g. 'Developer ID Application: Your Name (TEAMID)') or pass --skip-sign}"
     : "${DEV_ID_INSTALLER:?Set DEV_ID_INSTALLER env or pass --skip-sign}"
 fi
+NOTARY_MODE="none"
 if [[ $SKIP_NOTARIZE -eq 0 ]]; then
-    : "${NOTARY_PROFILE:?Set NOTARY_PROFILE env (created via xcrun notarytool store-credentials) or pass --skip-notarize}"
+    # Mirror build_devid_dmg.sh G8 pattern: prefer inline credentials
+    # (CI-friendly, defensive against feedback_keychain_notary_vanished
+    # 24-48h profile-disappearance pattern); fall back to keychain
+    # profile if any inline var is missing.
+    if [[ -n "${APPLE_NOTARY_USER:-}" ]] && [[ -n "${APPLE_NOTARY_APP_PASSWORD:-}" ]] && [[ -n "${APPLE_TEAM_ID:-}" ]]; then
+        NOTARY_MODE="inline"
+        echo "Notarytool mode: inline (APPLE_NOTARY_USER / APPLE_NOTARY_APP_PASSWORD / APPLE_TEAM_ID)"
+    else
+        : "${NOTARY_PROFILE:?Set NOTARY_PROFILE env (or APPLE_NOTARY_USER + APPLE_NOTARY_APP_PASSWORD + APPLE_TEAM_ID for inline) or pass --skip-notarize}"
+        NOTARY_MODE="keychain"
+        echo "Notarytool mode: keychain profile '$NOTARY_PROFILE'"
+    fi
 fi
 
 # === Step 2: pyinstaller build ===
@@ -348,9 +360,17 @@ run rm -f "$COMPONENT_PKG"
 if [[ $SKIP_NOTARIZE -eq 0 ]]; then
     echo
     echo "--- Step 7: notarytool submit + wait ---"
-    run xcrun notarytool submit "$PKG_OUT" \
-        --keychain-profile "$NOTARY_PROFILE" \
-        --wait
+    if [[ "$NOTARY_MODE" == "inline" ]]; then
+        run xcrun notarytool submit "$PKG_OUT" \
+            --apple-id "$APPLE_NOTARY_USER" \
+            --password "$APPLE_NOTARY_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+    else
+        run xcrun notarytool submit "$PKG_OUT" \
+            --keychain-profile "$NOTARY_PROFILE" \
+            --wait
+    fi
     echo
     echo "--- Step 8: stapler staple ---"
     run xcrun stapler staple "$PKG_OUT"
