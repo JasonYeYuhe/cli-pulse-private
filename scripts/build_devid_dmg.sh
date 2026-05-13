@@ -107,15 +107,19 @@ if [[ "$ARCH" != "$HOST_ARCH" ]]; then
     exit 1
 fi
 
-# === Read app version from Info.plist ===
-if [[ ! -f "$APP_INFO_PLIST" ]]; then
-    echo "error: cannot read app version — $APP_INFO_PLIST missing" >&2
-    exit 2
-fi
-APP_VERSION="$(defaults read "${APP_INFO_PLIST%.plist}" CFBundleShortVersionString 2>/dev/null || true)"
-APP_BUILD="$(defaults read "${APP_INFO_PLIST%.plist}" CFBundleVersion 2>/dev/null || true)"
+# === Read app version from build settings (v1.20 A8) ===
+# Source plist uses $(MARKETING_VERSION) / $(CURRENT_PROJECT_VERSION)
+# substitutions; `defaults read` returns the literal `$(MARKETING_VERSION)`
+# string. Resolve via xcodebuild -showBuildSettings instead.
+XCODE_PROJECT="$PROJECT_ROOT/CLI Pulse Bar/CLI Pulse Bar.xcodeproj"
+read_build_setting() {
+    xcodebuild -project "$XCODE_PROJECT" -target "CLI Pulse Bar" -configuration Release -showBuildSettings -json 2>/dev/null \
+        | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['buildSettings'].get('$1',''))"
+}
+APP_VERSION="$(read_build_setting MARKETING_VERSION)"
+APP_BUILD="$(read_build_setting CURRENT_PROJECT_VERSION)"
 if [[ -z "$APP_VERSION" ]] || [[ -z "$APP_BUILD" ]]; then
-    echo "error: could not read CFBundleShortVersionString / CFBundleVersion from $APP_INFO_PLIST" >&2
+    echo "error: could not read MARKETING_VERSION / CURRENT_PROJECT_VERSION via xcodebuild -showBuildSettings" >&2
     exit 2
 fi
 
