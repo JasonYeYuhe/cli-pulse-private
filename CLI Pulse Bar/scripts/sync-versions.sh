@@ -12,7 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 REPO_ROOT="$(dirname "$PROJECT_DIR")"
 ANDROID_DIR="$REPO_ROOT/android"
-PBXPROJ="$PROJECT_DIR/CLI Pulse Bar.xcodeproj/project.pbxproj"
+XCODEPROJ="$PROJECT_DIR/CLI Pulse Bar.xcodeproj"
+PBXPROJ="$XCODEPROJ/project.pbxproj"
 GRADLE_FILE="$ANDROID_DIR/app/build.gradle.kts"
 # All five Info.plists that ship in the iOS-bound archive. They each
 # carry hardcoded CFBundleShortVersionString + CFBundleVersion (not
@@ -62,12 +63,12 @@ read_ios_version() {
     # build settings the same way an actual archive does, AND avoids the
     # `grep MARKETING_VERSION | head -1` drift problem from the 2026-05-11
     # incident (per feedback_sync_versions_script.md).
-    xcodebuild -project "$PBXPROJ/.." -target "CLI Pulse iOS" -configuration Release -showBuildSettings -json 2>/dev/null \
+    xcodebuild -project "$XCODEPROJ" -target "CLI Pulse iOS" -configuration Release -showBuildSettings -json 2>/dev/null \
         | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['buildSettings'].get('MARKETING_VERSION',''))"
 }
 
 read_ios_build() {
-    xcodebuild -project "$PBXPROJ/.." -target "CLI Pulse iOS" -configuration Release -showBuildSettings -json 2>/dev/null \
+    xcodebuild -project "$XCODEPROJ" -target "CLI Pulse iOS" -configuration Release -showBuildSettings -json 2>/dev/null \
         | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['buildSettings'].get('CURRENT_PROJECT_VERSION',''))"
 }
 
