@@ -231,4 +231,10 @@
     <string name="pdf_month_end_estimate">Month-End Estimate</string>
     <string name="pdf_spent_so_far">Spent So Far</string>
     <string name="pdf_confidence_range">Confidence Range</string>
+
+    <!-- Notification permission (v1.20.1 C7) -->
+    <string name="notification_permission_title">Enable notifications?</string>
+    <string name="notification_permission_body">CLI Pulse uses notifications to alert you about quota thresholds, remote approvals from your other devices, and other important events. You can change this later in system settings.</string>
+    <string name="notification_permission_continue">Continue</string>
+    <string name="notification_permission_not_now">Not now</string>
 </resources>

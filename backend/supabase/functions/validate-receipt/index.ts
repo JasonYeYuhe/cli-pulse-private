@@ -286,10 +286,40 @@ Deno.serve(async (req: Request) => {
       const rootCerts = [
         new TextEncoder().encode(APPLE_ROOT_CA_G3_PEM).buffer,
       ];
+
+      // v1.20.1 C2: peek the JWS payload (unauthenticated) for the `environment`
+      // claim so we pick PRODUCTION vs SANDBOX correctly before constructing the
+      // verifier. TestFlight + dev-flow receipts carry `environment = "Sandbox"`
+      // and were previously hard-rejected by a hardcoded Environment.PRODUCTION
+      // verifier. The peek itself is unverified — if an attacker forges the env
+      // field the subsequent signature check still catches them, because the
+      // verifier's bundleId + appAppleId + root-cert chain are still enforced.
+      const jwsParts = transactionJWS.split(".");
+      if (jwsParts.length !== 3) {
+        return jsonResponse(
+          { verified: false, error: "Malformed JWS" },
+          400,
+        );
+      }
+      let environment: Environment;
+      try {
+        const padded = jwsParts[1].replace(/-/g, "+").replace(/_/g, "/");
+        const pad = "=".repeat((4 - (padded.length % 4)) % 4);
+        const peek = JSON.parse(atob(padded + pad));
+        environment = peek.environment === "Sandbox"
+          ? Environment.SANDBOX
+          : Environment.PRODUCTION;
+      } catch (_) {
+        return jsonResponse(
+          { verified: false, error: "Cannot decode JWS payload" },
+          400,
+        );
+      }
+
       const verifier = new SignedDataVerifier(
         rootCerts,
         true,
-        Environment.PRODUCTION,
+        environment,
         APPLE_BUNDLE_ID,
         appAppleId,
       );

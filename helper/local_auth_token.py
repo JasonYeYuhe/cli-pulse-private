@@ -69,14 +69,32 @@ def rotate_token(path: Path | None = None) -> str:
 
     raw = secrets.token_bytes(TOKEN_BYTES)
     encoded = base64.b64encode(raw).decode("ascii")
-    # Write to a tmp file in the same directory and rename — atomic on
-    # POSIX, so a concurrent reader never sees a half-written token.
+    # v1.20.1 C6: write the tmp file via low-level os.open with mode 0o600
+    # at create time, then rename. The previous `tmp.write_text() + chmod`
+    # sequence created the file at the process umask (typically 0o022,
+    # i.e. world-readable) for the brief window between write and chmod.
+    # A local user with fswatch/inotify on the parent directory could race
+    # the read and capture the helper auth token, which grants full PTY
+    # control of any managed CLI session.
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(encoded)
-    os.chmod(tmp, 0o600)
+    # O_NOFOLLOW defends against a symlink swap targeting a privileged path.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+    fd = os.open(str(tmp), flags, 0o600)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(encoded)
+    except BaseException:
+        # If write failed mid-flight, close + unlink so we don't leave
+        # a zero-byte token tmp file lying around for the next rotation.
+        try:
+            os.unlink(str(tmp))
+        except FileNotFoundError:
+            pass
+        raise
     tmp.replace(path)
     # `replace()` preserves the destination's mode on some platforms;
-    # re-chmod the final path to be defensive.
+    # re-chmod the final path to be defensive against an existing path
+    # that already had wider permissions (e.g. a prior buggy build).
     os.chmod(path, 0o600)
     logger.info("rotated local auth token at %s", path)
     return encoded

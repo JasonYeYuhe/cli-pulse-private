@@ -73,6 +73,10 @@ fun AppNavigation(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
 
+    // v1.20.1 C7: ask for POST_NOTIFICATIONS once on first authenticated launch.
+    // No-op below Android 13 and after the user has answered once.
+    com.clipulse.android.ui.permission.NotificationPermissionEffect()
+
     // If a link-flow OAuth deep link arrived while the user wasn't on the Settings
     // tab, auto-navigate there so SettingsScreen's LaunchedEffects can consume the
     // callback / surface the notice. Login callbacks are intentionally not routed

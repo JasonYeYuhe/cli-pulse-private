@@ -6,6 +6,8 @@ import com.android.billingclient.api.*
 import com.clipulse.android.data.remote.SupabaseClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -37,7 +39,10 @@ class BillingManager(
     private val _state = MutableStateFlow(SubscriptionState())
     val state: StateFlow<SubscriptionState> = _state
 
-    private val scope = CoroutineScope(Dispatchers.IO)
+    // v1.20.1 C3: SupervisorJob so one failed validateOnServer coroutine doesn't
+    // cancel the whole singleton's scope (which would silently kill all future
+    // billing work in the app session). Pair with `scope.cancel()` in disconnect().
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val reconnectAttempts = AtomicInteger(0)
     private val isReconnecting = AtomicBoolean(false)
     private val isConnected = AtomicBoolean(false)
@@ -208,5 +213,6 @@ class BillingManager(
     fun disconnect() {
         isConnected.set(false)
         billingClient.endConnection()
+        scope.cancel()
     }
 }

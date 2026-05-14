@@ -231,4 +231,10 @@
     <string name="pdf_month_end_estimate">月末预估</string>
     <string name="pdf_spent_so_far">已花费</string>
     <string name="pdf_confidence_range">置信区间</string>
+
+    <!-- 通知权限 (v1.20.1 C7) -->
+    <string name="notification_permission_title">启用通知?</string>
+    <string name="notification_permission_body">CLI Pulse 使用通知来提醒你配额阈值、来自其他设备的远程审批,以及其他重要事件。你可以稍后在系统设置中更改此选项。</string>
+    <string name="notification_permission_continue">继续</string>
+    <string name="notification_permission_not_now">暂不</string>
 </resources>

@@ -62,8 +62,15 @@ jobs:
           GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          # v1.20.1 C5: SENTRY_DSN is read in app/build.gradle.kts:44 via
+          # `System.getenv("SENTRY_DSN")`. Without this, CI-produced release
+          # AABs would carry an empty DSN string and silently drop every crash
+          # report. Repo secret ANDROID_SENTRY_DSN must be set; see
+          # docs/CI_SECRETS.md or `gh secret set ANDROID_SENTRY_DSN`.
+          SENTRY_DSN: ${{ secrets.ANDROID_SENTRY_DSN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
-      - name: Upload release AAB (v1.9.7 P1-5)
+      - name: Upload release AAB
         if: success()
         uses: actions/upload-artifact@v4
         with:
