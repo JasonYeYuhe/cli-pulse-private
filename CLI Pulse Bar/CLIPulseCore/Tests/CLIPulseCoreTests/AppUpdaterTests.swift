@@ -1,7 +1,10 @@
 import XCTest
 @testable import CLIPulseCore
 
-#if os(macOS)
+// v1.21 D5: AppUpdater is compiled only under DEVID_BUILD now. Tests are
+// skipped when DEVID_BUILD is not set (e.g., default `swift test` from the
+// CLIPulseCore package). The Xcode CI scheme for DEVID passes the flag.
+#if os(macOS) && DEVID_BUILD
 
 /// Unit tests for AppUpdater's pure-logic helpers (version comparison,
 /// architecture gate, manifest decode). Network / file / Finder-handoff

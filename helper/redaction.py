@@ -220,9 +220,18 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
     # begins with `eyJ` (base64 of `{"`). Catches Supabase access tokens,
     # Auth0 tokens, GCP id_tokens, Anthropic OAuth refresh tokens, etc.
     re.compile(r"eyJ[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}"),
-    # Long hex tokens — covers helper_secret-style values, MD5/SHA
-    # hashes, un-dashed UUIDs.
-    re.compile(r"\b[A-Fa-f0-9]{32,}\b"),
+    # Long hex tokens — covers helper_secret-style values (SHA-256 hex,
+    # 64 chars). v1.21 F4: raised floor from 32 → 56 chars to stop over-
+    # redacting git commit SHAs (40 chars) and content hashes that legit-
+    # imately appear in terminal output and are not secrets. Real secrets
+    # in CLI Pulse's threat model are helper_secret (SHA-256, 64 chars)
+    # and SHA-256-shape API receipts; both still caught at 56-char floor.
+    # MD5 (32) and SHA-1 (40) are practically extinct as new secret
+    # formats, and the trade-off of preserving git/content hashes in
+    # event tails is worth the dropped MD5/SHA-1 coverage. Specific
+    # provider patterns above (sk-, ghp_, etc.) still catch the API-key
+    # cases where they'd matter.
+    re.compile(r"\b[A-Fa-f0-9]{56,}\b"),
 )
 
 

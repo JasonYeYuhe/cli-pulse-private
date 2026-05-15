@@ -225,12 +225,46 @@ class PosixPtyTransport(SessionTransport):
         p = self._payload(handle)
         if p.closed:
             return
-        # Best-effort terminate. If the child is wedged, the helper's own
-        # shutdown loop will eventually escalate to SIGKILL via the
-        # manager.
+        # v1.21 F1: SIGTERM → grace → SIGKILL escalation + zombie reap.
+        # Previous behaviour was "send SIGTERM and hope": if the child
+        # ignored SIGTERM, the master fd was closed but the child + its
+        # process group leaked until daemon restart, draining file
+        # descriptors and leaving a zombie. Grace defaults to 3 s, override
+        # via `HELPER_TERM_GRACE_SECONDS` for CLIs that legitimately need
+        # longer to flush state. `_signal_pgid` already guards
+        # ProcessLookupError; we wrap the second-stage SIGKILL in an extra
+        # try/except for the "child died between poll() and killpg()" race.
         try:
             if p.proc.poll() is None:
                 self._signal_pgid(handle, signal.SIGTERM)
+                try:
+                    grace = float(os.environ.get("HELPER_TERM_GRACE_SECONDS", "3"))
+                except ValueError:
+                    grace = 3.0
+                try:
+                    p.proc.wait(timeout=grace)
+                except subprocess.TimeoutExpired:
+                    logger.warning(
+                        "session %s did not exit within %ss of SIGTERM; escalating to SIGKILL",
+                        handle.session_id, grace,
+                    )
+                    try:
+                        pgid = os.getpgid(p.proc.pid)
+                        os.killpg(pgid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError, OSError):
+                        pass
+                    # Non-blocking reap so the zombie is collected immediately
+                    # rather than waiting for the next poll cycle.
+                    try:
+                        p.proc.wait(timeout=1.0)
+                    except subprocess.TimeoutExpired:
+                        # Even SIGKILL didn't take it down within 1s — log and
+                        # move on; the kernel will eventually reap when the
+                        # helper itself exits.
+                        logger.error(
+                            "session %s still alive 1s after SIGKILL; orphan PID %s",
+                            handle.session_id, p.proc.pid,
+                        )
         finally:
             try:
                 os.close(p.master_fd)

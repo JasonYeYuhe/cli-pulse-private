@@ -126,7 +126,8 @@ public enum CredentialBridge {
         if status == errSecItemNotFound {
             var addQuery = query
             addQuery[kSecValueData as String] = data
-            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            // v1.21 D3: tighter than AfterFirstUnlock — see KeychainHelper.swift
+            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
             let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
             if addStatus != errSecSuccess {
                 logger.error("Keychain save failed: \(addStatus, privacy: .public)")

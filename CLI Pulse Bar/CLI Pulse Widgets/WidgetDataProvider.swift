@@ -105,9 +105,17 @@ struct CLIPulseTimelineProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<CLIPulseEntry>) -> Void) {
         let data = WidgetStorage.load()
-        let entry = CLIPulseEntry(date: Date(), data: data)
-        let nextUpdate = Calendar.current.date(byAdding: .minute, value: 5, to: Date()) ?? Date().addingTimeInterval(300)
-        let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
+        let now = Date()
+        // v1.21 D6: emit 3 timeline entries spanning the next 15 min instead
+        // of one. WidgetKit will pick the most relevant one to render based
+        // on the relevance score, and the staleness label rendered inside
+        // the widget keeps reading sensibly as the entry timestamps advance.
+        let entries: [CLIPulseEntry] = (0..<3).map { offset in
+            let entryDate = Calendar.current.date(byAdding: .minute, value: offset * 5, to: now) ?? now.addingTimeInterval(TimeInterval(offset * 300))
+            return CLIPulseEntry(date: entryDate, data: data)
+        }
+        let nextUpdate = Calendar.current.date(byAdding: .minute, value: 15, to: now) ?? now.addingTimeInterval(900)
+        let timeline = Timeline(entries: entries, policy: .after(nextUpdate))
         completion(timeline)
     }
 }
@@ -115,6 +123,22 @@ struct CLIPulseTimelineProvider: TimelineProvider {
 struct CLIPulseEntry: TimelineEntry {
     let date: Date
     let data: WidgetData
+
+    // v1.21 D6: relevance scoring for iOS 17+ Smart Stack. The widget rises
+    // in the stack when (a) there are unresolved alerts, or (b) the highest-
+    // usage provider is approaching its quota cap. Score scales linearly with
+    // both signals; WidgetKit normalises across all widgets so absolute
+    // magnitude matters less than direction.
+    var relevance: TimelineEntryRelevance? {
+        let alertWeight = Float(data.unresolvedAlerts) * 5.0
+        let topUsageRatio: Float = {
+            guard let top = data.providers.max(by: { ($0.usage / max($0.quota, 1)) < ($1.usage / max($1.quota, 1)) }),
+                  top.quota > 0 else { return 0 }
+            return Float(top.usage / top.quota)
+        }()
+        let usageWeight = max(0, (topUsageRatio - 0.7)) * 30.0  // ramps once >70% of quota
+        return TimelineEntryRelevance(score: alertWeight + usageWeight)
+    }
 }
 
 // MARK: - Single Provider Timeline Provider

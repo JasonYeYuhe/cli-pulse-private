@@ -152,6 +152,13 @@ struct iPadSplitView: View {
         .navigationSplitViewStyle(.balanced)
         .tint(PulseTheme.accent)
         .keyboardShortcut(.init("1"), modifiers: .command)
+        // v1.21 D1: iPad notification-tap routing. iOSAppDelegate writes the
+        // destination tab to `state.selectedTab` on push tap, but iPadSplitView
+        // owns a private `selectedSection` that previously never read from it,
+        // so taps on iPad silently went nowhere.
+        .onChange(of: state.selectedTab) { _, newTab in
+            selectedSection = newTab
+        }
     }
 
     private var sidebar: some View {

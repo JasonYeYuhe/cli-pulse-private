@@ -1,218 +1,184 @@
 # CLI Pulse Release Workflow
 
-This document defines the release path for CLI Pulse now that source and
-distribution have been separated.
+Source of truth: 4-channel ship across Mac DEVID DMG, Mac App Store
+(MAS), iOS App Store, and Android Google Play. Plus a sidecar helper
+.pkg channel for users on DEVID. Last rewritten 2026-05-15 (was
+previously describing a stale 2-version-old macOS-only flow).
 
-## Repo Roles
+## Repo Topology
 
-### Private source repo
+| Remote | URL | Visibility | Role |
+|---|---|---|---|
+| `origin` | `JasonYeYuhe/cli-pulse-private` | Private | All source: app, helper, backend, tests, internal docs |
+| `public` | `JasonYeYuhe/cli-pulse` | Public | `README.md`, `PRIVACY.md`, `TERMS.md`, `docs/` (Pages), release notes — NO source |
+| (n/a) | `JasonYeYuhe/cli-pulse-distrib` | Public | DEVID DMG release artifacts (`app-vX.Y.Z` tag) + `latest.json` manifest |
+| (n/a) | `JasonYeYuhe/cli-pulse-helper-releases` | Public | Helper `.pkg` release artifacts + `latest.json` manifest |
 
-- Remote name: `origin`
-- GitHub repo: `JasonYeYuhe/cli-pulse-private`
-- Contains:
-  - `CLI Pulse Bar/`
-  - `helper/`
-  - `backend/`
-  - `archive/`
-  - tests
-  - internal docs and implementation notes
+Never push product source to `public`. The pre-push hook
+(`.githooks/pre-push`) blocks accidents.
 
-### Public distribution repo
+## Channels overview
 
-- Remote name: `public`
-- GitHub repo: `JasonYeYuhe/cli-pulse`
-- Contains only:
-  - `README.md`
-  - `PRIVACY.md`
-  - `TERMS.md`
-  - `docs/`
-  - public GitHub Releases assets
+| Channel | Target | Build script | Upload target | CI workflow |
+|---|---|---|---|---|
+| DEVID DMG | macOS users with `Developer ID Application` notarized DMG | `scripts/build_devid_dmg.sh` (or `.github/workflows/devid-dmg.yml` via `workflow_dispatch`) | `cli-pulse-distrib` GitHub release | `devid-dmg.yml` |
+| Mac App Store | Mac users via MAS sandbox | `CLI Pulse Bar/scripts/build-appstore.sh` | App Store Connect (Transporter/altool) | none (local-only) |
+| iOS App Store | iPhone + iPad + Watch | Same `build-appstore.sh` (iOS scheme) | App Store Connect | none (local-only) |
+| Android Play Store | Android | `./gradlew bundleRelease` (under `android/`) | Play Console (manual upload) | `android-ci.yml` (test only; AAB build needs keystore secret not yet wired) |
+| Helper .pkg | DEVID-channel users with self-managed helper | `scripts/build_helper_pkg.sh` | `cli-pulse-helper-releases` GitHub release | none (local-only) |
 
-Do not push product source to `public`.
+## Pre-ship validation
 
-## Release Principles
-
-1. All development happens in the private repo.
-2. Public GitHub is for downloads, legal pages, support, and release notes.
-3. Public release tags must point only to distribution-only commits.
-4. DMG assets may be public; source code may not.
-
-## Standard macOS Release Flow
-
-### 1. Finish product work in private
-
-- Implement and review changes in the private repo.
-- Commit and push to `origin`.
-- Merge to private `main` only when ready.
-
-### 2. Validate before building
-
-Run these from the private source workspace root:
+Before any ship, in the source root:
 
 ```bash
-python3 -m pytest -q helper/test_system_collector.py
+# Helper Python
+(cd helper && python -m pytest -q)
+# Swift package
 swift test --package-path "CLI Pulse Bar/CLIPulseCore"
+# Android unit tests (needs Android Studio JBR java in PATH)
+(cd android && JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
+    ./gradlew testDebugUnitTest --no-daemon)
+# Helper Swift package
+swift test --package-path HelperSwift
 ```
 
-If the release includes app packaging or entitlement changes, also run a local
-Xcode build and a quick smoke test of the macOS app.
+Then a local Xcode smoke build of the target scheme + a manual
+launch of the built `.app` is mandatory for any Apple channel.
 
-### 3. Build the macOS artifact
+## Version bump
 
-- Build the macOS app from the private repo.
-- Sign and notarize the app if required.
-- Produce the release artifact, typically a DMG.
-- Keep the built artifact outside the public repo until upload time.
-- Prefer a build/output directory outside iCloud-synced folders. The release
-  script now defaults to `~/Library/Caches/CLI-Pulse-Bar-release` to avoid
-  File Provider extended attributes that can break signing.
+Single source of truth: `MARKETING_VERSION` in
+`CLI Pulse Bar/CLI Pulse Bar.xcodeproj/project.pbxproj`. The 5
+embedded `Info.plist` files reference `$(MARKETING_VERSION)` so
+bumping one place propagates to all (D8 in v1.20 plan).
 
-Recommended output naming:
+Android: edit `android/app/build.gradle.kts` `versionName` +
+`versionCode`.
 
-- `CLI-Pulse-Bar-vX.Y.Z.dmg`
+`scripts/sync-versions.sh --dry-run` should be CI-gated on pushes
+that touch `project.pbxproj` or Android `build.gradle.kts` to
+catch drift between platforms (v1.21 G6).
 
-### Signing and notarization prerequisites
+## Signing credentials
 
-For a DMG that opens without the extra Gatekeeper override flow, this machine
-must have:
+Apple side — both DEVID and MAS:
 
-- a `Developer ID Application` certificate installed in Keychain
-- notarization credentials configured for `notarytool`
+- Distribution cert at `~/Library/Application Support/CLI-Pulse-Secrets/apple-distribution-2026-05-13/`
+- Developer ID Application cert at `~/Library/Application Support/CLI-Pulse-Secrets/devid-application-2026-05-14/`
+- App Store Connect API key (`.p8` + key-id + issuer-id) used by
+  `build-appstore.sh` for ASC upload — see
+  `reference_appstore_creds` memory.
+- Notarytool — `AC_NOTARY_PROFILE` keychain profile has been
+  unreliable on macOS 26.x (memory `feedback_keychain_notary_vanished`).
+  Inline env vars (`xcrun notarytool submit --apple-id ... --team-id ... --password ...`) is the
+  reliable path.
 
-Recommended setup:
+Android:
+
+- Upload keystore at `~/Library/Application Support/CLI-Pulse-Secrets/cli-pulse-upload.jks`
+  (memory `reference_google_play_signing`).
+- CI does NOT have the keystore today, so CI's `bundleRelease`
+  step fails. AAB build runs locally for now.
+
+## DEVID DMG ship
 
 ```bash
-export DEVELOPER_ID_APPLICATION="Developer ID Application: Your Name (TEAMID)"
-export NOTARYTOOL_KEYCHAIN_PROFILE="cli-pulse-notary"
+# Bump MARKETING_VERSION + Android version
+# Edit project.pbxproj + build.gradle.kts + commit
+./scripts/build_devid_dmg.sh   # → ~/Library/Caches/CLI-Pulse-Bar-release/CLI-Pulse-Bar-vX.Y.Z-<arch>.dmg
+# Upload to cli-pulse-distrib
+gh release create "app-vX.Y.Z" "<dmg-path>" -R JasonYeYuhe/cli-pulse-distrib \
+    --title "CLI Pulse Bar vX.Y.Z" --notes-file docs/release-notes/vX.Y.Z.md
+# Promote to latest (after clean-Mac smoke!)
+# update cli-pulse-distrib's latest.json to point to the new tag
 ```
 
-`cli-pulse-notary` is the default profile name expected by the release script.
+Or, on a clean GitHub-hosted runner via `.github/workflows/devid-dmg.yml`:
+trigger `workflow_dispatch` with version input. Builds + signs +
+notarizes + uploads in one ~25-min run.
 
-Current validated local values for this workspace:
-
-```bash
-export DEVELOPER_ID_APPLICATION="Developer ID Application: Yuhe Ye (KHMK6Q3L3K)"
-export NOTARYTOOL_KEYCHAIN_PROFILE="cli-pulse-notary"
-```
-
-Create the notary profile once:
-
-```bash
-xcrun notarytool store-credentials "cli-pulse-notary" \
-  --apple-id "YOUR_APPLE_ID" \
-  --team-id "YOUR_TEAM_ID" \
-  --password "APP_SPECIFIC_PASSWORD"
-```
-
-Build a notarized DMG:
+## MAS + iOS ship
 
 ```bash
 cd "CLI Pulse Bar"
-./scripts/build-release.sh --notarize
+./scripts/build-appstore.sh --target=mac    # MAS build
+./scripts/build-appstore.sh --target=ios    # iOS build
+# Both upload to ASC via altool / asc-rest API. Then in ASC Web:
+# 1. Add the new build to the version
+# 2. Fill in "What's New"
+# 3. Submit for review
 ```
 
-Current output path:
+Five ASC gotchas codified in `build-appstore.sh` per memory
+`feedback_asc_release_workflow`. Per-version `submit_v*.py` script
+proliferation should be replaced by a single
+`scripts/submit_asc.py` + `docs/release-notes/vX.Y.Z.md` (deferred
+to v1.22 — R-F1).
+
+## Helper .pkg ship
 
 ```bash
-~/Library/Caches/CLI-Pulse-Bar-release/CLI-Pulse-Bar-vX.Y.Z.dmg
+./scripts/build_helper_pkg.sh             # → dist/cli-pulse-helper-vX.Y.Z.pkg
+# Notarize + staple
+xcrun notarytool submit ... && xcrun stapler staple ...
+# Upload to cli-pulse-helper-releases
+gh release create "v1.18.0" "<pkg-path>" -R JasonYeYuhe/cli-pulse-helper-releases \
+    --title "Helper v1.18.0"
+# Update releases/download/latest/latest.json to point at the new tag
 ```
 
-If the machine only has `Apple Development` and not `Developer ID Application`,
-outside-App-Store distribution will still trigger Gatekeeper warnings. Do not
-publish that build as the "fixed" public release.
+Code at `HELPER_VERSION=1.18.0` in `scripts/build_helper_pkg.sh`.
+Production `.pkg` published at 1.17.3 currently; A1 in v1.20 plan
+covers the publish.
 
-### 4. Prepare public-facing content
-
-Update public-facing content only if needed:
-
-- `README.md`
-- `docs/index.html`
-- `PRIVACY.md`
-- `TERMS.md`
-- release notes text
-
-This work belongs in the public repo, not the private source repo.
-
-### 5. Publish the release to the public repo
-
-Use the public repo only for distribution steps:
-
-1. Ensure `public/main` still contains only distribution files.
-2. Create or update the public release notes.
-3. Create the release tag on the public distribution history.
-4. Upload the DMG asset to the public GitHub Release.
-
-Example:
+## Android ship
 
 ```bash
-gh release create "vX.Y.Z" "CLI-Pulse-Bar-vX.Y.Z.dmg#CLI-Pulse-Bar-vX.Y.Z.dmg" \
-  --repo JasonYeYuhe/cli-pulse \
-  --title "CLI Pulse vX.Y.Z" \
-  --notes-file /tmp/cli-pulse-release-notes.md
+(cd android && ./gradlew bundleRelease)   # → app/build/outputs/bundle/release/app-release.aab
+# Manual upload to Play Console
+# Internal track → 10% staged rollout → 100%
 ```
 
-Important:
+## Public repo distribution work
 
-- Never create a public release tag from a source-bearing commit.
-- If a tag must be recreated, recreate it on the distribution-only public
-  history first, then recreate the release.
+After the release artifacts are uploaded:
 
-### 6. Verify public distribution
+1. `docs/release-notes/vX.Y.Z.md` committed to private repo.
+2. Public repo (`public` remote) gets release notes published (and
+   any `docs/` updates that should ship publicly).
+3. Public GitHub Release on `JasonYeYuhe/cli-pulse` if we want a
+   discoverable changelog separate from the channel-specific repos.
 
-After publishing:
+## Post-ship verification
 
-- Confirm the GitHub Release page loads.
-- Confirm the DMG downloads correctly.
-- Confirm GitHub Pages still serves:
-  - `https://jasonyeyuhe.github.io/cli-pulse/`
-  - `privacy.html`
-  - `terms.html`
-- Confirm the public repo tree still does not contain source directories.
+- DEVID: download from `cli-pulse-distrib` `latest.json`, install on
+  a clean Mac, launch, verify version + Sentry event arrives.
+- Apple: TestFlight or ASC build status visible.
+- Play: internal track installable, Sentry Android event arrives.
+- Helper: install `.pkg`, watch helper restart, verify version log.
 
-## Public Repo Maintenance Rules
+Reference incident: `feedback_v080_crash_on_launch_incident` —
+skipping the clean-machine smoke is what produced v0.8.0's
+crash-on-launch on Windows. Same discipline applies to all four
+channels.
 
-Allowed changes in `public`:
+## Forbidden in `public`
 
-- legal text updates
-- support and FAQ updates
-- landing page/download page updates
-- release notes
-- DMG uploads
+- App source
+- Helper source
+- Backend SQL or edge functions
+- Test files
+- Internal `PROJECT_FIX_*.md` / `PROJECT_PLAN_*.md` notes
+- Credentials of any kind
 
-Forbidden changes in `public`:
+## Quick checklist
 
-- app source
-- helper source
-- backend source
-- test files
-- provider collectors
-- internal docs or notes
-- archived product code
-
-## AI / Automation Rules
-
-Any AI working in this project must follow:
-
-1. Read `AGENTS.md` first.
-2. Treat `origin` as the only source-code remote.
-3. Treat `public` as distribution-only.
-4. If a task mentions releases, distinguish clearly between:
-   - private build work
-   - public distribution work
-5. Do not push source commits, feature branches, or private implementation
-   details to `public`.
-
-## Quick Checklist
-
-Before each release:
-
-- [ ] Product changes merged in private repo
-- [ ] Python helper tests pass
-- [ ] Swift package tests pass
-- [ ] macOS app smoke-tested
-- [ ] DMG built and notarized
-- [ ] Public release notes prepared
-- [ ] Public repo still distribution-only
-- [ ] Release tag created on distribution-only commit
-- [ ] DMG uploaded to GitHub Release
-- [ ] GitHub Pages/download links verified
+- [ ] Tests pass: helper pytest + Swift CLIPulseCore + Android unit + HelperSwift
+- [ ] Version bumped in project.pbxproj + build.gradle.kts (sync-versions.sh)
+- [ ] All 4 channels built (DEVID DMG, MAS, iOS, Android AAB)
+- [ ] All 4 channels uploaded (cli-pulse-distrib, ASC×2, Play Console)
+- [ ] Helper .pkg published if helper version changed
+- [ ] Release notes committed to private repo + published to public repo
+- [ ] Clean-Mac / clean-Android smoke verified before promoting to "latest"
+- [ ] Sentry shows post-release events tagged with new version

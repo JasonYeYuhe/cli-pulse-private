@@ -499,6 +499,17 @@ class LocalSessionServer:
                 conn.close()
             except OSError:
                 pass
+            # v1.21 F2: prune ourselves from _conn_threads so a long-running
+            # helper with many short connections doesn't grow the list (and
+            # the thread objects it pins) forever. The list is only used in
+            # stop() to join() all active threads — finished threads being
+            # absent there is correct behaviour (they've already terminated).
+            current = threading.current_thread()
+            with self._conn_threads_lock:
+                try:
+                    self._conn_threads.remove(current)
+                except ValueError:
+                    pass  # stop() already cleared the list
 
     # ── streaming loop ──────────────────────────────────────
 

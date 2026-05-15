@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -57,28 +58,46 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# v1.21 F3: serialise concurrent config reads + writes. The main loop calls
+# load_config() each cycle while the UDS thread can call set_local_control_enabled()
+# which does a read-modify-write. Without this lock, the UDS write can land
+# between the main loop's open() and its first read(), producing a JSONDecodeError
+# from a torn file. Also serialises the write path so two simultaneous UDS calls
+# can't both clobber each other's edits.
+_config_lock = threading.RLock()
+
+
 def load_config() -> HelperConfig:
-    if not CONFIG_PATH.exists():
-        raise ConfigError("helper is not paired yet — run 'pair' first")
-    try:
-        data = json.loads(CONFIG_PATH.read_text())
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise ConfigError(f"corrupted config at {CONFIG_PATH}: {exc}") from exc
-    # Detect legacy v0 config (has 'server' or missing 'helper_secret')
-    if "server" in data or "helper_secret" not in data:
-        raise ConfigError(
-            f"legacy config detected at {CONFIG_PATH} — please re-pair:\n"
-            f"  rm {CONFIG_PATH}\n"
-            f"  python3 cli_pulse_helper.py pair --pairing-code <CODE>"
-        )
-    # Accept only known fields
-    known = {f.name for f in HelperConfig.__dataclass_fields__.values()}
-    return HelperConfig(**{k: v for k, v in data.items() if k in known})
+    with _config_lock:
+        if not CONFIG_PATH.exists():
+            raise ConfigError("helper is not paired yet — run 'pair' first")
+        try:
+            data = json.loads(CONFIG_PATH.read_text())
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ConfigError(f"corrupted config at {CONFIG_PATH}: {exc}") from exc
+        # Detect legacy v0 config (has 'server' or missing 'helper_secret')
+        if "server" in data or "helper_secret" not in data:
+            raise ConfigError(
+                f"legacy config detected at {CONFIG_PATH} — please re-pair:\n"
+                f"  rm {CONFIG_PATH}\n"
+                f"  python3 cli_pulse_helper.py pair --pairing-code <CODE>"
+            )
+        # Accept only known fields
+        known = {f.name for f in HelperConfig.__dataclass_fields__.values()}
+        return HelperConfig(**{k: v for k, v in data.items() if k in known})
 
 
 def save_config(config: HelperConfig) -> None:
-    CONFIG_PATH.write_text(json.dumps(asdict(config), indent=2))
-    CONFIG_PATH.chmod(0o600)
+    # v1.21 F3: atomic write via tmp file + replace, holding the lock so
+    # we never observe a half-written config from a concurrent load_config().
+    with _config_lock:
+        tmp = CONFIG_PATH.with_suffix(CONFIG_PATH.suffix + ".tmp")
+        tmp.write_text(json.dumps(asdict(config), indent=2))
+        tmp.chmod(0o600)
+        tmp.replace(CONFIG_PATH)
+        # Defensive re-chmod on the final path (some filesystems carry
+        # the destination's mode across replace() rather than the source's).
+        CONFIG_PATH.chmod(0o600)
 
 
 def set_local_control_enabled(enabled: bool) -> bool:

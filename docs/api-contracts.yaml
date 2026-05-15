@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: CLI Pulse API
-  version: 1.4.0
+  version: 1.5.0
   description: |
     Shared API contract for CLI Pulse across iOS (Swift/Codable), Android (Kotlin/JSONObject),
     and Python (dict) clients. All endpoints are Supabase RPCs or REST queries behind
@@ -298,8 +298,24 @@ components:
 paths:
   /rest/v1/rpc/dashboard_summary:
     post:
-      summary: Get dashboard summary
+      summary: Get dashboard summary (timezone-aware in v1.5.0+)
       operationId: dashboardSummary
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                p_user_today:
+                  type: string
+                  format: date
+                  description: |
+                    Device-local "today" key in YYYY-MM-DD. Added in backend v0.44
+                    to fix the TZ skew between server UTC `current_date` and
+                    device-local `metric_date` writes. Clients in non-UTC zones
+                    MUST supply this; UTC clients may omit (server falls back to
+                    `current_date`).
       responses:
         '200':
           description: Dashboard metrics
@@ -309,8 +325,20 @@ paths:
 
   /rest/v1/rpc/provider_summary:
     post:
-      summary: Get provider usage summaries
+      summary: Get provider usage summaries (timezone-aware in v1.5.0+)
       operationId: providerSummary
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                p_user_today:
+                  type: string
+                  format: date
+                  description: |
+                    Device-local "today" key. Same semantics as dashboard_summary.
       responses:
         '200':
           description: Array of provider usage data
@@ -319,6 +347,38 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/ProviderUsage' }
+
+  /rest/v1/rpc/get_managed_sessions:
+    post:
+      summary: List managed-session sessions for the authenticated user (v1.5.0+)
+      description: |
+        Added in backend v0.45 (multi-CLI managed sessions). Returns the list of
+        sessions started via remote_app_request_session_start. Provider whitelist
+        now includes `claude`, `codex`, `gemini` (added v0.45) and `shell`.
+      operationId: getManagedSessions
+      responses:
+        '200':
+          description: Array of managed-session rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id, provider, status, created_at]
+                  properties:
+                    id: { type: string, format: uuid }
+                    provider:
+                      type: string
+                      enum: [claude, codex, gemini, shell]
+                    status:
+                      type: string
+                      enum: [pending, running, stopped, errored]
+                    cwd_basename: { type: string }
+                    cwd_hmac: { type: string, nullable: true }
+                    client_label: { type: string, nullable: true }
+                    created_at: { type: string, format: date-time }
+                    last_event_at: { type: string, format: date-time, nullable: true }
 
   /rest/v1/rpc/get_user_tier:
     post:

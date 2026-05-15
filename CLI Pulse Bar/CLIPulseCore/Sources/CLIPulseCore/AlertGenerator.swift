@@ -1,5 +1,4 @@
 import Foundation
-import CommonCrypto
 
 /// Generates alerts from device metrics and session data.
 /// Ports the 3 alert rules from Python's `collect_alerts()`.
@@ -165,13 +164,10 @@ public enum AlertGenerator {
     }
 
     private static func sha256Prefix(_ s: String, prefixBytes: Int) -> String {
-        guard let data = s.data(using: .utf8) else { return "" }
-        var hash = [UInt8](repeating: 0, count: 32)
-        data.withUnsafeBytes { ptr in
-            let buf = ptr.baseAddress!.assumingMemoryBound(to: UInt8.self)
-            CC_SHA256(buf, CC_LONG(data.count), &hash)
-        }
-        return hash.prefix(prefixBytes).map { String(format: "%02x", $0) }.joined()
+        // v1.21 D4: route through shared CryptoHelpers (CryptoKit-backed).
+        let full = CryptoHelpers.sha256HexUtf8(s)
+        // sha256HexUtf8 returns hex (2 chars per byte); take 2 * prefixBytes chars.
+        return String(full.prefix(prefixBytes * 2))
     }
     #endif
 

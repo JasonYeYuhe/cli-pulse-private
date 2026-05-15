@@ -371,8 +371,12 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
         try? FileManager.default.removeItem(at: finalURL)
         try FileManager.default.moveItem(at: tempURL, to: finalURL)
 
-        // Verify SHA-256 of the downloaded pkg against the manifest.
-        let actualSHA = try Self.sha256(of: finalURL)
+        // Verify SHA-256 of the downloaded pkg against the manifest. v1.21 D4:
+        // hashed off-main via Task.detached so the install-progress UI stays
+        // responsive while a 30-80 MB pkg is being fingerprinted.
+        let actualSHA = try await Task.detached {
+            try CryptoHelpers.sha256Hex(of: finalURL)
+        }.value
         guard actualSHA.lowercased() == manifest.sha256.lowercased() else {
             try? FileManager.default.removeItem(at: finalURL)
             throw NSError(
@@ -479,19 +483,8 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
         }
     }
 
-    static func sha256(of url: URL) throws -> String {
-        let data = try Data(contentsOf: url, options: .mappedIfSafe)
-        var hash = [UInt8](repeating: 0, count: 32)
-        data.withUnsafeBytes { ptr in
-            let buf = ptr.baseAddress!.assumingMemoryBound(to: UInt8.self)
-            CC_SHA256(buf, CC_LONG(data.count), &hash)
-        }
-        return hash.map { String(format: "%02x", $0) }.joined()
-    }
 }
-
-// MARK: - CommonCrypto bridge
-
-import CommonCrypto
+// v1.21 D4: removed local sha256(of:) — callers route through CryptoHelpers.
+// CommonCrypto import removed in favor of CryptoKit (via CryptoHelpers).
 
 #endif

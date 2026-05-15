@@ -101,7 +101,8 @@ public enum UserSecret {
             kSecAttrService: keychainService,
             kSecAttrAccount: keychainAccount,
             kSecValueData: data,
-            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock
+            // v1.21 D3: tighter than AfterFirstUnlock; never iCloud-syncs
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
         let status = SecItemAdd(attrs as CFDictionary, nil)
         if status != errSecSuccess && status != errSecDuplicateItem {

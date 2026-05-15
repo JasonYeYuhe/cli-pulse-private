@@ -23,7 +23,17 @@ public enum KeychainHelper {
         if status == errSecItemNotFound {
             var addQuery = query
             addQuery[kSecValueData as String] = data
-            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            // v1.21 D3: WhenUnlockedThisDeviceOnly is tighter than the previous
+            // AfterFirstUnlock — token is unreadable while device is locked AND
+            // never syncs via iCloud Keychain (which AfterFirstUnlock could,
+            // if kSecAttrSynchronizable were ever set). Main-app reads tokens
+            // only while user is interacting (= device unlocked), so the
+            // tighter access class is compatible. Existing items keep their
+            // old accessibility until natural rotation rewrites them — no
+            // explicit migration needed (Apple rejects accessibility changes
+            // in SecItemUpdate with errSecParam, so the safe path is just
+            // new writes = tighter, old items continue to work as-is).
+            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
             SecItemAdd(addQuery as CFDictionary, nil)
         }
     }

@@ -17,6 +17,9 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # v1.21 G4: cap CI minutes. Pytest PTY subprocess tests can hang on a
+    # mis-configured runner (see feedback_pytest_hang_stale memory).
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: helper

@@ -1,4 +1,8 @@
-#if os(macOS)
+// v1.21 D5: gate AppUpdater on `#if DEVID_BUILD` in addition to os(macOS).
+// MAS builds never construct AppUpdater (consumers in AppState/SettingsTab
+// already wrap their access in `#if DEVID_BUILD`), so the class was dead code
+// in MAS binaries. AppUpdaterTests is similarly gated below.
+#if os(macOS) && DEVID_BUILD
 import Foundation
 import os
 import AppKit
@@ -252,8 +256,13 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
         try? FileManager.default.removeItem(at: finalURL)
         try FileManager.default.moveItem(at: tempURL, to: finalURL)
 
-        // Verify SHA-256 of the downloaded DMG against the manifest.
-        let actualSHA = try Self.sha256(of: finalURL)
+        // Verify SHA-256 of the downloaded DMG against the manifest. v1.21 D4:
+        // hashes a 50-150 MB file — must run off the @MainActor download() path
+        // to avoid freezing the popover. `Task.detached` hops to a background
+        // executor; SHA256.hash is CPU-bound and Sendable-safe.
+        let actualSHA = try await Task.detached {
+            try CryptoHelpers.sha256Hex(of: finalURL)
+        }.value
         guard actualSHA.lowercased() == manifest.sha256.lowercased() else {
             try? FileManager.default.removeItem(at: finalURL)
             throw NSError(
@@ -302,19 +311,8 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
         }
     }
 
-    static func sha256(of url: URL) throws -> String {
-        let data = try Data(contentsOf: url, options: .mappedIfSafe)
-        var hash = [UInt8](repeating: 0, count: 32)
-        data.withUnsafeBytes { ptr in
-            let buf = ptr.baseAddress!.assumingMemoryBound(to: UInt8.self)
-            CC_SHA256(buf, CC_LONG(data.count), &hash)
-        }
-        return hash.map { String(format: "%02x", $0) }.joined()
-    }
 }
-
-// MARK: - CommonCrypto bridge
-
-import CommonCrypto
+// v1.21 D4: removed local sha256(of:) — callers route through CryptoHelpers.
+// CommonCrypto import removed; CryptoKit is the single SHA-256 path now.
 
 #endif
