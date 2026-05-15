@@ -19,6 +19,23 @@ public enum SentryLogger {
     ]
 
     public static func start(platform: SentryPlatform) {
+        // v1.21 M1: hand the actual SentrySDK.start off the main thread so
+        // any unexpected file I/O / hook installation in sentry-cocoa cannot
+        // block app launch on a slow-disk or weak-network device. Per
+        // Gemini round 1: weak network should never delay our cold start
+        // by more than a frame. SentrySDK.start is documented thread-safe.
+        //
+        // Trade-off: a crash in the ~50ms window between Application init
+        // and the background queue picking up `_startSync` won't be captured
+        // — acceptable for this feature given crash-on-launch with a working
+        // SDK is rare and the dispatched start runs at .utility QoS so it
+        // gets to run quickly.
+        DispatchQueue.global(qos: .utility).async {
+            _startSync(platform: platform)
+        }
+    }
+
+    private static func _startSync(platform: SentryPlatform) {
         // v1.20 A7: skip Sentry initialization in DEBUG builds. The
         // production project's "All Events" view used to fill with
         // noise from local dev sessions (each iteration triggered

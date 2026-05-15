@@ -4,6 +4,21 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<!-- v1.21 D8: explicit list so iOS's locale matcher falls back
+		     zh-Hant → zh-Hans (same script family) instead of dropping to en.
+		     Listing zh-Hant here without a zh-Hant.lproj is intentional —
+		     Apple's locale chain matches scripts; absent lproj triggers
+		     fallback to zh-Hans. Adding an empty zh-Hant.lproj would risk
+		     ASC 4.0 "Incomplete Localization" review reject. -->
+		<string>en</string>
+		<string>zh-Hans</string>
+		<string>zh-Hant</string>
+		<string>ja</string>
+		<string>ko</string>
+		<string>es</string>
+	</array>
 	<key>CFBundleDisplayName</key>
 	<string>CLI Pulse</string>
 	<key>CFBundleExecutable</key>

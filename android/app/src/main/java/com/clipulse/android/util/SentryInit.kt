@@ -5,6 +5,7 @@ import com.clipulse.android.BuildConfig
 import io.sentry.SentryEvent
 import io.sentry.SentryLevel
 import io.sentry.android.core.SentryAndroid
+import kotlin.concurrent.thread
 
 object SentryInit {
 
@@ -27,6 +28,20 @@ object SentryInit {
         val dsn = BuildConfig.SENTRY_DSN
         if (dsn.isBlank() || !dsn.startsWith("https://")) return
 
+        // v1.21 M1: defer the actual SentryAndroid.init off the main thread
+        // so cold-start latency stays bounded even on slow-disk devices or
+        // when the SDK's anr-handler / file-read setup is sluggish. Sentry
+        // documents init as thread-safe; the daemon thread runs at default
+        // priority so the work completes well within the first second.
+        // Crashes in the ~50ms window between Application.onCreate and the
+        // background thread picking up the init are not captured — that's
+        // an accepted trade-off versus blocking launch.
+        thread(start = true, isDaemon = true, name = "sentry-init") {
+            installSync(app, dsn)
+        }
+    }
+
+    private fun installSync(app: Application, dsn: String) {
         SentryAndroid.init(app) { options ->
             options.dsn = dsn
             options.release = "cli-pulse@${BuildConfig.VERSION_NAME}+${BuildConfig.VERSION_CODE}"

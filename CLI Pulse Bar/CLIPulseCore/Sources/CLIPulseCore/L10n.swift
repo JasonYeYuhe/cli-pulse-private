@@ -754,6 +754,12 @@ public enum L10n {
         public static var remoteControl: String { tr("advanced.remote_control") }
         public static var remoteControlHint: String { tr("advanced.remote_control_hint") }
         public static var remoteConsentTitle: String { tr("advanced.remote_consent_title") }
+        // v1.21 D7: privacy-critical consent body — promises about what data
+        // leaves the device when Remote Control is on. Per Gemini round 1
+        // this MUST be human-translated before ASC re-submit; do not machine
+        // translate non-en keys. en + zh-Hans landed in v1.21; es/ja/ko
+        // intentionally still emit English (fallback) pending review.
+        public static var remoteConsentBody: String { tr("advanced.remote_consent_body") }
         public static var token: String { tr("advanced.token") }
         public static var providersLoaded: String { tr("advanced.providers_loaded") }
         public static var lastRefresh: String { tr("advanced.last_refresh") }

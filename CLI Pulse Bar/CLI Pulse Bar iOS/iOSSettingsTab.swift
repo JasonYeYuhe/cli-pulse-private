@@ -369,18 +369,13 @@ struct iOSSettingsTab: View {
                             state.setRemoteControlEnabled(true)
                         }
                     } message: {
-                        Text(
-                            "When Remote Control is on, CLI Pulse can:\n" +
-                            "• upload a redacted summary of each Claude permission request (tool name, short summary, risk badge)\n" +
-                            "• upload a short tail of terminal output and the session status\n" +
-                            "• accept your remote Approve / Deny back into the local hook on your Mac\n\n" +
-                            "What never leaves the Mac:\n" +
-                            "• provider API keys, cookies, OAuth tokens\n" +
-                            "• full transcripts or session log files\n" +
-                            "• full project paths (only basename + HMAC)\n\n" +
-                            "Approve here is per-request only — it does NOT add a Claude Code Always-Allow rule. Claude will ask again next time it needs the same tool. To set persistent rules, use Claude Code's own \"Always Allow\" UI on the Mac.\n\n" +
-                            "Approving a request executes the tool call on your Mac. Only approve requests you understand."
-                        )
+                        // v1.21 D7: privacy-critical consent body, now in the
+                        // localized string catalog (single shared key with the
+                        // Mac AdvancedSection surface). en + zh-Hans translated
+                        // in v1.21; es/ja/ko still emit the English fallback
+                        // pending native-speaker review (do not machine-translate
+                        // — Gemini round 1 ASC 4.0 rejection risk).
+                        Text(L10n.advanced.remoteConsentBody)
                     }
 
                     // Advanced

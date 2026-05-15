@@ -90,6 +90,18 @@ jobs:
           echo "Decision: $REASON (run_full=$FULL)"
           echo "Matrix: $MATRIX"
 
+  check-versions:
+    name: Version drift gate (v1.21 G6)
+    # Runs on every push/PR — purely reads source files, no Apple/Play
+    # credentials needed. Catches the case where someone bumps the
+    # Apple MARKETING_VERSION without bumping Android versionName (or
+    # vice versa). Ubuntu runner since this is just `grep` + `sed`.
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/check-versions.sh
+
   test-core:
     name: CLIPulseCore unit tests
     needs: decide

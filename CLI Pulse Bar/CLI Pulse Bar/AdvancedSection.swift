@@ -318,17 +318,13 @@ struct AdvancedSection: View {
 
     /// Body copy for the Remote Control consent — same content as
     /// the old `.alert` message so the consent text doesn't drift.
+    ///
+    /// v1.21 D7: routed through `L10n.advanced.remoteConsentBody` so the
+    /// localized string catalog is the single source of truth (Mac + iOS
+    /// share the same key). The iOS surface in `iOSSettingsTab.swift`
+    /// reads the same key.
     private var remoteControlConsentBody: String {
-        "When Remote Control is on, CLI Pulse can:\n" +
-        "• upload a redacted summary of each Claude permission request (tool name, short summary, risk badge)\n" +
-        "• upload a short tail of terminal output and the session status\n" +
-        "• accept your remote Approve / Deny back into the local hook\n\n" +
-        "What never leaves this Mac:\n" +
-        "• provider API keys, cookies, OAuth tokens\n" +
-        "• full transcripts or session log files\n" +
-        "• full project paths (only basename + HMAC)\n\n" +
-        "Approve here is per-request only — it does NOT add a Claude Code Always-Allow rule. You'll be asked again the next time Claude needs the same tool. To set persistent rules, use Claude Code's own \"Always Allow\" UI on the Mac.\n\n" +
-        "Approving a request executes the tool call on this Mac. Only approve requests you understand."
+        L10n.advanced.remoteConsentBody
     }
 
     /// v1.9.4 privacy disclosure row. Green = stays on device,

@@ -29,6 +29,39 @@ final class iOSAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationC
     ) -> Bool {
         // Take over notification delivery callbacks from the OS.
         UNUserNotificationCenter.current().delegate = self
+
+        // v1.21 M4: force APNs token reconciliation on every cold launch.
+        // iOS only fires didRegisterForRemoteNotificationsWithDeviceToken
+        // when the token actually changes — but if the token rotated
+        // while the app was uninstalled (or the user reinstalled, or
+        // the device rebooted in a way that invalidated the token),
+        // the server's stored copy can be stale until the next change
+        // event the OS happens to deliver. Calling this on launch is
+        // cheap (no-op when nothing's changed), and the resulting
+        // didRegister callback writes through to the server. Pre-auth
+        // launches stash the token in `pendingPushTokenRegistration`
+        // which `flushPendingPushTokenIfAvailable` replays on sign-in.
+        //
+        // No authorization check here: `registerForRemoteNotifications`
+        // is a local OS call; the OS itself decides whether to actually
+        // produce a token based on the user's notification settings.
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            // Only register if the user already authorized (or pre-auth
+            // provisional). On `.denied` / `.notDetermined` we skip — the
+            // permission-grant flow in `requestNotificationPermission`
+            // will trigger the first registration at the right product
+            // moment.
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                DispatchQueue.main.async {
+                    application.registerForRemoteNotifications()
+                }
+            case .denied, .notDetermined:
+                break
+            @unknown default:
+                break
+            }
+        }
         return true
     }
 
