@@ -51,6 +51,16 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent
 SQL_FILES = sorted(ROOT.glob("*.sql"))
 
+# v1.21 F10: files that intentionally preserve historical / superseded SQL
+# even though the static analysis would correctly flag the bug. v0.43 is a
+# verbatim backfill of what the cli-pulse-desktop team applied to prod on
+# 2026-05-04 — it shipped an off-by-one rolling window, which v0.44 fixed
+# the same week. Rewriting v0.43 to "look correct" would break F9 live-
+# migration replay parity with prod.
+EXEMPT_FILES: set[str] = {
+    "migrate_v0.43_provider_quotas_bigint_and_updated_at.sql",
+}
+
 
 def strip_comments(text: str) -> str:
     """Drop `-- ...` line comments so we don't false-positive on prose."""
@@ -149,6 +159,8 @@ def check_file(path: pathlib.Path) -> list[str]:
 def main() -> int:
     all_failures: list[str] = []
     for path in SQL_FILES:
+        if path.name in EXEMPT_FILES:
+            continue
         all_failures.extend(check_file(path))
 
     if all_failures:
