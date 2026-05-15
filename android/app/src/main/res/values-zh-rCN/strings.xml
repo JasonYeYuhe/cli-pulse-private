@@ -237,4 +237,10 @@
     <string name="notification_permission_body">CLI Pulse 使用通知来提醒你配额阈值、来自其他设备的远程审批,以及其他重要事件。你可以稍后在系统设置中更改此选项。</string>
     <string name="notification_permission_continue">继续</string>
     <string name="notification_permission_not_now">暂不</string>
+
+
+    <!-- v1.21 E6: plurals for DevicesScreen header -->
+    <plurals name="devices_registered_count">
+        <item quantity="other">已注册 %d 台设备</item>
+    </plurals>
 </resources>

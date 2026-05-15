@@ -231,4 +231,17 @@
     <string name="pdf_month_end_estimate">月末推定</string>
     <string name="pdf_spent_so_far">これまでの支出</string>
     <string name="pdf_confidence_range">信頼区間</string>
+
+
+    <!-- v1.21 E6: gap-fill (translated 2026-05-15) -->
+    <string name="notification_permission_title">通知を有効にしますか？</string>
+    <string name="notification_permission_body">CLI Pulse は、クォータのしきい値、他のデバイスからのリモート承認、その他の重要なイベントを通知でお知らせします。この設定は後でシステム設定から変更できます。</string>
+    <string name="notification_permission_continue">続ける</string>
+    <string name="notification_permission_not_now">今はしない</string>
+
+
+    <!-- v1.21 E6: plurals for DevicesScreen header -->
+    <plurals name="devices_registered_count">
+        <item quantity="other">%d 台登録済み</item>
+    </plurals>
 </resources>

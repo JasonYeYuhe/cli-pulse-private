@@ -126,6 +126,10 @@ dependencies {
     implementation(libs.compose.ui.graphics)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
+    // v1.21 E2: NavigationSuiteScaffold auto-switches between NavigationBar
+    // (phone, compact width) and NavigationRail / Drawer (tablet, foldable,
+    // expanded width) based on window size class.
+    implementation(libs.compose.material3.adaptive.nav.suite)
     implementation(libs.compose.material.icons)
     debugImplementation(libs.compose.ui.tooling)
 

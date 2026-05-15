@@ -237,4 +237,11 @@
     <string name="notification_permission_body">CLI Pulse uses notifications to alert you about quota thresholds, remote approvals from your other devices, and other important events. You can change this later in system settings.</string>
     <string name="notification_permission_continue">Continue</string>
     <string name="notification_permission_not_now">Not now</string>
+
+
+    <!-- v1.21 E6: plurals for DevicesScreen header -->
+    <plurals name="devices_registered_count">
+        <item quantity="one">%d device registered</item>
+        <item quantity="other">%d devices registered</item>
+    </plurals>
 </resources>

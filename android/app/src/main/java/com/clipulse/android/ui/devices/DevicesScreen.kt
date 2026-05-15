@@ -9,6 +9,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -16,6 +17,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.clipulse.android.R
 import com.clipulse.android.ui.components.LifecyclePollingEffect
 import com.clipulse.android.ui.navigation.LocalSnackbarHostState
+import com.clipulse.android.ui.theme.PulseSuccess
+import com.clipulse.android.ui.theme.PulseWarning
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,7 +46,13 @@ fun DevicesScreen(
                 Text(stringResource(R.string.screen_devices), style = MaterialTheme.typography.headlineMedium)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "${state.devices.size} registered",
+                    // v1.21 E6: pluralStringResource handles "1 device" vs "N
+                    // devices" via the language's own plural rules.
+                    pluralStringResource(
+                        R.plurals.devices_registered_count,
+                        state.devices.size,
+                        state.devices.size,
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -97,10 +106,14 @@ fun DevicesScreen(
 
 @Composable
 private fun DeviceCard(device: com.clipulse.android.data.model.DeviceRecord) {
+    // v1.21 E1: route status colors through theme-aware palette so the badge
+    // stays visible against PulseBackgroundDark. PulseSuccess / PulseWarning
+    // are the cli-pulse brand semantic colors, MaterialTheme.colorScheme
+    // .outline supplies the "neutral / offline" tone in either light or dark.
     val statusColor = when (device.status) {
-        "Online" -> Color(0xFF4CAF50)
-        "Degraded" -> Color(0xFFFF9800)
-        else -> Color(0xFF9E9E9E)
+        "Online" -> PulseSuccess
+        "Degraded" -> PulseWarning
+        else -> MaterialTheme.colorScheme.outline
     }
 
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {

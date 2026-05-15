@@ -171,4 +171,71 @@
     <string name="alert_action_resolve">已解決</string>
     <string name="alert_action_snooze">稍後提醒</string>
     <string name="alert_action_snooze_duration_1h">1 小時</string>
+
+
+    <!-- v1.21 E6: gap-fill (translated 2026-05-15) -->
+    <string name="card_cost">費用</string>
+    <string name="card_cost_value">費用：%1$s</string>
+    <string name="card_cpu_pct">CPU：%1$d%%</string>
+    <string name="card_device_value">裝置：%1$s</string>
+    <string name="card_helper_version">Helper v%1$s</string>
+    <string name="card_last_seen">最近一次：%1$s</string>
+    <string name="card_memory_pct">記憶體：%1$d%%</string>
+    <string name="card_overall_quota">整體配額</string>
+    <string name="card_pct_left">剩餘 %1$d%%</string>
+    <string name="card_plan">方案：%1$s</string>
+    <string name="card_quota_tiers">配額等級</string>
+    <string name="card_remaining">剩餘 %1$s</string>
+    <string name="card_requests_value">請求：%1$d</string>
+    <string name="card_resets">重置：%1$s</string>
+    <string name="card_status">狀態</string>
+    <string name="card_this_week">本週</string>
+    <string name="card_today">今日</string>
+    <string name="card_usage">用量</string>
+    <string name="card_usage_value">用量：%1$s</string>
+    <string name="card_used_of">已使用 %1$s / %2$s</string>
+    <string name="card_week">週</string>
+    <string name="error_unknown">未知錯誤</string>
+    <string name="notification_permission_body">CLI Pulse 會以通知提醒您配額上限、來自其他裝置的遠端核准請求,以及其他重要事件。您可以稍後在系統設定中更改此選項。</string>
+    <string name="notification_permission_continue">繼續</string>
+    <string name="notification_permission_not_now">稍後再說</string>
+    <string name="notification_permission_title">啟用通知?</string>
+    <string name="pdf_active_sessions">進行中工作階段</string>
+    <string name="pdf_confidence_range">信賴區間</string>
+    <string name="pdf_cost_forecast">費用預測</string>
+    <string name="pdf_daily_trend">每日費用走勢 (過去 30 天)</string>
+    <string name="pdf_footer">CLI Pulse v%1$s · %2$s</string>
+    <string name="pdf_generated">產生時間：%1$s</string>
+    <string name="pdf_h_cost">費用</string>
+    <string name="pdf_h_est_cost">預估費用</string>
+    <string name="pdf_h_project">專案</string>
+    <string name="pdf_h_provider">提供者</string>
+    <string name="pdf_h_quota">配額</string>
+    <string name="pdf_h_remaining">剩餘</string>
+    <string name="pdf_h_status">狀態</string>
+    <string name="pdf_h_usage">用量</string>
+    <string name="pdf_h_week_usage">本週用量</string>
+    <string name="pdf_month_end_estimate">月底預估</string>
+    <string name="pdf_na">不適用</string>
+    <string name="pdf_online_devices">線上裝置</string>
+    <string name="pdf_progress">進度</string>
+    <string name="pdf_progress_value">%1$d/%2$d 天</string>
+    <string name="pdf_provider_breakdown">依提供者統計</string>
+    <string name="pdf_spent_so_far">目前已花費</string>
+    <string name="pdf_summary">摘要</string>
+    <string name="pdf_title">CLI Pulse 月度報告</string>
+    <string name="pdf_today_est_cost">今日預估費用</string>
+    <string name="pdf_today_usage">今日用量</string>
+    <string name="pdf_top_sessions">費用最高的工作階段</string>
+    <string name="pdf_unresolved_alerts">未處理警示</string>
+    <string name="screen_alerts">警示</string>
+    <string name="screen_devices">裝置</string>
+    <string name="screen_providers">提供者</string>
+    <string name="screen_sessions">工作階段</string>
+
+
+    <!-- v1.21 E6: plurals for DevicesScreen header -->
+    <plurals name="devices_registered_count">
+        <item quantity="other">已註冊 %d 台裝置</item>
+    </plurals>
 </resources>

@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,7 +32,10 @@ fun CostAnalysisScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val snackbar = LocalSnackbarHostState.current
-    var selectedTab by remember { mutableIntStateOf(0) }
+    // v1.21 E7: rememberSaveable so the user's selected range (7d / 30d / 90d)
+    // survives low-memory process death. Plain `remember` reset to tab 0 every
+    // time the OS killed the app while the user was off-screen.
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     LaunchedEffect(state.error) {
         state.error?.let { snackbar.showSnackbar(it) }
     }

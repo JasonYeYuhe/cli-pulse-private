@@ -55,6 +55,12 @@ jobs:
           fi
           printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
 
+      - name: Locale parity guard (v1.21 E6)
+        # Fails CI if any values-<locale>/strings.xml is missing keys that
+        # exist in values/strings.xml. Catches the v1.21-era drift where
+        # values-es / values-ko / values-zh-rTW were ~30% behind.
+        run: python3 ../scripts/ci_check_android_strings_parity.py
+
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --no-daemon
 

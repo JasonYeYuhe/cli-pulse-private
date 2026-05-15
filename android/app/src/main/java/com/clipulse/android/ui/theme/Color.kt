@@ -22,10 +22,17 @@ fun providerColor(kind: ProviderKind): Color = when (kind) {
     ProviderKind.Claude -> Color(0xFFD97757)
     ProviderKind.Codex -> Color(0xFF10A37F)
     ProviderKind.Gemini -> Color(0xFF4285F4)
-    ProviderKind.Cursor -> Color(0xFF000000)
-    ProviderKind.Copilot -> Color(0xFF000000)
+    // v1.21 E1: Cursor / Copilot / Ollama brand marks are pure black, which
+    // disappears against the dark-theme Surface (PulseBackgroundDark
+    // = 0xFF0F172A). Switch to the same neutral 0xFF6B7280 we use for the
+    // "unknown brand" cluster — the provider name label next to the swatch
+    // preserves recognizability, and the swatch is now visible on both
+    // light and dark surfaces. Same Compose color (non-@Composable function)
+    // so all callers stay unchanged.
+    ProviderKind.Cursor -> Color(0xFF6B7280)
+    ProviderKind.Copilot -> Color(0xFF6B7280)
     ProviderKind.OpenRouter -> Color(0xFF6366F1)
-    ProviderKind.Ollama -> Color(0xFF000000)
+    ProviderKind.Ollama -> Color(0xFF6B7280)
     ProviderKind.Warp -> Color(0xFF00D4FF)
     ProviderKind.Kilo -> Color(0xFFFF6B35)
     ProviderKind.Zai -> Color(0xFF4F46E5)

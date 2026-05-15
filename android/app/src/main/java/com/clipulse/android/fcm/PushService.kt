@@ -8,11 +8,11 @@ import androidx.core.app.NotificationCompat
 import com.clipulse.android.R
 import com.clipulse.android.data.remote.SupabaseClient
 import com.clipulse.android.data.remote.TokenStore
+import com.clipulse.android.di.ApplicationScope
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
@@ -30,11 +30,18 @@ class PushService : FirebaseMessagingService() {
     @Inject lateinit var supabase: SupabaseClient
     @Inject lateinit var tokenStore: TokenStore
 
+    // v1.21 E5: process-scoped CoroutineScope from CoroutineModule replaces
+    // the prior `CoroutineScope(Dispatchers.IO).launch { ... }` that orphaned
+    // its work when this short-lived FirebaseMessagingService was destroyed
+    // mid-upload. The injected scope outlives the service instance, so token
+    // upserts always complete (or fail cleanly via SupervisorJob isolation).
+    @Inject @ApplicationScope lateinit var applicationScope: CoroutineScope
+
     override fun onNewToken(token: String) {
         Log.d(TAG, "FCM token refreshed")
         val deviceId = tokenStore.deviceId
         if (deviceId != null && tokenStore.accessToken != null) {
-            CoroutineScope(Dispatchers.IO).launch {
+            applicationScope.launch {
                 try {
                     supabase.updatePushToken(deviceId, token)
                     Log.d(TAG, "Push token registered for device $deviceId")

@@ -5,6 +5,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -91,33 +93,48 @@ fun AppNavigation(
         }
     }
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        bottomBar = {
-            // Hide bottom bar on detail screens
-            val isTopLevel = tabs.any { currentDestination?.route == it.route }
-            if (isTopLevel) {
-                NavigationBar {
-                    tabs.forEach { screen ->
-                        NavigationBarItem(
-                            icon = { Icon(screen.icon, contentDescription = screen.label) },
-                            label = { Text(screen.label) },
-                            selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true,
-                            onClick = {
-                                navController.navigate(screen.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                        )
-                    }
-                }
+    // v1.21 E2: NavigationSuiteScaffold auto-renders NavigationBar (compact
+    // width / phones) or NavigationRail / PermanentDrawer (expanded width /
+    // tablets, foldables) based on the active window size class. Replaces
+    // the previous Scaffold+NavigationBar pair, which collapsed the
+    // navigation UX on wide displays.
+    //
+    // Detail routes still hide the navigation surface to preserve the
+    // pre-E2 phone UX where deeper screens gain the full vertical extent.
+    // On tablet/foldable widths the rail stays — that's the whole point of
+    // the rail pattern: persistent top-level switching.
+    val isTopLevel = tabs.any { currentDestination?.route == it.route }
+    NavigationSuiteScaffold(
+        layoutType = if (isTopLevel) {
+            androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
+                .calculateFromAdaptiveInfo(
+                    androidx.compose.material3.adaptive.currentWindowAdaptiveInfo()
+                )
+        } else {
+            NavigationSuiteType.None
+        },
+        navigationSuiteItems = {
+            tabs.forEach { screen ->
+                item(
+                    icon = { Icon(screen.icon, contentDescription = screen.label) },
+                    label = { Text(screen.label) },
+                    selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true,
+                    onClick = {
+                        navController.navigate(screen.route) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                )
             }
         },
-    ) { innerPadding ->
+    ) {
+        Scaffold(
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+        ) { innerPadding ->
         CompositionLocalProvider(LocalSnackbarHostState provides snackbarHostState) {
         NavHost(
             navController = navController,
@@ -170,6 +187,7 @@ fun AppNavigation(
             composable("cost_analysis") {
                 CostAnalysisScreen(onBack = { navController.popBackStack() })
             }
+        }
         }
         }
     }

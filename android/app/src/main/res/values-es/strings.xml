@@ -171,4 +171,72 @@
     <string name="alert_action_resolve">Resolver</string>
     <string name="alert_action_snooze">Posponer</string>
     <string name="alert_action_snooze_duration_1h">1 h</string>
+
+
+    <!-- v1.21 E6: gap-fill (translated 2026-05-15) -->
+    <string name="card_cost">Costo</string>
+    <string name="card_cost_value">Costo: %1$s</string>
+    <string name="card_cpu_pct">CPU: %1$d%%</string>
+    <string name="card_device_value">Dispositivo: %1$s</string>
+    <string name="card_helper_version">Helper v%1$s</string>
+    <string name="card_last_seen">Última vez: %1$s</string>
+    <string name="card_memory_pct">Memoria: %1$d%%</string>
+    <string name="card_overall_quota">Cuota total</string>
+    <string name="card_pct_left">%1$d%% restante</string>
+    <string name="card_plan">Plan: %1$s</string>
+    <string name="card_quota_tiers">Niveles de cuota</string>
+    <string name="card_remaining">%1$s restante</string>
+    <string name="card_requests_value">Sol.: %1$d</string>
+    <string name="card_resets">Restablece: %1$s</string>
+    <string name="card_status">Estado</string>
+    <string name="card_this_week">Esta semana</string>
+    <string name="card_today">Hoy</string>
+    <string name="card_usage">Uso</string>
+    <string name="card_usage_value">Uso: %1$s</string>
+    <string name="card_used_of">%1$s usados de %2$s</string>
+    <string name="card_week">Semana</string>
+    <string name="error_unknown">Error desconocido</string>
+    <string name="notification_permission_body">CLI Pulse usa notificaciones para alertarte sobre límites de cuota, aprobaciones remotas de tus otros dispositivos y otros eventos importantes. Puedes cambiar esto más tarde en los ajustes del sistema.</string>
+    <string name="notification_permission_continue">Continuar</string>
+    <string name="notification_permission_not_now">Ahora no</string>
+    <string name="notification_permission_title">¿Activar notificaciones?</string>
+    <string name="pdf_active_sessions">Sesiones activas</string>
+    <string name="pdf_confidence_range">Rango de confianza</string>
+    <string name="pdf_cost_forecast">Pronóstico de costos</string>
+    <string name="pdf_daily_trend">Tendencia diaria de costos (últimos 30 días)</string>
+    <string name="pdf_footer">CLI Pulse v%1$s · %2$s</string>
+    <string name="pdf_generated">Generado: %1$s</string>
+    <string name="pdf_h_cost">Costo</string>
+    <string name="pdf_h_est_cost">Costo est.</string>
+    <string name="pdf_h_project">Proyecto</string>
+    <string name="pdf_h_provider">Proveedor</string>
+    <string name="pdf_h_quota">Cuota</string>
+    <string name="pdf_h_remaining">Restante</string>
+    <string name="pdf_h_status">Estado</string>
+    <string name="pdf_h_usage">Uso</string>
+    <string name="pdf_h_week_usage">Uso semanal</string>
+    <string name="pdf_month_end_estimate">Estimación a fin de mes</string>
+    <string name="pdf_na">N/D</string>
+    <string name="pdf_online_devices">Dispositivos en línea</string>
+    <string name="pdf_progress">Progreso</string>
+    <string name="pdf_progress_value">%1$d/%2$d días</string>
+    <string name="pdf_provider_breakdown">Desglose por proveedor</string>
+    <string name="pdf_spent_so_far">Gastado hasta ahora</string>
+    <string name="pdf_summary">Resumen</string>
+    <string name="pdf_title">Informe mensual de CLI Pulse</string>
+    <string name="pdf_today_est_cost">Costo estimado de hoy</string>
+    <string name="pdf_today_usage">Uso de hoy</string>
+    <string name="pdf_top_sessions">Sesiones con mayor costo</string>
+    <string name="pdf_unresolved_alerts">Alertas no resueltas</string>
+    <string name="screen_alerts">Alertas</string>
+    <string name="screen_devices">Dispositivos</string>
+    <string name="screen_providers">Proveedores</string>
+    <string name="screen_sessions">Sesiones</string>
+
+
+    <!-- v1.21 E6: plurals for DevicesScreen header -->
+    <plurals name="devices_registered_count">
+        <item quantity="one">%d dispositivo registrado</item>
+        <item quantity="other">%d dispositivos registrados</item>
+    </plurals>
 </resources>
