@@ -132,9 +132,14 @@ struct CLIPulseEntry: TimelineEntry {
     var relevance: TimelineEntryRelevance? {
         let alertWeight = Float(data.unresolvedAlerts) * 5.0
         let topUsageRatio: Float = {
-            guard let top = data.providers.max(by: { ($0.usage / max($0.quota, 1)) < ($1.usage / max($1.quota, 1)) }),
-                  top.quota > 0 else { return 0 }
-            return Float(top.usage / top.quota)
+            // Only consider providers with a positive quota (self-hosted /
+            // Ollama-style providers carry `quota = nil` and shouldn't
+            // contribute to the score).
+            let ratios: [Float] = data.providers.compactMap { p in
+                guard let q = p.quota, q > 0 else { return nil }
+                return Float(p.usage) / Float(q)
+            }
+            return ratios.max() ?? 0
         }()
         let usageWeight = max(0, (topUsageRatio - 0.7)) * 30.0  // ramps once >70% of quota
         return TimelineEntryRelevance(score: alertWeight + usageWeight)
