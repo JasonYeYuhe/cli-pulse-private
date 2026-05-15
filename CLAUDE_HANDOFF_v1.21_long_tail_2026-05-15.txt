@@ -1,0 +1,157 @@
+## CLI Pulse — v1.21 long tail handoff (2026-05-15)
+
+继续 ship v1.21 main train 的剩余 19 项。背景:上一个 session 做完了
+5-平台深度审计、写了 PLAN_v1.21_2026-05-14.md、过了 Gemini 3.1 Pro
+两轮 review,然后 ship 了:
+
+- **v1.20.1 紧急 patch** (commit `fa5722c`):C2/C3/C5/C6/C7 都 land,
+  validate-receipt edge function 已部署到 prod Supabase。C1/C4 经
+  审计后 dropped(audit 假阳性)。
+- **v1.21 batch 1** (commits `6fece44` + `5c408e9` 含 D6 hotfix):
+  Apple D-block(D1+D3+D4+D5+D6)+ Helper F-block(F1+F2+F3+F4)+
+  CI/docs G-block(G1+G2+G3+G4+G7)= 13 项 + 1 个 hotfix。
+
+git 当前在 `main` HEAD `5c408e9`。**先 `git pull`**(可能 CI 还在跑,
+但 main 已经稳定)。
+
+---
+
+### 你要做的:ship 剩余 19 项
+
+完整清单 + 路径 + 实施细节都在 `PLAN_v1.21_2026-05-14.md` §3 + §6。
+读完整份计划再开工——别只读这个 handoff。
+
+**优先级建议(我把它们排好了顺序,按 §6 Implementation order)**:
+
+**Day 1(Helper + Backend,~3-4 小时)**:
+- **F10** backfill `migrate_v0.42*.sql` + `migrate_v0.43*.sql` 真实 SQL
+  (desktop team 已 apply 到 prod,本地没有源文件)。
+  必须先 query prod 拿真实 SQL:
+  ```
+  # 从 memory reference_supabase_access_token 取 token
+  export SUPABASE_ACCESS_TOKEN="$(cat ~/Library/Application\ Support/CLI-Pulse-Secrets/supabase-access-token-2026-05-15.txt | grep '^sbp_' | head -1)"
+  # 用 supabase CLI 或者 Management API curl 出 supabase_migrations.schema_migrations 表
+  # 如果该表没有 statements 列(老 Supabase),fallback 走 Dashboard UI 或 pg_dump 对 diff
+  ```
+  注意 Gemini round 2 警告:F10 必须先于 F9 完成。
+- **F9** live migration CI(`.github/workflows/supabase-ci.yml` 加 job 用
+  `supabase/setup-cli` + `supabase db start` + replay 所有 `migrate_v*.sql`)。
+  依赖 F10 真实 SQL 存在,否则 CI 跑空 stub 没意义。
+- **F5** helper update SHA-256 verify(`HelperInstaller.swift` 已有
+  CryptoHelpers.sha256Hex 可用,加 manifest 的 sha256 字段 +
+  cli-pulse-helper-releases 的 latest.json 加 sha256 输出)。
+- **F6** 多 Apple Root CA 硬编码(`supabase/functions/validate-receipt/index.ts`
+  当前只硬编码 G3,加 G2 + 任何已分发的 G4+。**绝对不要动态 fetch**
+  per Gemini round 1 CRITICAL)。
+- **F7** `remote_session_events.created_at` 单列索引。**重要**:
+  `CREATE INDEX CONCURRENTLY` 不能在事务块里跑,所以新 migration
+  文件必须有头注释 `-- supabase: no-transaction`(或者文件只含
+  这一条 DDL)。
+- **F8** APNs JWT KV cache(`supabase/functions/send-approval-push/index.ts`
+  用 Deno KV,TTL 55 分钟)。
+- **F11** `send-widget-refresh` edge function + pg_cron(支持 D2
+  iOS silent-push 路径,定时触发 widget reload)。
+
+**Day 2(Android,~3-4 小时)**:
+- **E1** dark-mode 颜色修复(`Color.kt:25-26,28` Cursor/Copilot/Ollama
+  纯黑 + `DevicesScreen.kt:101-103` 硬编码状态颜色,改用
+  `MaterialTheme.colorScheme` 或 theme-conditional)。
+- **E2** `NavigationSuiteScaffold` 自适应布局(替换底部 NavigationBar
+  在 12" tablet/foldable 上的渲染)。
+- **E4** Predictive back(`AndroidManifest.xml <application>` 加
+  `android:enableOnBackInvokedCallback="true"` + Compose 的 `BackHandler`。
+  两者都要——Gemini round 1 明确说仅 Manifest 或仅 BackHandler 都不够)。
+- **E5** `PushService.kt:37` 的 `CoroutineScope(Dispatchers.IO).launch`
+  作用域清理(改用 retained singleton scope 或 lifecycleScope)。
+- **E6** ko/es locale 缺 54 字符串补齐 + `DevicesScreen.kt:47`
+  硬编码 "X registered" 转 plurals + 加 lint 规则防回归。
+- **E7** `SavedStateHandle` for `ProvidersViewModel` (providerName)
+  + `DailyUsageViewModel` (selectedRange) 实现进程死亡恢复。
+
+**Day 3(Apple i18n + 跨平台 M-block,~3-4 小时)**:
+- **D7** Apple i18n 集群(~20 硬编码字符串。路径全在 plan 的
+  §3.1 D7 描述里)。**Critical 子集**:
+  `iOSSettingsTab.swift:373-383` 的 Remote Control 同意 dialog
+  是 8 句法律文本,中文用户看不到中文版,优先翻译。
+  其余字符串可分两个 PR(一个 Mac 一个 iOS)。
+- **D8** 配 zh-Hant locale fallback(把 Apple targets 的
+  `CFBundleLocalizations` 配成 zh-Hant → zh-Hans 链。**不要**
+  仅创建空 zh-Hant.lproj —— Gemini round 1 警告 ASC 4.0 拒稿风险)。
+- **M1** Sentry init 异步 + 2-3s 超时(三平台:
+  `CLIPulseCore/SentryLogger.swift` Mac/iOS、`SentryInit.kt:27` Android)。
+- **M2** Supabase 调用 timeout 审计 + Sentry breadcrumb 加
+  网络错误标签(为国内 SNI 风险做防御性日志)。
+- **M3** AppGroup ID MAS vs DEVID 审计(`CLI Pulse Bar.entitlements` /
+  `CLI Pulse Bar AppStore.entitlements` / Widget 扩展 entitlements
+  里的 group ID 要么三处全一致,要么走 xcconfig 注入)。
+- **M4** APNs token 启动期对账(`iOSAppDelegate.didRegisterForRemoteNotifications`
+  里每次启动都强制 upsert 到 server,不依赖本地缓存)。
+
+**Day 4(CI 收尾)**:
+- **G5** 关老 Sentry DEFAULT key —— 需要 Sentry UI 操作。**用 Chrome MCP**:
+  导航到 `https://jason-yeyuhe.sentry.io/`,Settings → Projects →
+  apple-ios + apple-macos 项目,把名为 `DEFAULT` 的 client key
+  点 Disable。**先看 Event volume 确认老 DSN 流量已经下降到可
+  接受**(因为 v1.18/v1.19 用户已经升到新 DSN 了,理论上没
+  事件再用老 key)。
+- **G6** sync-versions --dry-run CI gate(因为 `scripts/sync-versions.sh`
+  需要 ASC 凭据,直接在 CI 跑不动。两种思路:(a) 重写一个
+  纯比较版本的轻量 bash 脚本叫 `scripts/check-versions.sh`,在
+  swift-ci.yml 新增一个 job 调用;(b) 修改 sync-versions.sh
+  让 ASC 凭据在 `--dry-run` 模式可选)。
+
+---
+
+### 重要约束(违反会出事)
+
+1. **不要碰 `CLI Pulse Bar/codexbar/` 目录** —— gitignored 冻结的
+   vendored upstream snapshot,审计 agent 屡次假阳性。
+   per `feedback_v1_17_audit_dismissals` memory。
+2. **绝对不要动态 fetch Apple Root CA**(F6 用硬编码数组)——
+   Gemini round 1 CRITICAL。
+3. **F10 必须先于 F9**,否则 live migration CI 跑空 stub 无意义。
+4. **D7 i18n 隐私 dialog 翻译必须人工审核**(不能机翻),
+   ASC 审 4.0 会拒(per Gemini)。zh-CN 你是母语可以自己审。
+5. **autonomy contract**(`feedback_cli_pulse_autonomy`):
+   后端 schema 变更 / 关老 Sentry key / public-repo 写入要先
+   告知用户。F9/F10/F11 涉及 schema,G5 涉及 Sentry account
+   操作。**先告知用户再 apply**,但 apply 本身可以自主完成。
+6. **Android CI release-AAB 步骤会失败**——这是预存问题(keystore
+   secret 没在 CI 设置)。**不要尝试修**,用户明确说"不动 CI"。
+   你看到 Android CI failure 是正常的。
+7. **每个修复要 land 后立即归档到 PROJECT_FIX_*.md** per
+   `feedback_fix_archiving` memory。
+
+---
+
+### 已就绪的资源
+
+- **PLAN_v1.21_2026-05-14.md** —— 完整计划 + Gemini 2 轮 disposition。
+  §3 是 work items,§6 是 implementation order,§7 是 risks。
+- **Supabase access token** (never-expires,2026-05-15 申请):
+  从 `reference_supabase_access_token` memory 读取,或本地
+  `~/Library/Application Support/CLI-Pulse-Secrets/supabase-access-token-2026-05-15.txt`。
+  **不要把 token 字面值写到任何 commit 里** —— GitHub Push Protection
+  会 block,见 `feedback_github_secret_scanner` memory。
+- **Chrome MCP** 已知可工作(上次 session 用它去 supabase dashboard
+  申请了新 token)。
+- **PROJECT_FIX_2026-05-14_v1.20.1_critical_sweep.md** —— 还没写,
+  你 ship 完 long tail 后,把 v1.20.1 + v1.21 batch 1 + long tail 各自
+  写一份 PROJECT_FIX_* archive。
+
+---
+
+### 你 ship 完后应该做的
+
+1. 跑 `helper pytest`(应该全过)、Swift CLIPulseCore test、
+   Android testDebugUnitTest、本地 xcodebuild on `CLI Pulse Bar` +
+   `CLI Pulse iOS` + `CLI Pulse Widgets` schemes(D6 之前漏过
+   widget compile,现在通过本地 xcodebuild 不能再漏)。
+2. Commit + push 到 main。
+3. 验 CI 全绿(Android CI 失败是 OK 的,见约束 §6)。
+4. 把 v1.21 完整内容写成 `PROJECT_FIX_2026-05-15_v1.21_long_tail.md`。
+5. 给我汇报。如果有任何卡点(尤其是后端 schema、Sentry UI 操作、
+   翻译需要人工审、用户决策),先停下用 AskUserQuestion 问我。
+
+不要试图一次性 push 19 项。建议按 Day 分批 commit(每 day 1-2 个
+commit),减小 review surface 和回滚粒度。
