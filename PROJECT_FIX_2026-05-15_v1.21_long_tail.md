@@ -331,22 +331,39 @@ variants. No code change.
 * Wired into [`swift-ci.yml`](.github/workflows/swift-ci.yml) as a new
   `check-versions` job that runs on every push / PR.
 
-### G5 — disable old Sentry DEFAULT keys — **manual user action required**
-**Why deferred**: per the project-level autonomy contract, Sentry
-account-level operations (disabling client keys) need explicit user
-approval before execution.
+### G5 — disable old Sentry DEFAULT keys — **DONE**
+Executed after user gave explicit go-ahead later in the session via
+Chrome MCP + the Sentry per-project Keys REST API.
 
-**Steps for the user**:
-1. Open https://jason-yeyuhe.sentry.io/
-2. Settings → Projects → `apple-ios` → Client Keys.
-3. Check event volume for the `DEFAULT` key. If it has dropped to ~0
-   (v1.18/v1.19 users have rolled to the new DSN by now), click the
-   row → Disable. Same for `apple-macos` project.
-4. Don't touch `android` / `helper` projects — they only ever had one DSN.
+**Pre-check (Sentry stats API, last 30 days received-events per key)**:
+* `apple-ios`
+  * `Cool Slug` (active, matches `b586c581...` in iOS Info.plist):
+    1 event total — last event `2026-05-01`.
+  * `Default` (the old key, `a81bb1aa...`): 7 events total —
+    `2026-04-24=3`, `2026-04-29=3`, `2026-04-30=1`. Zero traffic in the
+    14 days since.
+* `apple-macos`
+  * `Causal Ladybird` (active, matches `bf007392...` in Mac Info.plist):
+    64 events — daily traffic continuing through 2026-05-14.
+  * `Default` (the old key, `ae8b93ba...`): 53 events — clustered between
+    `2026-04-24` and `2026-05-01`, zero traffic in the 14 days since.
 
-**Why now matters**: conflated old+new traffic makes Android Sentry crash
-rate trending meaningless. Disabling the old keys also limits blast radius
-if the old DSN ever leaks publicly.
+The cliff exactly matches the v1.18/v1.19 rollout window — confirming all
+upgrading users have rolled to the new DSN.
+
+**Action**: `PUT /api/0/projects/jason-yeyuhe/{apple-ios|apple-macos}/keys/{defaultId}/`
+with `{"isActive": false}`. Both calls returned HTTP 200 with the updated
+key's `isActive=false`. Verified post-state:
+
+| Project | Key | isActive (after) |
+|---|---|---|
+| apple-ios | Cool Slug | true |
+| apple-ios | Default | **false** |
+| apple-macos | Causal Ladybird | true |
+| apple-macos | Default | **false** |
+
+`android` + `helper` Sentry projects only ever had a single DSN, so no
+follow-up needed there.
 
 ---
 
@@ -362,7 +379,7 @@ if the old DSN ever leaks publicly.
   Existing error handlers don't distinguish "no network / TLS handshake
   failed" from "server returned 5xx" — adding a single breadcrumb helper
   + audit pass across each catch block.
-* **G5 Sentry DEFAULT key disable** — manual, see above.
+* ~~**G5 Sentry DEFAULT key disable**~~ — completed in-session (see above).
 
 ---
 
