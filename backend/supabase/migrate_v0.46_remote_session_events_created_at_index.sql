@@ -1,0 +1,37 @@
+-- supabase: no-transaction
+-- ============================================================
+-- v0.46 — remote_session_events.created_at single-column index
+-- Date: 2026-05-15 (v1.21 long-tail F7)
+--
+-- Why this migration exists on its own:
+-- `CREATE INDEX CONCURRENTLY` cannot run inside a transaction block,
+-- and Supabase's migration runner wraps every .sql file in BEGIN/COMMIT
+-- by default. The `-- supabase: no-transaction` directive in the very
+-- first line tells the Supabase CLI (and our local replay loop in
+-- .github/workflows/supabase-ci.yml) to skip the auto-wrap.
+--
+-- CRITICAL: keep this file's ONLY statement the CREATE INDEX. Adding
+-- a second statement here (even another DDL) re-introduces the
+-- transaction wrap and breaks CONCURRENTLY.
+--
+-- Background:
+-- v0.22 added the nightly retention cron that deletes
+-- remote_session_events rows older than 30 days. v0.28 added
+-- remote_retention_purge() which executes the actual DELETE:
+--
+--   DELETE FROM public.remote_session_events
+--   WHERE created_at < now() - interval '30 days';
+--
+-- Without an index on created_at, this is a sequential scan over the
+-- entire table every night. Once we hit a couple million rows
+-- (~6 months of broad rollout), the cron grows from <1s to multi-minute
+-- and the WAL pressure spikes. Even pre-rollout, the query plan
+-- inspection in Supabase Dashboard shows seq scan today.
+--
+-- IF NOT EXISTS makes this idempotent — safe to replay in CI / local
+-- dev / re-running on prod (where it's already applied externally
+-- this won't conflict either way).
+-- ============================================================
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_remote_session_events_created_at
+  ON public.remote_session_events (created_at);

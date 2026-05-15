@@ -58,13 +58,76 @@ interface AppPushTokenRow {
   bundle_id: string;
 }
 
+// v1.21 F8: Deno KV cache for the APNs JWT. APNs accepts JWT iat up to 60
+// minutes old per the Notifications Push spec; we cache for 55 minutes so the
+// edge function reuses the same signed token across invocations and stays well
+// within APNs' rate limit (>1/minute/key triggers TooManyProviderTokenUpdates).
+// The cache key is teamId + keyId (NOT the .p8 body) — keyId rotates with the
+// signing key, so a key rotation transparently invalidates the cache.
+const APNS_JWT_TTL_MS = 55 * 60 * 1000;
+const APNS_JWT_TTL_SECONDS = APNS_JWT_TTL_MS / 1000;
+
+interface CachedAPNsJWT {
+  jwt: string;
+  signedAt: number;
+}
+
+let _kvPromise: Promise<Deno.Kv | null> | null = null;
+function getKv(): Promise<Deno.Kv | null> {
+  if (_kvPromise === null) {
+    _kvPromise = (async () => {
+      try {
+        // Deno.openKv() can throw on cold starts inside some Supabase regions
+        // when the KV backend is initialising. Treat that as "no cache" — we
+        // fall back to re-signing per invocation, which is the pre-F8 path.
+        return await Deno.openKv();
+      } catch (_err) {
+        return null;
+      }
+    })();
+  }
+  return _kvPromise;
+}
+
 /**
- * Build an APNs token-based-auth JWT (ES256). Cached for ~50 minutes
- * (APNs accepts up to 60min). For Phase 1 we re-sign per invocation
- * since edge functions are short-lived; future optimisation can cache
- * via KV if invocation rate justifies it.
+ * Build an APNs token-based-auth JWT (ES256), cached in Deno KV for ~55 minutes.
+ * Falls back to per-invocation signing if KV is unavailable.
  */
 async function buildAPNsJWT(teamId: string, keyId: string, p8Pem: string): Promise<string> {
+  const kv = await getKv();
+  const cacheKey = ["apns_jwt", teamId, keyId];
+
+  if (kv !== null) {
+    try {
+      const cached = await kv.get<CachedAPNsJWT>(cacheKey);
+      if (cached.value && cached.value.jwt) {
+        const ageMs = Date.now() - cached.value.signedAt;
+        if (ageMs < APNS_JWT_TTL_MS) {
+          return cached.value.jwt;
+        }
+      }
+    } catch (_err) {
+      // KV read failure → fall through and re-sign.
+    }
+  }
+
+  const jwt = await signAPNsJWT(teamId, keyId, p8Pem);
+
+  if (kv !== null) {
+    try {
+      const entry: CachedAPNsJWT = { jwt, signedAt: Date.now() };
+      await kv.set(cacheKey, entry, { expireIn: APNS_JWT_TTL_MS });
+    } catch (_err) {
+      // KV write failure does not block the push — we'll just re-sign next time.
+    }
+  }
+
+  return jwt;
+}
+
+// Lower-level: actually sign the JWT. Split out so the cache wrapper above can
+// stay focused on KV plumbing.
+async function signAPNsJWT(teamId: string, keyId: string, p8Pem: string): Promise<string> {
   // Strip PEM armor + base64-decode to get DER. Then SubtleCrypto.importKey
   // for ES256 (P-256, SHA-256).
   const pemBody = p8Pem

@@ -103,3 +103,84 @@ jobs:
 
       - name: Every public table with user_id cascades to auth.users
         run: python3 backend/supabase/ci_check_user_id_cascade.py
+
+  live-migration-replay:
+    name: Live migration replay (F9 — supabase db + psql)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Initialize Supabase project (writes supabase/config.toml)
+        run: |
+          set -euo pipefail
+          mkdir -p supabase
+          if [ ! -f supabase/config.toml ]; then
+            supabase init --workdir . >/dev/null 2>&1 || true
+          fi
+
+      - name: Start local Supabase stack
+        run: |
+          set -euo pipefail
+          # `supabase start` boots Postgres + GoTrue + extensions (pg_cron,
+          # pg_net, pgcrypto, supabase_vault). 60-120s on cold runners.
+          supabase start --exclude=studio,inbucket,imgproxy,storage-api,realtime,edge-runtime,logflare,vector,pooler
+          supabase status
+
+      - name: Resolve DB connection URL
+        id: db
+        run: |
+          DB_URL="$(supabase status --output env | grep '^DB_URL=' | sed 's/^DB_URL=//; s/^"//; s/"$//')"
+          if [ -z "$DB_URL" ]; then
+            echo "DB_URL not found in supabase status output"
+            supabase status --output env
+            exit 1
+          fi
+          echo "::add-mask::$DB_URL"
+          echo "url=$DB_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Replay backend/supabase/*.sql in version order
+        env:
+          DB_URL: ${{ steps.db.outputs.url }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y >/dev/null
+          sudo apt-get install -y postgresql-client >/dev/null
+
+          apply() {
+            local f="$1"
+            # Files declaring `-- supabase: no-transaction` (e.g. CREATE
+            # INDEX CONCURRENTLY) must run outside a transaction block.
+            if head -3 "$f" | grep -qE '^--[[:space:]]*supabase:[[:space:]]*no-transaction'; then
+              echo "── apply $f (no-transaction)"
+              psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"
+            else
+              echo "── apply $f"
+              psql "$DB_URL" -v ON_ERROR_STOP=1 -1 -f "$f"
+            fi
+          }
+
+          # 1) Baseline schema
+          apply backend/supabase/schema.sql
+
+          # 2) RPC bundles (idempotent CREATE OR REPLACE)
+          if [ -f backend/supabase/app_rpc.sql ];    then apply backend/supabase/app_rpc.sql;    fi
+          if [ -f backend/supabase/helper_rpc.sql ]; then apply backend/supabase/helper_rpc.sql; fi
+
+          # 3) All migrate_v*.sql in semver order. The patch-or-dotted
+          #    naming (e.g. v0.17, v0.17.1) means `sort -V` is the right
+          #    comparator — `ls` lex order would put v0.10 before v0.2.
+          for f in $(ls backend/supabase/migrate_v*.sql | sort -V); do
+            apply "$f"
+          done
+
+          echo "── all migrations replayed cleanly"
+
+      - name: Tear down Supabase stack
+        if: always()
+        run: supabase stop --no-backup || true
