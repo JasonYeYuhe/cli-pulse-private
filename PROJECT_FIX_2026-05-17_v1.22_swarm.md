@@ -273,3 +273,60 @@ unrelated; the ship-gate runs the comprehensive matrix.
 
 **Schema/account/public-surface**: none (read-only consumer of the
 already-applied v0.48 RPC).
+
+---
+
+## S4 — iOS Swarm grid + Live Activity scaffolding (no schema)
+
+**iOS Swarm grid** [iOSSwarmTab.swift](CLI%20Pulse%20Bar/CLI%20Pulse%20Bar%20iOS/iOSSwarmTab.swift):
+NavigationStack + `LazyVGrid`, the exact macOS S3 contract (shared
+models/API/`refreshRemoteSwarms`/`SwarmFormat`/`L10n.swarm`,
+attention-sort, stale-greyed-not-dropped R2-2, **zero `$`** R2-5,
+opaque handle RK7, decomposed sub-builders, structured-concurrency
+poll). Adds an inline **Approve-oldest** button that reuses the
+shipped `decideRemoteApproval` on the globally-oldest
+`remotePendingApprovals` row (honest proxy: the opaque rollup carries
+no request_id by design, so we act on the oldest real pending request
+= in practice the oldest-blocked agent — documented, not hidden).
+Wired into all 3 iOS nav sites: iPhone `TabView`, iPad `detailView`
+switch (**this closes the iOS CI `switch must be exhaustive` failure
+the S3 commit transiently introduced** — expected S3→S4 sequencing,
+fixed proactively per feedback_github_ci_emails), iPad sidebar.
+
+**Live Activity / Dynamic Island** — 100% greenfield (zero prior
+ActivityKit anywhere). Scoped conservatively:
+* [SwarmActivityAttributes.swift](CLI%20Pulse%20Bar/CLIPulseCore/Sources/CLIPulseCore/SwarmActivityAttributes.swift)
+  in CLIPulseCore (the only module both app + widget-ext import),
+  `#if os(iOS) && canImport(ActivityKit)`-guarded so the macOS/watch
+  CLIPulseCore builds stay green (verified: `swift build` clean).
+* [SwarmLiveActivity.swift](CLI%20Pulse%20Bar/CLI%20Pulse%20Widgets/SwarmLiveActivity.swift)
+  widget-extension `ActivityConfiguration` — lock screen + full
+  Dynamic Island (compact/minimal/expanded). Shows `{swarms · agents ·
+  blocked}` + a native `Text(timerInterval:)` age — the ONLY no-push-
+  safe dynamic element (R2-4). **No `$`.** `widgetURL(clipulse://swarm)`
+  deep-link.
+* [SwarmLiveActivityController.swift](CLI%20Pulse%20Bar/CLI%20Pulse%20Bar%20iOS/SwarmLiveActivityController.swift)
+  app-side lifecycle: starts when ≥1 agent blocked, updates
+  content-state from the polled `remoteSwarms` each tick, ends when
+  unblocked / RC off. **Local-state-driven, `pushType: nil`.** Fully
+  best-effort (ActivityKit errors swallowed — never disturbs the grid).
+* `NSSupportsLiveActivities=true` added to the iOS app Info.plist (the
+  only plist/entitlement change — Explore confirmed **MAS-strip is
+  macOS-only; iOS embeds no helper**, so RK2's MAS risk does NOT apply
+  to this iOS capability change).
+* pbxproj: `iOSSwarmTab`/`SwarmLiveActivityController` → iOS target
+  (A20025/26, B20025/26); `SwarmLiveActivity` → Widgets target
+  (A40030/B40030); `SwarmActivityAttributes` auto-included (SwiftPM).
+
+**Named follow-up gate (NOT done — by design)**: APNs-push-driven
+Live Activity updates (background continuation) need a distinct
+Live-Activity push-token type + a new edge function + server token
+storage + **a physical Dynamic-Island device to obtain/verify the
+token** — exactly the "Live Activity real-device" gate the handoff
+flags. v1.22.0 ships the LA structurally (renders correctly from local
+state while the app is active); the push path is the documented
+v1.22.x follow-up. This is the honest cut, not a silent omission.
+
+**Schema/account/public-surface**: none. The `NSSupportsLiveActivities`
+capability is reflected at ASC submit time (a ship-gate concern, not a
+code gate).

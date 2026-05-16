@@ -10,6 +10,10 @@ struct CLIPulseWidgetBundle: WidgetBundle {
         if #available(iOSApplicationExtension 17.0, *) {
             UsageLockScreenWidget()
         }
+        // v1.22 P0 S4 — Swarm Live Activity / Dynamic Island.
+        if #available(iOSApplicationExtension 16.2, *) {
+            SwarmLiveActivity()
+        }
         #endif
         #if os(watchOS)
         if #available(watchOSApplicationExtension 10.0, *) {

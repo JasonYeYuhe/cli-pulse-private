@@ -104,6 +104,16 @@ struct iOSMainView: View {
                 }
                 .tag(AppState.Tab.sessions)
 
+            iOSSwarmTab()
+                .environmentObject(state)
+                .environmentObject(authState)
+                .environmentObject(alertState)
+                .environmentObject(providerState)
+                .tabItem {
+                    Label(L10n.tab.swarm, systemImage: "square.grid.3x3.fill")
+                }
+                .tag(AppState.Tab.swarm)
+
             iOSAlertsTab()
                 .environmentObject(state)
                 .environmentObject(authState)
@@ -167,6 +177,7 @@ struct iPadSplitView: View {
                 sidebarButton(.overview)
                 sidebarButton(.providers)
                 sidebarButton(.sessions)
+                sidebarButton(.swarm)
             }
             Section(L10n.dashboard.manage) {
                 sidebarButton(.alerts, badge: alertState.alerts.filter { !$0.is_resolved }.count)
@@ -248,6 +259,8 @@ struct iPadSplitView: View {
             iOSProvidersTab()
         case .sessions:
             iOSSessionsTab()
+        case .swarm:
+            iOSSwarmTab()
         case .alerts:
             iOSAlertsTab()
         case .settings:

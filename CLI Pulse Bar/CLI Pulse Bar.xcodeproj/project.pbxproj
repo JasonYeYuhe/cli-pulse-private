@@ -42,6 +42,8 @@
 		A20008 /* iOSOverviewTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20004 /* iOSOverviewTab.swift */; };
 		A20009 /* iOSProvidersTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20005 /* iOSProvidersTab.swift */; };
 		A20010 /* iOSSessionsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20006 /* iOSSessionsTab.swift */; };
+		A20025 /* iOSSwarmTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20025 /* iOSSwarmTab.swift */; };
+		A20026 /* SwarmLiveActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20026 /* SwarmLiveActivityController.swift */; };
 		A20011 /* iOSAlertsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20007 /* iOSAlertsTab.swift */; };
 		A20012 /* iOSSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20008 /* iOSSettingsTab.swift */; };
 		A20013 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B20009 /* Assets.xcassets */; };
@@ -72,6 +74,7 @@
 		A40003 /* UsageOverviewWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40003 /* UsageOverviewWidget.swift */; };
 		A40004 /* ProviderUsageWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40004 /* ProviderUsageWidget.swift */; };
 		A40005 /* LockScreenWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40005 /* LockScreenWidget.swift */; };
+		A40030 /* SwarmLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40030 /* SwarmLiveActivity.swift */; };
 		A40006 /* WidgetTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40006 /* WidgetTheme.swift */; };
 		A40007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B40007 /* Assets.xcassets */; };
 		A40010 /* CLI Pulse Widgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C40001 /* CLI Pulse Widgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -214,6 +217,8 @@
 		B20004 /* iOSOverviewTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSOverviewTab.swift; sourceTree = "<group>"; };
 		B20005 /* iOSProvidersTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSProvidersTab.swift; sourceTree = "<group>"; };
 		B20006 /* iOSSessionsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSSessionsTab.swift; sourceTree = "<group>"; };
+		B20025 /* iOSSwarmTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSSwarmTab.swift; sourceTree = "<group>"; };
+		B20026 /* SwarmLiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwarmLiveActivityController.swift; sourceTree = "<group>"; };
 		B20007 /* iOSAlertsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSAlertsTab.swift; sourceTree = "<group>"; };
 		B20008 /* iOSSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSSettingsTab.swift; sourceTree = "<group>"; };
 		B20009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -247,6 +252,7 @@
 		B40003 /* UsageOverviewWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageOverviewWidget.swift; sourceTree = "<group>"; };
 		B40004 /* ProviderUsageWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderUsageWidget.swift; sourceTree = "<group>"; };
 		B40005 /* LockScreenWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockScreenWidget.swift; sourceTree = "<group>"; };
+		B40030 /* SwarmLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwarmLiveActivity.swift; sourceTree = "<group>"; };
 		B40006 /* WidgetTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetTheme.swift; sourceTree = "<group>"; };
 		B40007 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B40008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -383,6 +389,8 @@
 				B20004 /* iOSOverviewTab.swift */,
 				B20005 /* iOSProvidersTab.swift */,
 				B20006 /* iOSSessionsTab.swift */,
+				B20025 /* iOSSwarmTab.swift */,
+				B20026 /* SwarmLiveActivityController.swift */,
 				B20007 /* iOSAlertsTab.swift */,
 				B20008 /* iOSSettingsTab.swift */,
 				B20012 /* iOSRemoteApprovalsView.swift */,
@@ -429,6 +437,7 @@
 				B40003 /* UsageOverviewWidget.swift */,
 				B40004 /* ProviderUsageWidget.swift */,
 				B40005 /* LockScreenWidget.swift */,
+				B40030 /* SwarmLiveActivity.swift */,
 				B30023 /* WatchComplicationWidget.swift */,
 				B40006 /* WidgetTheme.swift */,
 				B40007 /* Assets.xcassets */,
@@ -715,6 +724,8 @@
 				A20008 /* iOSOverviewTab.swift in Sources */,
 				A20009 /* iOSProvidersTab.swift in Sources */,
 				A20010 /* iOSSessionsTab.swift in Sources */,
+				A20025 /* iOSSwarmTab.swift in Sources */,
+				A20026 /* SwarmLiveActivityController.swift in Sources */,
 				A20011 /* iOSAlertsTab.swift in Sources */,
 				A20012 /* iOSSettingsTab.swift in Sources */,
 				A20014 /* iOSRemoteApprovalsView.swift in Sources */,
@@ -754,6 +765,7 @@
 				A40003 /* UsageOverviewWidget.swift in Sources */,
 				A40004 /* ProviderUsageWidget.swift in Sources */,
 				A40005 /* LockScreenWidget.swift in Sources */,
+				A40030 /* SwarmLiveActivity.swift in Sources */,
 				A30023 /* WatchComplicationWidget.swift in Sources */,
 				A40006 /* WidgetTheme.swift in Sources */,
 				A40020 /* CLIPulseIntentCache.swift in Sources */,
