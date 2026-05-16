@@ -18,7 +18,8 @@ all 11 findings adopted; user scope sign-off 2026-05-16 (commit
 |---|---|---|---|
 | [`1d57fb4`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/1d57fb4) | review+sign-off | 2 | PLAN dispositioned, scope locked |
 | [`75ef646`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/75ef646) | H-F1 | 10 | helper-only; no schema; 537 pytest green |
-| _(this commit)_ | S1 + S1b | 6 | helper-only; no schema; **dark by default**; 558 pytest green |
+| [`2cd824f`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/2cd824f) | S1 + S1b | 6 | helper-only; no schema; **dark by default**; 558 pytest green |
+| _(this commit)_ | S2 (file only) | 2 | migration **authored, NOT applied** — CI-green; prod apply is user-gated |
 
 ---
 
@@ -160,3 +161,42 @@ unaffected by the wiring.
 backend-schema change → **user-approval gate per the autonomy contract
 (RK4)**. Helper ships dark; S2 is the next step and is presented to the
 user before any `apply`.
+
+---
+
+## S2 — backend migration (AUTHORED, NOT APPLIED — autonomy gate)
+
+CI surfaced the ordering precisely: the **RPC contract drift guard**
+(`backend/supabase/ci_check_rpc_contract.py`) failed the S1+S1b push
+because the helper calls `remote_helper_swarm_heartbeat` with no SQL
+definition. This cleanly delineates the autonomy boundary: **authoring
+the migration file is a repo change (autonomous); APPLYING it to prod
+Supabase is the gated action** (handoff: "schema 改动要先告知用户再
+apply (apply 本身可自主)"; PLAN RK4).
+
+**Authored**: [`backend/supabase/migrate_v0.48_remote_swarms.sql`](backend/supabase/migrate_v0.48_remote_swarms.sql)
+— convention-perfect against the v0.26/v0.27/v0.47 precedents:
+* `remote_swarms` table — latest-wins one row per `(user_id,
+  device_id)`, modelled on `provider_quotas` + the `remote_*` device
+  FK; RLS select/delete-own, no insert/update policy (RPC-only writes).
+* `remote_helper_swarm_heartbeat(p_device_id, p_helper_secret,
+  p_swarms jsonb)` — `_remote_authenticate_helper_gated` (same posture
+  as `remote_helper_post_event`), `SECURITY DEFINER`, `RETURNS jsonb`
+  (no `RETURNS TABLE` → no DROP, grants preserved — gemini-patterns
+  #1), defensive 64-elem + 32 KB caps, UPSERT.
+* `remote_app_list_swarms()` — `auth.uid()` +
+  `_remote_control_enabled_for_caller()` JWT gate; returns each device
+  blob annotated with `stale` (past the **90s** live-TTL = 3× the 30s
+  S1b beat, RK8) instead of dropping it (R2-2 "last-seen, not
+  vanished"); `revoke public,anon` + `grant authenticated`.
+* `_cleanup_remote_swarms_internal()` + idempotent pg_cron
+  `remote_swarms_cleanup_nightly` at `7 4 * * *` (next free slot after
+  v0.28's 03:47, v0.28/v0.47 guard shape), fully revoked.
+
+**Verified locally**: RPC contract guard now `OK`; helper param names
+(`p_device_id/p_helper_secret/p_swarms`) match the SQL signature.
+
+**NOT done (the gate)**: `apply_migration` / `execute_sql` against prod
+Supabase, and the schema_migrations ledger entry — **awaiting explicit
+user approval to apply**. Until applied, the shipped helper stays dark
+(`swarm_enabled=False`) so nothing calls the absent prod RPC.
