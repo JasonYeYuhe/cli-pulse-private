@@ -230,6 +230,61 @@ def _run_hook_inner(
     cwd_hmac = _hmac_path(user_path_secret or "", cwd) if cwd else None
     parsed = _safe_parse(adapter, raw, cwd_hmac)
 
+    # S1 (v1.22) — swarm tagging. The hook is the ONLY ingestion path
+    # that knows the agent's real worktree (managed sessions run at
+    # $HOME; see remote_agent._handle_start). Derive a privacy-
+    # preserving, account-scoped swarm_key from the worktree and record
+    # local edge-aggregation state for S1b's heartbeat to roll up. The
+    # entire block is failure-soft: swarm tagging must NEVER affect the
+    # approval flow or crash the hook (RK1). It also deliberately does
+    # NOT touch the `remote_helper_create_permission_request` RPC
+    # signature — the shipped approval path stays byte-identical and
+    # this stays decoupled from the S2 backend schema.
+    def _swarm_mark(status: str) -> None:
+        try:
+            import swarm  # stdlib-only; lazy so an import error can't
+            sk = _swarm_ctx.get("key")  # break the hook (RK1)
+            if not sk:
+                return
+            swarm.SwarmStore().record_activity(
+                sk,
+                handle=_swarm_ctx["handle"],
+                branch=_swarm_ctx["branch"],
+                provider=provider,
+                session_id=_swarm_ctx["session"],
+                status=status,
+                is_linked_worktree=_swarm_ctx["linked"],
+            )
+        except Exception as exc:  # noqa: BLE001 — never break the hook
+            logger.warning("swarm: tag soft-failed: %s", exc)
+
+    _swarm_ctx: dict[str, Any] = {}
+    # Single master gate (S1/S1b) — dark until S2 ships + a coordinated
+    # release flips it (see HelperConfig.swarm_enabled). When off this
+    # is a true no-op: no local writes, no warning noise.
+    if getattr(helper_config, "swarm_enabled", False):
+        try:
+            import swarm as _swarm_mod
+            _wt = _swarm_mod.resolve_worktree(cwd)
+            _acct = str(getattr(helper_config, "helper_secret", "") or "")
+            if _wt is not None and _acct:
+                _sk = _swarm_mod.compute_swarm_key(
+                    _wt.main_repo, _wt.branch, _acct
+                )
+                if _sk:
+                    _swarm_ctx = {
+                        "key": _sk,
+                        "handle": _swarm_mod.display_handle(_sk),
+                        "branch": _wt.branch,
+                        "linked": _wt.is_linked_worktree,
+                        "session": str(raw.get("session_id") or "") or _sk[:12],
+                    }
+                    # Hook ingress == this agent just hit an approval
+                    # gate → blocked until the decision resolves below.
+                    _swarm_mark("awaiting-approval")
+        except Exception as exc:  # noqa: BLE001 — RK1
+            logger.warning("swarm: resolve soft-failed: %s", exc)
+
     # High-risk fail-closed shortcut: do not even emit a remote request.
     if cfg.fail_closed_on_high_risk and parsed.risk == AdapterRisk.HIGH:
         logger.info("high-risk %s call — falling back to local prompt", parsed.tool_name)
@@ -274,6 +329,7 @@ def _run_hook_inner(
         ))
         return 0
     if local_outcome is not None:
+        _swarm_mark("running")  # approval resolved locally → unblocked
         _emit(adapter.emit_hook_output(local_outcome, parsed))
         return 0
 
@@ -339,6 +395,7 @@ def _run_hook_inner(
     # Phase 1: silently downgrade alwaysSession (we don't emit permissionUpdates).
     scope = "once"
     decision = AdapterDecision(decision=raw_decision, scope=scope, reason="")
+    _swarm_mark("running")  # remote approve/deny resolved → unblocked
     _emit(adapter.emit_hook_output(decision, parsed))
     return 0
 

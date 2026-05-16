@@ -52,6 +52,13 @@ class HelperConfig:
     # decision. Defaults to False so an existing config without this
     # key loads as opted-out.
     local_control_enabled: bool = False
+    # v1.22 S1/S1b: master gate for Swarm View. Defaults False so the
+    # feature is fully dark (no local swarm-state writes, no heartbeat
+    # upload) until the S2 backend RPC is deployed and a coordinated
+    # release flips it on. An existing config without this key loads as
+    # opted-out. Both the S1 hook tagging and the S1b heartbeat honor
+    # this single flag.
+    swarm_enabled: bool = False
 
 
 def now_iso() -> str:
@@ -339,6 +346,51 @@ def _fetch_track_git_activity(config: HelperConfig) -> bool:
         return False
 
 
+def _swarm_heartbeat(config: "HelperConfig") -> None:
+    """S1b (v1.22) — edge-aggregated swarm heartbeat.
+
+    Reads the local SwarmStore that S1's hook path maintains, rolls it
+    up, and POSTs one `remote_helper_swarm_heartbeat` RPC carrying the
+    per-swarm summary (NOT the raw event stream — R1-A4 edge
+    aggregation; the backend just reads the latest row per swarm_key).
+
+    Wholly failure-soft (RK1): a missing RPC (S2 not yet deployed),
+    network error, or unreadable state file logs at DEBUG/WARNING and
+    returns — it must never disturb the daemon cycle. Honors the single
+    `swarm_enabled` master gate so the feature stays dark until S2 is
+    live and a coordinated release flips it on.
+
+    Cadence is driven by a ~30s monotonic timer in the daemon's 1s tick
+    loop (independent of `interval`, which is ≥60s) so the backend's 90s
+    heartbeat TTL stays a 3× anti-flap margin over the beat (RK8).
+    """
+    if not getattr(config, "swarm_enabled", False):
+        return
+    try:
+        import swarm
+        rollup = swarm.SwarmStore().rollup()
+    except Exception as exc:  # noqa: BLE001 — never break the daemon
+        logger.warning("swarm: rollup soft-failed: %s", exc)
+        return
+    if not rollup:
+        # No active swarms → no POST. The backend's TTL ages out the
+        # last row on its own; a heartbeat of "nothing" is unnecessary.
+        return
+    try:
+        supabase_rpc(
+            "remote_helper_swarm_heartbeat",
+            {
+                "p_device_id": config.device_id,
+                "p_helper_secret": config.helper_secret,
+                "p_swarms": rollup,
+            },
+            timeout=10.0,
+        )
+        logger.debug("swarm heartbeat sent (%d swarm(s))", len(rollup))
+    except Exception as exc:  # noqa: BLE001 — RK1: best-effort only
+        logger.debug("swarm heartbeat soft-failed (S2 may be undeployed): %s", exc)
+
+
 def daemon(args: argparse.Namespace) -> None:
     """Run continuously: heartbeat + sync every interval seconds.
 
@@ -547,6 +599,11 @@ def daemon(args: argparse.Namespace) -> None:
     signal.signal(signal.SIGHUP, _handle_shutdown)
 
     logger.info("CLI Pulse helper daemon started (interval=%ds). Press Ctrl+C to stop.", interval)
+    # S1b: ~30s swarm-heartbeat cadence on a monotonic clock, decoupled
+    # from `interval` (≥60s) so the backend 90s TTL keeps a 3× anti-flap
+    # margin (RK8). 0.0 ⇒ first eligible tick fires promptly.
+    _SWARM_HB_PERIOD_S = 30.0
+    _last_swarm_hb = 0.0
     try:
         while not stopping:
             try:
@@ -621,6 +678,14 @@ def daemon(args: argparse.Namespace) -> None:
                         remote_agent_manager.tick()
                     except Exception as exc:
                         logger.warning("remote agent tick failed: %s", exc)
+                # S1b swarm heartbeat — monotonic ~30s cadence, fully
+                # failure-soft inside `_swarm_heartbeat` (RK1). `config`
+                # is refreshed once per cycle above so the swarm_enabled
+                # toggle takes effect within one cycle.
+                _now_mono = time.monotonic()
+                if _now_mono - _last_swarm_hb >= _SWARM_HB_PERIOD_S:
+                    _last_swarm_hb = _now_mono
+                    _swarm_heartbeat(config)
                 time.sleep(1)
     except KeyboardInterrupt:
         pass

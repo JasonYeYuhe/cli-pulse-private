@@ -17,7 +17,8 @@ all 11 findings adopted; user scope sign-off 2026-05-16 (commit
 | Commit | Work item | Files | Notes |
 |---|---|---|---|
 | [`1d57fb4`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/1d57fb4) | review+sign-off | 2 | PLAN dispositioned, scope locked |
-| _(this commit)_ | H-F1 | 9 | helper-only; no schema; 537 pytest green |
+| [`75ef646`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/75ef646) | H-F1 | 10 | helper-only; no schema; 537 pytest green |
+| _(this commit)_ | S1 + S1b | 6 | helper-only; no schema; **dark by default**; 558 pytest green |
 
 ---
 
@@ -65,3 +66,97 @@ free". Full helper suite: **537 passed, 1 skipped** — zero regressions.
 
 **Schema/account/public-surface**: none. Pure helper code; autonomy
 contract not engaged.
+
+---
+
+## S1 — swarm_key tagging (helper, no schema)
+
+**Key architectural finding** (from the codebase explore, sharpening
+Gemini R1-A1/R2-3): the helper has **two** ingestion paths and only one
+knows the worktree. Remote-spawned managed sessions
+(`remote_agent._handle_start`) run at `$HOME` with `cwd=""` by an
+explicit privacy-posture decision — they genuinely cannot yield a
+repo/branch and correctly get **no** swarm tag. The **hook path**
+(`remote_hook._run_hook_inner`, `cwd = raw["cwd"]`) is the only place
+the agent's real worktree is known. So swarm_key derivation lives on
+the hook path, not the spawn path. Documented here because it both
+confirms and concretizes the review's "cwd is fragile" thesis.
+
+**New** [`helper/swarm.py`](helper/swarm.py):
+* `resolve_worktree(cwd)` — one `git rev-parse --git-common-dir
+  --abbrev-ref HEAD --is-inside-work-tree` round-trip. Uses the shared
+  `.git` **common-dir parent** as the canonical `main_repo` so every
+  linked worktree of one repo groups into ONE swarm (R1-A1 monorepo/
+  sibling fix); `branch` is the per-agent axis. Detached HEAD →
+  `(detached)`. Non-git / missing / timeout / git-absent → `None`
+  (RK1: never raises, event just goes untagged).
+* `compute_swarm_key(main_repo, branch, account_secret)` — domain-
+  separated, NUL-joined `HMAC-SHA256`. Secret is the **account-scoped**
+  `config.helper_secret` (identical across the user's devices →
+  cross-device grouping works, R2-1). Empty secret → `""` (fail-soft).
+* `display_handle(key)` = `swarm-<6 hex>` — the v1.22.0 cross-device
+  label: leaks nothing (RK7); the local Mac resolves the real name
+  from its own cache.
+* `encrypt_label`/`decrypt_label` — stdlib-only (no `cryptography`
+  dep — feedback_v116) authenticated account-envelope, **implemented +
+  unit-tested but NOT wired into any 1.22.0 upload**. This is exactly
+  the plan's documented R2-1 fallback: v1.22.0 ships opaque-handle
+  only; v1.22.1 flips on encrypted real-name sync with the crypto
+  already reviewed.
+* `SwarmStore` — bounded (`64` swarms × `32` sessions), 0600,
+  atomic tmp+rename JSON at `~/.cli_pulse/swarm_state.json`; TTL-prunes
+  at 600s. `record_activity` (S1 writes per hook) + `rollup` (S1b
+  reads). Every method failure-soft — a corrupt/locked state file can
+  never break the approval hook (RK1).
+
+**Hook wiring** ([remote_hook.py](helper/remote_hook.py)
+`_run_hook_inner`): after `cwd` is known, a single guarded block
+records `awaiting-approval` at hook ingress (the agent just hit a
+permission gate = the swarm view's primary "needs attention" signal)
+and `running` at the two decision-resolved sites (local UDS + remote).
+The shipped `remote_helper_create_permission_request` RPC signature is
+**deliberately untouched** — swarm data rides only the S1b heartbeat,
+de-risking the approval path and decoupling from the S2 schema gate.
+
+**Honest scope note**: the hook fires only on permission-gated tool
+calls, so a fully auto-approved agent that never hooks won't appear in
+the swarm until it next gates. tokens/min is NOT sourced here (the hook
+has no token telemetry — that's the separate `daily_usage_metrics`
+pipeline, joined backend-side in S2). This is the truthful v1.22.0
+signal set; broader liveness is a known follow-up, not silently
+implied.
+
+---
+
+## S1b — swarm_heartbeat (helper, no schema, edge aggregation)
+
+* New module fn `_swarm_heartbeat(config)` in
+  [cli_pulse_helper.py](helper/cli_pulse_helper.py): reads
+  `SwarmStore().rollup()` and POSTs ONE
+  `remote_helper_swarm_heartbeat` RPC with the per-swarm summary —
+  **edge aggregation, not the raw event stream** (R1-A4). Empty rollup
+  ⇒ no POST (backend TTL ages the last row). Wholly failure-soft: a
+  missing RPC (S2 not yet deployed), network error, or unreadable
+  state all log + return, never disturbing the daemon (RK1).
+* Wired into the daemon's 1s tick loop on a **monotonic ~30s timer**,
+  decoupled from `interval` (≥60s) so the backend's planned 90s TTL
+  stays a 3× anti-flap margin over the beat (RK8).
+* New `HelperConfig.swarm_enabled` (default **False**). Single master
+  gate for *both* S1 hook tagging and the S1b heartbeat — the whole
+  feature is dark (no local writes, no upload, no log noise) until S2
+  is deployed and a coordinated release flips it. Backward-compatible
+  (existing configs load opted-out; `load_config` strips unknowns).
+
+**Tests**: `test_swarm.py` (16) + `test_swarm_heartbeat.py` (5),
+including real-git-repo linked-worktree grouping, detached HEAD,
+account-secret cross-device determinism, label crypto tamper/wrong-key
+rejection, store TTL/bounds/corrupt-file soft-fail, gate-off-no-upload,
+and RK1 RPC-missing-doesn't-raise. Full helper suite **558 passed, 1
+skipped** (was 537) — zero regressions; existing 64 hook tests
+unaffected by the wiring.
+
+**Schema/account/public-surface**: none yet. The
+`remote_helper_swarm_heartbeat` RPC + its storage is **S2**, which is a
+backend-schema change → **user-approval gate per the autonomy contract
+(RK4)**. Helper ships dark; S2 is the next step and is presented to the
+user before any `apply`.
