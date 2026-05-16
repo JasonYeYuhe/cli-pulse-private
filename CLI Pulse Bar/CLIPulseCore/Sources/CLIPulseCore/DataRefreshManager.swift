@@ -2057,6 +2057,11 @@ extension AppState {
                     remoteSessions = []
                     remoteSessionsLastRefresh = nil
                     remoteSessionsError = nil
+                    // v1.22 Swarm View: same optimistic-clear posture so
+                    // the grid doesn't show stale swarms after RC-off.
+                    remoteSwarms = []
+                    remoteSwarmsLastRefresh = nil
+                    remoteSwarmsError = nil
                     // Sessions Input iter 2: drop the cached event tail
                     // for every session. Without this, a "Show output"
                     // panel that was open at toggle-off would briefly
@@ -2187,6 +2192,36 @@ extension AppState {
         } catch {
             guard remoteControlEnabled else { return }
             remoteSessionsError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Remote Swarms (v1.22 P0 — Swarm View)
+
+    /// Refresh `remoteSwarms` from `remote_app_list_swarms`. Identical
+    /// gating discipline to `refreshRemoteSessions`: no-op + cache clear
+    /// when Remote Control is off, post-await re-check so a mid-flight
+    /// RC-off drops the response (Gemini review P2 #8 pattern). The grid
+    /// keeps `stale` devices (they render greyed) — the server already
+    /// dropped anything past the 10-min outer window.
+    public func refreshRemoteSwarms() async {
+        guard remoteControlEnabled else {
+            remoteSwarms = []
+            remoteSwarmsLastRefresh = Date()
+            return
+        }
+        do {
+            let pulled = try await api.remoteListSwarms()
+            guard remoteControlEnabled else {
+                remoteSwarms = []
+                remoteSwarmsLastRefresh = Date()
+                return
+            }
+            remoteSwarms = pulled
+            remoteSwarmsLastRefresh = Date()
+            remoteSwarmsError = nil
+        } catch {
+            guard remoteControlEnabled else { return }
+            remoteSwarmsError = error.localizedDescription
         }
     }
 

@@ -1080,3 +1080,57 @@ public struct RemotePermissionRequest: Codable, Sendable, Identifiable {
         self.created_at = created_at; self.expires_at = expires_at
     }
 }
+
+// MARK: - Remote Swarms (v1.22 P0 — Swarm View / backend v0.48)
+
+/// One device's swarm heartbeat, as returned by `remote_app_list_swarms()`.
+/// `swarms` is the per-swarm rollup the helper edge-aggregated (~30s
+/// beat — R1-A4). `stale == true` ⇒ past the 90s live-TTL (RK8/R2-2):
+/// the UI greys the card and shows "last seen", it is NOT dropped.
+/// Verbatim snake_case to match the project's default `JSONDecoder()`
+/// (no keyDecodingStrategy) — see APIClient.decode.
+public struct RemoteSwarmDevice: Codable, Sendable, Identifiable {
+    public var id: String { device_id }
+    public let device_id: String
+    public let updated_at: String
+    public let age_s: Double
+    public let stale: Bool
+    public let swarms: [RemoteSwarm]
+
+    public init(
+        device_id: String, updated_at: String, age_s: Double,
+        stale: Bool, swarms: [RemoteSwarm]
+    ) {
+        self.device_id = device_id; self.updated_at = updated_at
+        self.age_s = age_s; self.stale = stale; self.swarms = swarms
+    }
+}
+
+/// One swarm (a git repo+branch grouping of sibling agents) within a
+/// device heartbeat. `handle` is the opaque `swarm-<6hex>` — NO repo or
+/// branch name ever crosses the wire (RK7). P0 carries NO `$` figure;
+/// the headline burn metric is agents/blocked (tokens/$ are P1).
+public struct RemoteSwarm: Codable, Sendable, Identifiable {
+    public var id: String { swarm_key }
+    public let swarm_key: String
+    public let handle: String
+    public let is_linked_worktree: Bool
+    public let providers: [String]
+    public let agents: Int
+    public let blocked: Int
+    public let oldest_blocked_age_s: Double
+    public let last_seen_s_ago: Double
+
+    public init(
+        swarm_key: String, handle: String, is_linked_worktree: Bool,
+        providers: [String], agents: Int, blocked: Int,
+        oldest_blocked_age_s: Double, last_seen_s_ago: Double
+    ) {
+        self.swarm_key = swarm_key; self.handle = handle
+        self.is_linked_worktree = is_linked_worktree
+        self.providers = providers; self.agents = agents
+        self.blocked = blocked
+        self.oldest_blocked_age_s = oldest_blocked_age_s
+        self.last_seen_s_ago = last_seen_s_ago
+    }
+}

@@ -717,3 +717,18 @@
 
 /* ── v1.21 D7: Remote Control privacy-critical consent body ── */
 "advanced.remote_consent_body" = "开启远程控制后,CLI Pulse 可以:\n• 上传每次 Claude 权限请求的脱敏摘要(工具名、简短描述、风险等级)\n• 上传终端输出的末尾片段及会话状态\n• 将您的远程「同意 / 拒绝」转发回本地 helper\n\n永远不会离开您设备的内容:\n• 服务商 API 密钥、Cookie、OAuth 令牌\n• 完整对话内容或会话日志文件\n• 完整项目路径(仅上传 basename 加 HMAC)\n\n此处的「同意」仅对当前请求生效,不会添加 Claude Code 的「Always Allow」规则。下次 Claude 需要使用同一工具时仍会再次询问。如需设置长期规则,请在 Mac 上使用 Claude Code 自带的「Always Allow」界面。\n\n同意请求即表示在您的 Mac 上执行该工具调用。请仅同意您能够理解的请求。";
+
+/* ── Swarm View (v1.22 P0 — 智能体集群总控) ── */
+"tab.swarm" = "集群";
+"swarm.title" = "集群";
+"swarm.no_swarms" = "暂无活跃集群";
+"swarm.empty_hint" = "在 git worktree 中运行 agent,它们会按仓库和分支分组显示在这里。";
+"swarm.disabled_hint" = "开启远程控制以查看你的 agent 集群。";
+"swarm.stale" = "已过期";
+"swarm.worktree" = "worktree";
+"swarm.blocked_badge" = "已阻塞";
+"swarm.agents" = "%d 个 agent";
+"swarm.blocked" = "%d 个阻塞";
+"swarm.last_seen" = "%@前活跃";
+"swarm.oldest_blocked" = "已阻塞 %@";
+"swarm.summary" = "%d 个集群 · %d 个 agent · %d 个阻塞";

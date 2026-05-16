@@ -15,6 +15,7 @@
 		A10007 /* OverviewTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10007 /* OverviewTab.swift */; };
 		A10008 /* ProvidersTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10008 /* ProvidersTab.swift */; };
 		A10009 /* SessionsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10009 /* SessionsTab.swift */; };
+		A10072 /* SwarmTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10072 /* SwarmTab.swift */; };
 		A10010 /* AlertsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10010 /* AlertsTab.swift */; };
 		A10011 /* SettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10011 /* SettingsTab.swift */; };
 		A10012 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10012 /* Assets.xcassets */; };
@@ -184,6 +185,7 @@
 		B10007 /* OverviewTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewTab.swift; sourceTree = "<group>"; };
 		B10008 /* ProvidersTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProvidersTab.swift; sourceTree = "<group>"; };
 		B10009 /* SessionsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsTab.swift; sourceTree = "<group>"; };
+		B10072 /* SwarmTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwarmTab.swift; sourceTree = "<group>"; };
 		B10010 /* AlertsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertsTab.swift; sourceTree = "<group>"; };
 		B10011 /* SettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTab.swift; sourceTree = "<group>"; };
 		B10012 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -331,6 +333,7 @@
 				B10099 /* YieldScoreCard.swift */,
 				B10008 /* ProvidersTab.swift */,
 				B10009 /* SessionsTab.swift */,
+				B10072 /* SwarmTab.swift */,
 				B10010 /* AlertsTab.swift */,
 				B10011 /* SettingsTab.swift */,
 				B10041 /* DangerZoneSection.swift */,
@@ -679,6 +682,7 @@
 				A10099 /* YieldScoreCard.swift in Sources */,
 				A10008 /* ProvidersTab.swift in Sources */,
 				A10009 /* SessionsTab.swift in Sources */,
+				A10072 /* SwarmTab.swift in Sources */,
 				A10010 /* AlertsTab.swift in Sources */,
 				A10011 /* SettingsTab.swift in Sources */,
 				A10041 /* DangerZoneSection.swift in Sources */,

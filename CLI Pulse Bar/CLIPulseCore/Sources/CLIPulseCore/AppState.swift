@@ -303,6 +303,15 @@ public final class AppState: ObservableObject {
     @Published public var remoteSessionsLastRefresh: Date?
     @Published public var remoteSessionsError: String?
 
+    // MARK: - Remote Swarms (v1.22 P0 — Swarm View / v0.48)
+    /// Per-device edge-aggregated swarm rollups from
+    /// `remote_app_list_swarms`. Same gating discipline as
+    /// `remoteSessions` (refreshed only while the Swarm UI is on screen
+    /// AND `remoteControlEnabled`; cleared on RC-off and logout).
+    @Published public var remoteSwarms: [RemoteSwarmDevice] = []
+    @Published public var remoteSwarmsLastRefresh: Date?
+    @Published public var remoteSwarmsError: String?
+
     // MARK: - Remote Session Events (Sessions Input iter 2 — live tail)
     /// Live output tail per managed session, keyed by `RemoteSession.id`.
     /// Each list is the appended history of `stdout` / `stderr` /
@@ -595,6 +604,7 @@ public final class AppState: ObservableObject {
         case overview = "Overview"
         case providers = "Providers"
         case sessions = "Sessions"
+        case swarm = "Swarm"
         case alerts = "Alerts"
         case settings = "Settings"
 
@@ -603,6 +613,7 @@ public final class AppState: ObservableObject {
             case .overview: return "gauge.with.dots.needle.33percent"
             case .providers: return "cpu"
             case .sessions: return "terminal"
+            case .swarm: return "square.grid.3x3.fill"
             case .alerts: return "bell.badge"
             case .settings: return "gear"
             }
@@ -613,6 +624,7 @@ public final class AppState: ObservableObject {
             case .overview: return L10n.tab.overview
             case .providers: return L10n.tab.providers
             case .sessions: return L10n.tab.sessions
+            case .swarm: return L10n.tab.swarm
             case .alerts: return L10n.tab.alerts
             case .settings: return L10n.tab.settings
             }

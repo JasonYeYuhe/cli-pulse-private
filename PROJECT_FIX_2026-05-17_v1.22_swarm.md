@@ -19,7 +19,9 @@ all 11 findings adopted; user scope sign-off 2026-05-16 (commit
 | [`1d57fb4`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/1d57fb4) | review+sign-off | 2 | PLAN dispositioned, scope locked |
 | [`75ef646`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/75ef646) | H-F1 | 10 | helper-only; no schema; 537 pytest green |
 | [`2cd824f`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/2cd824f) | S1 + S1b | 6 | helper-only; no schema; **dark by default**; 558 pytest green |
-| _(this commit)_ | S2 (file only) | 2 | migration **authored, NOT applied** — CI-green; prod apply is user-gated |
+| [`b9f3686`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/b9f3686) | S2 (file) | 2 | migration authored; CI-green |
+| _(prod action)_ | S2 **APPLIED** | — | user-approved 2026-05-16; `apply_migration` → prod Supabase; ledger `v0_48_remote_swarms`; advisor-clean |
+| _(this commit)_ | S3 | 13 | Mac Swarm tab; Bar app BUILD SUCCEEDED; 21 swift tests green; no schema |
 
 ---
 
@@ -196,7 +198,78 @@ apply (apply 本身可自主)"; PLAN RK4).
 **Verified locally**: RPC contract guard now `OK`; helper param names
 (`p_device_id/p_helper_secret/p_swarms`) match the SQL signature.
 
-**NOT done (the gate)**: `apply_migration` / `execute_sql` against prod
-Supabase, and the schema_migrations ledger entry — **awaiting explicit
-user approval to apply**. Until applied, the shipped helper stays dark
-(`swarm_enabled=False`) so nothing calls the absent prod RPC.
+**APPLIED to prod 2026-05-16** (user-approved via AskUserQuestion).
+`apply_migration` name `v0_48_remote_swarms` → Supabase `gkjwsxotmwrgqsvfijzs`
+(Tokyo, PG17). Verified: table + 3 functions present, RLS on + 2
+policies, cron `remote_swarms_cleanup_nightly @ 7 4 * * *`,
+`supabase_migrations.schema_migrations` latest = `v0_48_remote_swarms`
+(MCP `apply_migration` auto-records the ledger — no manual insert
+needed since there's no CONCURRENTLY).
+
+**Advisor review** (security, post-DDL): the only findings touching the
+new objects are WARN lints 0026/0027 (table visible in GraphQL — but
+RLS-protected, same as every `remote_*` table) and 0028/0029
+(SECURITY DEFINER callable by anon/authenticated — *intentional*: the
+helper authenticates via anon-key + device-secret inside
+`_remote_authenticate_helper_gated`; the app RPC is JWT-gated +
+already `revoke public,anon`+`grant authenticated`). These fire
+identically for the entire pre-existing `remote_*` family by deliberate
+design (v0.31 `remote_advisor_followups` posture). **No new/unexpected
+findings; no remediation — "fixing" 0028 would break the helper.**
+
+Helper remains dark (`swarm_enabled=False`) — the RPC now exists in
+prod but nothing calls it until a later coordinated enable. Production
+behavior unchanged.
+
+---
+
+## S3 — Mac Swarm tab (helper-read app, no schema)
+
+New `case .swarm` in `AppState.Tab` (auto-propagates to the tab bar
+`ForEach`; both `MenuBarView` `switch state.selectedTab` sites updated)
++ icon `square.grid.3x3.fill` + `L10n.tab.swarm`.
+
+* **Models** ([Models.swift](CLI%20Pulse%20Bar/CLIPulseCore/Sources/CLIPulseCore/Models.swift)):
+  `RemoteSwarmDevice` + `RemoteSwarm`, verbatim snake_case (the
+  project's `JSONDecoder()` has no keyDecodingStrategy), `Identifiable`
+  + memberwise `init` — matches the v0.48 RPC shape exactly.
+* **API** ([APIClient.swift](CLI%20Pulse%20Bar/CLIPulseCore/Sources/CLIPulseCore/APIClient.swift)):
+  `remoteListSwarms()` → `remote_app_list_swarms` (mirrors
+  `remoteListSessions`; JWT-gated, RC-gated server-side).
+* **State** ([AppState.swift](CLI%20Pulse%20Bar/CLIPulseCore/Sources/CLIPulseCore/AppState.swift)
+  + [DataRefreshManager.swift](CLI%20Pulse%20Bar/CLIPulseCore/Sources/CLIPulseCore/DataRefreshManager.swift)):
+  `remoteSwarms` / `…LastRefresh` / `…Error`; `refreshRemoteSwarms()`
+  with the exact `refreshRemoteSessions` discipline (no-op + clear when
+  RC off, post-await re-check — Gemini P2 #8); optimistic clear on the
+  RC-off path.
+* **View** [SwarmTab.swift](CLI%20Pulse%20Bar/CLI%20Pulse%20Bar/SwarmTab.swift):
+  `LazyVGrid` 2-col, **attention-sort** (stale ↓, then blocked ↓, then
+  agents ↓, then handle); per-card blocked badge + oldest-blocked age +
+  provider chips + worktree icon; **stale devices render greyed with
+  "last seen Xm", not dropped** (R2-2); structured-concurrency 10s
+  poll (NOT `Timer.publish` — feedback_swiftui_timer_lifecycle);
+  disabled/empty/error states. **ZERO `$` anywhere** — headline is
+  agents/blocked (R2-5, user-confirmed); `handle` is the opaque
+  `swarm-6hex` (RK7). Card decomposed into typed sub-builders after
+  hitting the SwiftUI "expression too complex to type-check" wall.
+* **Shared** [SwarmFormatters.swift](CLI%20Pulse%20Bar/CLIPulseCore/Sources/CLIPulseCore/SwarmFormatters.swift):
+  `SwarmFormat.humanizeAge` in CLIPulseCore so S4 iOS/Live-Activity +
+  S5 watch reuse it (and it's unit-testable).
+* **L10n**: `L10n.swarm` enum + `swarm.*` / `tab.swarm` keys in all 5
+  `.lproj`. en + zh-Hans (user's native locale) properly written;
+  ja/ko/es seeded with English baseline — same posture the v1.21 D7
+  consent strings already use; full translation is the plan's explicit
+  D7 carried-over follow-up (NOT P0-blocking).
+* **Project**: `SwarmTab.swift` wired into `project.pbxproj` (4
+  entries, fresh `A10072/B10072` IDs mirroring `SessionsTab`).
+* **Tests** [RemoteSwarmTests.swift](CLI%20Pulse%20Bar/CLIPulseCore/Tests/CLIPulseCoreTests/RemoteSwarmTests.swift):
+  decode shape, empty array, stale device, `humanizeAge` edges.
+
+**Verified**: `swift build` CLIPulseCore clean; `xcodebuild -scheme
+"CLI Pulse Bar"` **BUILD SUCCEEDED**; targeted `swift test` **21
+passed / 0 failures** (swarm + model + tab/L10n-adjacent). Full-suite
+run is pre-existing network-flaky (ClaudeSourceResolver 401) and
+unrelated; the ship-gate runs the comprehensive matrix.
+
+**Schema/account/public-surface**: none (read-only consumer of the
+already-applied v0.48 RPC).

@@ -715,3 +715,18 @@
 
 /* ── v1.21 D7: Remote Control privacy-critical consent body ── */
 "advanced.remote_consent_body" = "When Remote Control is on, CLI Pulse can:\n• upload a redacted summary of each Claude permission request (tool name, short summary, risk badge)\n• upload a short tail of terminal output and the session status\n• relay your remote Approve / Deny to the local helper\n\nWhat never leaves your device:\n• provider API keys, cookies, OAuth tokens\n• full transcripts or session log files\n• full project paths (only basename + HMAC)\n\nApprove here is per-request only — it does NOT add a Claude Code Always-Allow rule. Claude will ask again next time it needs the same tool. To set persistent rules, use Claude Code's own \"Always Allow\" UI on your Mac.\n\nApproving a request executes the tool call on your Mac. Only approve requests you understand.";
+
+/* ── Swarm View (v1.22 P0 — Mission Control for the agent swarm) ── */
+"tab.swarm" = "Swarm";
+"swarm.title" = "Swarm";
+"swarm.no_swarms" = "No Active Swarms";
+"swarm.empty_hint" = "Run agents in git worktrees and they'll appear here, grouped by repo and branch.";
+"swarm.disabled_hint" = "Enable Remote Control to watch your agent swarms.";
+"swarm.stale" = "stale";
+"swarm.worktree" = "worktree";
+"swarm.blocked_badge" = "BLOCKED";
+"swarm.agents" = "%d agents";
+"swarm.blocked" = "%d blocked";
+"swarm.last_seen" = "last seen %@ ago";
+"swarm.oldest_blocked" = "blocked %@";
+"swarm.summary" = "%d swarms · %d agents · %d blocked";

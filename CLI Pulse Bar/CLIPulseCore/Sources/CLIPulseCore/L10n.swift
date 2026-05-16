@@ -32,6 +32,7 @@ public enum L10n {
         public static var overview: String { tr("tab.overview") }
         public static var providers: String { tr("tab.providers") }
         public static var sessions: String { tr("tab.sessions") }
+        public static var swarm: String { tr("tab.swarm") }
         public static var alerts: String { tr("tab.alerts") }
         public static var settings: String { tr("tab.settings") }
     }
@@ -124,6 +125,25 @@ public enum L10n {
         public static var running: String { tr("sessions.running") }
         public static var details: String { tr("sessions.details") }
         public static func countRunning(_ count: Int) -> String { tr("sessions.count_running", count) }
+    }
+
+    // MARK: - Swarm View (v1.22 P0)
+
+    public enum swarm {
+        public static var title: String { tr("swarm.title") }
+        public static var noSwarms: String { tr("swarm.no_swarms") }
+        public static var emptyHint: String { tr("swarm.empty_hint") }
+        public static var disabledHint: String { tr("swarm.disabled_hint") }
+        public static var stale: String { tr("swarm.stale") }
+        public static var worktree: String { tr("swarm.worktree") }
+        public static var blockedBadge: String { tr("swarm.blocked_badge") }
+        public static func agents(_ count: Int) -> String { tr("swarm.agents", count) }
+        public static func blocked(_ count: Int) -> String { tr("swarm.blocked", count) }
+        public static func lastSeen(_ ago: String) -> String { tr("swarm.last_seen", ago) }
+        public static func oldestBlocked(_ ago: String) -> String { tr("swarm.oldest_blocked", ago) }
+        public static func summary(_ swarms: Int, _ agents: Int, _ blocked: Int) -> String {
+            tr("swarm.summary", swarms, agents, blocked)
+        }
     }
 
     // MARK: - Alerts

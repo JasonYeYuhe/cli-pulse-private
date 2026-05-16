@@ -1164,6 +1164,15 @@ public actor APIClient {
         return result
     }
 
+    /// v1.22 P0 Swarm View. `remote_app_list_swarms` returns a jsonb
+    /// array; the generic `rpc` decode handles the top-level array as
+    /// `[RemoteSwarmDevice]`. JWT-gated server-side + RC-gated (returns
+    /// `[]` when Remote Control is off).
+    public func remoteListSwarms() async throws -> [RemoteSwarmDevice] {
+        let result: [RemoteSwarmDevice] = try await rpc("remote_app_list_swarms")
+        return result
+    }
+
     /// List the event tail (`stdout` / `stderr` / `status` / `info`) for
     /// a managed session. Pagination is by the bigserial `id` column
     /// (server-authoritative monotonic insert order) — pass the largest

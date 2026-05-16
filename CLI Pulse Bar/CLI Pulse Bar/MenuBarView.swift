@@ -146,6 +146,7 @@ struct MenuBarView: View {
                             case .overview:    OverviewTab()
                             case .providers:   ProvidersTab()
                             case .sessions:    SessionsTab()
+                            case .swarm:       SwarmTab()
                             case .alerts:      AlertsTab()
                             case .settings:    SettingsTab()
                             }
@@ -276,6 +277,8 @@ struct MenuBarView: View {
                     ProvidersTab()
                 case .sessions:
                     SessionsTab()
+                case .swarm:
+                    SwarmTab()
                 case .alerts:
                     AlertsTab()
                 case .settings:
