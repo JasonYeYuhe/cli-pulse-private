@@ -330,3 +330,45 @@ v1.22.x follow-up. This is the honest cut, not a silent omission.
 **Schema/account/public-surface**: none. The `NSSupportsLiveActivities`
 capability is reflected at ASC submit time (a ship-gate concern, not a
 code gate).
+
+---
+
+## v1.22.0 status @ checkpoint (2026-05-17)
+
+**Done, on `main`, CI-tracked, build-verified:**
+
+| Item | Plat | State |
+|---|---|---|
+| Gemini 2-round review + dispositions + user scope sign-off | — | ✅ `1d57fb4` |
+| H-F1 BaseSpawner refactor + Aider/OpenCode/Cursor | helper | ✅ `75ef646` (558 pytest) |
+| S1 swarm_key tagging + S1b heartbeat (dark) | helper | ✅ `2cd824f` (558 pytest) |
+| S2 `remote_swarms` migration | backend | ✅ `b9f3686` + **APPLIED to prod** (advisor-clean) |
+| S3 Mac Swarm tab | macOS | ✅ `acef706` (Bar BUILD SUCCEEDED) |
+| S4 iOS Swarm grid + Live Activity scaffolding | iOS | ✅ `df95bb4` (iOS BUILD SUCCEEDED) |
+
+End-to-end the marquee feature is live on the **two primary platforms**:
+helper edge-aggregates → prod `remote_swarms` RPC → Mac grid + iOS grid
++ Dynamic Island, all behind the dark `swarm_enabled` flag so prod
+behavior is unchanged until a coordinated enable.
+
+**Remaining for the v1.22.0 train (each gated as noted):**
+
+- **S5** watch complication + Android Glance `{n · m blocked}` — native,
+  no gate; Android via Android-Studio JBR per handoff §5.
+- **S6** swarm alerts (blocked-age / burn) via `webhook_jobs` + >60s
+  hysteresis — **backend-schema → autonomy gate** (inform user before
+  apply, same as S2/RK4).
+- **Live Activity APNs push path** — **real-device gate** (handoff):
+  needs LA push-token type + edge function + server token store +
+  physical Dynamic-Island device. Structurally shipped; push is the
+  documented follow-up.
+- **Coordinated enable** of `HelperConfig.swarm_enabled` — flip only
+  after the helper .pkg ships with S1/S1b and S2 is confirmed live
+  (S2 is live now; the helper .pkg ship is part of the train).
+- **5-channel ship**: version 1.21.0→1.22.0, build 62→64, Android
+  versionCode 30→31; helper .pkg republish; **VM smoke before any
+  DEVID latest.json promote** (feedback_v080); **ASC/Play account ops**
+  (incl. the new `NSSupportsLiveActivities` capability surfacing at
+  submit) — account-gated.
+- Carried-over D7 i18n: full ja/ko/es/zh-Hant translation of the
+  `swarm.*` strings (currently English baseline in ja/ko/es).
