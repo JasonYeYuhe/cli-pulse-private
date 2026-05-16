@@ -312,63 +312,74 @@ BOOT/INIT → (无 Wi-Fi/无凭据) → PROVISIONING (SoftAP+配网+输入配对
 
 ---
 
-## 十、原型采购清单（带链接）
+## 十、原型采购清单（日本发货 / 省钱版，带链接）
 
-说明：下面给的是**官方/厂商正品页面链接**（稳定、可长期访问）。你在国内的话，
-Waveshare（深圳微雪）、M5Stack、LILYGO 在淘宝/天猫官方店和闲管家、AliExpress
-都能买到——我给出确切型号名，淘宝直接搜型号即可（不贴淘宝商品链接是因为它们
-会失效/我无法保证准确）。原型阶段按计划只买 1–3 台。
+前提：用户在**日本**。下面按"日本能发货"的渠道给，分预算档。链接是官方/正品
+稳定页。币种用 USD + 日元约值（之前误用了人民币￥，已纠正）。
 
-### A. 现在就买（概念验证原型，主板二选一/或各一）
+**关键省钱认知**：M5Stack Dial 是这里**最贵且最不划算**的——它把编码器/RFID/
+RTC/外壳都捆进去了，而氛围屏根本用不到这些。最便宜的可行原型是一块**一体式
+圆屏开发板**，一块板本身就是原型。
 
-**首选 ①（最快"像个成品"）— M5Stack Dial v1.1**
-ESP32-S3 + 1.28″ 圆形触摸屏 + 旋钮编码器 + RTC + 蜂鸣器 + 按键 + 现成旋钮外壳，
-开箱即是一个氛围设备雏形。注意买 **v1.1**（老款已 EOL）。
-- 官方店：https://shop.m5stack.com/products/m5stack-dial-v1-1
-- 美国可买（Adafruit）：https://www.adafruit.com/product/5966
-- 文档：https://docs.m5stack.com/en/core/M5Dial
-- 淘宝搜索词：`M5Stack Dial`
+### 渠道（日本视角）
 
-**首选 ②（更大画布，方便以后做表情脸）— Waveshare ESP32-S3 圆屏**
-- 1.85″ 360×360 圆屏：https://www.waveshare.com/esp32-s3-touch-lcd-1.85.htm
-- 1.46″ 412×412 圆屏，**板载喇叭+麦克风**（Phase B 的声音直接省一笔）：
+| 渠道 | 特点 | 适合 |
+| --- | --- | --- |
+| **Switch Science（スイッチサイエンス）** | 日本公司，国内发货次日达，无关税/无等待，单价略高 | 要快、怕清关 |
+| **Amazon.co.jp** | Waveshare/LILYGO/M5Stack/树莓派都有，Prime 快 | 便利、国内 |
+| **AliExpress（LILYGO/Waveshare 官方店）** | 最便宜，发日本约 1–3 周，运费低/免运，可能有少量消费税 | 省钱、不急 |
+| **秋月電子通商 / 千石電商** | 离散件（舵机/WS2812/喇叭）最便宜，国内当天发 | Phase B 配件 |
+
+### A. 现在就买（概念验证，按预算选一块主板即可）
+
+**① 最省钱推荐 — Waveshare ESP32-S3-LCD-1.28（圆屏一体板）**
+ESP32-S3 + 1.28″ 240×240 圆屏（GC9A01），一块板即原型，约 **$16（AliExpress
+含运约 $23，约 ¥3,000–3,500 日元）**。
+- 官方页：https://www.waveshare.com/esp32-s3-lcd-1.28.htm
+- 触摸版：https://www.waveshare.com/esp32-s3-touch-lcd-1.28.htm
+- 带 CNC 金属壳款（更像成品）：https://www.waveshare.com/esp32-s3-lcd-1.28-b.htm
+- 买法：AliExpress 搜 **"Waveshare official store" → ESP32-S3-LCD-1.28**；
+  或 Amazon.co.jp 搜 `Waveshare ESP32-S3 1.28 round`（更快、国内发货）
+
+**①′ 极限便宜（愿意接线）** — AliExpress 搜 `ESP32 GC9A01 1.28 round display
+board`，一体板约 **$8–12**。确认是"集成板"不是单块裸屏。最省，但要自己接线/确认引脚。
+
+**② 大画布备选（以后做表情脸更爽）— Waveshare 圆屏大尺寸**
+- 1.85″ 360×360：https://www.waveshare.com/esp32-s3-touch-lcd-1.85.htm
+- 1.46″ 412×412，**板载喇叭+麦克风**（Phase B 声音直接省）：
   https://www.waveshare.com/esp32-s3-touch-lcd-1.46b.htm
-- 1.28″ 240×240 圆屏（最便宜的圆屏入门，可带 CNC 金属壳）：
-  https://www.waveshare.com/esp32-s3-touch-lcd-1.28.htm ｜带壳款
-  https://www.waveshare.com/esp32-s3-touch-lcd-1.28-b.htm
-- 淘宝搜索词：`微雪 ESP32-S3 圆屏 1.85`（或 1.46 / 1.28）
 
-**预算备选（方形屏，便宜但不像"伴侣"）— LILYGO T-Display-S3**
-- https://lilygo.cc/products/t-display-s3
-- 淘宝搜索词：`LILYGO T-Display-S3`
+**③ 只有"想要快+日本国内+开箱即成品外壳"才考虑 — M5Stack Dial v1.1**
+最贵（Switch Science 约 ¥6,000+ 日元），氛围屏用不上它的旋钮/RFID。
+- 日本发货：https://www.switch-science.com/products/10302
+- 官方：https://shop.m5stack.com/products/m5stack-dial-v1-1
 
-> 建议组合：买 **M5Stack Dial v1.1 ×1**（最快出 demo）+ **Waveshare 1.85″ 或
-> 1.46″ ×1**（留给表情/声音演进）。再加一根能传数据的 **USB-C 线** + 一个
-> **5V/2A USB-C 电源**（常年通电摆件用）。Phase A 这样就够了。
-> 估算：两块板约 ¥200–400，线材电源 ¥30 以内。
+**预算备选（方屏，便宜但不像伴侣）— LILYGO T-Display-S3**
+- 官方：https://lilygo.cc/en-us/products/t-display-s3
+- LILYGO AliExpress 官方店（发日本、常免运）：https://lilygo.aliexpress.com/store/2090076
 
-### B. 之后再买（Phase B：做表情/会动/声音时）
+> 推荐组合（省钱版）：**只买 1 块 Waveshare ESP32-S3-LCD-1.28**（或带壳款）
+> 跑通 Phase A，约 **$16–25（¥2,500–3,800 日元）**。USB-C 线手头一般就有；
+> 常年通电用任意 5V/1A 充电头即可。两块板都想要再加一块 1.46″/1.85″。
 
-- **情绪 RGB 灯环** WS2812：Adafruit NeoPixel Ring 16 —
-  https://www.adafruit.com/product/1463 ｜淘宝搜索词：`WS2812 16位 RGB 灯环`
-- **点头/转头微型舵机** SG90（建议升级金属齿 MG90S 更耐用）：
-  Waveshare https://www.waveshare.com/sg90-servo.htm ｜
-  M5Stack https://shop.m5stack.com/products/sg90-servo ｜
-  淘宝搜索词：`SG90 舵机` / `MG90S 金属舵机`
-- **小喇叭 + I2S 功放**（MAX98357A）：若用 Waveshare 1.46″ 已自带喇叭可跳过；
-  淘宝搜索词：`MAX98357A I2S 功放`
-- 注意：舵机要独立 5V 电源轨，不要和主控共用，避免堵转拉低电压重启。
+### B. 之后再买（Phase B：表情/会动/声音，日本国内买最便宜）
+
+- **舵机 SG90**（点头/转头，建议金属齿 MG90S）：秋月電子/千石/Switch Science
+  约 ¥400–800/个。官方参考 https://www.waveshare.com/sg90-servo.htm
+- **WS2812 RGB 灯环**（情绪光）：秋月電子/AliExpress，约 ¥300–900。
+  Adafruit 正品参考 https://www.adafruit.com/product/1463
+- **小喇叭 + I2S 功放 MAX98357A**：若选 Waveshare 1.46″ 已自带喇叭可跳过。
+- 注意：舵机用独立 5V 电源轨，别和主控共用，避免堵转拉低电压重启。
 
 ### C. 可选 Linux 路线（只有想早做复杂动画/语音才考虑）
 
-- Raspberry Pi Zero 2 W 官方页：
-  https://www.raspberrypi.com/products/raspberry-pi-zero-2-w/
-- 另需小 DSI/SPI 屏 + microSD。开发更省心，但功耗/成本/量产一致性更差，
-  量产仍倾向 ESP32-S3。
+- Raspberry Pi Zero 2 W 官方页：https://www.raspberrypi.com/products/raspberry-pi-zero-2-w/
+  （日本：Switch Science / KSY / Amazon.co.jp 均有）
+- 另需小屏 + microSD。开发省心，但功耗/成本/量产一致性差，量产仍倾向 ESP32-S3。
 
 ### D. 到货后做什么（接回已完成的后端）
 
 后端 `desk_snapshot` RPC 已就绪。固件按第四节状态机：配网 → 用配对码走
 `register_helper`（`p_device_type='DeskCompanion'`）→ 轮询 `desk_snapshot` →
 按返回的 `status` 枚举驱动屏幕/灯/蜂鸣。建议先用 P1 软件模拟器把渲染状态机
-跑通，再烧到买回来的板子上。
+跑通，再烧到买回来的板子上——这样不急着花钱也能先验证概念。
