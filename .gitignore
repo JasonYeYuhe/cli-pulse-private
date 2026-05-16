@@ -78,3 +78,6 @@ helper/__pycache__/
 HelperSwift/.build/
 HelperSwift/.swiftpm/
 HelperSwift/Package.resolved
+
+# Gemini review raw dumps (provenance kept local; canonical record is the PLAN disposition tables)
+.gemini-review-*.txt

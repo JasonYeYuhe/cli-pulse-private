@@ -1,7 +1,16 @@
 # CLI Pulse v1.22 Strategic Dev Plan (2026-05-16)
 
-**Status**: Draft for Gemini 2-round review + user sign-off. Do NOT start
-implementation until reviewed (per `feedback_gemini_review_patterns`).
+**Status**: Gemini 2-round review **COMPLETE** 2026-05-16 (R1
+GO-WITH-CHANGES, R2 GO-WITH-MINOR-CHANGES; all findings adopted —
+see §7–§8). **User scope sign-off RECEIVED 2026-05-16 → IMPLEMENTING.**
+
+**Scope lock (user, 2026-05-16):**
+- **Q5 → v1.22.0**: H-F1 4th-provider refactor ships in the launch train.
+- **Q6 → v1.22.1**: C4 public share link held out of the launch train.
+- **Train shape → P0-only**: v1.22.0 = P0 Swarm View (S1–S6) + H-F1.
+  P1 Cost Intelligence = v1.22.1, P2 Team Rollup = v1.23.0.
+- **P0 ships ZERO `$`**: tokens/min only; all dollar framing is the
+  P1 headline (R2-5 confirmed by user).
 
 **Prev train**: v1.21.0 shipped 2026-05-16 across all 5 channels
 (Backend Supabase prod, DEVID DMG, iOS App Store, macOS App Store,
@@ -107,24 +116,65 @@ session live, Remote Approvals push a single pending request to the
 phone. We have multi-provider, multi-device, multi-platform.
 
 **What v1.22 adds**: aggregate the per-session stream into a **swarm**
-abstraction —
-  - Helper: detect the git worktree / repo root + branch per session
-    and tag events with a `swarm_key` (repo root) + `worktree` +
-    `branch`. Group sibling sessions.
-  - Backend: `remote_swarms` view/RPC that rolls up active sessions by
-    `swarm_key` — aggregate tokens/min, cost/min, per-agent status
-    (running / awaiting-approval / idle / errored), oldest-blocked age.
+abstraction — *(architecture revised per Gemini Rounds 1 & 2; see §7–§8)*
+  - Helper: `swarm_key` = `HMAC(repo-root + branch, account_secret)` as
+    the **primary, load-bearing** path. An orchestrator parent-session
+    id is used *opportunistically only where one is observably exposed*
+    — treated as best-effort/aspirational, never relied on (Claude
+    Squad/Agent Teams do not currently expose a stable cross-process id
+    the helper can intercept) (R2-3). The secret is **account-scoped,
+    not device-local**, so the same repo+branch under one account
+    produces the same key on every machine (cross-device grouping
+    works) (R2-1). Repo path/worktree/branch never travel as plaintext:
+    the helper uploads the opaque key plus the label **encrypted to the
+    account key**; the phone/watch decrypt client-side (R1-A3, R2-1).
+    *v1.22.0 fallback if account-envelope crypto is too heavy for the
+    train:* scope P0 to **single-machine swarms** with a per-account
+    salted label and defer true multi-device swarm + encrypted-label
+    sync to v1.22.1 — decided at S1 implementation, surfaced in the PR.
+    Repo-root alone is rejected (monorepo collapse). Never crash a
+    session over swarm tagging (R1-A1).
+  - Helper: emit a discrete `swarm_heartbeat` event ~every 30s carrying
+    the *locally rolled-up* swarm state (per-agent status, tokens/min,
+    oldest-blocked age). Aggregation happens at the edge, not in
+    Postgres (R1-A4).
+  - Backend: `remote_swarm_summary()` reads the **latest heartbeat row
+    per `swarm_key`** (O(active-swarms), not O(events)) — no on-the-fly
+    scan of `remote_session_events` — and **filters
+    `WHERE created_at > now() - interval '90 seconds'`** so a
+    crashed/slept helper does not leave a ghost "8 agents running"
+    forever; a swarm past TTL renders as *stale / last-seen Xm ago*,
+    not dropped silently (R2-2). 90s = 3× the 30s heartbeat (>2×
+    padding per `feedback_gemini_review_patterns` #3 anti-flap). If
+    implemented `RETURNS TABLE`, `DROP FUNCTION` precedes
+    `CREATE OR REPLACE`.
   - Mac: a "Swarm" tab — live grid, one card per agent/worktree, sorted
     by "needs attention" (blocked > error > burning > running > idle).
-    Combined burn meter at top. Click a card → existing session detail.
+    The combined meter is **tokens/min only** — no `$` figure in P0.
+    A naive static-price `$/hr` is *removed from P0 entirely* (R2-4,
+    R2-5 supersede the R1-A6 "keep naive $/hr" refinement): a wrong
+    dollar number the week a provider repractices would poison the
+    very "fine print" trust wedge P1 is built on. All `$` framing —
+    with a backend-served, maintained price table — is the P1 headline.
+    Click a card → existing session detail.
   - iOS: Swarm grid + **Live Activity / Dynamic Island** showing
-    `{n agents · m blocked · $X/hr}`, with Approve/Deny for the
-    oldest-blocked agent inline (lands the deferred I-F1).
+    `{n agents · m blocked · age-timer}` only, with Approve/Deny for
+    the oldest-blocked agent inline (lands the deferred I-F1). APNs
+    pushes fire **only on discrete macro state transitions**
+    (blocked-count change), never per burn tick. No `$/hr` on the Live
+    Activity: ActivityKit/SwiftUI cannot recompute cost between pushes,
+    so an extrapolated figure would drift wildly — the lock-screen
+    surface shows only counts + a native `Text(timerInterval:)` age
+    (R1-A2, R2-4). `$` stays in the foregrounded app (P1).
   - watch + Android Glance widget: `{n · m blocked}` at-a-glance
     (lands deferred W-F-class + A-F1).
   - Alerting: a swarm-level alert "agent blocked > 5 min" /
-    "swarm burn > $X/hr" via the existing alert pipeline + optional
-    Slack/Discord webhook (lands deferred B-F2).
+    "swarm burn > X tokens/min" evaluated in the async `webhook_jobs`
+    worker (not the read path) with **hysteresis** — an alert clears
+    only after the condition is false for >60s, and never fires on a
+    swarm already past the 90s heartbeat TTL — to prevent flapping at
+    the sync boundary (R1-A5, R2-2). Optional Slack/Discord webhook
+    (lands deferred B-F2).
 
 **Why it sells**: this is the screenshot that goes on the landing page
 and in the launch tweet. "Run 8 agents, watch them all from your watch,
@@ -173,17 +223,18 @@ M=mac, I=iOS, W=watch, A=android, X=cross.
 ### P0 Swarm View
 | # | Item | Plat | Eff |
 |---|---|---|---|
-| S1 | Helper: derive `swarm_key`=repo-root, `worktree`, `branch` per session; tag events. Audit `provider_spawners/*` + worktree detection (`git rev-parse --show-toplevel`, `--git-common-dir` for worktree). | H | M |
-| S2 | Backend: `remote_swarm_summary()` RPC + index; aggregates active sessions by swarm_key. Schema change → **user-approval gate**. | B | M |
-| S3 | Mac Swarm tab: live grid, attention-sort, combined burn meter, drill-in to SessionDetail. | M | L |
-| S4 | iOS Swarm grid + Live Activity / Dynamic Island w/ inline Approve-oldest-blocked (deferred I-F1). Capability + entitlement audit; MAS-strip safe. | I | L |
+| S1 | Helper: `swarm_key` = `HMAC(repo-root+branch, account_secret)` — **primary load-bearing path**; orchestrator parent-id only opportunistically where observably exposed (best-effort, not relied on — R2-3). Account-scoped (not device) secret so cross-machine grouping works; label uploaded encrypted-to-account-key, never plaintext (R2-1). Audit `provider_spawners/*` + worktree detection (`git rev-parse --show-toplevel`, `--git-common-dir`, `$GIT_DIR`/devcontainer/bare/submodule/detached-HEAD); repo-root-only rejected. Never crash a session on tagging failure. | H | M |
+| S1b | Helper: `swarm_heartbeat` event (~30s) with locally rolled-up swarm state (edge aggregation); carries a monotonic seq so a lost beat is detectable. | H | S |
+| S2 | Backend: `remote_swarm_summary()` reads **latest heartbeat row per swarm_key** filtered `created_at > now()-interval '90s'` (ghost-swarm TTL — R2-2); past-TTL ⇒ `stale` flag, not dropped; index on `(swarm_key, created_at desc)`; `DROP FUNCTION` first if `RETURNS TABLE`. Schema change → **user-approval gate**. | B | M |
+| S3 | Mac Swarm tab: live grid, attention-sort, **tokens/min-only** combined meter (no `$` in P0 — R2-5; true-cost = P1), stale-swarm state, drill-in to SessionDetail; client-side label decrypt. | M | L |
+| S4 | iOS Swarm grid + Live Activity / Dynamic Island (`{n · m blocked · age}` only, **no `$/hr`** — R2-4) w/ inline Approve-oldest-blocked (deferred I-F1). APNs **only on macro state transitions**; native `Text(timerInterval:)` age, no on-device cost extrapolation. Capability + entitlement audit; MAS-strip safe. | I | L |
 | S5 | watch complication + Android Glance widget: `{n · m blocked}` (deferred W-F / A-F1). | W,A | M |
-| S6 | Swarm-level alerts (blocked-age, burn-rate) + optional Slack/Discord webhook (deferred B-F2, reuse `webhook_jobs`). | B,X | M |
+| S6 | Swarm-level alerts (blocked-age, burn-rate) evaluated in async `webhook_jobs` worker with **>60s hysteresis** + optional Slack/Discord webhook (deferred B-F2, reuse `webhook_jobs`). | B,X | M |
 
 ### P1 Cost Intelligence
 | # | Item | Plat | Eff |
 |---|---|---|---|
-| C1 | True-cost normalizer model + provider efficiency leaderboard. | X | M |
+| C1 | Cross-tool spend = raw tokens × **backend-served, maintained provider price table** (NOT a static client table — R2-5; NOT a "tokens-per-resolved-session" proxy — Q3/R1). Owns ALL `$` framing app-wide (P0 deliberately ships none). Provider $ comparison, not an efficiency "leaderboard". | X | M |
 | C2 | Budget guardrails: per-provider budget + 50/80/95/100% escalating alerts. | X | M |
 | C3 | Monthly AI Spend Statement (PDF + email, Pro-gated; extends existing PDF + deferred B-F4). | M,B | M |
 | C4 | Opt-in public share link (deferred B-F3; short-token read-only view). **Public-surface → flag per autonomy.** | B | M |
@@ -228,12 +279,14 @@ must ship clean and standalone.
 
 | # | Risk | Mitigation |
 |---|---|---|
-| RK1 | Worktree detection is brittle across the 30+ CLIs (each spawns differently). | S1 audits `provider_spawners/*`; fall back to repo-root-only grouping when worktree undetectable; never crash a session over swarm tagging. |
+| RK1 | Worktree/swarm-key detection brittle across 30+ CLIs (orchestrators expose a parent id; hand-rolled use raw worktrees; monorepo, bare/submodule/symlinked worktree, non-git agent, detached HEAD, `$GIT_DIR` override, devcontainer all break naive repo-root). | S1: orchestrator parent-id first, else `HMAC(repo-root+branch)`; **repo-root-only rejected** (monorepo collapse); explicit fallback ladder enumerated in S1; never crash a session over swarm tagging. |
 | RK2 | Live Activity / Dynamic Island capability changes break MAS strip or sandbox. | Mirror v1.21 D2 discipline: capability+entitlement audit, real-device test, verify MAS strip per `feedback_mas_vs_devid_helper`. |
-| RK3 | Swarm aggregation RPC hot-loops on large event volume. | Index + `remote_session_events.created_at` (already shipped v1.21 F7); cap swarm fan-in; precompute via the existing cron pattern if needed. |
+| RK3 | Swarm aggregation hot-loops on large event volume. | **Edge aggregation** (R1-A4): helper emits `swarm_heartbeat`; backend read is O(active-swarms) latest-row, not O(events). Index `(swarm_key, created_at desc)`; v1.21 F7 created_at index still applies. |
 | RK4 | Backend schema for S2/T1 violates autonomy contract. | User-approval gate before any migration (`feedback_cli_pulse_autonomy`). |
 | RK5 | Scope creep — P0+P1+P2 in one train repeats nothing-ships risk. | Hard split per §4. v1.22.0 = P0 only. |
-| RK6 | Privacy regression in Team Rollup (per-member data). | Aggregate $/token only; never prompt/transcript content; reuse helper redaction; legal-grade copy reviewed by user (zh-CN native). |
+| RK6 | Privacy regression in Team Rollup (per-member data). | Aggregate $/token only; no per-repo attribution (rejected per Q4); never prompt/transcript content; reuse helper redaction; legal-grade copy reviewed by user (zh-CN native). |
+| RK7 | **P0 itself leaks PII**: repo/worktree paths + branch names carry client names, internal codenames, embargoed-CVE identifiers. | `HMAC(repo+branch, account_secret)` key + label **encrypted to the account key** before upload; backend never sees plaintext; phone/watch decrypt client-side (R1-A3, R2-1). Account-scoped (not device) secret preserves cross-machine grouping. Privacy is a P0 concern, not just P2. |
+| RK8 | Lost/crashed-helper heartbeat leaves a ghost swarm ("8 agents running" forever); a device-only secret would silently fork cross-machine swarms. | S2 TTL filter `created_at > now()-90s` ⇒ stale state, not phantom-live (R2-2); account-scoped HMAC secret keeps one key per repo+branch across machines (R2-1); heartbeat carries a seq for lost-beat detection. |
 
 ## 6. Open questions for Gemini review
 
@@ -252,7 +305,60 @@ must ship clean and standalone.
 6. Should the public share link (C4) be in the launch train as a growth
    loop, or held until P1 so the launch isn't diluted?
 
-## 7. Memory references
+## 7. Gemini Round 1 — Disposition
+
+Gemini 3.1 Pro reviewed the full draft + the 6 open questions on
+2026-05-16 (`reference_gemini_cli`, model `gemini-3.1-pro-preview`).
+Verdict: **GO-WITH-CHANGES**. Raw output archived at
+`.gemini-review-v1.22-round1.txt`. All findings adopted; plan bodies
+(§2 P0, §3 S1/S1b/S2/S3/S4/S6/C1, §5 RK1/RK3/RK6/RK7) revised in place.
+
+| Gemini finding | Severity | Disposition |
+|---|---|---|
+| R1-A1 repo-root swarm_key collapses monorepos; daemon cwd inference fragile for containerized agents | CRITICAL | **Adopted** — S1 + §2 now: orchestrator parent-id first, else `HMAC(repo-root+branch)`; repo-root-only rejected; resolves Q1 |
+| R1-A2 Live Activity APNs budget exhausted by 8 agents flipping state / burn ticks | CRITICAL | **Adopted** — S4 + §2: APNs only on macro state transitions; baseline burn in payload, on-device extrapolation; local age timer; resolves Q2 |
+| R1-A3 P0 leaks sensitive repo/branch names to backend (not just a P2 issue) | MAJOR | **Adopted** — new RK7; helper HMAC-hashes path/branch device-side before upload, UI resolves locally; privacy promoted to a P0 concern |
+| R1-A4 on-the-fly `remote_swarm_summary()` hot-loops on event volume; `RETURNS TABLE` migration friction | MAJOR | **Adopted** — new S1b `swarm_heartbeat` edge aggregation; S2 reads latest-heartbeat-per-key (O(swarms)); `DROP FUNCTION` if `RETURNS TABLE`; RK3 rewritten |
+| R1-A5 blocked/burn alerts flap at the sync boundary | MAJOR | **Adopted** — S6 + §2: eval in async `webhook_jobs` worker with >60s hysteresis (matches `feedback_gemini_review_patterns` #3) |
+| R1-A6 P0 `$X/hr` secretly couples to the P1 cost-normalizer → scope creep | MINOR | **Adopted-with-refinement** — P0 primary meter = tokens/min (factual); a *naive* `$/hr` (raw tokens × static list-price) stays in P0 to preserve the launch screenshot; the *normalized cross-tool true-cost* model stays P1 (RK5 intact) |
+| Q1 swarm_key choice | CRITICAL | **Resolved** — see R1-A1 |
+| Q2 Live Activity cadence | CRITICAL | **Resolved** — see R1-A2 |
+| Q3 true-cost proxy is misleading | MAJOR | **Adopted** — C1 reworded: raw tokens × standard provider pricing, NOT a "tokens-per-resolved-session" proxy; no efficiency "leaderboard" |
+| Q4 Team Rollup per-repo attribution | MAJOR | **Adopted** — aggregate-only; per-repo attribution rejected; folded into RK6 |
+| Q5 H-F1 in v1.22.0 vs v1.22.1 | SCOPE | Gemini recommended **v1.22.0**; **user confirmed v1.22.0 (2026-05-16)** — H-F1 in the launch train |
+| Q6 public share link C4 in launch train | SCOPE | Gemini recommended **hold to v1.22.1**; **user confirmed v1.22.1 (2026-05-16)** — C4 out of the launch train |
+
+**Round 1 total verdict**: GO-WITH-CHANGES. Architecture (swarm-key,
+edge aggregation, APNs, privacy) revised above; two scope questions
+(Q5, Q6) + P0-as-standalone-train carried to user sign-off.
+
+## 8. Gemini Round 2 — Disposition
+
+Gemini reviewed the Round-1-revised plan on 2026-05-16, tasked to (a)
+verify dispositions were really in the bodies and (b) surface
+second-order issues the fixes introduced. Verdict:
+**GO-WITH-MINOR-CHANGES**; it confirmed Round 1 changes were genuinely
+adopted and the S2 approval-gate / RK5 scope split intact. Raw output
+archived at `.gemini-review-v1.22-round2.txt`. All findings adopted;
+bodies (§2 P0, §3 S1/S1b/S2/S3/S4/C1, §5 RK7/RK8) revised in place.
+
+| Round 2 finding | Severity | Disposition |
+|---|---|---|
+| R2-1 device-local HMAC secret forks cross-machine swarms; phone has empty local cache → can't resolve hash→repo name | CRITICAL | **Adopted** — secret is now **account-scoped**; label uploaded **encrypted to account key**, phone/watch decrypt client-side; documented v1.22.0 fallback = single-machine swarms + defer multi-device to v1.22.1; §2/S1/RK7/RK8 rewritten |
+| R2-2 lost/slept heartbeat ⇒ ghost "8 agents running" forever | CRITICAL | **Adopted** — S2 + §2: TTL filter `created_at > now()-interval '90s'`; past-TTL ⇒ `stale/last-seen`, not dropped; 90s = 3× heartbeat anti-flap; new RK8; alerts suppressed on past-TTL swarms |
+| R2-3 orchestrator parent-id is aspirational, not a real fallback — HMAC path is the only functional one | MAJOR | **Adopted** — S1 + §2 reworded: `HMAC(repo+branch)` is the **primary load-bearing** path; orchestrator-id only opportunistic/best-effort where observably exposed; refines the Q1 answer |
+| R2-4 Live Activity can't recompute `$/hr` between pushes → wild drift | MAJOR | **Adopted** — Live Activity now `{n · m blocked · native age-timer}` only, no `$`; cost stays in the foregrounded app; §2 iOS + S4 rewritten |
+| R2-5 naive static-price `$/hr` in P0 is a maintenance/accuracy liability that poisons the P1 trust wedge | MINOR→**escalated** | **Adopted — supersedes the R1-A6 "keep naive $/hr" refinement.** P0 ships **tokens/min only, zero `$`**; ALL `$` framing (backend-served maintained price table) becomes the P1 headline; §2 Mac + S3 + C1 rewritten. RK5 strengthened (cleaner P0/P1 split) |
+| Q5 H-F1 in v1.22.0 | SCOPE | Round 2 re-confirmed v1.22.0; **user confirmed v1.22.0 (2026-05-16)** |
+| Q6 public share link C4 | SCOPE | Round 2 re-confirmed hold; **user confirmed v1.22.1 (2026-05-16)** |
+| Disposition-vs-body audit | — | Round 2 explicitly confirmed Round 1 changes were really in the text (the #1 v1.21 Round 2 failure mode) — no table/body gaps found |
+
+**Round 2 total verdict**: GO-WITH-MINOR-CHANGES. All five R2 findings
+applied above; the only open items are the two scope decisions (Q5, Q6)
+and P0-as-standalone-train, which the handoff designates as **user**
+calls. Plan is otherwise implementation-ready pending that sign-off.
+
+## 9. Memory references
 
 - `feedback_cli_pulse_autonomy` — backend schema / public-repo / Sentry
   = user-approval-gate; act-don't-ask otherwise.
