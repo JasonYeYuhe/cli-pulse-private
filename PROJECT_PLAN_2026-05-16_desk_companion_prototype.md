@@ -306,5 +306,69 @@ BOOT/INIT → (无 Wi-Fi/无凭据) → PROVISIONING (SoftAP+配网+输入配对
 ## 九、本期建议的下一步（待你确认后执行）
 
 1. 锁定 P0 的 MVP 信号集（建议：在跑 / 需审批 / 完成 / 今日花费 / 严重告警）。
-2. 实施第四节的最小后端改动（新增设备级只读配对 + 聚合快照端点）。
+2. ~~实施第四节的最小后端改动~~ ✅ 已完成：`backend/supabase/migrate_v0.48_desk_companion_snapshot.sql`
+   （`desk_snapshot` RPC）+ `rollback_v0.48.sql`，已过全部 5 个后端 CI 契约校验。
 3. 做 P1 设备模拟器跑通端到端，再投入买硬件做 P2。
+
+---
+
+## 十、原型采购清单（带链接）
+
+说明：下面给的是**官方/厂商正品页面链接**（稳定、可长期访问）。你在国内的话，
+Waveshare（深圳微雪）、M5Stack、LILYGO 在淘宝/天猫官方店和闲管家、AliExpress
+都能买到——我给出确切型号名，淘宝直接搜型号即可（不贴淘宝商品链接是因为它们
+会失效/我无法保证准确）。原型阶段按计划只买 1–3 台。
+
+### A. 现在就买（概念验证原型，主板二选一/或各一）
+
+**首选 ①（最快"像个成品"）— M5Stack Dial v1.1**
+ESP32-S3 + 1.28″ 圆形触摸屏 + 旋钮编码器 + RTC + 蜂鸣器 + 按键 + 现成旋钮外壳，
+开箱即是一个氛围设备雏形。注意买 **v1.1**（老款已 EOL）。
+- 官方店：https://shop.m5stack.com/products/m5stack-dial-v1-1
+- 美国可买（Adafruit）：https://www.adafruit.com/product/5966
+- 文档：https://docs.m5stack.com/en/core/M5Dial
+- 淘宝搜索词：`M5Stack Dial`
+
+**首选 ②（更大画布，方便以后做表情脸）— Waveshare ESP32-S3 圆屏**
+- 1.85″ 360×360 圆屏：https://www.waveshare.com/esp32-s3-touch-lcd-1.85.htm
+- 1.46″ 412×412 圆屏，**板载喇叭+麦克风**（Phase B 的声音直接省一笔）：
+  https://www.waveshare.com/esp32-s3-touch-lcd-1.46b.htm
+- 1.28″ 240×240 圆屏（最便宜的圆屏入门，可带 CNC 金属壳）：
+  https://www.waveshare.com/esp32-s3-touch-lcd-1.28.htm ｜带壳款
+  https://www.waveshare.com/esp32-s3-touch-lcd-1.28-b.htm
+- 淘宝搜索词：`微雪 ESP32-S3 圆屏 1.85`（或 1.46 / 1.28）
+
+**预算备选（方形屏，便宜但不像"伴侣"）— LILYGO T-Display-S3**
+- https://lilygo.cc/products/t-display-s3
+- 淘宝搜索词：`LILYGO T-Display-S3`
+
+> 建议组合：买 **M5Stack Dial v1.1 ×1**（最快出 demo）+ **Waveshare 1.85″ 或
+> 1.46″ ×1**（留给表情/声音演进）。再加一根能传数据的 **USB-C 线** + 一个
+> **5V/2A USB-C 电源**（常年通电摆件用）。Phase A 这样就够了。
+> 估算：两块板约 ¥200–400，线材电源 ¥30 以内。
+
+### B. 之后再买（Phase B：做表情/会动/声音时）
+
+- **情绪 RGB 灯环** WS2812：Adafruit NeoPixel Ring 16 —
+  https://www.adafruit.com/product/1463 ｜淘宝搜索词：`WS2812 16位 RGB 灯环`
+- **点头/转头微型舵机** SG90（建议升级金属齿 MG90S 更耐用）：
+  Waveshare https://www.waveshare.com/sg90-servo.htm ｜
+  M5Stack https://shop.m5stack.com/products/sg90-servo ｜
+  淘宝搜索词：`SG90 舵机` / `MG90S 金属舵机`
+- **小喇叭 + I2S 功放**（MAX98357A）：若用 Waveshare 1.46″ 已自带喇叭可跳过；
+  淘宝搜索词：`MAX98357A I2S 功放`
+- 注意：舵机要独立 5V 电源轨，不要和主控共用，避免堵转拉低电压重启。
+
+### C. 可选 Linux 路线（只有想早做复杂动画/语音才考虑）
+
+- Raspberry Pi Zero 2 W 官方页：
+  https://www.raspberrypi.com/products/raspberry-pi-zero-2-w/
+- 另需小 DSI/SPI 屏 + microSD。开发更省心，但功耗/成本/量产一致性更差，
+  量产仍倾向 ESP32-S3。
+
+### D. 到货后做什么（接回已完成的后端）
+
+后端 `desk_snapshot` RPC 已就绪。固件按第四节状态机：配网 → 用配对码走
+`register_helper`（`p_device_type='DeskCompanion'`）→ 轮询 `desk_snapshot` →
+按返回的 `status` 枚举驱动屏幕/灯/蜂鸣。建议先用 P1 软件模拟器把渲染状态机
+跑通，再烧到买回来的板子上。

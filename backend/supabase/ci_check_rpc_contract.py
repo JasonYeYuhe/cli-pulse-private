@@ -83,6 +83,9 @@ HELPER_RPCS = {
     "remote_helper_poll_permission_decision",
     "_remote_authenticate_helper_gated",
     "_remote_control_enabled_for_caller",
+    # Desk Companion hardware (v0.48). Device-secret auth, read-only,
+    # polled by ESP32/Pi firmware — no Apple/helper/Android call site.
+    "desk_snapshot",
 }
 
 # Internal/admin RPCs — never called from the client side. We skip the
