@@ -32,7 +32,14 @@ IOS_PLIST_PATHS=(
 # it's what ASC's iOS submission consumes).
 IOS_INFO_PLIST="$PROJECT_DIR/CLI Pulse Bar iOS/Info.plist"
 
-# App Store Connect credentials — set via environment or .env file
+# App Store Connect credentials — set via environment, or fall back to
+# the out-of-repo creds file (lets the daily scheduled task run without
+# the caller pre-exporting ASC_* — the SKILL.md only runs the bare script).
+ASC_ENV_FILE="${ASC_ENV_FILE:-$HOME/Library/Application Support/CLI-Pulse-Secrets/asc-sync-env-2026-05-16.sh}"
+if [[ -z "${ASC_API_KEY_ID:-}" && -f "$ASC_ENV_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$ASC_ENV_FILE"
+fi
 API_KEY_ID="${ASC_API_KEY_ID:?Set ASC_API_KEY_ID environment variable}"
 API_ISSUER="${ASC_API_ISSUER:?Set ASC_API_ISSUER environment variable}"
 API_KEY_PATH="${ASC_API_KEY_PATH:-$HOME/Library/Mobile Documents/com~apple~CloudDocs/Downloads/AuthKey_${API_KEY_ID}.p8}"
