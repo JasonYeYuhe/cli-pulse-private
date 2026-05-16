@@ -35,22 +35,24 @@ shape as Claude/Codex overrides).
 
 from __future__ import annotations
 
-import os
-import shutil
 from typing import Any
 
+from .base import BaseSpawner
 
-class GeminiSpawner:
+
+class GeminiSpawner(BaseSpawner):
     name = "gemini"
+    binary = "gemini"
+    argv0_env = "CLI_PULSE_GEMINI_ARGV0"
+
+    # env_overrides ({}) / is_available / supports_remote_approval
+    # (False — same posture as Codex) inherited verbatim from
+    # BaseSpawner.
 
     def argv(self, params: Any) -> list[str]:
-        override = os.environ.get("CLI_PULSE_GEMINI_ARGV0")
-        argv: list[str]
-        if override:
-            tokens = override.split()
-            argv = tokens if tokens else ["gemini"]
-        else:
-            argv = ["gemini"]
+        # Base handles argv0-override tokenization (and the compound
+        # override + flag case the v1.15 tests pin).
+        argv = super().argv(params)
 
         # Forward --yolo only if the iOS spawn request explicitly opted
         # in via env. Default OFF; the iOS picker is responsible for
@@ -60,21 +62,3 @@ class GeminiSpawner:
             argv = argv + ["--yolo"]
 
         return argv
-
-    def env_overrides(self, params: Any) -> dict[str, str]:  # noqa: ARG002
-        return {}
-
-    def is_available(self) -> bool:
-        override = os.environ.get("CLI_PULSE_GEMINI_ARGV0")
-        if override:
-            tokens = override.split()
-            if tokens and (
-                shutil.which(tokens[0]) is not None
-                or os.path.isabs(tokens[0]) and os.access(tokens[0], os.X_OK)
-            ):
-                return True
-        return shutil.which("gemini") is not None
-
-    def supports_remote_approval(self) -> bool:
-        # No first-class hook protocol. Same posture as Codex.
-        return False

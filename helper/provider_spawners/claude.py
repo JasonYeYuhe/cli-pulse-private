@@ -17,44 +17,20 @@ in front of the manager's argv.
 
 from __future__ import annotations
 
-import os
-import shutil
-from typing import Any
+from .base import BaseSpawner
 
 
-class ClaudeSpawner:
+class ClaudeSpawner(BaseSpawner):
     name = "claude"
+    binary = "claude"
+    argv0_env = "CLI_PULSE_CLAUDE_ARGV0"
 
-    def argv(self, params: Any) -> list[str]:  # noqa: ARG002
-        override = os.environ.get("CLI_PULSE_CLAUDE_ARGV0")
-        if override:
-            tokens = override.split()
-            if tokens:
-                return tokens
-        return ["claude"]
-
-    def env_overrides(self, params: Any) -> dict[str, str]:  # noqa: ARG002
-        # Claude has no provider-specific env beyond what the manager
-        # already injects (CLI_PULSE_REMOTE_SESSION_ID, capability
-        # token). Keep the hook here for future env knobs.
-        return {}
-
-    def is_available(self) -> bool:
-        # Honor the env override above for the availability check too,
-        # so a user with a non-PATH claude install can still see the
-        # provider light up in the app.
-        override = os.environ.get("CLI_PULSE_CLAUDE_ARGV0")
-        if override:
-            tokens = override.split()
-            if tokens and (
-                shutil.which(tokens[0]) is not None
-                or os.path.isabs(tokens[0]) and os.access(tokens[0], os.X_OK)
-            ):
-                return True
-        return shutil.which("claude") is not None
+    # argv / env_overrides ({}) / is_available inherited verbatim from
+    # BaseSpawner — Claude has no provider-specific env beyond what the
+    # manager injects (CLI_PULSE_REMOTE_SESSION_ID, capability token).
 
     def supports_remote_approval(self) -> bool:
         # Claude has the `claude-pre-tool-use` hook protocol that the
-        # helper translates into `remote_pending_approvals`. Codex and
-        # Gemini don't (yet).
+        # helper translates into `remote_pending_approvals`. The other
+        # providers don't (yet) — see each module's docstring.
         return True

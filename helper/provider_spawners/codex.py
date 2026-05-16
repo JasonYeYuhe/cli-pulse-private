@@ -18,21 +18,19 @@ shape as the Claude override).
 
 from __future__ import annotations
 
-import os
-import shutil
 from typing import Any
 
+from .base import BaseSpawner
 
-class CodexSpawner:
+
+class CodexSpawner(BaseSpawner):
     name = "codex"
+    binary = "codex"
+    argv0_env = "CLI_PULSE_CODEX_ARGV0"
 
-    def argv(self, params: Any) -> list[str]:  # noqa: ARG002
-        override = os.environ.get("CLI_PULSE_CODEX_ARGV0")
-        if override:
-            tokens = override.split()
-            if tokens:
-                return tokens
-        return ["codex"]
+    # argv / is_available / supports_remote_approval (False — Codex
+    # inline-prompts in its TUI, no hook protocol the helper can
+    # translate) inherited verbatim from BaseSpawner.
 
     def env_overrides(self, params: Any) -> dict[str, str]:  # noqa: ARG002
         # v1.16 §2.1 defensive hardening: enable Rust backtrace by default
@@ -43,21 +41,3 @@ class CodexSpawner:
         return {
             "RUST_BACKTRACE": "1",
         }
-
-    def is_available(self) -> bool:
-        override = os.environ.get("CLI_PULSE_CODEX_ARGV0")
-        if override:
-            tokens = override.split()
-            if tokens and (
-                shutil.which(tokens[0]) is not None
-                or os.path.isabs(tokens[0]) and os.access(tokens[0], os.X_OK)
-            ):
-                return True
-        return shutil.which("codex") is not None
-
-    def supports_remote_approval(self) -> bool:
-        # Codex inline-prompts approvals in stdout — no hook
-        # protocol the helper can translate to `remote_pending_approvals`
-        # in v1.15. Defer until upstream exposes a structured channel
-        # OR we build a TUI-pattern detector (significant scope).
-        return False

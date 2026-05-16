@@ -16,9 +16,12 @@ This module exposes:
   on PATH. Helper uses this to advertise capabilities to the app via
   heartbeat.
 
-Add a new provider by writing a new module in `helper/provider_spawners/`
-that exposes a class implementing `ProviderSpawner`, then registering
-it in `_REGISTRY` below.
+Add a new provider (H-F1, v1.22): subclass `BaseSpawner` in a new module
+in `helper/provider_spawners/` setting `name` / `binary` / `argv0_env`
+(override a method only if the CLI genuinely diverges), then register
+the instance in `_REGISTRY` below and re-export it in `__all__`. The
+old per-provider copies of the argv0-override + `is_available` probe
+were collapsed into `BaseSpawner` so this is now a ~10-line change.
 """
 
 from __future__ import annotations
@@ -31,9 +34,13 @@ from typing import Protocol, runtime_checkable
 # (rather than `helper.provider_spawners.X`) so the package resolves
 # both at runtime (helper invoked from inside `helper/`) and in CI
 # (`pytest -q` from `helper/`).
+from .aider import AiderSpawner
+from .base import BaseSpawner
 from .claude import ClaudeSpawner
 from .codex import CodexSpawner
+from .cursor import CursorSpawner
 from .gemini import GeminiSpawner
+from .opencode import OpenCodeSpawner
 
 
 @runtime_checkable
@@ -73,6 +80,10 @@ _REGISTRY: dict[str, ProviderSpawner] = {
     "claude": ClaudeSpawner(),
     "codex": CodexSpawner(),
     "gemini": GeminiSpawner(),
+    # H-F1 (v1.22): swarm coverage of the next CLI wave from day one.
+    "aider": AiderSpawner(),
+    "opencode": OpenCodeSpawner(),
+    "cursor": CursorSpawner(),
 }
 
 
@@ -108,9 +119,13 @@ def all_provider_names() -> list[str]:
 
 __all__ = [
     "ProviderSpawner",
+    "BaseSpawner",
     "ClaudeSpawner",
     "CodexSpawner",
     "GeminiSpawner",
+    "AiderSpawner",
+    "OpenCodeSpawner",
+    "CursorSpawner",
     "get_spawner",
     "available_providers",
     "all_provider_names",

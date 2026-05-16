@@ -17,13 +17,20 @@ if str(HELPER_DIR) not in sys.path:
     sys.path.insert(0, str(HELPER_DIR))
 
 from provider_spawners import (  # noqa: E402
+    AiderSpawner,
+    BaseSpawner,
     ClaudeSpawner,
     CodexSpawner,
+    CursorSpawner,
     GeminiSpawner,
+    OpenCodeSpawner,
     all_provider_names,
     available_providers,
     get_spawner,
 )
+
+# H-F1 (v1.22): the registry after the BaseSpawner refactor + new CLIs.
+_ALL_PROVIDERS = {"claude", "codex", "gemini", "aider", "opencode", "cursor"}
 
 
 # Empty params shim — concrete spawners only read `params.extra_env`.
@@ -33,9 +40,9 @@ _EMPTY = SimpleNamespace(extra_env=None)
 # ── registry ────────────────────────────────────────────────
 
 
-def test_registry_has_three_known_providers():
+def test_registry_has_all_known_providers():
     names = all_provider_names()
-    assert set(names) == {"claude", "codex", "gemini"}, (
+    assert set(names) == _ALL_PROVIDERS, (
         f"unexpected provider list: {names}"
     )
 
@@ -45,10 +52,26 @@ def test_get_spawner_returns_instance_for_known():
         ("claude", ClaudeSpawner),
         ("codex", CodexSpawner),
         ("gemini", GeminiSpawner),
+        ("aider", AiderSpawner),
+        ("opencode", OpenCodeSpawner),
+        ("cursor", CursorSpawner),
     ]:
         spawner = get_spawner(name)
         assert spawner is not None
         assert isinstance(spawner, cls)
+
+
+def test_every_spawner_inherits_base():
+    """H-F1 de-dup invariant: all registered spawners share the single
+    `BaseSpawner` argv0-override + `is_available` implementation. Pinned
+    so a future provider that re-copies the resolution logic instead of
+    subclassing is caught in review.
+    """
+    for name in _ALL_PROVIDERS:
+        spawner = get_spawner(name)
+        assert isinstance(spawner, BaseSpawner), (
+            f"{name} spawner must subclass BaseSpawner (H-F1)"
+        )
 
 
 def test_get_spawner_returns_none_for_unknown():
@@ -106,6 +129,38 @@ def test_gemini_argv_yolo_falsy_keeps_default():
         params = SimpleNamespace(extra_env={"CLI_PULSE_GEMINI_YOLO": value})
         argv = GeminiSpawner().argv(params)
         assert argv == ["gemini"], f"value={value!r} → {argv}"
+
+
+# ── H-F1 new providers (Aider / OpenCode / Cursor) ──────────
+
+
+@pytest.mark.parametrize("spawner_cls,expected_argv,name", [
+    (AiderSpawner, ["aider"], "aider"),
+    (OpenCodeSpawner, ["opencode"], "opencode"),
+    # Cursor's headless agent binary is `cursor-agent`, not `cursor`.
+    (CursorSpawner, ["cursor-agent"], "cursor"),
+])
+def test_new_provider_argv_and_name(spawner_cls, expected_argv, name):
+    s = spawner_cls()
+    assert s.name == name
+    assert s.argv(_EMPTY) == expected_argv
+    assert s.env_overrides(_EMPTY) == {}
+    # None of the H-F1 CLIs expose a Claude-style hook protocol.
+    assert s.supports_remote_approval() is False
+
+
+def test_new_provider_inherits_shared_argv0_override(monkeypatch, tmp_path):
+    """The whole point of H-F1: a brand-new provider gets the override
+    + `is_available` behavior for free from BaseSpawner, with zero
+    copied resolution code. Verify on CursorSpawner.
+    """
+    fake = tmp_path / "cursor-agent"
+    fake.write_text("#!/bin/sh\nexit 0\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("CLI_PULSE_CURSOR_ARGV0", f"{fake} --print")
+    s = CursorSpawner()
+    assert s.argv(_EMPTY) == [str(fake), "--print"]
+    assert s.is_available() is True
 
 
 # ── env override hooks ──────────────────────────────────────
@@ -166,6 +221,10 @@ def test_only_claude_supports_remote_approval():
     assert ClaudeSpawner().supports_remote_approval() is True
     assert CodexSpawner().supports_remote_approval() is False
     assert GeminiSpawner().supports_remote_approval() is False
+    # H-F1 CLIs: observability-only, no remote-approve surface.
+    assert AiderSpawner().supports_remote_approval() is False
+    assert OpenCodeSpawner().supports_remote_approval() is False
+    assert CursorSpawner().supports_remote_approval() is False
 
 
 # ── is_available + capability advertisement ─────────────────
