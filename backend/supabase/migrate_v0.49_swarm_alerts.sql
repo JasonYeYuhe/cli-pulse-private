@@ -20,9 +20,10 @@
 --    `webhook_jobs` → the existing 30s `process_webhook_jobs` cron →
 --    `send-webhook` edge fn does Slack/Discord delivery automatically.
 --    NO new webhook table / column / edge function (v0.25 pipeline).
--- 3. New `swarm_alert_eval` pg_cron @ 1 minute (async worker — the
+-- 3. New `swarm_alert_eval` pg_cron @ '* * * * *' (every minute — the
 --    plan's "evaluated in the async webhook_jobs worker, not the read
---    path"). No collision with existing cron slots.
+--    path"). No collision with existing cron slots. (Std 5-field cron,
+--    not '1 minute': this pg_cron rejects that — see schedule note.)
 --
 -- Hysteresis (>60s — PLAN_v1.22 §2/R1-A5):
 -- A new alert fires only if there is NO unresolved alert for the same
@@ -59,6 +60,17 @@
 -- guarded `cron.schedule` — safe to re-run.
 -- ============================================================
 
+-- Supporting index (Gemini R1 MINOR). The 1-min evaluator filters
+-- public.remote_swarms by `updated_at` with NO user_id predicate, so
+-- v0.48's idx_remote_swarms_user (user_id, updated_at desc) can't serve
+-- it. A dedicated updated_at index keeps the recurring scan index-only.
+-- Plain (non-CONCURRENTLY) is correct here: remote_swarms is empty at
+-- apply time (feature dark) so the build is instant and lock-free, and
+-- the file's no-CONCURRENTLY ⇒ no `-- supabase: no-transaction` invariant
+-- holds. `if not exists` keeps the migration re-runnable.
+create index if not exists idx_remote_swarms_updated_at
+  on public.remote_swarms(updated_at);
+
 create or replace function public._evaluate_swarm_alerts_internal()
 returns void as $$
 declare
@@ -81,8 +93,24 @@ begin
 
     for v_elem in select * from jsonb_array_elements(v_row.swarms)
     loop
-      v_blocked := coalesce((v_elem->>'blocked')::int, 0);
-      v_age     := coalesce((v_elem->>'oldest_blocked_age_s')::numeric, 0);
+      -- Defensive numeric extraction (Gemini R1 BLOCKER). A bare
+      -- (v_elem->>'k')::int/::numeric on a present-but-NON-numeric helper
+      -- value (e.g. "blocked":"x" / "" / true) raises 22P02 and aborts
+      -- the WHOLE cron txn — silently halting swarm alerting for EVERY
+      -- user until the bad payload ages out (or forever if a device keeps
+      -- re-sending it). coalesce() only guards SQL NULL (missing key),
+      -- NOT a bad scalar. So: cast ONLY when the JSON value really is a
+      -- number (missing/null/string/bool → 0, fail-closed = no false
+      -- alert), and numeric-clamp before ::int so a bug value can't
+      -- overflow it (round(huge/60)::int → 22003, same txn-abort class).
+      v_blocked := case
+        when jsonb_typeof(v_elem->'blocked') = 'number'
+          then least(greatest(floor((v_elem->>'blocked')::numeric), 0), 100000)::int
+        else 0 end;
+      v_age := case
+        when jsonb_typeof(v_elem->'oldest_blocked_age_s') = 'number'
+          then least(greatest((v_elem->>'oldest_blocked_age_s')::numeric, 0), 2592000)
+        else 0 end;
 
       -- Threshold: at least one agent blocked > 5 minutes.
       if v_blocked > 0 and v_age > 300 then
@@ -111,9 +139,15 @@ begin
                 and created_at > now() - interval '60 seconds'
            )
         then
+          -- is_resolved explicit (Gemini R2 MINOR): the table default is
+          -- already `false` (NOT NULL), so this changes no behavior — but
+          -- writing it makes the hysteresis `and is_resolved = false`
+          -- self-evidently correct and immune to any future change of the
+          -- column default.
           insert into public.alerts (
             id, user_id, type, severity, title, message,
-            related_provider, suppression_key, grouping_key, source_kind
+            related_provider, suppression_key, grouping_key, source_kind,
+            is_resolved
           ) values (
             gen_random_uuid()::text, v_row.user_id,
             'Swarm Agent Blocked', 'Warning',
@@ -121,7 +155,8 @@ begin
             v_blocked || ' agent(s) in ' || v_handle ||
               ' blocked > 5 min (oldest ~' ||
               round(v_age / 60.0)::int || ' min). Approve from the app.',
-            v_prov, v_skey, v_skey, 'swarm'
+            v_prov, v_skey, v_skey, 'swarm',
+            false
           );
         end if;
       end if;
@@ -136,7 +171,13 @@ revoke all on function public._evaluate_swarm_alerts_internal()
   from PUBLIC, authenticated, anon;
 
 -- Async evaluator cron (the plan's "async worker, not the read path").
--- 1-minute cadence — well under the 5-min threshold, no slot collision.
+-- Every minute — well under the 5-min threshold, no slot collision.
+-- NOTE: this Supabase pg_cron only accepts standard 5-field cron OR an
+-- interval string of the form '[1-59] seconds' — NOT '1 minute' (it
+-- raises 22023 "invalid schedule"; confirmed live 2026-05-17, the exact
+-- case Gemini R1 MINOR #3 flagged). The existing 30s jobs work because
+-- they use the *seconds* interval form, which does not generalize to
+-- minutes. '* * * * *' is the correct every-minute schedule.
 do $$
 begin
   perform cron.unschedule('swarm_alert_eval');
@@ -150,7 +191,7 @@ begin
   if exists (select 1 from pg_extension where extname = 'pg_cron') then
     perform cron.schedule(
       'swarm_alert_eval',
-      '1 minute',
+      '* * * * *',
       $cron$select public._evaluate_swarm_alerts_internal();$cron$
     );
   else

@@ -418,11 +418,13 @@ already-applied v0.48 RPC).
 
 ---
 
-## S6 — swarm-alerts migration (AUTHORED for review — NOT applied)
+## S6 — swarm-alerts migration (APPLIED to prod 2026-05-17)
 
-Per user instruction "S6-for-review": `backend/supabase/migrate_v0.49_swarm_alerts.sql`
-is **authored + committed (CI-green) but NOT applied to prod** — the
-backend-schema autonomy gate (RK4), same flow as S2.
+`backend/supabase/migrate_v0.49_swarm_alerts.sql` was Gemini-3.1-Pro
+re-reviewed and **APPLIED to prod** (project `gkjwsxotmwrgqsvfijzs`,
+ledger `20260517071103:v0_49_swarm_alerts`) on explicit user approval
+2026-05-17 (remote/handoff session — backend-schema autonomy gate
+satisfied by direct user authorization, same flow as S2).
 
 **Design** (convention-perfect vs v0.25/v0.48; full rationale in the
 migration header):
@@ -440,11 +442,57 @@ migration header):
   `alerts_enqueue_webhook` AFTER-INSERT trigger → `webhook_jobs` →
   existing 30s `process_webhook_jobs` cron → `send-webhook`
   Slack/Discord edge fn. **Zero new webhook infra.**
-* New `swarm_alert_eval` pg_cron @ `'1 minute'` (no slot collision);
-  idempotent v0.48-shape unschedule+schedule; internal fn fully
-  revoked; `RETURNS void` (no DROP); no CONCURRENTLY.
+* New `swarm_alert_eval` pg_cron @ `'* * * * *'` (every minute, no slot
+  collision); idempotent v0.48-shape unschedule+schedule; internal fn
+  fully revoked; `RETURNS void` (no DROP); no CONCURRENTLY.
 * Privacy (RK7): alert text uses only the opaque `handle` —
   never a repo/branch.
+
+**Gemini 3.1 Pro re-review (2026-05-17, before apply) — R1 NO-GO → R2
+GO, all findings dispositioned:**
+* **R1 BLOCKER (adopted, real bug)**: bare `(elem->>'k')::int/::numeric`
+  on a present-but-non-numeric helper value raises `22P02` and aborts
+  the *entire* cron txn → swarm alerting silently dead for **every**
+  user until the bad payload ages out. `coalesce()` only guards SQL
+  NULL, not a bad scalar. Fixed: cast only when `jsonb_typeof(...) =
+  'number'` (else 0, fail-closed), numeric-clamp before `::int`
+  (`blocked` 0–100000, `age` 0–2592000) so a bug value can't overflow
+  `round(age/60)::int` → `22003` (same txn-abort class).
+* **R1 MINOR index (adopted)**: the evaluator filters `remote_swarms`
+  by `updated_at` with no `user_id`, so v0.48's `(user_id,updated_at)`
+  index can't serve it. Added `idx_remote_swarms_updated_at` (plain,
+  not CONCURRENTLY — table empty at apply, instant/lock-free).
+* **R1 MINOR `'1 minute'` cron syntax (Gemini right; I was wrong)**: I
+  initially dismissed this citing the live `[30 seconds]` jobs — flawed
+  reasoning (those prove the *seconds*-interval form, which does NOT
+  generalize). The first `apply_migration` then failed exactly here:
+  `ERROR 22023: invalid schedule: 1 minute` (this pg_cron accepts only
+  5-field cron or `'[1-59] seconds'`). Apply rolled back **fully &
+  atomically** (verified: ledger/fn/index/cron all absent post-fail).
+  Fixed to `'* * * * *'`; re-applied clean. Lesson logged to memory.
+* **R2 MINOR `is_resolved` (adopted, behaviour-neutral)**: INSERT now
+  writes `is_resolved=false` explicitly. The column is already `NOT
+  NULL DEFAULT false` (verified live) so behaviour is unchanged — this
+  just makes the hysteresis `is_resolved=false` self-evidently correct
+  and immune to a future default change.
+* **R2 NIT (NOT adopted, with reason)**: wrapping the
+  `cron.unschedule` `exception when others then null` in a pg_cron
+  existence check — declined to keep byte-identical parity with the
+  established house idempotency pattern (v0.28/v0.47/v0.48 all use it;
+  v0.48 `remote_swarms_cleanup_nightly` is the exact precedent).
+
+**Post-apply verification (live, prod):** ledger tail =
+`v0_49_swarm_alerts`; fn exists, `proacl = postgres,service_role` only
+(REVOKE confirmed — no anon/authenticated/PUBLIC); index present; cron
+`swarm_alert_eval [* * * * *] active=true`; manual `_evaluate_swarm_
+alerts_internal()` run = `ok-noop` (0 alerts, clean against 0 rows);
+`remote_swarms` still 0 rows ⇒ **zero production behaviour change** (the
+1-min cron is a no-op until helpers heartbeat & `swarm_enabled` flips).
+Advisors: **v0.49 introduced no new finding** — the new SECURITY
+DEFINER fn is not flagged (`search_path` locked, EXECUTE revoked); the
+6 swarm-tagged lints are all pre-existing v0.48 table/RPC items already
+accepted as advisor-clean; the 2 ERRORs (`provider_usage_week/today`
+SECURITY DEFINER views) are unrelated pre-existing, out of scope.
 
 **Scope cut (documented, not silent):** the plan's *"swarm burn > X
 tokens/min"* alert is **deferred to v1.22.1** — the helper heartbeat
@@ -457,9 +505,8 @@ migration-only, so no drift trip). Optional `send-webhook` TYPE_ALIASES
 `swarm_blocked` filter-chip = a noted follow-up (delivery already works
 by default).
 
-**NOT done (the gate)**: `apply_migration` to prod + ledger entry —
-**awaiting user review/approval** (this is the "S6-for-review"
-deliverable).
+**DONE**: `apply_migration` to prod + ledger entry landed 2026-05-17
+(see Gemini dispositions + post-apply verification above).
 
 ---
 
@@ -479,19 +526,17 @@ debug build all pass).
 | S3 | macOS | `acef706` | Bar BUILD SUCCEEDED |
 | S4 | iOS | `df95bb4` | iOS BUILD SUCCEEDED |
 | S5 | watch+Android | `be9ec65`,`b26b196` | Watch + Android builds OK |
-| S6 | backend | `54cf1f4` | **AUTHORED, not applied (review)** |
+| S6 | backend | `54cf1f4` (+ Gemini-hardening commit) | **APPLIED to prod 2026-05-17 (advisor-clean)** |
 
-**Gated remainder (unchanged — all require user/device/account):**
-1. **S6 apply** — review `migrate_v0.49_swarm_alerts.sql`, then I
-   `apply_migration` on approval (same flow as S2).
-2. **Live Activity APNs-push** — real-device gate (LA ships
+**Gated remainder (S6 now DONE — all below require user/device/account):**
+1. **Live Activity APNs-push** — real-device gate (LA ships
    structurally; push path = v1.22.x follow-up).
-3. **Coordinated enable** — flip `HelperConfig.swarm_enabled` only
-   after the helper .pkg carrying S1/S1b ships (S2 already live).
-4. **5-channel ship** — 1.21.0→1.22.0, build 62→64, Android vc 30→31;
+2. **Coordinated enable** — flip `HelperConfig.swarm_enabled` only
+   after the helper .pkg carrying S1/S1b ships (S2 + S6 already live).
+3. **5-channel ship** — 1.21.0→1.22.0, build 62→64, Android vc 30→31;
    helper .pkg republish; VM smoke before DEVID promote; ASC/Play
    account ops (incl. `NSSupportsLiveActivities` at ASC submit).
-5. **D7 i18n** — full ja/ko translation of `swarm.*` (Apple) +
+4. **D7 i18n** — full ja/ko translation of `swarm.*` (Apple) +
    ja/ko `swarm_widget_description` (Android); zh + es done.
 
 The dark `swarm_enabled` flag means production behavior is still
