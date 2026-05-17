@@ -610,3 +610,10 @@ behavior-change risk pre-gated-ship).
 **Artifact:** `docs/v1.22_SHIP_CHECKLIST.md` — first formal ship
 checklist since v1.16; makes the §6 gated remainder mechanical.
 No ship blocker found. Feature still DARK; prod behavior unchanged.
+
+**Closeout (2026-05-17):** committed `e128555`, pushed to `main`; push
+smoke matrix all green — Swift CI / Helper CI / Supabase CI / Lint all
+`success`. Android CI path-filtered (no `android/` change) → not
+triggered this commit, so the known pre-existing release-AAB keystore
+failure did not run. Sweep fully closed; only the §6 gated user-only
+ship steps remain.
