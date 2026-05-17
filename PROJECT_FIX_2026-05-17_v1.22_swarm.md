@@ -460,3 +460,40 @@ by default).
 **NOT done (the gate)**: `apply_migration` to prod + ledger entry —
 **awaiting user review/approval** (this is the "S6-for-review"
 deliverable).
+
+---
+
+## v1.22.0 status @ S1–S6 + H-F1 COMPLETE (2026-05-17)
+
+All P0 work items + H-F1 are on `main`, archived above, build-verified,
+CI-green (sole red = the known pre-existing Android release-AAB
+keystore step — handoff says don't fix; parity + unit tests + local
+debug build all pass).
+
+| Item | Plat | Commit | Verify |
+|---|---|---|---|
+| review+signoff | — | `1d57fb4` | Gemini R1/R2 + user lock |
+| H-F1 | helper | `75ef646` | 558 pytest |
+| S1+S1b | helper | `2cd824f` | 558 pytest (dark) |
+| S2 | backend | `b9f3686` + **prod APPLIED** | advisor-clean |
+| S3 | macOS | `acef706` | Bar BUILD SUCCEEDED |
+| S4 | iOS | `df95bb4` | iOS BUILD SUCCEEDED |
+| S5 | watch+Android | `be9ec65`,`b26b196` | Watch + Android builds OK |
+| S6 | backend | `54cf1f4` | **AUTHORED, not applied (review)** |
+
+**Gated remainder (unchanged — all require user/device/account):**
+1. **S6 apply** — review `migrate_v0.49_swarm_alerts.sql`, then I
+   `apply_migration` on approval (same flow as S2).
+2. **Live Activity APNs-push** — real-device gate (LA ships
+   structurally; push path = v1.22.x follow-up).
+3. **Coordinated enable** — flip `HelperConfig.swarm_enabled` only
+   after the helper .pkg carrying S1/S1b ships (S2 already live).
+4. **5-channel ship** — 1.21.0→1.22.0, build 62→64, Android vc 30→31;
+   helper .pkg republish; VM smoke before DEVID promote; ASC/Play
+   account ops (incl. `NSSupportsLiveActivities` at ASC submit).
+5. **D7 i18n** — full ja/ko translation of `swarm.*` (Apple) +
+   ja/ko `swarm_widget_description` (Android); zh + es done.
+
+The dark `swarm_enabled` flag means production behavior is still
+unchanged; nothing here is user-visible until the coordinated enable
+in the ship train.
