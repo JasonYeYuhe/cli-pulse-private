@@ -28,6 +28,7 @@ if str(HELPER_DIR) not in sys.path:
 from provider_adapters import ClaudeAdapter, AdapterRisk, adapter_for  # noqa: E402
 from provider_adapters.base import AdapterDecision  # noqa: E402
 import remote_hook  # noqa: E402
+import swarm  # noqa: E402
 
 
 class _StubHelperConfig:
@@ -971,3 +972,120 @@ def test_classify_bash_with_no_command_field_is_medium():
             cwd_hmac=None,
         )
         assert parsed.risk == AdapterRisk.MEDIUM, f"input {tool_input!r} → {parsed.risk}"
+
+
+# ── v1.22.0 Swarm dark-gate + _swarm_mark lifecycle (S1) ──────
+# Ship-critical: the entire v1.22.0 release rests on swarm_enabled
+# defaulting False. The hook-side gate was previously untested.
+
+
+class _SwarmCfg:
+    """Helper config with the swarm gate explicitly enabled."""
+    device_id = "11111111-1111-1111-1111-111111111111"
+    helper_secret = "acct-secret"
+    swarm_enabled = True
+
+
+def _capture_swarm_marks(monkeypatch):
+    marks = []
+
+    def _fake_record(self, swarm_key, *, status="running", **_kw):
+        marks.append(status)
+
+    monkeypatch.setattr(swarm.SwarmStore, "record_activity", _fake_record)
+    return marks
+
+
+def test_swarm_dark_gate_false_never_touches_swarmstore(monkeypatch):
+    """swarm_enabled absent/False ⇒ remote_hook must NOT resolve a
+    worktree or write SwarmStore, even on a code path that calls
+    _swarm_mark("running") (local-approve). This is the dark-launch
+    invariant the whole v1.22.0 ship depends on."""
+    buf = _capture_stdout(monkeypatch)
+    resolved = []
+    monkeypatch.setattr(
+        swarm, "resolve_worktree",
+        lambda *a, **k: resolved.append(1) or None,
+    )
+    marks = _capture_swarm_marks(monkeypatch)
+    monkeypatch.setattr(
+        remote_hook, "_try_local_uds_hook",
+        lambda *a, **k: AdapterDecision(decision="approve", scope="once", reason=""),
+    )
+    rc = remote_hook.run_hook(
+        "claude",
+        config=remote_hook.HookConfig(timeout_s=0.05, poll_interval_s=0.01),
+        stdin_payload={"tool_name": "Read",
+                       "tool_input": {"file_path": "/etc/hosts"},
+                       "cwd": "/Users/dev/x"},
+        helper_config=_StubHelperConfig(),  # no swarm_enabled attr → False
+        rpc_caller=lambda name, _p, **_k: {},
+        user_secret_loader=lambda: "user-hmac-secret",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    assert resolved == []          # gate skipped worktree resolution
+    assert marks == []             # zero SwarmStore writes
+    out = json.loads(buf.getvalue())
+    assert out["hookSpecificOutput"]["decision"]["behavior"] == "allow"
+
+
+def test_swarm_mark_awaiting_on_ingress_when_enabled(monkeypatch):
+    """swarm_enabled=True ⇒ hook ingress marks the swarm
+    'awaiting-approval' (it just hit an approval gate), independent of
+    how the approval later resolves (here: times out)."""
+    _capture_stdout(monkeypatch)
+    monkeypatch.setattr(
+        swarm, "resolve_worktree",
+        lambda *a, **k: swarm.WorktreeInfo(
+            main_repo="/r", branch="main", is_linked_worktree=False),
+    )
+    marks = _capture_swarm_marks(monkeypatch)
+    monkeypatch.setattr(remote_hook, "_try_local_uds_hook", lambda *a, **k: None)
+    rc = remote_hook.run_hook(
+        "claude",
+        config=remote_hook.HookConfig(timeout_s=0.02, poll_interval_s=0.01),
+        stdin_payload={"tool_name": "Read",
+                       "tool_input": {"file_path": "/etc/hosts"},
+                       "cwd": "/Users/dev/x"},
+        helper_config=_SwarmCfg(),
+        rpc_caller=lambda name, _p, **_k: {},   # never resolves → timeout
+        user_secret_loader=lambda: "user-hmac-secret",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    assert marks == ["awaiting-approval"]
+
+
+def test_swarm_mark_running_after_remote_approval(monkeypatch):
+    """Full S1 lifecycle: 'awaiting-approval' on ingress, then
+    'running' once the remote approval resolves (remote_hook:398)."""
+    _capture_stdout(monkeypatch)
+    monkeypatch.setattr(
+        swarm, "resolve_worktree",
+        lambda *a, **k: swarm.WorktreeInfo(
+            main_repo="/r", branch="main", is_linked_worktree=False),
+    )
+    marks = _capture_swarm_marks(monkeypatch)
+    monkeypatch.setattr(remote_hook, "_try_local_uds_hook", lambda *a, **k: None)
+
+    def fake_rpc(name, _p, **_k):
+        if name == "remote_helper_create_permission_request":
+            return {"request_id": "x", "status": "pending"}
+        if name == "remote_helper_poll_permission_decision":
+            return {"status": "approved", "decision": "approve", "scope": "once"}
+        return {}
+
+    rc = remote_hook.run_hook(
+        "claude",
+        config=remote_hook.HookConfig(timeout_s=1.0, poll_interval_s=0.01),
+        stdin_payload={"tool_name": "Read",
+                       "tool_input": {"file_path": "/etc/hosts"},
+                       "cwd": "/Users/dev/x"},
+        helper_config=_SwarmCfg(),
+        rpc_caller=fake_rpc,
+        user_secret_loader=lambda: "user-hmac-secret",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    assert marks == ["awaiting-approval", "running"]

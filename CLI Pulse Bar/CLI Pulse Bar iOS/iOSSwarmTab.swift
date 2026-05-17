@@ -28,6 +28,12 @@ struct iOSSwarmTab: View {
         for d in state.remoteSwarms {
             for s in d.swarms { out.append(Entry(device: d, swarm: s)) }
         }
+        // NOTE (v1.22.0): this attention-sort comparator is intentionally
+        // duplicated verbatim in `CLI Pulse Bar/SwarmTab.swift`. Extraction
+        // into a shared CLIPulseCore pure func is deferred to v1.22.1 —
+        // touching View-body private `Entry` types right before a gated
+        // ship is not worth the behavior-change risk for a display-only
+        // dedup.
         return out.sorted { a, b in
             if a.device.stale != b.device.stale { return !a.device.stale }
             if a.swarm.blocked != b.swarm.blocked { return a.swarm.blocked > b.swarm.blocked }

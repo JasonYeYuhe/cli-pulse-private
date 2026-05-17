@@ -563,3 +563,50 @@ Translated this pass (native-quality, UI-tight, placeholders preserved):
 The dark `swarm_enabled` flag means production behavior is still
 unchanged; nothing here is user-visible until the coordinated enable
 in the ship train.
+
+---
+
+## Pre-ship hardening & verification sweep (DONE 2026-05-17)
+
+User-directed autonomous sweep while the gated ship awaits the user.
+Plan: `~/.claude/plans/inherited-humming-finch.md` (Gemini 3.1 Pro
+GO-WITH-CHANGES — BLOCKER dark-gate test + 3 MAJORs all adopted).
+Strictly additive: tests, docs, 2 comment-only edits — no behavior change.
+
+**Full-train verification, all GREEN:**
+- helper `ruff` clean; `pytest -q` **566 passed, 1 skipped** (incl. 8 new).
+- CLIPulseCore `swift test` All tests passed (RemoteSwarm suite incl.);
+  HelperSwift 336/0.
+- 5-scheme `xcodebuild` (macOS/iOS/Watch/Widgets/CLIPulseHelper) all
+  BUILD SUCCEEDED; Android `clean testDebugUnitTest assembleDebug`
+  BUILD SUCCESSFUL (JDK17 + local SDK; a stale gitignored
+  `ic_launcher 2.png` build artifact — source clean, CI unaffected).
+- **Prod v0.49 evaluator** validated live via rollback-only `DO` blocks
+  (FK pair from `devices`): (a) non-numeric `blocked`/`age` no raise;
+  (b) 1 alert, opaque handle only; (c0/c1/c2) hysteresis isolated
+  (unresolved-clause / 60s-window-while-resolved / re-fire after 65s);
+  (d) clamps hold (100000 / 43200 min, no 22003). Zero committed leak
+  (`alerts`/`remote_swarms`/`webhook_jobs` all 0 — rolled-back
+  webhook_jobs confirms the trigger is MVCC-safe, not `pg_net`-sync).
+- **3 Gemini 3.1 Pro deep reviews — all GO**: (1) dark-gate seam (no
+  SwarmStore/RPC when `swarm_enabled=False`, no mid-flight race);
+  (2) rollup ↔ v0.48 RPC ↔ Swift `Models.swift` / Kotlin
+  `RemoteSwarm.kt` decode exact match; (3) iOS Live Activity
+  `reconcile()` lifecycle + `pushType:nil` correct, no leak.
+
+**8 additive tests:** `test_swarm.py` +5 (oldest-blocked-age value &
+oldest-pick, per-swarm `_MAX_SESSIONS_PER_SWARM` cap, bare-repo→None,
+git-not-found→None); `test_remote_hook.py` +3 (the ship-critical
+**`swarm_enabled=False` dark-gate** invariant + `_swarm_mark`
+awaiting→running lifecycle). Heartbeat `False` gate already covered by
+`test_swarm_heartbeat.py::test_disabled_gate_uploads_nothing`.
+
+**Decision A (deferred, not done):** the duplicated attention-sort
+comparator in `SwarmTab.swift` / `iOSSwarmTab.swift` is left duplicated
+for v1.22.0 (cross-ref comments added); extract to a shared CLIPulseCore
+pure func + unit test in v1.22.1 (View-body refactor not worth the
+behavior-change risk pre-gated-ship).
+
+**Artifact:** `docs/v1.22_SHIP_CHECKLIST.md` — first formal ship
+checklist since v1.16; makes the §6 gated remainder mechanical.
+No ship blocker found. Feature still DARK; prod behavior unchanged.

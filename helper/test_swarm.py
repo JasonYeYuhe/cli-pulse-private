@@ -212,3 +212,79 @@ def test_store_bounds_swarm_count(tmp_path: Path):
         st.record_activity(f"k{i}", handle="h", branch="b",
                            provider="claude", session_id=f"s{i}")
     assert len(st.rollup()) <= swarm._MAX_SWARMS
+
+
+# ── rollup: oldest_blocked_age_s (the v0.49 alert threshold input) ──
+# v1.22.0 pre-ship hardening: the prod swarm-alert evaluator
+# (_evaluate_swarm_alerts_internal) fires on `oldest_blocked_age_s > 300`,
+# so the value this rollup emits is safety-relevant, not cosmetic.
+
+
+def test_rollup_oldest_blocked_age_value(tmp_path: Path):
+    """oldest_blocked_age_s is the wall-clock age of the blocked session
+    (the exact field the v0.49 evaluator thresholds on at >300s)."""
+    t = {"v": 1000.0}
+    st, _ = _store(tmp_path, lambda: t["v"])
+    st.record_activity("k", handle="swarm-k", branch="main",
+                        provider="claude", session_id="s1",
+                        status="awaiting-approval")
+    t["v"] = 1060.0  # 60s later, well under _ACTIVITY_TTL_S (600)
+    r = st.rollup()[0]
+    assert r["blocked"] == 1
+    assert r["oldest_blocked_age_s"] == 60.0
+
+
+def test_rollup_oldest_blocked_age_picks_oldest(tmp_path: Path):
+    """With multiple blocked sessions the age reflects the OLDEST
+    (max), not the most recent — matches the `max(...)` in rollup()."""
+    t = {"v": 1000.0}
+    st, _ = _store(tmp_path, lambda: t["v"])
+    st.record_activity("k", handle="swarm-k", branch="main",
+                        provider="claude", session_id="old",
+                        status="awaiting-approval")
+    t["v"] = 1030.0
+    st.record_activity("k", handle="swarm-k", branch="main",
+                        provider="claude", session_id="new",
+                        status="awaiting-approval")
+    t["v"] = 1050.0
+    r = st.rollup()[0]
+    assert r["blocked"] == 2
+    # old: 1050-1000=50 ; new: 1050-1030=20 ; oldest = 50
+    assert r["oldest_blocked_age_s"] == 50.0
+
+
+def test_store_bounds_sessions_per_swarm(tmp_path: Path):
+    """Per-swarm session cap (different axis than _MAX_SWARMS): one
+    swarm can't grow unbounded — keeps the heartbeat blob small."""
+    t = {"v": 1.0}
+    st, _ = _store(tmp_path, lambda: t["v"])
+    for i in range(swarm._MAX_SESSIONS_PER_SWARM + 10):
+        t["v"] += 1.0  # distinct last_seen → deterministic eviction
+        st.record_activity("k", handle="swarm-k", branch="main",
+                           provider="claude", session_id=f"s{i}")
+    r = st.rollup()[0]
+    assert r["agents"] == swarm._MAX_SESSIONS_PER_SWARM
+
+
+# ── resolve_worktree soft-fail branches (RK1: never break the hook) ──
+
+
+def test_resolve_bare_repo_returns_none(tmp_path: Path):
+    """A bare repo is not a work tree → no swarm tag, no crash."""
+    bare = tmp_path / "bare.git"
+    bare.mkdir()
+    _git(bare, "init", "-q", "--bare")
+    assert swarm.resolve_worktree(str(bare)) is None
+
+
+def test_resolve_git_not_found_returns_none(tmp_path: Path, monkeypatch):
+    """git binary absent → None, never raises (machines without git on
+    PATH must still get a working approval hook — RK1)."""
+    d = tmp_path / "d"
+    d.mkdir()
+
+    def _no_git(*a, **k):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(swarm.subprocess, "run", _no_git)
+    assert swarm.resolve_worktree(str(d)) is None
