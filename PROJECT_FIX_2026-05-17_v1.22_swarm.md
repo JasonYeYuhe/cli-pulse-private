@@ -415,3 +415,48 @@ widget-data channel rather than inventing a parallel one.
 
 **Schema/account/public-surface**: none (read-only consumer of the
 already-applied v0.48 RPC).
+
+---
+
+## S6 — swarm-alerts migration (AUTHORED for review — NOT applied)
+
+Per user instruction "S6-for-review": `backend/supabase/migrate_v0.49_swarm_alerts.sql`
+is **authored + committed (CI-green) but NOT applied to prod** — the
+backend-schema autonomy gate (RK4), same flow as S2.
+
+**Design** (convention-perfect vs v0.25/v0.48; full rationale in the
+migration header):
+* `_evaluate_swarm_alerts_internal()` — cron-driven async evaluator
+  (NOT a read path — plan R1-A5). Scans `remote_swarms` where
+  `updated_at > now()-90s` (RK8: never alert on a ghost), unrolls the
+  `swarms` jsonb, fires when `blocked > 0 AND oldest_blocked_age_s >
+  300` (5 min).
+* **>60s hysteresis**: insert only if no *unresolved* alert for the
+  `suppression_key` AND none created in the last 60s — the anti-flap
+  window. No prior server-side hysteresis precedent existed; this is
+  the new pattern (existing alerts are pure date/week suppression
+  gates).
+* Reuses the **entire existing webhook pipeline** (v0.25): the
+  `alerts_enqueue_webhook` AFTER-INSERT trigger → `webhook_jobs` →
+  existing 30s `process_webhook_jobs` cron → `send-webhook`
+  Slack/Discord edge fn. **Zero new webhook infra.**
+* New `swarm_alert_eval` pg_cron @ `'1 minute'` (no slot collision);
+  idempotent v0.48-shape unschedule+schedule; internal fn fully
+  revoked; `RETURNS void` (no DROP); no CONCURRENTLY.
+* Privacy (RK7): alert text uses only the opaque `handle` —
+  never a repo/branch.
+
+**Scope cut (documented, not silent):** the plan's *"swarm burn > X
+tokens/min"* alert is **deferred to v1.22.1** — the helper heartbeat
+carries no token field (P0 = zero `$`, R2-5; tokens are the P1 Cost
+Intelligence headline). v0.49 ships the blocked-age alert only.
+
+**CI**: RPC-contract guard `OK`; alert-type guard `ok` (it scans only
+`app_rpc.sql`, not migrations — the new `'Swarm Agent Blocked'` type is
+migration-only, so no drift trip). Optional `send-webhook` TYPE_ALIASES
+`swarm_blocked` filter-chip = a noted follow-up (delivery already works
+by default).
+
+**NOT done (the gate)**: `apply_migration` to prod + ledger entry —
+**awaiting user review/approval** (this is the "S6-for-review"
+deliverable).
