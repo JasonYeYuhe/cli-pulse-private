@@ -244,5 +244,5 @@
     <plurals name="devices_registered_count">
         <item quantity="other">%d 台登録済み</item>
     </plurals>
-    <string name="swarm_widget_description">Live agent swarm — agents and blocked at a glance</string>
+    <string name="swarm_widget_description">リアルタイムのエージェントスウォーム — エージェント数とブロック数をひと目で</string>
 </resources>

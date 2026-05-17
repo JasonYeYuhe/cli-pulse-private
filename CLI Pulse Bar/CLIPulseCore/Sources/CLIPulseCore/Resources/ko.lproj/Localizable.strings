@@ -431,16 +431,16 @@
 "advanced.remote_consent_body" = "When Remote Control is on, CLI Pulse can:\n• upload a redacted summary of each Claude permission request (tool name, short summary, risk badge)\n• upload a short tail of terminal output and the session status\n• relay your remote Approve / Deny to the local helper\n\nWhat never leaves your device:\n• provider API keys, cookies, OAuth tokens\n• full transcripts or session log files\n• full project paths (only basename + HMAC)\n\nApprove here is per-request only — it does NOT add a Claude Code Always-Allow rule. Claude will ask again next time it needs the same tool. To set persistent rules, use Claude Code's own \"Always Allow\" UI on your Mac.\n\nApproving a request executes the tool call on your Mac. Only approve requests you understand.";
 
 /* ── Swarm View (v1.22 P0 — Mission Control for the agent swarm) ── */
-"tab.swarm" = "Swarm";
-"swarm.title" = "Swarm";
-"swarm.no_swarms" = "No Active Swarms";
-"swarm.empty_hint" = "Run agents in git worktrees and they'll appear here, grouped by repo and branch.";
-"swarm.disabled_hint" = "Enable Remote Control to watch your agent swarms.";
-"swarm.stale" = "stale";
+"tab.swarm" = "스웜";
+"swarm.title" = "스웜";
+"swarm.no_swarms" = "활성 스웜 없음";
+"swarm.empty_hint" = "git worktree에서 에이전트를 실행하면 저장소와 브랜치별로 그룹화되어 여기에 표시됩니다.";
+"swarm.disabled_hint" = "원격 제어를 활성화하면 에이전트 스웜을 확인할 수 있습니다.";
+"swarm.stale" = "오래됨";
 "swarm.worktree" = "worktree";
-"swarm.blocked_badge" = "BLOCKED";
-"swarm.agents" = "%d agents";
-"swarm.blocked" = "%d blocked";
-"swarm.last_seen" = "last seen %@ ago";
-"swarm.oldest_blocked" = "blocked %@";
-"swarm.summary" = "%d swarms · %d agents · %d blocked";
+"swarm.blocked_badge" = "차단됨";
+"swarm.agents" = "에이전트 %d개";
+"swarm.blocked" = "%d개 차단";
+"swarm.last_seen" = "%@ 전 확인";
+"swarm.oldest_blocked" = "%@ 차단됨";
+"swarm.summary" = "%d 스웜 · %d 에이전트 · %d 차단";

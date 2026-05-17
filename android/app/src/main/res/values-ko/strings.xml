@@ -238,5 +238,5 @@
     <plurals name="devices_registered_count">
         <item quantity="other">%d개 등록됨</item>
     </plurals>
-    <string name="swarm_widget_description">Live agent swarm — agents and blocked at a glance</string>
+    <string name="swarm_widget_description">실시간 에이전트 스웜 — 에이전트와 차단 현황을 한눈에</string>
 </resources>

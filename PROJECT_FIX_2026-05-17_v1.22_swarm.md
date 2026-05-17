@@ -256,10 +256,11 @@ New `case .swarm` in `AppState.Tab` (auto-propagates to the tab bar
   `SwarmFormat.humanizeAge` in CLIPulseCore so S4 iOS/Live-Activity +
   S5 watch reuse it (and it's unit-testable).
 * **L10n**: `L10n.swarm` enum + `swarm.*` / `tab.swarm` keys in all 5
-  `.lproj`. en + zh-Hans (user's native locale) properly written;
-  ja/ko/es seeded with English baseline — same posture the v1.21 D7
-  consent strings already use; full translation is the plan's explicit
-  D7 carried-over follow-up (NOT P0-blocking).
+  `.lproj`. en + zh-Hans written at S3 time; ja/ko/es were seeded with
+  English baseline then **fully translated 2026-05-17 (D7 closed)** —
+  see the D7 completion section below. (NOTE: an earlier checkpoint
+  line claimed "es done" — that was inaccurate; es was English-baseline
+  until the D7 pass. Verified against the actual `.lproj` files.)
 * **Project**: `SwarmTab.swift` wired into `project.pbxproj` (4
   entries, fresh `A10072/B10072` IDs mirroring `SessionsTab`).
 * **Tests** [RemoteSwarmTests.swift](CLI%20Pulse%20Bar/CLIPulseCore/Tests/CLIPulseCoreTests/RemoteSwarmTests.swift):
@@ -528,7 +529,29 @@ debug build all pass).
 | S5 | watch+Android | `be9ec65`,`b26b196` | Watch + Android builds OK |
 | S6 | backend | `54cf1f4` (+ Gemini-hardening commit) | **APPLIED to prod 2026-05-17 (advisor-clean)** |
 
-**Gated remainder (S6 now DONE — all below require user/device/account):**
+## D7 i18n — swarm.* full localization (DONE 2026-05-17)
+
+The plan's carried-over D7 follow-up is **complete**. Prior state
+(verified against the live `.lproj`/`values-*` files, NOT the
+checkpoint prose — the doc's "es done" claim was wrong): only en +
+zh-Hans were real; **es, ja, ko Apple were all English baseline**;
+Android `swarm_widget_description` was English in ja + ko (es/zh done).
+
+Translated this pass (native-quality, UI-tight, placeholders preserved):
+* **Apple** `Localizable.strings` es / ja / ko — all 13 keys
+  (`tab.swarm` + 12 `swarm.*`). Term parity with zh-Hans's localized
+  "Swarm": es **Enjambre** (matches Android es), ja **スウォーム**, ko
+  **스웜**. `swarm.worktree` left as `worktree` in every locale (git
+  technical term — same choice zh-Hans already made).
+* **Android** `strings.xml` `values-ja` / `values-ko`
+  `swarm_widget_description`.
+* **Verified**: `plutil -lint` OK for all 5 `.lproj`; per-key `%d`/`%@`
+  count parity vs `en` confirmed programmatically (no format-arg
+  drift); ja/ko `strings.xml` XML well-formed. Pure resource-value
+  edits (no Swift/Kotlin, no format-arg change) ⇒ cannot break the
+  build; CI smoke matrix is the backstop.
+
+**Gated remainder (S6 + D7 now DONE — all below require user/device/account):**
 1. **Live Activity APNs-push** — real-device gate (LA ships
    structurally; push path = v1.22.x follow-up).
 2. **Coordinated enable** — flip `HelperConfig.swarm_enabled` only
@@ -536,8 +559,6 @@ debug build all pass).
 3. **5-channel ship** — 1.21.0→1.22.0, build 62→64, Android vc 30→31;
    helper .pkg republish; VM smoke before DEVID promote; ASC/Play
    account ops (incl. `NSSupportsLiveActivities` at ASC submit).
-4. **D7 i18n** — full ja/ko translation of `swarm.*` (Apple) +
-   ja/ko `swarm_widget_description` (Android); zh + es done.
 
 The dark `swarm_enabled` flag means production behavior is still
 unchanged; nothing here is user-visible until the coordinated enable
