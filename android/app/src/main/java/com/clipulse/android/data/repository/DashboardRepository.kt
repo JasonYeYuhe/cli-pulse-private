@@ -33,6 +33,11 @@ class DashboardRepository(
     private val _alerts = MutableStateFlow<List<AlertRecord>>(emptyList())
     val alerts: StateFlow<List<AlertRecord>> = _alerts
 
+    // v1.22 P0 S5 — live swarm rollups for the Glance widget. Ephemeral
+    // (real-time only), so NOT Room-cached like providers/devices.
+    private val _swarms = MutableStateFlow<List<RemoteSwarmDevice>>(emptyList())
+    val swarms: StateFlow<List<RemoteSwarmDevice>> = _swarms
+
     private val _dailyUsage = MutableStateFlow<List<DailyUsage>>(emptyList())
     val dailyUsage: StateFlow<List<DailyUsage>> = _dailyUsage
 
@@ -136,6 +141,13 @@ class DashboardRepository(
         val data = supabase.devices()
         _devices.value = data
         cache.replaceDevices(data.map { CachedDevice(id = it.id, json = serializeDevice(it)) })
+    }
+
+    /** v1.22 S5 — refresh live swarm rollups (no Room cache; the
+     *  Glance widget calls this on its update tick). RC-gated
+     *  server-side: returns `[]` when Remote Control is off. */
+    suspend fun refreshSwarms() {
+        _swarms.value = supabase.remoteListSwarms()
     }
 
     suspend fun refreshAlerts() {

@@ -285,6 +285,18 @@ class SupabaseClient(
         }
     }
 
+    // ── Swarm View (v1.22 P0 S5 / backend v0.48) ─────────
+
+    /**
+     * `remote_app_list_swarms` → per-device edge-aggregated swarm
+     * rollups. JWT-gated + RC-gated server-side (returns `[]` when
+     * Remote Control is off). Parses the nested `swarms` array the
+     * same way `providers()` parses `tiers`.
+     */
+    suspend fun remoteListSwarms(): List<RemoteSwarmDevice> = withContext(Dispatchers.IO) {
+        parseRemoteSwarms(rpcArray("remote_app_list_swarms"))
+    }
+
     // ── Alerts ───────────────────────────────────────────
 
     suspend fun alerts(): List<AlertRecord> = withContext(Dispatchers.IO) {
@@ -1049,3 +1061,41 @@ sealed class ApiError : Exception() {
         override val message: String get() = "Session expired. Please sign in again."
     }
 }
+
+/**
+ * v1.22 P0 S5 — pure `remote_app_list_swarms` JSON → model parser,
+ * extracted from [SupabaseClient.remoteListSwarms] so it's unit-
+ * testable without mocking OkHttp (mirrors the OAuthCallbackParser
+ * testability posture). Lenient `opt*` reads tolerate an older server.
+ */
+internal fun parseRemoteSwarms(arr: JSONArray): List<RemoteSwarmDevice> =
+    (0 until arr.length()).map { i ->
+        val d = arr.getJSONObject(i)
+        val swarmsArr = d.optJSONArray("swarms")
+        val swarms = if (swarmsArr != null) {
+            (0 until swarmsArr.length()).map { j ->
+                val s = swarmsArr.getJSONObject(j)
+                val provArr = s.optJSONArray("providers")
+                val provs = if (provArr != null) {
+                    (0 until provArr.length()).map { k -> provArr.optString(k) }
+                } else emptyList()
+                RemoteSwarm(
+                    swarmKey = s.optString("swarm_key"),
+                    handle = s.optString("handle"),
+                    isLinkedWorktree = s.optBoolean("is_linked_worktree", false),
+                    providers = provs,
+                    agents = s.optInt("agents"),
+                    blocked = s.optInt("blocked"),
+                    oldestBlockedAgeS = s.optDouble("oldest_blocked_age_s", 0.0),
+                    lastSeenSAgo = s.optDouble("last_seen_s_ago", 0.0),
+                )
+            }
+        } else emptyList()
+        RemoteSwarmDevice(
+            deviceId = d.optString("device_id"),
+            updatedAt = d.optString("updated_at"),
+            ageS = d.optDouble("age_s", 0.0),
+            stale = d.optBoolean("stale", false),
+            swarms = swarms,
+        )
+    }

@@ -1635,6 +1635,11 @@ extension AppState {
             let unresolvedAlerts: Int
             let providers: [WidgetProviderData]
             let lastUpdated: Date
+            // v1.22 S5 — keys must match the widget-extension's
+            // WidgetData (WidgetDataProvider.swift) so the watch
+            // complication / Glance parity reads them.
+            let swarmAgents: Int?
+            let swarmBlocked: Int?
         }
 
         let widgetProviders = providers.prefix(10).map { provider in
@@ -1647,13 +1652,25 @@ extension AppState {
             )
         }
 
+        // v1.22 S5 — at-a-glance swarm totals across non-stale devices.
+        // Best-effort: `remoteSwarms` is only fresh while the Swarm UI
+        // is on-screen (RC-gated, like remoteSessions), so the
+        // complication shows last-known counts — honest for an
+        // at-a-glance surface, same freshness model as the other
+        // published widget metrics.
+        let liveSwarms = remoteSwarms.filter { !$0.stale }.flatMap { $0.swarms }
+        let swarmAgentsTotal = liveSwarms.reduce(0) { $0 + $1.agents }
+        let swarmBlockedTotal = liveSwarms.reduce(0) { $0 + $1.blocked }
+
         let data = WidgetData(
             totalUsageToday: dashboard?.total_usage_today ?? 0,
             totalCostToday: dashboard?.total_estimated_cost_today ?? 0,
             activeSessions: dashboard?.active_sessions ?? 0,
             unresolvedAlerts: alerts.filter { !$0.is_resolved }.count,
             providers: Array(widgetProviders),
-            lastUpdated: Date()
+            lastUpdated: Date(),
+            swarmAgents: swarmAgentsTotal,
+            swarmBlocked: swarmBlockedTotal
         )
 
         if let encoded = try? JSONEncoder().encode(data) {

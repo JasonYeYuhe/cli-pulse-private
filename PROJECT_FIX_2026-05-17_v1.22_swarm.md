@@ -372,3 +372,46 @@ behavior is unchanged until a coordinated enable.
   submit) — account-gated.
 - Carried-over D7 i18n: full ja/ko/es/zh-Hant translation of the
   `swarm.*` strings (currently English baseline in ja/ko/es).
+
+---
+
+## S5 — watch complication + Android Glance (no schema)
+
+**S5a watch** (no new files → no pbxproj): extended the existing
+widget-data channel rather than inventing a parallel one.
+* `WidgetData` (`WidgetDataProvider.swift`) +`swarmAgents`/`swarmBlocked`
+  as **optional** (`Int?`) so an OLD persisted App-Group blob still
+  decodes (synthesized `decodeIfPresent`); `empty`/`preview` updated.
+* `publishWidgetData()` (DataRefreshManager) computes totals across
+  non-stale `remoteSwarms` and writes them; the local mirror struct
+  got the matching keys.
+* `WatchComplicationView.rectangularView` gained an at-a-glance
+  `{n agents · m blocked}` row (blocked tinted orange — the
+  needs-attention signal). NO `$` (R2-5). Honest freshness note in
+  code: `remoteSwarms` is RC/tab-gated so the complication shows
+  last-known — same model as every other published widget metric.
+* Verified: Watch scheme `xcodebuild` **BUILD SUCCEEDED**.
+
+**S5b Android Glance** (greenfield — app's first Glance widget):
+* `libs.versions.toml` + `app/build.gradle.kts`: add
+  `androidx.glance:glance-appwidget 1.1.1`.
+* `data/model/RemoteSwarm.kt` — `RemoteSwarm`/`RemoteSwarmDevice` (org.json
+  hand-parse posture, no Moshi — matches `DeviceRecord`).
+* `SupabaseClient`: `remoteListSwarms()` → delegates to a pure
+  top-level `parseRemoteSwarms(JSONArray)` (extracted for testability,
+  mirrors the `OAuthCallbackParser` posture); nested `swarms`/`providers`
+  parsed like `providers()` parses `tiers`.
+* `DashboardRepository`: ephemeral `_swarms` StateFlow + `refreshSwarms()`
+  (no Room cache — real-time only).
+* `widget/SwarmGlanceWidget.kt` — `GlanceAppWidget` + Hilt `@EntryPoint`
+  (Glance can't `@Inject`) + `SwarmGlanceReceiver`; minimal stacked-text
+  `{n agents · m blocked}`, NO `$`. `res/xml/swarm_glance_widget_info.xml`
+  + manifest `<receiver>` + `swarm_widget_description` string.
+* Test `RemoteSwarmParseTest.kt` (parallels iOS `RemoteSwarmTests`):
+  nested shape, empty array, missing-optional tolerance.
+* Verified: `./gradlew :app:testDebugUnitTest :app:assembleDebug`
+  (Studio JBR per handoff §5) **BUILD SUCCESSFUL** 2m23s — Glance API
+  + manifest/XML/resources link, parse test passes.
+
+**Schema/account/public-surface**: none (read-only consumer of the
+already-applied v0.48 RPC).

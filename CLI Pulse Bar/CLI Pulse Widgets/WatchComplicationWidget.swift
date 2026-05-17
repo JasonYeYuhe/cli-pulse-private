@@ -129,6 +129,26 @@ struct WatchComplicationView: View {
                     }
                 }
             }
+
+            // v1.22 P0 S5 — at-a-glance swarm line: `{n · m blocked}`.
+            // Only when there's live swarm activity; blocked count is
+            // tinted (the "needs attention" signal). No `$` (R2-5).
+            let swarmAgents = entry.data.swarmAgents ?? 0
+            if swarmAgents > 0 {
+                let swarmBlocked = entry.data.swarmBlocked ?? 0
+                HStack(spacing: 4) {
+                    Image(systemName: "square.grid.3x3.fill")
+                        .font(.system(size: 8))
+                    Text("\(swarmAgents)")
+                        .font(.caption2.weight(.semibold).monospacedDigit())
+                    if swarmBlocked > 0 {
+                        Text("· \(swarmBlocked) blocked")
+                            .font(.caption2.weight(.bold).monospacedDigit())
+                            .foregroundStyle(.orange)
+                    }
+                    Spacer()
+                }
+            }
         }
     }
 

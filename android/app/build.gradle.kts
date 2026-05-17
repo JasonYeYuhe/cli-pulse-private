@@ -146,6 +146,9 @@ dependencies {
     // Core
     implementation(libs.core.ktx)
 
+    // v1.22 S5 — Glance app-widget (Swarm at-a-glance)
+    implementation(libs.glance.appwidget)
+
     // Hilt
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v1.22 P0 S5 — Swarm at-a-glance Glance widget metadata.
+     updatePeriodMillis 0 = no system polling (Glance refreshes on
+     placement + when the app calls updateAll; the at-a-glance scope
+     doesn't warrant a battery-costing 30-min system poll). -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="110dp"
+    android:minHeight="40dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="1"
+    android:updatePeriodMillis="0"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:description="@string/swarm_widget_description" />

@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">CLI Pulse</string>
+    <!-- v1.22 P0 S5 — Swarm Glance widget -->
+    <string name="swarm_widget_description">Live agent swarm — agents and blocked at a glance</string>
 
     <!-- Tabs -->
     <string name="tab_overview">Overview</string>

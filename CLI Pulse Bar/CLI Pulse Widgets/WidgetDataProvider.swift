@@ -10,6 +10,13 @@ struct WidgetData: Codable {
     let unresolvedAlerts: Int
     let providers: [WidgetProviderData]
     let lastUpdated: Date
+    // v1.22 P0 S5 — at-a-glance swarm counts for the watch
+    // complication / Android Glance parity. Optional so an OLD
+    // persisted App-Group blob (no swarm keys) still decodes
+    // (synthesized Codable uses decodeIfPresent for optionals);
+    // read sites coalesce nil → 0.
+    let swarmAgents: Int?
+    let swarmBlocked: Int?
 
     static let empty = WidgetData(
         totalUsageToday: 0,
@@ -17,7 +24,9 @@ struct WidgetData: Codable {
         activeSessions: 0,
         unresolvedAlerts: 0,
         providers: [],
-        lastUpdated: Date()
+        lastUpdated: Date(),
+        swarmAgents: 0,
+        swarmBlocked: 0
     )
 
     static let preview = WidgetData(
@@ -30,7 +39,9 @@ struct WidgetData: Codable {
             WidgetProviderData(name: "Codex", usage: 85_000, quota: 200_000, costToday: 1.20, iconName: "chevron.left.forwardslash.chevron.right"),
             WidgetProviderData(name: "Gemini", usage: 40_000, quota: 300_000, costToday: 0.40, iconName: "sparkles"),
         ],
-        lastUpdated: Date()
+        lastUpdated: Date(),
+        swarmAgents: 5,
+        swarmBlocked: 2
     )
 }
 

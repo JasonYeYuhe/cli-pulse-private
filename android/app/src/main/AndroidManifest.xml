@@ -76,5 +76,17 @@
                 <data android:scheme="clipulse" android:host="auth" android:path="/callback" />
             </intent-filter>
         </activity>
+
+        <!-- v1.22 P0 S5 — Swarm at-a-glance Glance widget -->
+        <receiver
+            android:name=".widget.SwarmGlanceReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/swarm_glance_widget_info" />
+        </receiver>
     </application>
 </manifest>
