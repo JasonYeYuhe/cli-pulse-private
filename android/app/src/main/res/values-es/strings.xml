@@ -239,4 +239,5 @@
         <item quantity="one">%d dispositivo registrado</item>
         <item quantity="other">%d dispositivos registrados</item>
     </plurals>
+    <string name="swarm_widget_description">Enjambre de agentes en vivo: agentes y bloqueados de un vistazo</string>
 </resources>

@@ -243,4 +243,5 @@
     <plurals name="devices_registered_count">
         <item quantity="other">已注册 %d 台设备</item>
     </plurals>
+    <string name="swarm_widget_description">实时 agent 集群 — 一览 agent 数与阻塞数</string>
 </resources>
