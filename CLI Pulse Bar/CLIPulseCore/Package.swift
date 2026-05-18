@@ -1,4 +1,11 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.2
+// NOTE: bumped from 5.9 → 6.2 ONLY so SwiftPM will accept the
+// SweetCookieKit dependency (its manifest is swift-tools 6.2; a package
+// cannot depend on one requiring a newer tools version — clean CI
+// resolution enforces this even though local Xcode SwiftPM was lenient).
+// `swiftLanguageModes: [.v5]` below pins Swift 5 language mode so the
+// existing CLIPulseCore sources keep their prior (non-strict-concurrency)
+// semantics — the tools-version bump is dependency-resolution-only.
 
 import PackageDescription
 
@@ -45,5 +52,6 @@ let package = Package(
             name: "CLIPulseCoreTests",
             dependencies: ["CLIPulseCore"]
         ),
-    ]
+    ],
+    swiftLanguageModes: [.v5]
 )
