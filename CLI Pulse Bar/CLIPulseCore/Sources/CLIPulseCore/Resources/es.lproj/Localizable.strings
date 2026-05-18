@@ -444,3 +444,16 @@
 "swarm.last_seen" = "visto hace %@";
 "swarm.oldest_blocked" = "bloqueado hace %@";
 "swarm.summary" = "%d enjambres · %d agentes · %d bloqueados";
+
+/* CodexBar-parity v1.23.0 G4 — pace/forecast text (UI-consumer follow-on i18n) */
+"usage_pace.on_track" = "Al ritmo previsto";
+"usage_pace.in_deficit" = "%@%% por encima";
+"usage_pace.in_reserve" = "%@%% de reserva";
+"usage_pace.lasts_until_reset" = "Dura hasta el reinicio";
+"usage_pace.runs_out_now" = "Se agota ahora";
+"usage_pace.runs_out_in" = "Se agota en %@";
+"usage_pace.projected_empty_now" = "Se vaciará pronto";
+"usage_pace.projected_empty_in" = "Se vaciará en %@";
+"usage_pace.run_out_risk" = "≈ %@%% de riesgo de agotarse";
+"usage_pace.summary_with_right" = "Ritmo: %@ · %@";
+"usage_pace.summary_left_only" = "Ritmo: %@";

@@ -734,3 +734,16 @@
 "swarm.last_seen" = "%@前活跃";
 "swarm.oldest_blocked" = "已阻塞 %@";
 "swarm.summary" = "%d 个集群 · %d 个 agent · %d 个阻塞";
+
+/* CodexBar-parity v1.23.0 G4 — pace/forecast text (UI-consumer follow-on i18n) */
+"usage_pace.on_track" = "节奏正常";
+"usage_pace.in_deficit" = "超出 %@%%";
+"usage_pace.in_reserve" = "结余 %@%%";
+"usage_pace.lasts_until_reset" = "可用至重置";
+"usage_pace.runs_out_now" = "即将耗尽";
+"usage_pace.runs_out_in" = "%@后耗尽";
+"usage_pace.projected_empty_now" = "预计即将用尽";
+"usage_pace.projected_empty_in" = "预计 %@后用尽";
+"usage_pace.run_out_risk" = "≈ 耗尽风险 %@%%";
+"usage_pace.summary_with_right" = "节奏：%@ · %@";
+"usage_pace.summary_left_only" = "节奏：%@";
