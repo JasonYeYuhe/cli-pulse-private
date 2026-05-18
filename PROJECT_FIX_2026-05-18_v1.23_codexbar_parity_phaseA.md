@@ -128,12 +128,31 @@ not in this scope). **Branch discipline (Gemini MEDIUM):** v1.23.0 parity must
 NOT merge to `main` until the v1.22.1 release branch is cut from `790573e`.
 Until then `feature/v1.23.0-parity` stays an isolated CI-green branch.
 
-## Remaining (same branch, deferred)
-- **G3 `GeminiStatusProbe`** (task #6): own commit + own Gemini review; replace
-  7 infra seams (CodexBarLog→OSLog, BinaryLocator/PathBuilder/TTYCommandRunner
-  →ProcessInfo+which, ProviderHTTPClient/SubprocessRunner→URLSession), drop
-  `toUsageSnapshot()` (GeminiCollectorTests covers it). Before it touches the
-  live Gemini path.
+## G3 — GeminiStatusProbe (DONE 2026-05-18, same branch)
+Own Gemini 3.1 Pro review → **GO-WITH-CHANGES** (Q1 drop whole curl-fallback
+API + 2 tests; Q2 granular `#if os(macOS)`; Q3 standalone no-wiring; Q4
+os.Logger privacy → log only safe scalars `.public`, no tokens/PII; LOW add
+`.unsupportedPlatform`). Vendored `Collectors/Gemini/GeminiStatusProbe.swift`
+(~990L post-drop) + `+DataLoader.swift` (URLSession-only). Dropped
+`toUsageSnapshot()`+3 is*Model helpers (CodexBar-only types; covered by
+GeminiCollector + GeminiCollectorTests). 7 infra seams replaced
+(CodexBarLog→os.Logger; BinaryLocator/LoginShellPathCache/PathBuilder/
+TTYCommandRunner→`which`/`runProcess` shims + ProcessInfo;
+ProviderHTTPClient/SubprocessRunner→URLSession; TextParsing.stripANSICodes
+inlined as clean `\u{1B}` literal — no raw control byte). Granular
+`#if os(macOS)` on the Process cluster; non-macOS `extractOAuthCredentials`
+stub → `.unsupportedPlatform`. Standalone — NOT wired into live
+`GeminiCollector` (Gemini D3-style). 5 test files ported (swift-testing→
+XCTest, `#if os(macOS)` for env/API/Plan): GeminiStatusProbeTests 16,
+GeminiStatusProbeAPITests 14 (2 curl tests dropped), GeminiStatusProbePlanTests
+7 (1 toUsageSnapshot test dropped, 2 trimmed) + GeminiTestEnvironment +
+GeminiAPITestHelpers vendored. Verified: **63 targeted tests green** (incl.
+GeminiCollectorTests regression + the fnm/homebrew/nix subprocess paths) +
+**5/5 Xcode schemes BUILD SUCCEEDED** (probe inherits to iOS/watch).
+
+## Remaining (same branch, deferred — beyond G3)
+- UsagePace UI consumer wiring + full-locale `usage_pace.*`; live-path
+  wiring of GeminiStatusProbe into `GeminiCollector` (own review); Phases B–E.
 - UI consumer wiring for the UsagePace engine + full-locale `usage_pace.*`
   (follow-on).
 - Phases B–E (promote 6 hollow stubs / 17 missing providers / depth / polish).
