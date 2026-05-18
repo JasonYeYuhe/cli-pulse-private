@@ -96,6 +96,11 @@ public struct ProviderConfig: Codable, Identifiable, Sendable {
 // MARK: - Cookie Source
 
 public enum CookieSource: String, Codable, CaseIterable, Sendable {
+    /// CodexBar-parity G1: auto-import the session cookie from any installed
+    /// browser (macOS only, via SweetCookieKit). Opt-in — existing configs
+    /// keep `nil`/`.manual` and behave exactly as before. Not offered on
+    /// iOS/watchOS (no browser cookie stores there).
+    case automatic = "Automatic"
     case safari = "Safari"
     case chrome = "Chrome"
     case firefox = "Firefox"

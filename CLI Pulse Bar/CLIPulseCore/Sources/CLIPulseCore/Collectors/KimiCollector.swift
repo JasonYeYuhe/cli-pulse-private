@@ -12,19 +12,23 @@ import Foundation
 public struct KimiCollector: ProviderCollector, Sendable {
     public let kind = ProviderKind.kimi
 
+    private static let cookieDomains = ["kimi.com", "www.kimi.com", "kimi.moonshot.cn"]
+
     public func isAvailable(config: ProviderConfig) -> Bool {
-        resolveToken(config: config) != nil
+        resolveToken(config: config) != nil || config.cookieSource == .automatic
     }
 
     public func collect(config: ProviderConfig) async throws -> CollectorResult {
-        guard let token = resolveToken(config: config) else {
-            throw CollectorError.missingCredentials("Kimi: no auth token found")
+        guard let token = await resolveTokenAsync(config: config) else {
+            throw CollectorError.missingCredentials("Kimi: no auth token (manual or auto-import)")
         }
         let data = try await fetchUsages(token: token)
         let parsed = try KimiCollector.parseResponse(data)
         return buildResult(parsed)
     }
 
+    /// Synchronous token resolution (apiKey / manual cookie / env). Does not
+    /// attempt browser auto-import — used by `isAvailable`.
     private func resolveToken(config: ProviderConfig) -> String? {
         if let k = config.apiKey, !k.isEmpty { return k }
         if let k = config.manualCookieHeader, !k.isEmpty {
@@ -33,6 +37,22 @@ public struct KimiCollector: ProviderCollector, Sendable {
         }
         if let k = ProcessInfo.processInfo.environment["KIMI_AUTH_TOKEN"], !k.isEmpty { return k }
         return nil
+    }
+
+    /// Full resolution including opt-in browser auto-import. Kimi uses the
+    /// `kimi-auth` cookie value as a JWT bearer token, so we extract it from
+    /// whatever cookie header the resolver returns.
+    private func resolveTokenAsync(config: ProviderConfig) async -> String? {
+        if let token = resolveToken(config: config) { return token }
+        guard config.cookieSource == .automatic else { return nil }
+        let resolution = await CookieResolver.resolve(
+            config: config,
+            envVarNames: [],
+            domains: Self.cookieDomains,
+            knownSessionCookieNames: ["kimi-auth"]
+        )
+        guard let header = resolution.headerValue else { return nil }
+        return extractCookieValue(header, name: "kimi-auth") ?? header
     }
 
     private func extractCookieValue(_ header: String, name: String) -> String? {

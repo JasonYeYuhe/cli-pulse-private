@@ -11,23 +11,38 @@ import Foundation
 public struct CursorCollector: ProviderCollector, Sendable {
     public let kind = ProviderKind.cursor
 
+    private static let envVars = ["CURSOR_COOKIE"]
+    private static let cookieDomains = ["cursor.com", "www.cursor.com"]
+    private static let knownSessionNames: Set<String> = [
+        "WorkosCursorSessionToken",
+        "__Secure-next-auth.session-token", "next-auth.session-token",
+        "wos-session", "__Secure-wos-session",
+        "authjs.session-token", "__Secure-authjs.session-token"
+    ]
+
     public func isAvailable(config: ProviderConfig) -> Bool {
-        resolveCookie(config: config) != nil
+        hasManualOrEnv(config: config) || config.cookieSource == .automatic
     }
 
     public func collect(config: ProviderConfig) async throws -> CollectorResult {
-        guard let cookie = resolveCookie(config: config) else {
-            throw CollectorError.missingCredentials("Cursor: no session cookie configured")
+        let resolution = await CookieResolver.resolve(
+            config: config,
+            envVarNames: Self.envVars,
+            domains: Self.cookieDomains,
+            knownSessionCookieNames: Self.knownSessionNames
+        )
+        guard let cookie = resolution.headerValue else {
+            throw CollectorError.missingCredentials("Cursor: no session cookie (manual or auto-import)")
         }
         let data = try await fetchUsageSummary(cookie: cookie)
         let parsed = try CursorCollector.parseResponse(data)
         return buildResult(parsed)
     }
 
-    private func resolveCookie(config: ProviderConfig) -> String? {
-        if let c = config.manualCookieHeader, !c.isEmpty { return c }
-        if let c = ProcessInfo.processInfo.environment["CURSOR_COOKIE"], !c.isEmpty { return c }
-        return nil
+    private func hasManualOrEnv(config: ProviderConfig) -> Bool {
+        if let c = config.manualCookieHeader, !c.isEmpty { return true }
+        if let c = ProcessInfo.processInfo.environment["CURSOR_COOKIE"], !c.isEmpty { return true }
+        return false
     }
 
     private func fetchUsageSummary(cookie: String) async throws -> Data {
