@@ -16,10 +16,19 @@
 //     precedent). en strings only this train (D2) — additional locales
 //     land with the UI consumer follow-on; there is no UI consumer yet
 //     in Phase A (D3), so nothing is user-visible until then.
-//   * `UsageFormatter.resetCountdownDescription` inlined as a private
-//     helper instead of vendoring the whole `UsageFormatter`. The
-//     duration string ("in 3d") is an English formatter, deferred for
-//     localization with the rest of the engine wiring.
+//   * `UsageFormatter.resetCountdownDescription` inlined. v1.23.0 G4
+//     (Gemini R1 HIGH): restructured to a single private
+//     `compactCountdown(seconds:) -> String?` returning a bare unit
+//     string ("3d", "2h 5m") or nil for the "now" case — the upstream
+//     concat-then-`dropFirst(3)` parse was a latent string-corruption
+//     bug. Rendered L10n output is byte-identical (tests unchanged).
+//     The compact d/h/m unit letters stay English this pass (Gemini R1
+//     Q4: defer 5-locale duration pluralization; CodexBar-identical,
+//     language-neutral); the L10n phrase templates are localized.
+//   * v1.23.0 G4: the consumed surface (`UsagePaceText`, `WeeklyDetail`,
+//     and the `weekly*`/`session*` statics) is promoted to `public` so
+//     the macOS/iOS app targets can consume it (was internal in Phase A
+//     when there was deliberately no UI consumer, D3).
 //
 // ─── MIT License (full notice required by upstream) ───────────────
 //
@@ -49,12 +58,24 @@
 
 import Foundation
 
-enum UsagePaceText {
-    struct WeeklyDetail {
-        let leftLabel: String
-        let rightLabel: String?
-        let expectedUsedPercent: Double
-        let stage: UsagePace.Stage
+public enum UsagePaceText {
+    public struct WeeklyDetail {
+        public let leftLabel: String
+        public let rightLabel: String?
+        public let expectedUsedPercent: Double
+        public let stage: UsagePace.Stage
+
+        public init(
+            leftLabel: String,
+            rightLabel: String?,
+            expectedUsedPercent: Double,
+            stage: UsagePace.Stage)
+        {
+            self.leftLabel = leftLabel
+            self.rightLabel = rightLabel
+            self.expectedUsedPercent = expectedUsedPercent
+            self.stage = stage
+        }
     }
 
     private enum DetailContext {
@@ -62,7 +83,7 @@ enum UsagePaceText {
         case weekly
     }
 
-    static func weeklySummary(pace: UsagePace, now: Date = .init()) -> String {
+    public static func weeklySummary(pace: UsagePace, now: Date = .init()) -> String {
         let detail = self.weeklyDetail(pace: pace, now: now)
         if let rightLabel = detail.rightLabel {
             return L10n.usagePace.summaryWithRight(detail.leftLabel, rightLabel)
@@ -70,7 +91,7 @@ enum UsagePaceText {
         return L10n.usagePace.summaryLeftOnly(detail.leftLabel)
     }
 
-    static func weeklyDetail(pace: UsagePace, now: Date = .init()) -> WeeklyDetail {
+    public static func weeklyDetail(pace: UsagePace, now: Date = .init()) -> WeeklyDetail {
         WeeklyDetail(
             leftLabel: self.detailLeftLabel(for: pace),
             rightLabel: self.detailRightLabel(for: pace, context: .weekly, now: now),
@@ -95,15 +116,14 @@ enum UsagePaceText {
         if pace.willLastToReset {
             etaLabel = L10n.usagePace.lastsUntilReset
         } else if let etaSeconds = pace.etaSeconds {
-            let etaText = Self.durationText(seconds: etaSeconds, now: now)
-            if etaText == "now" {
-                etaLabel = context == .session
-                    ? L10n.usagePace.projectedEmptyNow
-                    : L10n.usagePace.runsOutNow
-            } else {
+            if let etaText = Self.compactCountdown(seconds: etaSeconds) {
                 etaLabel = context == .session
                     ? L10n.usagePace.projectedEmptyIn(etaText)
                     : L10n.usagePace.runsOutIn(etaText)
+            } else {
+                etaLabel = context == .session
+                    ? L10n.usagePace.projectedEmptyNow
+                    : L10n.usagePace.runsOutNow
             }
         } else {
             etaLabel = nil
@@ -118,34 +138,32 @@ enum UsagePaceText {
         return riskLabel
     }
 
-    private static func durationText(seconds: TimeInterval, now: Date) -> String {
-        let date = now.addingTimeInterval(seconds)
-        let countdown = Self.resetCountdownDescription(from: date, now: now)
-        if countdown == "now" { return "now" }
-        if countdown.hasPrefix("in ") { return String(countdown.dropFirst(3)) }
-        return countdown
-    }
+    /// Compact future-countdown for the ETA phrases. Restructured from
+    /// CodexBar `UsageFormatter.resetCountdownDescription` (MIT).
+    /// Returns `nil` when the projection is effectively "now" (the caller
+    /// then picks the `*Now` phrase), otherwise a bare unit string —
+    /// "3d" / "3d 2h" / "2h" / "2h 5m" / "5m" — with **no** "in " prefix,
+    /// so callers never string-slice (Gemini R1 HIGH: the upstream
+    /// concat-then-`dropFirst(3)` was a latent corruption bug). Numeric
+    /// output is identical to upstream; English unit letters this pass.
+    private static func compactCountdown(seconds: TimeInterval) -> String? {
+        let secs = max(0, seconds)
+        if secs < 1 { return nil }
 
-    /// Inlined from CodexBar `UsageFormatter.resetCountdownDescription`
-    /// (MIT). English-only formatter; localized with the UI follow-on.
-    private static func resetCountdownDescription(from date: Date, now: Date) -> String {
-        let seconds = max(0, date.timeIntervalSince(now))
-        if seconds < 1 { return "now" }
-
-        let totalMinutes = max(1, Int(ceil(seconds / 60.0)))
+        let totalMinutes = max(1, Int(ceil(secs / 60.0)))
         let days = totalMinutes / (24 * 60)
         let hours = (totalMinutes / 60) % 24
         let minutes = totalMinutes % 60
 
         if days > 0 {
-            if hours > 0 { return "in \(days)d \(hours)h" }
-            return "in \(days)d"
+            if hours > 0 { return "\(days)d \(hours)h" }
+            return "\(days)d"
         }
         if hours > 0 {
-            if minutes > 0 { return "in \(hours)h \(minutes)m" }
-            return "in \(hours)h"
+            if minutes > 0 { return "\(hours)h \(minutes)m" }
+            return "\(hours)h"
         }
-        return "in \(totalMinutes)m"
+        return "\(totalMinutes)m"
     }
 
     private static func roundedRiskPercent(_ probability: Double) -> Int {

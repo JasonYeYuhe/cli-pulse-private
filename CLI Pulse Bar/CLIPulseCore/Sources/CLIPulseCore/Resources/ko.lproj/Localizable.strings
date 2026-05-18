@@ -444,3 +444,16 @@
 "swarm.last_seen" = "%@ 전 확인";
 "swarm.oldest_blocked" = "%@ 차단됨";
 "swarm.summary" = "%d 스웜 · %d 에이전트 · %d 차단";
+
+/* CodexBar-parity v1.23.0 G4 — pace/forecast text (UI-consumer follow-on i18n) */
+"usage_pace.on_track" = "정상 페이스";
+"usage_pace.in_deficit" = "%@%% 초과";
+"usage_pace.in_reserve" = "%@%% 여유";
+"usage_pace.lasts_until_reset" = "리셋까지 유지";
+"usage_pace.runs_out_now" = "곧 소진";
+"usage_pace.runs_out_in" = "%@ 후 소진";
+"usage_pace.projected_empty_now" = "곧 소진 예상";
+"usage_pace.projected_empty_in" = "%@ 후 소진 예상";
+"usage_pace.run_out_risk" = "≈ 소진 위험 %@%%";
+"usage_pace.summary_with_right" = "페이스: %@ · %@";
+"usage_pace.summary_left_only" = "페이스: %@";

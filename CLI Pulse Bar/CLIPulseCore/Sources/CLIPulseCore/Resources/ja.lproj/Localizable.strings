@@ -734,3 +734,16 @@
 "swarm.last_seen" = "最終確認 %@ 前";
 "swarm.oldest_blocked" = "%@ ブロック中";
 "swarm.summary" = "%d スウォーム · %d エージェント · %d ブロック";
+
+/* CodexBar-parity v1.23.0 G4 — pace/forecast text (UI-consumer follow-on i18n) */
+"usage_pace.on_track" = "ペース通り";
+"usage_pace.in_deficit" = "%@%% 超過ペース";
+"usage_pace.in_reserve" = "%@%% 余裕";
+"usage_pace.lasts_until_reset" = "リセットまで持続";
+"usage_pace.runs_out_now" = "まもなく枯渇";
+"usage_pace.runs_out_in" = "%@で枯渇";
+"usage_pace.projected_empty_now" = "まもなく空になる見込み";
+"usage_pace.projected_empty_in" = "%@で空になる見込み";
+"usage_pace.run_out_risk" = "≈ 枯渇リスク %@%%";
+"usage_pace.summary_with_right" = "ペース: %@ · %@";
+"usage_pace.summary_left_only" = "ペース: %@";
