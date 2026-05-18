@@ -33,9 +33,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 // OTHER DEALINGS IN THE SOFTWARE.
 
-#if os(macOS) && canImport(SweetCookieKit)
+#if os(macOS)
 import Foundation
-import SweetCookieKit
+// SweetCookieKit is vendored into this module
+// (Vendor/SweetCookieKit/) — no import needed.
 
 /// SweetCookieKit-backed `CookieImporting` for macOS.
 ///

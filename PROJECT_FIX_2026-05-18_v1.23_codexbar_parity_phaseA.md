@@ -23,10 +23,19 @@ Two Gemini 3.1 Pro reviews, both findings adopted:
   use `#if os(macOS) && canImport(SweetCookieKit)` everywhere.
 
 ## G1 — browser-cookie auto-import
-- `CLIPulseCore/Package.swift`: + `SweetCookieKit` (MIT, steipete) 0.4.1,
-  linked **only** via `.product(..., condition: .when(platforms: [.macOS]))`.
-  SweetCookieKit declares `.macOS` only + links sqlite3 → would break
-  iOS/watch if unconditional. (`Package.resolved` pins rev `21bedea`.)
+- **SweetCookieKit is SOURCE-VENDORED, not an SPM dependency.** First attempt
+  added it via SPM (`.when(platforms:[.macOS])`); clean CI (macos-15 / Xcode
+  16.4 / **Swift 6.1**) rejected it — every SweetCookieKit tag's manifest is
+  `swift-tools 6.2`, which the 6.1 toolchain cannot parse (and bumping
+  CLIPulseCore to 6.2 then failed: CI Swift 6.1 can't parse a 6.2 root either).
+  Resolution (Gemini-consulted, PICK B): vendor the 11 MIT source files into
+  `Sources/CLIPulseCore/Vendor/SweetCookieKit/` (+ `LICENSE`), each whole-file
+  `#if os(macOS)`-wrapped (same iOS/watch isolation the SPM platform-condition
+  gave). `Package.swift` reverted to `swift-tools 5.9`, SPM dep removed, +
+  `linkerSettings: [.linkedLibrary("sqlite3", .when(platforms:[.macOS]))]`.
+  No external dependency / toolchain coupling remains; local builds passed
+  only because the dev Mac is Swift 6.2 — the clean-env CI matrix caught it
+  (`feedback_ci_smoke_full_matrix` validated again).
 - New `CookieImporting.swift` (cross-platform, no `#if`): protocol +
   `NullCookieImporter` (iOS/watch/tests → returns nil → manual fallback).
 - New `BrowserCookieAutoImporter.swift` (`#if os(macOS) && canImport(SweetCookieKit)`):
@@ -92,6 +101,11 @@ Two Gemini 3.1 Pro reviews, both findings adopted:
   gate and will run the full suite without the local Keychain-Agent block.
 - Helper untouched (Phase A is Swift-only) — no helper/.pkg/backend/ASC change;
   zero owner-gated steps touched; v1.22.0 ASC pipeline undisturbed.
+- **CI resolution journey:** push `940f4af` (SPM dep) → Swift CI red (SCK
+  tools 6.2 unresolvable); `d9a7f5d` (bump CLIPulseCore→6.2) → red (CI Swift
+  6.1 can't parse 6.2 root); `<vendor>` (source-vendor SCK, revert to 5.9) →
+  re-verified locally green (clean resolve + 5 schemes + 20 targeted), CI
+  re-run pending. Net: SCK fully under our control, no toolchain coupling.
 
 ## Roadmap
 Parity = **v1.23.0** (owner). P2 Team Rollup → v1.24.0; P1 Cost Intelligence

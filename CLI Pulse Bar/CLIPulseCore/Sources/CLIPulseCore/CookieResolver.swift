@@ -33,7 +33,7 @@ public enum CookieResolver {
     /// Platform-appropriate default importer: SweetCookieKit on macOS,
     /// a no-op everywhere else.
     public static var platformDefaultImporter: CookieImporting {
-        #if os(macOS) && canImport(SweetCookieKit)
+        #if os(macOS)
         return BrowserCookieAutoImporter.shared
         #else
         return NullCookieImporter()

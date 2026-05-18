@@ -1,11 +1,4 @@
-// swift-tools-version: 6.2
-// NOTE: bumped from 5.9 → 6.2 ONLY so SwiftPM will accept the
-// SweetCookieKit dependency (its manifest is swift-tools 6.2; a package
-// cannot depend on one requiring a newer tools version — clean CI
-// resolution enforces this even though local Xcode SwiftPM was lenient).
-// `swiftLanguageModes: [.v5]` below pins Swift 5 language mode so the
-// existing CLIPulseCore sources keep their prior (non-strict-concurrency)
-// semantics — the tools-version bump is dependency-resolution-only.
+// swift-tools-version: 5.9
 
 import PackageDescription
 
@@ -24,34 +17,31 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/getsentry/sentry-cocoa", from: "9.10.0"),
-        // CodexBar-parity G1: browser-cookie auto-import. SweetCookieKit
-        // (MIT, steipete) declares only `.macOS` + links sqlite3, so it is
-        // linked into the CLIPulseCore target ONLY on macOS via the
-        // `.when(platforms: [.macOS])` condition below. iOS/watchOS builds
-        // never resolve or link it; all SCK call sites are additionally
-        // guarded with `#if os(macOS) && canImport(SweetCookieKit)`.
-        .package(url: "https://github.com/steipete/SweetCookieKit", from: "0.4.1")
+        .package(url: "https://github.com/getsentry/sentry-cocoa", from: "9.10.0")
+        // CodexBar-parity G1: SweetCookieKit (MIT, steipete) is NOT an SPM
+        // dependency — its Package.swift requires swift-tools 6.2 while CI
+        // runs Swift 6.1, which would block clean resolution. The source is
+        // vendored under Sources/CLIPulseCore/Vendor/SweetCookieKit/ (each
+        // file `#if os(macOS)`-wrapped). sqlite3 is linked on macOS below.
     ],
     targets: [
         .target(
             name: "CLIPulseCore",
             dependencies: [
-                .product(name: "Sentry", package: "sentry-cocoa"),
-                .product(
-                    name: "SweetCookieKit",
-                    package: "SweetCookieKit",
-                    condition: .when(platforms: [.macOS])
-                )
+                .product(name: "Sentry", package: "sentry-cocoa")
             ],
             resources: [
                 .process("Resources")
+            ],
+            linkerSettings: [
+                // Required by the vendored SweetCookieKit cookie-DB reader
+                // (macOS only — guarded by `#if os(macOS)` in source).
+                .linkedLibrary("sqlite3", .when(platforms: [.macOS]))
             ]
         ),
         .testTarget(
             name: "CLIPulseCoreTests",
             dependencies: ["CLIPulseCore"]
         ),
-    ],
-    swiftLanguageModes: [.v5]
+    ]
 )
