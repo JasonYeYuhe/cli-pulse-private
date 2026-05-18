@@ -478,6 +478,8 @@
 "provider_config.keychain_notice" = "仅保存在 Mac 钥匙串中，绝不会上传。";
 "provider_config.cookie_source" = "Cookie 来源";
 "provider_config.manual_cookie_header" = "手动 Cookie 头";
+"provider_config.auto_import_note" = "自动从已登录的浏览器导入会话 Cookie。macOS 可能会请求一次钥匙串访问；若未找到，请在下方手动粘贴。";
+"provider_config.auto_import_failed" = "无法自动导入会话 Cookie，请手动粘贴：";
 "provider_config.capabilities" = "能力";
 "provider_config.cap_quota" = "配额";
 "provider_config.cap_exact_cost" = "精确成本";

@@ -712,6 +712,19 @@
 "claude.peak_hours.off_peak_in" = "Off-peak · peak in %@";
 "claude.peak_hours.off_peak_fallback" = "Off-peak";
 
+/* CodexBar-parity Phase A / G4 — pace/forecast text (en-only this train) */
+"usage_pace.on_track" = "On pace";
+"usage_pace.in_deficit" = "%@%% in deficit";
+"usage_pace.in_reserve" = "%@%% in reserve";
+"usage_pace.lasts_until_reset" = "Lasts until reset";
+"usage_pace.runs_out_now" = "Runs out now";
+"usage_pace.runs_out_in" = "Runs out in %@";
+"usage_pace.projected_empty_now" = "Projected empty now";
+"usage_pace.projected_empty_in" = "Projected empty in %@";
+"usage_pace.run_out_risk" = "≈ %@%% run-out risk";
+"usage_pace.summary_with_right" = "Pace: %@ · %@";
+"usage_pace.summary_left_only" = "Pace: %@";
+
 
 /* ── v1.21 D7: Remote Control privacy-critical consent body ── */
 "advanced.remote_consent_body" = "When Remote Control is on, CLI Pulse can:\n• upload a redacted summary of each Claude permission request (tool name, short summary, risk badge)\n• upload a short tail of terminal output and the session status\n• relay your remote Approve / Deny to the local helper\n\nWhat never leaves your device:\n• provider API keys, cookies, OAuth tokens\n• full transcripts or session log files\n• full project paths (only basename + HMAC)\n\nApprove here is per-request only — it does NOT add a Claude Code Always-Allow rule. Claude will ask again next time it needs the same tool. To set persistent rules, use Claude Code's own \"Always Allow\" UI on your Mac.\n\nApproving a request executes the tool call on your Mac. Only approve requests you understand.";

@@ -12,13 +12,21 @@ import Foundation
 public struct AugmentCollector: ProviderCollector, Sendable {
     public let kind = ProviderKind.augment
 
+    private static let envVars = ["AUGMENT_COOKIE"]
+    private static let cookieDomains = ["augmentcode.com", "app.augmentcode.com"]
+
     public func isAvailable(config: ProviderConfig) -> Bool {
-        resolveCookie(config: config) != nil
+        hasManualOrEnv(config: config) || config.cookieSource == .automatic
     }
 
     public func collect(config: ProviderConfig) async throws -> CollectorResult {
-        guard let cookie = resolveCookie(config: config) else {
-            throw CollectorError.missingCredentials("Augment: no session cookie configured")
+        let resolution = await CookieResolver.resolve(
+            config: config,
+            envVarNames: Self.envVars,
+            domains: Self.cookieDomains
+        )
+        guard let cookie = resolution.headerValue else {
+            throw CollectorError.missingCredentials("Augment: no session cookie (manual or auto-import)")
         }
         let creditsData = try await fetchEndpoint(path: "/api/credits", cookie: cookie)
         let credits = try AugmentCollector.parseCredits(creditsData)
@@ -27,10 +35,10 @@ public struct AugmentCollector: ProviderCollector, Sendable {
         return buildResult(credits: credits, subscription: sub)
     }
 
-    private func resolveCookie(config: ProviderConfig) -> String? {
-        if let c = config.manualCookieHeader, !c.isEmpty { return c }
-        if let c = ProcessInfo.processInfo.environment["AUGMENT_COOKIE"], !c.isEmpty { return c }
-        return nil
+    private func hasManualOrEnv(config: ProviderConfig) -> Bool {
+        if let c = config.manualCookieHeader, !c.isEmpty { return true }
+        if let c = ProcessInfo.processInfo.environment["AUGMENT_COOKIE"], !c.isEmpty { return true }
+        return false
     }
 
     private func fetchEndpoint(path: String, cookie: String) async throws -> Data {

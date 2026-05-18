@@ -245,7 +245,9 @@ final class ProviderModelTests: XCTestCase {
     // MARK: - CookieSource
 
     func testCookieSourceAllCases() {
-        let expected: Set<String> = ["Safari", "Chrome", "Firefox", "Manual"]
+        // "Automatic" added in v1.23 Phase A / G1 (CodexBar-parity
+        // browser-cookie auto-import; opt-in, dark-safe).
+        let expected: Set<String> = ["Automatic", "Safari", "Chrome", "Firefox", "Manual"]
         let actual = Set(CookieSource.allCases.map(\.rawValue))
         XCTAssertEqual(expected, actual)
     }

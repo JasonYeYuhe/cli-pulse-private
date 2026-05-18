@@ -478,6 +478,8 @@
 "provider_config.keychain_notice" = "Mac のキーチェーンにのみ保存されます。アップロードされません。";
 "provider_config.cookie_source" = "Cookieソース";
 "provider_config.manual_cookie_header" = "手動 Cookie ヘッダー";
+"provider_config.auto_import_note" = "サインイン済みのブラウザからセッション Cookie を自動取得します。macOS が一度キーチェーンへのアクセスを求めることがあります。見つからない場合は下に手動で貼り付けてください。";
+"provider_config.auto_import_failed" = "セッション Cookie を自動取得できませんでした。手動で貼り付けてください:";
 "provider_config.capabilities" = "機能";
 "provider_config.cap_quota" = "クォータ";
 "provider_config.cap_exact_cost" = "正確なコスト";

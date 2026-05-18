@@ -12,8 +12,13 @@ import Foundation
 public struct MiniMaxCollector: ProviderCollector, Sendable {
     public let kind = ProviderKind.minimax
 
+    private static let cookieEnvVars = ["MINIMAX_COOKIE", "MINIMAX_COOKIE_HEADER"]
+    private static let cookieDomains = ["minimax.io", "platform.minimax.io"]
+
     public func isAvailable(config: ProviderConfig) -> Bool {
-        resolveAPIToken(config: config) != nil || resolveCookie(config: config) != nil
+        resolveAPIToken(config: config) != nil
+            || hasManualOrEnvCookie(config: config)
+            || config.cookieSource == .automatic
     }
 
     public func collect(config: ProviderConfig) async throws -> CollectorResult {
@@ -22,7 +27,12 @@ public struct MiniMaxCollector: ProviderCollector, Sendable {
             let parsed = try MiniMaxCollector.parseRemainsResponse(data)
             return buildResult(parsed)
         }
-        if let cookie = resolveCookie(config: config) {
+        let resolution = await CookieResolver.resolve(
+            config: config,
+            envVarNames: Self.cookieEnvVars,
+            domains: Self.cookieDomains
+        )
+        if let cookie = resolution.headerValue {
             let data = try await fetchRemainsCookie(cookie: cookie)
             let parsed = try MiniMaxCollector.parseRemainsResponse(data)
             return buildResult(parsed)
@@ -36,11 +46,12 @@ public struct MiniMaxCollector: ProviderCollector, Sendable {
         return nil
     }
 
-    private func resolveCookie(config: ProviderConfig) -> String? {
-        if let c = config.manualCookieHeader, !c.isEmpty { return c }
-        if let c = ProcessInfo.processInfo.environment["MINIMAX_COOKIE"], !c.isEmpty { return c }
-        if let c = ProcessInfo.processInfo.environment["MINIMAX_COOKIE_HEADER"], !c.isEmpty { return c }
-        return nil
+    private func hasManualOrEnvCookie(config: ProviderConfig) -> Bool {
+        if let c = config.manualCookieHeader, !c.isEmpty { return true }
+        for name in Self.cookieEnvVars where !(ProcessInfo.processInfo.environment[name] ?? "").isEmpty {
+            return true
+        }
+        return false
     }
 
     private func remainsURL() -> String {

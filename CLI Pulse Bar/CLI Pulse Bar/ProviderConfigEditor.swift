@@ -22,6 +22,9 @@ struct ProviderConfigEditor: View {
     @State private var geminiError: String?
     @State private var showAPIKey: Bool = false
     @State private var testState: TestConnectionState = .idle
+    /// G1: set when a `.automatic` cookie test fails so the manual-paste
+    /// fallback field is revealed (animated). Reset on success / source change.
+    @State private var autoImportFailed: Bool = false
     // Claude Code keychain-connect state. Mirrors Gemini OAuth pattern but the
     // "prompt" is really the macOS Security framework's cross-app keychain
     // access dialog triggered by SecItemCopyMatching — we don't need any
@@ -42,6 +45,46 @@ struct ProviderConfigEditor: View {
 
     private var descriptor: ProviderDescriptor {
         ProviderRegistry.descriptor(for: kind)
+    }
+
+    /// G1: `.automatic` browser auto-import is macOS-only (no browser cookie
+    /// stores on iOS/watchOS). On other platforms it is hidden so a synced
+    /// `.automatic` config simply falls back to manual.
+    private var availableCookieSources: [CookieSource] {
+        #if os(macOS)
+        return CookieSource.allCases
+        #else
+        return CookieSource.allCases.filter { $0 != .automatic }
+        #endif
+    }
+
+    /// Manual cookie-header paste field + Keychain notice. Shared by the
+    /// `.manual` source and the `.automatic` failure-fallback reveal.
+    @ViewBuilder
+    private func manualCookieField(label: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            #if os(macOS)
+            NoAutoFillTextField(placeholder: "session=abc123; ...", text: $manualCookieHeader)
+                .frame(minHeight: 22)
+                .padding(.vertical, 1)
+            #else
+            TextField("session=abc123; ...", text: $manualCookieHeader)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 10))
+                .textContentType(.none)
+            #endif
+            HStack(spacing: 3) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.green.opacity(0.8))
+                Text(L10n.providerConfig.keychainNotice)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     var body: some View {
@@ -153,7 +196,7 @@ struct ProviderConfigEditor: View {
                         get: { cookieSource ?? .safari },
                         set: { cookieSource = $0 }
                     )) {
-                        ForEach(CookieSource.allCases, id: \.self) { src in
+                        ForEach(availableCookieSources, id: \.self) { src in
                             Text(src.rawValue).tag(src)
                         }
                     }
@@ -162,30 +205,26 @@ struct ProviderConfigEditor: View {
                     .frame(width: 100)
                 }
 
-                if cookieSource == .manual {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(L10n.providerConfig.manualCookieHeader)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                        #if os(macOS)
-                        NoAutoFillTextField(placeholder: "session=abc123; ...", text: $manualCookieHeader)
-                            .frame(minHeight: 22)
-                    .padding(.vertical, 1)
-                        #else
-                        TextField("session=abc123; ...", text: $manualCookieHeader)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 10))
-                            .textContentType(.none)
-                        #endif
+                if cookieSource == .automatic {
+                    VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 3) {
-                            Image(systemName: "lock.fill")
+                            Image(systemName: "sparkles")
                                 .font(.system(size: 8))
-                                .foregroundStyle(.green.opacity(0.8))
-                            Text(L10n.providerConfig.keychainNotice)
+                                .foregroundStyle(PulseTheme.accent)
+                            Text(L10n.providerConfig.autoImportNote)
                                 .font(.system(size: 9))
                                 .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if autoImportFailed {
+                            manualCookieField(label: L10n.providerConfig.autoImportFailed)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
                         }
                     }
+                }
+
+                if cookieSource == .manual {
+                    manualCookieField(label: L10n.providerConfig.manualCookieHeader)
                 }
             }
 
@@ -246,6 +285,10 @@ struct ProviderConfigEditor: View {
         .onChange(of: apiKey) { _ in testState = .idle }
         .onChange(of: manualCookieHeader) { _ in testState = .idle }
         .onChange(of: sourceMode) { _ in testState = .idle }
+        .onChange(of: cookieSource) { _ in
+            testState = .idle
+            withAnimation { autoImportFailed = false }
+        }
         #endif
     }
 
@@ -547,8 +590,12 @@ struct ProviderConfigEditor: View {
                 summary = "OK (\(ms)ms) status reachable"
             }
             testState = .success(summary)
+            withAnimation { autoImportFailed = false }
         } catch {
             testState = .failure(error.localizedDescription)
+            if cookieSource == .automatic {
+                withAnimation { autoImportFailed = true }
+            }
         }
     }
     #endif

@@ -710,6 +710,8 @@ public enum L10n {
         public static var keychainNotice: String { tr("provider_config.keychain_notice") }
         public static var cookieSource: String { tr("provider_config.cookie_source") }
         public static var manualCookieHeader: String { tr("provider_config.manual_cookie_header") }
+        public static var autoImportNote: String { tr("provider_config.auto_import_note") }
+        public static var autoImportFailed: String { tr("provider_config.auto_import_failed") }
         public static var capabilities: String { tr("provider_config.capabilities") }
         public static var capQuota: String { tr("provider_config.cap_quota") }
         public static var capExactCost: String { tr("provider_config.cap_exact_cost") }
@@ -915,6 +917,26 @@ public enum L10n {
         }
         public static var offPeakFallback: String {
             tr("claude.peak_hours.off_peak_fallback")
+        }
+    }
+
+    // CodexBar-parity Phase A / G4 — pace/forecast text. en-only this
+    // train (D2); other locales land with the UI consumer follow-on.
+    public enum usagePace {
+        public static var onTrack: String { tr("usage_pace.on_track") }
+        public static func inDeficit(_ delta: String) -> String { tr("usage_pace.in_deficit", delta) }
+        public static func inReserve(_ delta: String) -> String { tr("usage_pace.in_reserve", delta) }
+        public static var lastsUntilReset: String { tr("usage_pace.lasts_until_reset") }
+        public static var runsOutNow: String { tr("usage_pace.runs_out_now") }
+        public static func runsOutIn(_ duration: String) -> String { tr("usage_pace.runs_out_in", duration) }
+        public static var projectedEmptyNow: String { tr("usage_pace.projected_empty_now") }
+        public static func projectedEmptyIn(_ duration: String) -> String { tr("usage_pace.projected_empty_in", duration) }
+        public static func runOutRisk(_ percent: String) -> String { tr("usage_pace.run_out_risk", percent) }
+        public static func summaryWithRight(_ left: String, _ right: String) -> String {
+            tr("usage_pace.summary_with_right", left, right)
+        }
+        public static func summaryLeftOnly(_ left: String) -> String {
+            tr("usage_pace.summary_left_only", left)
         }
     }
 }
