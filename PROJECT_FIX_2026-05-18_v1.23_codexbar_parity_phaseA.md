@@ -103,9 +103,23 @@ Two Gemini 3.1 Pro reviews, both findings adopted:
   zero owner-gated steps touched; v1.22.0 ASC pipeline undisturbed.
 - **CI resolution journey:** push `940f4af` (SPM dep) → Swift CI red (SCK
   tools 6.2 unresolvable); `d9a7f5d` (bump CLIPulseCore→6.2) → red (CI Swift
-  6.1 can't parse 6.2 root); `<vendor>` (source-vendor SCK, revert to 5.9) →
-  re-verified locally green (clean resolve + 5 schemes + 20 targeted), CI
-  re-run pending. Net: SCK fully under our control, no toolchain coupling.
+  6.1 can't parse 6.2 root); `aba5d85` (source-vendor SCK, revert to 5.9) →
+  vendored SCK compiles on CI Swift 6.1, but CI full suite caught a stale
+  `ProviderModelTests.testCookieSourceAllCases` (hard-coded the rawValue set;
+  G1 added `.automatic`); `054f271` updated that assertion → **Swift CI +
+  Lint workflow SUCCESS**. Net: SCK fully under our control, no toolchain
+  coupling; the local full-suite Keychain hang is irrelevant — CI clean env
+  runs all ~220 tests and is the authoritative gate.
+- **Final CI (draft PR #43, full 9-job matrix):** Swift CI **success** — all
+  authoritative jobs pass: Decide-matrix, Version-drift-gate, HelperSwift
+  tests, CLIPulseCore unit tests, Build CLI Pulse Bar; MAS-archive/Phase4D
+  jobs correctly skipped. `SwiftLint (warning-only)` reports fail but the job
+  is `continue-on-error: true` by explicit design (1676 pre-existing
+  codebase-wide violations; non-blocking baseline — same status class as the
+  known-ignored Android release-AAB). The `usagePace` lowercase enum name is
+  intentional (matches the established `L10n.claudePeakHours/providerConfig/…`
+  convention). PR is **draft — must NOT merge until v1.22.1 cut** (Gemini
+  MEDIUM branch discipline).
 
 ## Roadmap
 Parity = **v1.23.0** (owner). P2 Team Rollup → v1.24.0; P1 Cost Intelligence
