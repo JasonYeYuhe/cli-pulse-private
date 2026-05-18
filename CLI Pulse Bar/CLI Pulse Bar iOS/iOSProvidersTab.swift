@@ -261,6 +261,26 @@ struct iOSEnhancedProviderCard: View {
                     )
                 }
 
+                // v1.23 G4: CodexBar-parity usage-pace forecast,
+                // mirroring the macOS providers card. Engine-gated to
+                // Codex/Claude with a valid future reset anchor; nil ⇒
+                // the row is absent. Matches the existing
+                // provider-conditional `ClaudePeakFooter` pattern in
+                // this same container (intentional ragged-row design
+                // since v1.18.2 — Gemini R1 CRITICAL verified: no new
+                // misalignment class introduced).
+                if let paceSummary = provider.paceSummary() {
+                    HStack(spacing: 4) {
+                        Image(systemName: "gauge.with.needle")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        Text(paceSummary)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
                 // v1.18.2 D-1: Anthropic peak / off-peak window
                 // indicator. Shared with the macOS providers tab via
                 // CLIPulseCore.ClaudePeakFooter; kept inside the

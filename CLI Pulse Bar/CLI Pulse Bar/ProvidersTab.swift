@@ -387,6 +387,24 @@ struct EnhancedProviderCard: View {
                     }
                 }
 
+                // v1.23 G4: CodexBar-parity usage-pace forecast
+                // ("12% in deficit · runs out in 3d"). Engine-gated to
+                // Codex/Claude with a valid future reset anchor; nil ⇒
+                // the row is simply absent. Safe in this vertically-
+                // stacked card list (Gemini R1 CRITICAL applies only to
+                // equal-height grids/HStacks — verified inapplicable).
+                if let paceSummary = provider.paceSummary() {
+                    HStack(spacing: 4) {
+                        Image(systemName: "gauge.with.needle")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.tertiary)
+                        Text(paceSummary)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
                 // v1.18: Anthropic peak / off-peak window indicator for
                 // Claude. Static schedule (weekdays 08:00–14:00 ET); the
                 // computation lives in `CLIPulseCore.ClaudePeakHours`

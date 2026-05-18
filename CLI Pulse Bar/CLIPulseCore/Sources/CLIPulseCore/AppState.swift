@@ -709,8 +709,18 @@ public final class AppState: ObservableObject {
         case .mostUsed:
             return mostUsedProvider?.provider ?? ""
         case .pace:
-            if let top = mostUsedProvider, top.usagePercent > 0 {
-                return String(format: "%.0f%%", top.usagePercent * 100)
+            // v1.23 G4: CodexBar-parity pace forecast. Prefer the
+            // ultra-compact engine label ("▲12%"/"▼8%"/"≈"); fall back
+            // to the prior remaining-% rendering when the engine has no
+            // verdict (non-Codex/Claude top provider, or no reset
+            // anchor) so behavior is unchanged for those cases.
+            if let top = mostUsedProvider {
+                if let paceLabel = top.paceMenuLabel() {
+                    return paceLabel
+                }
+                if top.usagePercent > 0 {
+                    return String(format: "%.0f%%", top.usagePercent * 100)
+                }
             }
             return ""
         case .icon:
