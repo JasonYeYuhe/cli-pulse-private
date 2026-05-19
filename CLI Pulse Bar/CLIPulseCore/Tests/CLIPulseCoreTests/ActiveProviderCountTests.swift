@@ -78,18 +78,19 @@ final class ActiveProviderCountTests: XCTestCase {
 
     // MARK: - the 5 cases the spec requires
 
-    func test_26TogglesEnabledNoUsageNoCredentials_countsAsZero() {
+    func test_allTogglesEnabledNoUsageNoCredentials_countsAsZero() {
         // The user-reported bug, exact reproduction.
-        // ProviderConfig.defaults() = 26 enabled toggles, 0 credentials, 0 server usage.
+        // ProviderConfig.defaults() enables every ProviderKind, 0 credentials, 0 server usage.
+        // Asserted against allCases.count so new providers (Phase B/C) don't re-break this.
         let configs = freshDefaults()
-        XCTAssertEqual(configs.filter(\.isEnabled).count, 26,
-                       "sanity check: defaults() enables all 26 ProviderKinds")
+        XCTAssertEqual(configs.filter(\.isEnabled).count, ProviderKind.allCases.count,
+                       "sanity check: defaults() enables every ProviderKind")
         let count = DataRefreshManager.activeProviderCount(
             providers: [],
             providerConfigs: configs
         )
         XCTAssertEqual(count, 0,
-                       "26 enabled toggles with no usage and no credentials must NOT count as 26 — that's the bug")
+                       "all enabled toggles with no usage and no credentials must count as 0 — that's the bug")
     }
 
     func test_OllamaWithManyModelsSessionsCountsAsOne() {

@@ -62,13 +62,13 @@ final class ProviderLimitMigrationTests: XCTestCase {
         guard state.subscriptionManager.maxProviders > 0 else {
             throw XCTSkip("Paid tier — skipping free-tier migration test")
         }
-        XCTAssertEqual(state.providerConfigs.filter(\.isEnabled).count, 26,
-                       "defaults() should enable all 26")
+        XCTAssertEqual(state.providerConfigs.filter(\.isEnabled).count, ProviderKind.allCases.count,
+                       "defaults() should enable every ProviderKind")
         // No usage rows, no credentials → activeCount = 0.
 
         state.migrateProviderLimitsIfNeeded()
 
-        XCTAssertEqual(state.providerConfigs.filter(\.isEnabled).count, 26,
+        XCTAssertEqual(state.providerConfigs.filter(\.isEnabled).count, ProviderKind.allCases.count,
                        "no active providers → no toggle pruning")
         XCTAssertEqual(state.providerLimitMigrationCount, 0,
                        "no active providers → no banner")
@@ -90,7 +90,7 @@ final class ProviderLimitMigrationTests: XCTestCase {
 
         state.migrateProviderLimitsIfNeeded()
 
-        XCTAssertEqual(state.providerConfigs.filter(\.isEnabled).count, 26,
+        XCTAssertEqual(state.providerConfigs.filter(\.isEnabled).count, ProviderKind.allCases.count,
                        "2 active <= 3 limit → no toggle pruning")
         XCTAssertEqual(state.providerLimitMigrationCount, 0,
                        "user must NOT see 'Disabled 23' on a fresh free install")
@@ -110,7 +110,7 @@ final class ProviderLimitMigrationTests: XCTestCase {
 
         state.migrateProviderLimitsIfNeeded()
 
-        XCTAssertEqual(state.providerConfigs.filter(\.isEnabled).count, 26,
+        XCTAssertEqual(state.providerConfigs.filter(\.isEnabled).count, ProviderKind.allCases.count,
                        "active == limit → still no prune (only OVER triggers)")
         XCTAssertEqual(state.providerLimitMigrationCount, 0)
     }
