@@ -428,9 +428,13 @@ public enum ProviderRegistry {
         ),
         ProviderDescriptor(
             kind: .perplexity, displayName: "Perplexity", category: .cloud,
-            supportedSources: [.auto, .api],
-            supportsQuota: true, supportsExactCost: false,
-            requiresHelperBackend: true,
+            // v1.23.0 Phase B-1: real cookie-based collector — `.web`
+            // so the auth UI asks for a session cookie, not an API key
+            // (Gemini Phase-B R1 Q3); requiresHelperBackend flipped
+            // false (now collected in-app; the flag is metadata-only).
+            supportedSources: [.auto, .web],
+            supportsQuota: true, supportsExactCost: true,
+            requiresHelperBackend: false,
             cliNames: ["perplexity", "pplx"], webDomain: "perplexity.ai"
         ),
         ProviderDescriptor(
