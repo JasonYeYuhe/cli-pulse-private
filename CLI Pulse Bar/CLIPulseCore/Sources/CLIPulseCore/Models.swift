@@ -76,6 +76,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case perplexity = "Perplexity"
     case volcanoEngine = "Volcano Engine"
     case glm = "GLM"
+    // v1.23.0 Phase C-1 (CodexBar parity): api-key collector.
+    case crof = "Crof"
 
     public var id: String { rawValue }
 
@@ -129,6 +131,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .perplexity: return "magnifyingglass.circle"
         case .volcanoEngine: return "flame"
         case .glm: return "text.bubble"
+        case .crof: return "c.circle"
         }
     }
 }

@@ -63,6 +63,7 @@ public enum CollectorRegistry {
         GLMCollector(),
         PerplexityCollector(),
         VertexAICollector(),
+        CrofCollector(),
     ]
 
     /// Returns the collector for a given provider, if one exists and is available.

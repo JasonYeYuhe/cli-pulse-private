@@ -442,6 +442,15 @@ public enum ProviderRegistry {
             cliNames: ["perplexity", "pplx"], webDomain: "perplexity.ai"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-1 (CodexBar parity): new api-key
+            // provider — Bearer key, single billing endpoint.
+            kind: .crof, displayName: "Crof", category: .cloud,
+            supportedSources: [.auto, .api],
+            supportsQuota: true, supportsExactCost: false, supportsCredits: true,
+            requiresHelperBackend: false,
+            cliNames: ["crof"], webDomain: "crof.ai"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
