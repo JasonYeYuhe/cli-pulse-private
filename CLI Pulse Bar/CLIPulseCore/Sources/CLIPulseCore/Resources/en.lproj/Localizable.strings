@@ -434,6 +434,8 @@
 "provider_config.disconnect" = "Disconnect";
 "provider_config.connect_gemini" = "Connect Gemini";
 "provider_config.gemini_uses_google" = "Uses your Google account. No API key needed.";
+"provider_config.gemini_cli_fallback" = "Gemini CLI fallback";
+"provider_config.gemini_cli_fallback_note" = "If the CLI Pulse Gemini login can't refresh, fall back to the Gemini CLI's own credentials. Direct-download builds only.";
 "provider_config.claude_code" = "Claude Code";
 "provider_config.connect_claude_code" = "Connect Claude Code";
 "provider_config.claude_keychain_hint" = "Reads your existing Claude Code login. macOS will ask once for permission — tap Always Allow.";

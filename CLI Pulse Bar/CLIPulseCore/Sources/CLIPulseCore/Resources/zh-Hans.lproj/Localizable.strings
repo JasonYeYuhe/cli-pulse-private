@@ -490,6 +490,8 @@
 "provider_config.disconnect" = "断开连接";
 "provider_config.connect_gemini" = "连接 Gemini";
 "provider_config.gemini_uses_google" = "使用你的 Google 账号，无需 API 密钥。";
+"provider_config.gemini_cli_fallback" = "Gemini CLI 回退";
+"provider_config.gemini_cli_fallback_note" = "当 CLI Pulse 的 Gemini 登录无法刷新时，回退到 Gemini CLI 自身的凭证。仅限直接下载版。";
 "provider_config.claude_code" = "Claude Code";
 "provider_config.connect_claude_code" = "连接 Claude Code";
 "provider_config.claude_keychain_hint" = "读取你已有的 Claude Code 登录信息。macOS 会请求一次授权——请点「始终允许」。";
