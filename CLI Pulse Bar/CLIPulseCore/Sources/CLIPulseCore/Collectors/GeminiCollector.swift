@@ -57,6 +57,11 @@ public struct GeminiCollector: ProviderCollector, Sendable {
 
     public func collect(config: ProviderConfig) async throws -> CollectorResult {
         guard var creds = readCredentials(), creds.accessToken != nil else {
+            // v1.23.0 G3: dark/opt-in CLI-probe fallback for the
+            // no-credentials gap. Returns nil instantly (probe never
+            // constructed) unless explicitly opted in; any probe error
+            // is swallowed so this throw path stays byte-identical.
+            if let probed = await probeFallbackResult(config: config) { return probed }
             throw CollectorError.missingCredentials("Gemini: no credentials found")
         }
 
@@ -77,6 +82,11 @@ public struct GeminiCollector: ProviderCollector, Sendable {
         }
 
         guard let token = creds.accessToken, !creds.isExpired else {
+            // v1.23.0 G3: try the dark/opt-in CLI-probe fallback BEFORE
+            // recording a failure — a probe rescue is not a failure.
+            // nil when opted-out (dark) or on any probe error, so the
+            // backoff state machine below stays byte-identical.
+            if let probed = await probeFallbackResult(config: config) { return probed }
             // v1.16 §2.2: backoff to avoid log spam every collector tick.
             // First failure for this source emits the normal error;
             // subsequent failures within 1h are silently suppressed
@@ -375,6 +385,110 @@ public struct GeminiCollector: ProviderCollector, Sendable {
         )
 
         return CollectorResult(usage: usage, dataKind: .quota)
+    }
+
+    // MARK: - G3 dark/opt-in CLI-probe fallback (v1.23.0 CodexBar parity)
+
+    /// Returns nil instantly (the probe is never even constructed)
+    /// unless this Gemini config explicitly opted into the fallback.
+    /// ANY probe error — App-Sandbox/POSIX failures from its
+    /// subprocess+filesystem OAuth-client discovery, network, or
+    /// `.unsupportedAuthType` — is swallowed and nil returned, so the
+    /// caller's pre-existing failure/backoff path runs byte-identically
+    /// (Gemini 3.1 Pro R1 CRITICAL). The probe only ever upgrades a
+    /// credential-gap failure into a success; it never alters the
+    /// failure path. Triggered solely at the no-creds / unrefreshable-
+    /// token gaps — never on transient network errors of the primary
+    /// path (so we don't double-hit Google or mask outages).
+    private func probeFallbackResult(config: ProviderConfig) async -> CollectorResult? {
+        guard config.geminiCliProbeFallback == true else { return nil }
+        do {
+            let probe = GeminiStatusProbe(homeDirectory: realUserHome())
+            let snapshot = try await probe.fetch()
+            return mapSnapshot(snapshot)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Maps a `GeminiStatusProbe` snapshot onto the SAME ProviderUsage
+    /// shape `buildResult` produces from the primary path, so toggling
+    /// the dark fallback never visibly jumps the displayed numbers
+    /// (Gemini R1 Q3). NOTE: `GeminiModelQuota.percentLeft` is already
+    /// 0–100 — it is NOT ×100 again here, unlike the fraction-based
+    /// primary `QuotaBucket` path (Gemini R1 HIGH scale trap).
+    func mapSnapshot(_ snap: GeminiStatusSnapshot) -> CollectorResult {
+        var familyBest: [String: (percent: Int, reset: String?)] = [:]
+        for q in snap.modelQuotas {
+            let family = classifyModel(q.modelId)
+            let percent = max(0, min(100, Int(q.percentLeft.rounded())))
+            // Prefer the canonical ISO form (round-trips through
+            // sharedISO8601Parse — matches the primary path and the G4
+            // pace engine); fall back to the probe's textual reset.
+            let reset = q.resetTime.map { sharedISO8601Formatter.string(from: $0) } ?? q.resetDescription
+            if let existing = familyBest[family] {
+                if percent < existing.percent { familyBest[family] = (percent, reset) }
+            } else {
+                familyBest[family] = (percent, reset)
+            }
+        }
+
+        let preferredOrder = ["Pro", "Flash", "Flash Lite"]
+        var tiers: [TierDTO] = []
+        for family in preferredOrder {
+            guard let info = familyBest[family] else { continue }
+            tiers.append(TierDTO(name: family, quota: 100, remaining: info.percent, reset_time: info.reset))
+        }
+        for family in familyBest.keys.sorted() where !preferredOrder.contains(family) {
+            guard let info = familyBest[family] else { continue }
+            tiers.append(TierDTO(name: family, quota: 100, remaining: info.percent, reset_time: info.reset))
+        }
+
+        let primaryFamily = preferredOrder.first(where: { familyBest[$0] != nil })
+        let primary = primaryFamily.flatMap { familyBest[$0] }
+        let overallRemaining = primary?.percent
+            ?? familyBest.values.map(\.percent).min()
+            ?? 100
+        let overallReset = primary?.reset ?? familyBest.values.compactMap(\.reset).first
+
+        let usage = ProviderUsage(
+            provider: ProviderKind.gemini.rawValue,
+            today_usage: 100 - overallRemaining,
+            week_usage: 100 - overallRemaining,
+            estimated_cost_today: 0,
+            estimated_cost_week: 0,
+            cost_status_today: "Unavailable",
+            cost_status_week: "Unavailable",
+            quota: 100,
+            remaining: overallRemaining,
+            plan_type: normalizePlan(snap.accountPlan),
+            reset_time: overallReset,
+            tiers: tiers,
+            status_text: "\(100 - overallRemaining)% used",
+            trend: [],
+            recent_sessions: [],
+            recent_errors: [],
+            metadata: ProviderMetadata(
+                display_name: "Gemini",
+                category: "cloud",
+                supports_exact_cost: false,
+                supports_quota: true
+            )
+        )
+        return CollectorResult(usage: usage, dataKind: .quota)
+    }
+
+    /// Normalizes the probe's free-form account plan onto the same
+    /// vocabulary `buildResult` derives from the tier id (Paid / Free /
+    /// Legacy / Unknown) so the plan badge is consistent across both
+    /// paths (Gemini R1 Q3). No tier info ⇒ "Unknown" (acceptable;
+    /// only ever reached in the opt-in fallback).
+    func normalizePlan(_ raw: String?) -> String {
+        guard let p = raw?.lowercased(), !p.isEmpty else { return "Unknown" }
+        if p.contains("standard") || p.contains("paid") { return "Paid" }
+        if p.contains("free") { return "Free" }
+        if p.contains("legacy") { return "Legacy" }
+        return "Unknown"
     }
 
     private func classifyModel(_ modelId: String) -> String {
