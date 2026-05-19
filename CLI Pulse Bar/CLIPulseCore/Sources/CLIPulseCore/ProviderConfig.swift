@@ -421,9 +421,13 @@ public enum ProviderRegistry {
         ),
         ProviderDescriptor(
             kind: .vertexAI, displayName: "Vertex AI (Google Cloud)", category: .cloud,
-            supportedSources: [.auto, .oauth, .api],
-            supportsQuota: true, supportsExactCost: true,
-            requiresHelperBackend: true,
+            // v1.23.0 Phase B-2: real collector via gcloud ADC (OAuth
+            // user creds) — drop `.api` (no API-key path);
+            // exactCost:false (fetcher returns only a usage %, no $);
+            // requiresHelperBackend false (in-app now, metadata-only).
+            supportedSources: [.auto, .oauth],
+            supportsQuota: true, supportsExactCost: false,
+            requiresHelperBackend: false,
             webDomain: "console.cloud.google.com"
         ),
         ProviderDescriptor(
