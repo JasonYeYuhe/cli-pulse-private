@@ -12,6 +12,14 @@ public struct ProviderConfig: Codable, Identifiable, Sendable {
     public var sourceMode: SourceType
     public var cookieSource: CookieSource?
     public var accountLabel: String?
+    /// v1.23.0 G3 (CodexBar parity, dark/opt-in): when true, the Gemini
+    /// collector may fall back to the vendored `GeminiStatusProbe`
+    /// (Gemini-CLI-package OAuth path) *only* when its own
+    /// Keychain/file credential path has no usable token. Optional ⇒
+    /// absent in existing serialized configs ⇒ decodes nil ⇒ OFF ⇒
+    /// byte-identical production behavior (same dark-safe pattern as
+    /// `cookieSource`). Gemini-only; ignored by other providers.
+    public var geminiCliProbeFallback: Bool?
 
     // Transient — never encoded into UserDefaults.  Populated at runtime from Keychain.
     public var apiKey: String?
@@ -22,6 +30,7 @@ public struct ProviderConfig: Codable, Identifiable, Sendable {
     // Only encode non-sensitive fields to UserDefaults
     private enum CodingKeys: String, CodingKey {
         case kind, isEnabled, sortOrder, sourceMode, cookieSource, accountLabel
+        case geminiCliProbeFallback
     }
 
     public init(
@@ -32,7 +41,8 @@ public struct ProviderConfig: Codable, Identifiable, Sendable {
         apiKey: String? = nil,
         cookieSource: CookieSource? = nil,
         manualCookieHeader: String? = nil,
-        accountLabel: String? = nil
+        accountLabel: String? = nil,
+        geminiCliProbeFallback: Bool? = nil
     ) {
         self.kind = kind
         self.isEnabled = isEnabled
@@ -42,6 +52,7 @@ public struct ProviderConfig: Codable, Identifiable, Sendable {
         self.cookieSource = cookieSource
         self.manualCookieHeader = manualCookieHeader
         self.accountLabel = accountLabel
+        self.geminiCliProbeFallback = geminiCliProbeFallback
     }
 
     public static func defaults() -> [ProviderConfig] {
