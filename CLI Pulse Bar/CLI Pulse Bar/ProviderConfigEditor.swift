@@ -32,6 +32,10 @@ struct ProviderConfigEditor: View {
     @State private var isClaudeConnected: Bool = false
     @State private var claudeConnectError: String?
     @State private var claudeConnectedEmail: String?
+    /// v1.23.0 G3 follow-on: opt-in for the dark CLI-probe fallback
+    /// (shipped in PR #45). macOS-only — the probe and this state are
+    /// `#if os(macOS)`; the iOS/watch build never sees it.
+    @State private var geminiCliProbeFallback: Bool = false
     #endif
 
     #if os(macOS)
@@ -57,6 +61,18 @@ struct ProviderConfigEditor: View {
         return CookieSource.allCases.filter { $0 != .automatic }
         #endif
     }
+
+    #if os(macOS)
+    /// True when running inside the App Sandbox (MAS build). The G3
+    /// CLI-probe fallback toggle is hidden here: the probe's
+    /// subprocess + filesystem OAuth-client discovery is sandbox-
+    /// blocked, so the opt-in only has effect on direct-download
+    /// (Developer ID) builds (Gemini G3-R1 Q4). Matches the codebase
+    /// sandbox idiom (cf. ClaudeSourceStrategy `/Library/Containers/`).
+    private var isAppSandboxed: Bool {
+        NSHomeDirectory().contains("/Library/Containers/")
+    }
+    #endif
 
     /// Manual cookie-header paste field + Keychain notice. Shared by the
     /// `.manual` source and the `.automatic` failure-fallback reveal.
@@ -313,6 +329,7 @@ struct ProviderConfigEditor: View {
         #if os(macOS)
         if kind == .gemini {
             isGeminiConnected = GeminiOAuthManager.shared.isConnected
+            geminiCliProbeFallback = config.geminiCliProbeFallback ?? false
         }
         if kind == .claude {
             loadClaudeConnectState()
@@ -391,6 +408,26 @@ struct ProviderConfigEditor: View {
                         .font(.system(size: 8))
                         .foregroundStyle(.quaternary)
                 }
+            }
+
+            // v1.23.0 G3 follow-on: surface the CLI-probe fallback
+            // opt-in (shipped dark in PR #45). Hidden on sandboxed/MAS
+            // builds — the probe's subprocess + filesystem OAuth-client
+            // discovery is sandbox-blocked, so this only has effect on
+            // direct-download (Developer ID) builds (Gemini G3-R1 Q4),
+            // and a visible-but-dead switch on MAS would be misleading.
+            if !isAppSandboxed {
+                Divider().padding(.vertical, 2)
+                Toggle(isOn: $geminiCliProbeFallback) {
+                    Text(L10n.providerConfig.geminiCliFallback)
+                        .font(.system(size: 10))
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                Text(L10n.providerConfig.geminiCliFallbackNote)
+                    .font(.system(size: 8))
+                    .foregroundStyle(.quaternary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -607,6 +644,15 @@ struct ProviderConfigEditor: View {
         state.providerConfigs[idx].cookieSource = cookieSource
         state.providerConfigs[idx].apiKey = apiKey.isEmpty ? nil : apiKey
         state.providerConfigs[idx].manualCookieHeader = manualCookieHeader.isEmpty ? nil : manualCookieHeader
+        #if os(macOS)
+        // v1.23.0 G3 follow-on: persist nil when off / non-Gemini so
+        // legacy configs stay byte-identical (dark-safe; Gemini G3-R1
+        // HIGH — encodeIfPresent omits the key). Wrapped #if os(macOS)
+        // because `geminiCliProbeFallback` @State is macOS-only —
+        // keeps the iOS/watch build green (Gemini G3-R1 CRITICAL).
+        state.providerConfigs[idx].geminiCliProbeFallback =
+            (kind == .gemini && geminiCliProbeFallback) ? true : nil
+        #endif
         state.saveProviderConfigs()
     }
 }

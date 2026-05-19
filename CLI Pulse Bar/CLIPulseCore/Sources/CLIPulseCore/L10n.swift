@@ -722,6 +722,11 @@ public enum L10n {
         public static var disconnect: String { tr("provider_config.disconnect") }
         public static var connectGemini: String { tr("provider_config.connect_gemini") }
         public static var geminiUsesGoogle: String { tr("provider_config.gemini_uses_google") }
+        // v1.23.0 G3 follow-on — CLI-probe fallback opt-in (macOS,
+        // non-MAS). en/ja/zh-Hans coverage matches the rest of the
+        // provider_config editor section (Phase-A G1 convention).
+        public static var geminiCliFallback: String { tr("provider_config.gemini_cli_fallback") }
+        public static var geminiCliFallbackNote: String { tr("provider_config.gemini_cli_fallback_note") }
         public static var claudeCode: String { tr("provider_config.claude_code") }
         public static var connectClaudeCode: String { tr("provider_config.connect_claude_code") }
         public static var claudeKeychainHint: String { tr("provider_config.claude_keychain_hint") }

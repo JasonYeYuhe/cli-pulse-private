@@ -490,6 +490,8 @@
 "provider_config.disconnect" = "接続解除";
 "provider_config.connect_gemini" = "Gemini に接続";
 "provider_config.gemini_uses_google" = "Google アカウントを使用します。APIキーは不要です。";
+"provider_config.gemini_cli_fallback" = "Gemini CLI フォールバック";
+"provider_config.gemini_cli_fallback_note" = "CLI Pulse の Gemini ログインを更新できない場合、Gemini CLI 自身の認証情報にフォールバックします。直接ダウンロード版のみ。";
 "provider_config.claude_code" = "Claude Code";
 "provider_config.connect_claude_code" = "Claude Code に接続";
 "provider_config.claude_keychain_hint" = "既存の Claude Code ログインを読み取ります。macOS が一度許可を求めます — 「常に許可」をタップしてください。";
