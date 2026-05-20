@@ -41,6 +41,7 @@ public enum PulseTheme {
         case "Alibaba": return Color(red: 0.95, green: 0.50, blue: 0.15)
         case "Crof": return Color(red: 0.45, green: 0.70, blue: 0.95)
         case "DeepSeek": return Color(red: 0.30, green: 0.45, blue: 0.85)
+        case "ElevenLabs": return Color(red: 0.15, green: 0.55, blue: 0.55)
         case "Kimi": return Color(red: 0.35, green: 0.55, blue: 0.90)
         case "Kiro": return Color(red: 0.20, green: 0.70, blue: 0.50)
         case "Vertex AI": return Color(red: 0.26, green: 0.52, blue: 0.96)

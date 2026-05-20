@@ -80,6 +80,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case crof = "Crof"
     // v1.23.0 Phase C-2: api-key credits-only collector.
     case deepseek = "DeepSeek"
+    // v1.23.0 Phase C-3: api-key .quota collector (xi-api-key header).
+    case elevenLabs = "ElevenLabs"
 
     public var id: String { rawValue }
 
@@ -135,6 +137,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .glm: return "text.bubble"
         case .crof: return "c.circle"
         case .deepseek: return "d.circle"
+        case .elevenLabs: return "waveform"
         }
     }
 }
