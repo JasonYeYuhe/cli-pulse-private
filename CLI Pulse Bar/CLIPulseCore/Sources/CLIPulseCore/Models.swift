@@ -78,6 +78,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case glm = "GLM"
     // v1.23.0 Phase C-1 (CodexBar parity): api-key collector.
     case crof = "Crof"
+    // v1.23.0 Phase C-2: api-key credits-only collector.
+    case deepseek = "DeepSeek"
 
     public var id: String { rawValue }
 
@@ -132,6 +134,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .volcanoEngine: return "flame"
         case .glm: return "text.bubble"
         case .crof: return "c.circle"
+        case .deepseek: return "d.circle"
         }
     }
 }
