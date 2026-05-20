@@ -451,6 +451,15 @@ public enum ProviderRegistry {
             cliNames: ["crof"], webDomain: "crof.ai"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-2 (CodexBar parity): credits-only
+            // (uncapped balance, no quota cap). Bearer api-key.
+            kind: .deepseek, displayName: "DeepSeek", category: .cloud,
+            supportedSources: [.auto, .api],
+            supportsQuota: false, supportsExactCost: false, supportsCredits: true,
+            requiresHelperBackend: false,
+            cliNames: ["deepseek"], webDomain: "platform.deepseek.com"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
