@@ -82,6 +82,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case deepseek = "DeepSeek"
     // v1.23.0 Phase C-3: api-key .quota collector (xi-api-key header).
     case elevenLabs = "ElevenLabs"
+    // v1.23.0 Phase C-4: api-key .credits collector (USD+DIEM dual-currency).
+    case venice = "Venice"
 
     public var id: String { rawValue }
 
@@ -138,6 +140,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .crof: return "c.circle"
         case .deepseek: return "d.circle"
         case .elevenLabs: return "waveform"
+        case .venice: return "v.circle"
         }
     }
 }
