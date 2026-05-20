@@ -469,6 +469,17 @@ public enum ProviderRegistry {
             cliNames: ["elevenlabs", "eleven-labs"], webDomain: "elevenlabs.io"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-4: credits provider with USD + DIEM
+            // dual currency (DIEM optionally has an epoch allocation
+            // cap → surfaced via per-currency TierDTOs, not top-level
+            // quota — `.credits` consistency with DeepSeek precedent).
+            kind: .venice, displayName: "Venice", category: .cloud,
+            supportedSources: [.auto, .api],
+            supportsQuota: false, supportsExactCost: false, supportsCredits: true,
+            requiresHelperBackend: false,
+            cliNames: ["venice"], webDomain: "venice.ai"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
