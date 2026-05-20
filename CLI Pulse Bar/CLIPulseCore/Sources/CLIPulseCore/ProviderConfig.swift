@@ -460,6 +460,15 @@ public enum ProviderRegistry {
             cliNames: ["deepseek"], webDomain: "platform.deepseek.com"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-3: real character-quota collector
+            // (xi-api-key header — not Bearer). Cap + reset_unix.
+            kind: .elevenLabs, displayName: "ElevenLabs", category: .cloud,
+            supportedSources: [.auto, .api],
+            supportsQuota: true, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: ["elevenlabs", "eleven-labs"], webDomain: "elevenlabs.io"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
