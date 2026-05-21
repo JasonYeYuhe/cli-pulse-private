@@ -14,7 +14,7 @@
 //   * UTF-8 BOM-free / 4-space style
 //   * `brandedLoginMethod` / `compactLoginMethod` return brand proper
 //     nouns ("Claude Max", "Max", …) and are intentionally NOT routed
-//     through L10n (same rationale as ClaudePeakHours' brand strings)
+//     through L10n (brand proper nouns stay English in every locale)
 //
 // ─── MIT License (full notice required by upstream) ───────────────
 //

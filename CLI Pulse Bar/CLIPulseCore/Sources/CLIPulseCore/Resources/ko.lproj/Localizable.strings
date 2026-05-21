@@ -422,9 +422,6 @@
 "account.delete_session_expired" = "계정을 삭제하기 전에 세션이 만료되었습니다. 계정은 아직 활성 상태입니다. 다시 로그인한 후 설정에서 '계정 삭제'를 다시 시도해 주세요.";
 
 /* ── v1.18.2 D-2: Claude 카드의 Anthropic 피크 시간 표시기 ── */
-"claude.peak_hours.peak_ends_in" = "피크 · %@ 후 종료";
-"claude.peak_hours.off_peak_in" = "비피크 · %@ 후 피크";
-"claude.peak_hours.off_peak_fallback" = "비피크";
 
 
 /* ── v1.21 D7: Remote Control privacy-critical consent body ── */

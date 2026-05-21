@@ -404,14 +404,6 @@ struct EnhancedProviderCard: View {
                             .lineLimit(1)
                     }
                 }
-
-                // v1.18: Anthropic peak / off-peak window indicator for
-                // Claude. Static schedule (weekdays 08:00–14:00 ET); the
-                // computation lives in `CLIPulseCore.ClaudePeakHours`
-                // and is shared with the iOS app.
-                if isClaude {
-                    ClaudePeakFooter()
-                }
             }
         }
         .padding(10)

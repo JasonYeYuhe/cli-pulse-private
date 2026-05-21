@@ -12,7 +12,7 @@
 //     in this module
 //   * `UsageProvider` → CLI Pulse's `ProviderKind` (the one call site)
 //   * user-visible phrases routed through `L10n.usagePace.*` so the
-//     in-app language switcher works (mirrors the ClaudePeakHours
+//     in-app language switcher works (the established L10n brand-string
 //     precedent). en strings only this train (D2) — additional locales
 //     land with the UI consumer follow-on; there is no UI consumer yet
 //     in Phase A (D3), so nothing is user-visible until then.
