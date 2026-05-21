@@ -480,6 +480,19 @@ public enum ProviderRegistry {
             cliNames: ["venice"], webDomain: "venice.ai"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-5: status-only deployment validator. No
+            // quota/credits number — a tiny "ping" chat-completion
+            // confirms the deployment is reachable and surfaces the
+            // resolved model. Multi-field config (key + endpoint +
+            // deployment + api-version) comes from env (AZURE_OPENAI_*),
+            // since ProviderConfig only stores `apiKey`.
+            kind: .azureOpenAI, displayName: "Azure OpenAI", category: .cloud,
+            supportedSources: [.auto, .api],
+            supportsQuota: false, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: ["azure-openai", "azureopenai", "aoai"], webDomain: "ai.azure.com"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,

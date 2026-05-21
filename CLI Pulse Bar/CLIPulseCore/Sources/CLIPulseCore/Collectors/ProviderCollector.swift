@@ -67,6 +67,7 @@ public enum CollectorRegistry {
         DeepSeekCollector(),
         ElevenLabsCollector(),
         VeniceCollector(),
+        AzureOpenAICollector(),
     ]
 
     /// Returns the collector for a given provider, if one exists and is available.
