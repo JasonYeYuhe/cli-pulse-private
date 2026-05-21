@@ -84,6 +84,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case elevenLabs = "ElevenLabs"
     // v1.23.0 Phase C-4: api-key .credits collector (USD+DIEM dual-currency).
     case venice = "Venice"
+    // v1.23.0 Phase C-5: api-key .statusOnly collector (deployment ping-validation).
+    case azureOpenAI = "Azure OpenAI"
 
     public var id: String { rawValue }
 
@@ -141,6 +143,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .deepseek: return "d.circle"
         case .elevenLabs: return "waveform"
         case .venice: return "v.circle"
+        case .azureOpenAI: return "a.circle"
         }
     }
 }
