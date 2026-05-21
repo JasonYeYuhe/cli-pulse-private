@@ -493,6 +493,17 @@ public enum ProviderRegistry {
             cliNames: ["azure-openai", "azureopenai", "aoai"], webDomain: "ai.azure.com"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-6: credits provider with a hard cap + reset
+            // ⇒ .quota gauge (ElevenLabs precedent). Bearer api-key, primary
+            // POST /api/v1/usage; best-effort GET /api/user/subscription
+            // enriches weekly window + tier (concurrent, ~2s grace-bounded).
+            kind: .codebuff, displayName: "Codebuff", category: .cloud,
+            supportedSources: [.auto, .api],
+            supportsQuota: true, supportsExactCost: false, supportsCredits: true,
+            requiresHelperBackend: false,
+            cliNames: ["codebuff", "manicode"], webDomain: "codebuff.com"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,

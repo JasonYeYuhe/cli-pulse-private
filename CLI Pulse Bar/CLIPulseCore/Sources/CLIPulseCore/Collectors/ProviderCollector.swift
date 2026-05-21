@@ -68,6 +68,7 @@ public enum CollectorRegistry {
         ElevenLabsCollector(),
         VeniceCollector(),
         AzureOpenAICollector(),
+        CodebuffCollector(),
     ]
 
     /// Returns the collector for a given provider, if one exists and is available.
