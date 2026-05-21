@@ -714,9 +714,6 @@
 "subscription.buy_lifetime" = "购买终身版";
 
 /* ── v1.18.2 D-2: Anthropic 高峰窗口指示器(Claude 卡片) ── */
-"claude.peak_hours.peak_ends_in" = "高峰 · %@后结束";
-"claude.peak_hours.off_peak_in" = "非高峰 · %@后进入高峰";
-"claude.peak_hours.off_peak_fallback" = "非高峰";
 
 
 /* ── v1.21 D7: Remote Control privacy-critical consent body ── */

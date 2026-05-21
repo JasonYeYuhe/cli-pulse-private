@@ -714,9 +714,6 @@
 "subscription.buy_lifetime" = "ライフタイムを購入";
 
 /* ── v1.18.2 D-2: Claude プロバイダーカードのピーク時間表示 ── */
-"claude.peak_hours.peak_ends_in" = "ピーク中 · あと%@";
-"claude.peak_hours.off_peak_in" = "オフピーク · %@後にピーク";
-"claude.peak_hours.off_peak_fallback" = "オフピーク";
 
 
 /* ── v1.21 D7: Remote Control privacy-critical consent body ── */

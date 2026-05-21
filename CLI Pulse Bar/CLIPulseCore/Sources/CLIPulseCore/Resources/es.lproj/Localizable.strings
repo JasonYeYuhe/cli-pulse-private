@@ -422,9 +422,6 @@
 "account.delete_session_expired" = "Tu sesión expiró antes de que pudiéramos eliminar tu cuenta. Tu cuenta sigue activa — vuelve a iniciar sesión y prueba de nuevo Eliminar cuenta desde Ajustes.";
 
 /* ── v1.18.2 D-2: Indicador de horario pico de Anthropic en la tarjeta Claude ── */
-"claude.peak_hours.peak_ends_in" = "Hora pico · termina en %@";
-"claude.peak_hours.off_peak_in" = "Fuera de pico · pico en %@";
-"claude.peak_hours.off_peak_fallback" = "Fuera de pico";
 
 
 /* ── v1.21 D7: Remote Control privacy-critical consent body ── */

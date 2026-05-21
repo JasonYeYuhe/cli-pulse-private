@@ -6,7 +6,7 @@
 // UsagePaceText routes its phrases through L10n (G4); setUp() pins the
 // in-app locale override to "en" so these English-literal assertions
 // stay deterministic regardless of host language. tearDown() restores
-// the previous override. (Mirrors ClaudePeakHoursTests.) See
+// the previous override (the standard locale-override test pattern). See
 // UsagePaceText.swift for the MIT attribution of the code under test.
 
 import XCTest
