@@ -110,6 +110,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case stepfun = "StepFun"
     // v1.23.0 Phase C-17: cookie collector (.quota — 4-hour + month usage windows; tRPC/JSONL).
     case t3chat = "T3 Chat"
+    // v1.23.0 Phase C-18: cookie collector (.quota token plan / .statusOnly balance; Xiaomi MiMo).
+    case mimo = "MiMo"
 
     public var id: String { rawValue }
 
@@ -180,6 +182,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .openaiAdmin: return "o.circle"
         case .stepfun: return "s.circle"
         case .t3chat: return "t.circle"
+        case .mimo: return "m.square"
         }
     }
 }
