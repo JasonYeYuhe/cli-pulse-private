@@ -116,6 +116,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case bedrock = "AWS Bedrock"
     // v1.23.0 Phase C-20: cookie+CSRF Bailian console (.quota token-plan subscription).
     case alibabaTokenPlan = "Alibaba Token Plan"
+    // v1.23.0 Phase C-21: Connect protobuf (.quota daily+weekly windows; Devin session).
+    case windsurf = "Windsurf"
 
     public var id: String { rawValue }
 
@@ -189,6 +191,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .mimo: return "m.square"
         case .bedrock: return "b.square"
         case .alibabaTokenPlan: return "a.circle.fill"
+        case .windsurf: return "w.circle"
         }
     }
 }

@@ -83,6 +83,7 @@ public enum CollectorRegistry {
         MiMoCollector(),
         BedrockCollector(),
         AlibabaTokenPlanCollector(),
+        WindsurfCollector(),
     ]
 
     /// Returns the collector for a given provider, if one exists and is available.

@@ -647,6 +647,16 @@ public enum ProviderRegistry {
             cliNames: [], webDomain: "bailian.console.aliyun.com"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-21: Connect-RPC protobuf GetPlanStatus; daily +
+            // weekly quota windows ⇒ `.quota`. 4-value Devin session (manual
+            // JSON bundle / env); localStorage auto-read skipped.
+            kind: .windsurf, displayName: "Windsurf", category: .ide,
+            supportedSources: [.auto, .web],
+            supportsQuota: true, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: ["windsurf"], webDomain: "windsurf.com"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
