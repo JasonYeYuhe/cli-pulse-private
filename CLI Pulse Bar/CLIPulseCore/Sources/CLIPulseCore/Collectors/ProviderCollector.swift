@@ -84,6 +84,7 @@ public enum CollectorRegistry {
         BedrockCollector(),
         AlibabaTokenPlanCollector(),
         WindsurfCollector(),
+        OpenCodeGoCollector(),
     ]
 
     /// Returns the collector for a given provider, if one exists and is available.
