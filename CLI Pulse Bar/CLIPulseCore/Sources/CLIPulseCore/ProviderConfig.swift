@@ -549,6 +549,16 @@ public enum ProviderRegistry {
             cliNames: ["mistral", "mistral-ai"], webDomain: "mistral.ai"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-11: cookie collector — USD `.credits` (monthly
+            // grant cap from a static plan catalog + 3 balance pools).
+            // better-auth.session_token cookie.
+            kind: .commandCode, displayName: "Command Code", category: .cloud,
+            supportedSources: [.auto, .web],
+            supportsQuota: false, supportsExactCost: true, supportsCredits: true,
+            requiresHelperBackend: false,
+            cliNames: ["commandcode", "command-code"], webDomain: "commandcode.ai"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
