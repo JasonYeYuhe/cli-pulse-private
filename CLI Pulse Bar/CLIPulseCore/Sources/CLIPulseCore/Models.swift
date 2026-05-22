@@ -88,6 +88,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case azureOpenAI = "Azure OpenAI"
     // v1.23.0 Phase C-6: api-key .quota collector (credits cap+reset; best-effort weekly/tier).
     case codebuff = "Codebuff"
+    // v1.23.0 Phase C-7: api-key .statusOnly collector (Token header; projects→usage aggregate).
+    case deepgram = "Deepgram"
 
     public var id: String { rawValue }
 
@@ -147,6 +149,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .venice: return "v.circle"
         case .azureOpenAI: return "a.circle"
         case .codebuff: return "b.circle"
+        case .deepgram: return "waveform.path"
         }
     }
 }

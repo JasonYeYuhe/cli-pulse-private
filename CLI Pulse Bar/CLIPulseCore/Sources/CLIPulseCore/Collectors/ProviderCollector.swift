@@ -69,6 +69,7 @@ public enum CollectorRegistry {
         VeniceCollector(),
         AzureOpenAICollector(),
         CodebuffCollector(),
+        DeepgramCollector(),
     ]
 
     /// Returns the collector for a given provider, if one exists and is available.

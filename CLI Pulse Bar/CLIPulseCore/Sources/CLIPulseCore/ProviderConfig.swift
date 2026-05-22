@@ -504,6 +504,19 @@ public enum ProviderRegistry {
             cliNames: ["codebuff", "manicode"], webDomain: "codebuff.com"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-7: status-only usage reporter. No quota /
+            // credits denominator — aggregates absolute usage counts
+            // (requests / audio hours / tokens) across projects.
+            // `Authorization: Token <key>` (not Bearer). Auto-discovers
+            // projects (capped + concurrent + absolute-timeout bounded);
+            // DEEPGRAM_PROJECT_ID pins a single project.
+            kind: .deepgram, displayName: "Deepgram", category: .cloud,
+            supportedSources: [.auto, .api],
+            supportsQuota: false, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: ["deepgram", "dg"], webDomain: "deepgram.com"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
