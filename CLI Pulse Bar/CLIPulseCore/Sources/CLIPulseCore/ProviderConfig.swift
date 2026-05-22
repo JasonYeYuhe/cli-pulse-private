@@ -559,6 +559,15 @@ public enum ProviderRegistry {
             cliNames: ["commandcode", "command-code"], webDomain: "commandcode.ai"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-12: api-key collector — Prometheus throughput
+            // metrics only (no quota/cost) ⇒ `.statusOnly` req/min · tok/min.
+            kind: .groq, displayName: "Groq", category: .cloud,
+            supportedSources: [.auto, .api],
+            supportsQuota: false, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: ["groq"], webDomain: "groq.com"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,

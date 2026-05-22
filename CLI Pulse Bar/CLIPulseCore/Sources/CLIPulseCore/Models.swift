@@ -98,6 +98,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case mistral = "Mistral"
     // v1.23.0 Phase C-11: cookie collector (.credits USD; 4 pools + plan-catalog cap).
     case commandCode = "Command Code"
+    // v1.23.0 Phase C-12: api-key collector (.statusOnly Prometheus throughput rates).
+    case groq = "Groq"
 
     public var id: String { rawValue }
 
@@ -162,6 +164,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .abacus: return "a.square"
         case .mistral: return "wind"
         case .commandCode: return "c.square"
+        case .groq: return "bolt.horizontal.circle"
         }
     }
 }

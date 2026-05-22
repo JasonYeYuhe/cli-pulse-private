@@ -74,6 +74,7 @@ public enum CollectorRegistry {
         AbacusCollector(),
         MistralCollector(),
         CommandCodeCollector(),
+        GroqCollector(),
     ]
 
     /// Returns the collector for a given provider, if one exists and is available.
