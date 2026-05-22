@@ -609,6 +609,15 @@ public enum ProviderRegistry {
             cliNames: ["stepfun"], webDomain: "stepfun.com"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-17: cookie collector — tRPC/JSONL getCustomerData;
+            // 4-hour + month usage windows ⇒ `.quota` percent gauges.
+            kind: .t3chat, displayName: "T3 Chat", category: .cloud,
+            supportedSources: [.auto, .web],
+            supportsQuota: true, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: ["t3chat", "t3"], webDomain: "t3.chat"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
