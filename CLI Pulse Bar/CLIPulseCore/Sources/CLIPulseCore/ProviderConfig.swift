@@ -667,6 +667,16 @@ public enum ProviderRegistry {
             cliNames: [], webDomain: "opencode.ai"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-23: gRPC-web GetGrokCreditsConfig; usedPercent
+            // window ⇒ `.quota` (.statusOnly fallback). Cookie / GROK_TOKEN env;
+            // sandbox-safe web billing (NOT the MAS-blocked `grok agent` subprocess).
+            kind: .grok, displayName: "Grok", category: .cloud,
+            supportedSources: [.auto, .web],
+            supportsQuota: true, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: ["grok"], webDomain: "grok.com"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
