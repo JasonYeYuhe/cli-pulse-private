@@ -81,6 +81,7 @@ public enum CollectorRegistry {
         StepFunCollector(),
         T3ChatCollector(),
         MiMoCollector(),
+        BedrockCollector(),
     ]
 
     /// Returns the collector for a given provider, if one exists and is available.

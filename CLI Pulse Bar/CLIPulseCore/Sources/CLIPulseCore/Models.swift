@@ -112,6 +112,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case t3chat = "T3 Chat"
     // v1.23.0 Phase C-18: cookie collector (.quota token plan / .statusOnly balance; Xiaomi MiMo).
     case mimo = "MiMo"
+    // v1.23.0 Phase C-19: AWS SigV4 + Cost Explorer (.statusOnly month-to-date Bedrock spend).
+    case bedrock = "AWS Bedrock"
 
     public var id: String { rawValue }
 
@@ -183,6 +185,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .stepfun: return "s.circle"
         case .t3chat: return "t.circle"
         case .mimo: return "m.square"
+        case .bedrock: return "b.square"
         }
     }
 }

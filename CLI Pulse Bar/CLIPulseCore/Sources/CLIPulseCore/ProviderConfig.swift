@@ -628,6 +628,16 @@ public enum ProviderRegistry {
             cliNames: ["mimo"], webDomain: "xiaomimimo.com"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-19: AWS env-creds + SigV4 → Cost Explorer
+            // month-to-date Bedrock spend ⇒ `.statusOnly` exact cost. Env-only
+            // creds (CLI/DEVID-oriented); 12h cache (Cost Explorer bills/call).
+            kind: .bedrock, displayName: "AWS Bedrock", category: .cloud,
+            supportedSources: [.auto, .api],
+            supportsQuota: false, supportsExactCost: true, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: [], webDomain: "console.aws.amazon.com"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
