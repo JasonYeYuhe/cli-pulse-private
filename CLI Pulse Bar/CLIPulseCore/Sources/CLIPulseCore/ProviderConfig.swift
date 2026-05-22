@@ -588,6 +588,17 @@ public enum ProviderRegistry {
             cliNames: ["llmproxy", "llm-proxy"], webDomain: nil
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-15: api-key collector — OpenAI ORG admin cost API
+            // (sk-admin- key), month-to-date spend ⇒ `.statusOnly` exact cost.
+            // Distinct from Codex (the OpenAI Codex CLI). cliNames empty so it
+            // doesn't auto-detect local OpenAI CLI creds.
+            kind: .openaiAdmin, displayName: "OpenAI Admin", category: .cloud,
+            supportedSources: [.auto, .api],
+            supportsQuota: false, supportsExactCost: true, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: [], webDomain: "platform.openai.com"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
