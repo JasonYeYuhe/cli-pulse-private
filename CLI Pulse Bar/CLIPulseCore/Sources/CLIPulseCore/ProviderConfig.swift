@@ -528,6 +528,17 @@ public enum ProviderRegistry {
             cliNames: ["manus"], webDomain: "manus.im"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-9: cookie collector — full Cookie header
+            // passthrough (multi-cookie; not a Bearer like Manus). 2 endpoints
+            // (compute-points required + billing bounded) → `.quota` compute
+            // points (supportsCredits:false ⇒ quota).
+            kind: .abacus, displayName: "Abacus AI", category: .cloud,
+            supportedSources: [.auto, .web],
+            supportsQuota: true, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: ["abacus"], webDomain: "abacus.ai"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
