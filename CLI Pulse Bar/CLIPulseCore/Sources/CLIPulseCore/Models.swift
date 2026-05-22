@@ -106,6 +106,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case llmProxy = "LLM Proxy"
     // v1.23.0 Phase C-15: api-key collector (.statusOnly org admin month-to-date spend).
     case openaiAdmin = "OpenAI Admin"
+    // v1.23.0 Phase C-16: cookie collector (.quota — 5-hour + weekly usage windows via Oasis-Token).
+    case stepfun = "StepFun"
 
     public var id: String { rawValue }
 
@@ -174,6 +176,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .moonshot: return "moon.circle"
         case .llmProxy: return "arrow.triangle.swap"
         case .openaiAdmin: return "o.circle"
+        case .stepfun: return "s.circle"
         }
     }
 }

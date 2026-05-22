@@ -599,6 +599,16 @@ public enum ProviderRegistry {
             cliNames: [], webDomain: "platform.openai.com"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-16: cookie collector — Oasis-Token cookie (NO
+            // password login); 5-hour + weekly usage-left-rate windows ⇒
+            // `.quota` percent gauges (like Claude/Codex).
+            kind: .stepfun, displayName: "StepFun", category: .cloud,
+            supportedSources: [.auto, .web],
+            supportsQuota: true, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: ["stepfun"], webDomain: "stepfun.com"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
