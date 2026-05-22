@@ -657,6 +657,16 @@ public enum ProviderRegistry {
             cliNames: ["windsurf"], webDomain: "windsurf.com"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-22: cookie page-scrape; rolling/weekly/monthly
+            // usage windows ⇒ `.quota` (+ Zen balance in status). Set
+            // OPENCODEGO_WORKSPACE_ID (robust) else _server discovery (fragile).
+            kind: .openCodeGo, displayName: "OpenCode Go", category: .cloud,
+            supportedSources: [.auto, .web],
+            supportsQuota: true, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: [], webDomain: "opencode.ai"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,

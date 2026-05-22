@@ -118,6 +118,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case alibabaTokenPlan = "Alibaba Token Plan"
     // v1.23.0 Phase C-21: Connect protobuf (.quota daily+weekly windows; Devin session).
     case windsurf = "Windsurf"
+    // v1.23.0 Phase C-22: cookie page-scrape (.quota rolling/weekly/monthly windows + Zen balance).
+    case openCodeGo = "OpenCode Go"
 
     public var id: String { rawValue }
 
@@ -192,6 +194,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .bedrock: return "b.square"
         case .alibabaTokenPlan: return "a.circle.fill"
         case .windsurf: return "w.circle"
+        case .openCodeGo: return "o.square"
         }
     }
 }
