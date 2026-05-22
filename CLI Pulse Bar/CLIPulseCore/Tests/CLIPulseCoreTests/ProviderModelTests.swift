@@ -14,7 +14,7 @@ final class ProviderModelTests: XCTestCase {
             "Kimi", "Kiro", "Vertex AI", "Perplexity",
             "Volcano Engine", "GLM", "Crof", "DeepSeek", "ElevenLabs", "Venice",
             "Azure OpenAI", "Codebuff", "Deepgram", "Manus", "Abacus AI", "Mistral",
-            "Command Code", "Groq", "Moonshot", "LLM Proxy",
+            "Command Code", "Groq", "Moonshot", "LLM Proxy", "OpenAI Admin",
         ]
         let actual = Set(ProviderKind.allCases.map(\.rawValue))
         XCTAssertEqual(expected, actual, "ProviderKind cases must match all target providers")

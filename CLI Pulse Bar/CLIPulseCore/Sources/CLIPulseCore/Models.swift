@@ -104,6 +104,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case moonshot = "Moonshot"
     // v1.23.0 Phase C-14: api-key collector (.statusOnly self-hosted proxy quota-stats aggregate).
     case llmProxy = "LLM Proxy"
+    // v1.23.0 Phase C-15: api-key collector (.statusOnly org admin month-to-date spend).
+    case openaiAdmin = "OpenAI Admin"
 
     public var id: String { rawValue }
 
@@ -171,6 +173,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .groq: return "bolt.horizontal.circle"
         case .moonshot: return "moon.circle"
         case .llmProxy: return "arrow.triangle.swap"
+        case .openaiAdmin: return "o.circle"
         }
     }
 }
