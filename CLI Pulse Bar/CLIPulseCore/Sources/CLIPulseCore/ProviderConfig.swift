@@ -638,6 +638,15 @@ public enum ProviderRegistry {
             cliNames: [], webDomain: "console.aws.amazon.com"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-20: cookie+CSRF Bailian console token-plan
+            // subscription ⇒ `.quota`. Distinct from Alibaba (coding-plan).
+            kind: .alibabaTokenPlan, displayName: "Alibaba Token Plan", category: .cloud,
+            supportedSources: [.auto, .web],
+            supportsQuota: true, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: [], webDomain: "bailian.console.aliyun.com"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,

@@ -82,6 +82,7 @@ public enum CollectorRegistry {
         T3ChatCollector(),
         MiMoCollector(),
         BedrockCollector(),
+        AlibabaTokenPlanCollector(),
     ]
 
     /// Returns the collector for a given provider, if one exists and is available.
