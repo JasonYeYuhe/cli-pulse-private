@@ -85,6 +85,7 @@ public enum CollectorRegistry {
         AlibabaTokenPlanCollector(),
         WindsurfCollector(),
         OpenCodeGoCollector(),
+        GrokCollector(),
     ]
 
     /// Returns the collector for a given provider, if one exists and is available.

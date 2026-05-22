@@ -120,6 +120,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case windsurf = "Windsurf"
     // v1.23.0 Phase C-22: cookie page-scrape (.quota rolling/weekly/monthly windows + Zen balance).
     case openCodeGo = "OpenCode Go"
+    // v1.23.0 Phase C-23: gRPC-web GetGrokCreditsConfig (.quota usedPercent window / .statusOnly; xAI).
+    case grok = "Grok"
 
     public var id: String { rawValue }
 
@@ -195,6 +197,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .alibabaTokenPlan: return "a.circle.fill"
         case .windsurf: return "w.circle"
         case .openCodeGo: return "o.square"
+        case .grok: return "x.circle"
         }
     }
 }
