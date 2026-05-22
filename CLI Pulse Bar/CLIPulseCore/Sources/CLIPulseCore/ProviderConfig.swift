@@ -539,6 +539,16 @@ public enum ProviderRegistry {
             cliNames: ["abacus"], webDomain: "abacus.ai"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-10: cookie collector — pay-as-you-go, no quota
+            // cap/balance ⇒ `.statusOnly` carrying exact month-to-date spend
+            // (supportsExactCost:true). Cookie header (ory_session_* + csrftoken).
+            kind: .mistral, displayName: "Mistral", category: .cloud,
+            supportedSources: [.auto, .web],
+            supportsQuota: false, supportsExactCost: true, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: ["mistral", "mistral-ai"], webDomain: "mistral.ai"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,

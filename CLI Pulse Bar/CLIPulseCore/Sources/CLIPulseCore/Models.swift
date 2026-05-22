@@ -94,6 +94,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case manus = "Manus"
     // v1.23.0 Phase C-9: cookie collector (.quota compute points; required + bounded billing).
     case abacus = "Abacus AI"
+    // v1.23.0 Phase C-10: cookie collector (.statusOnly month-to-date spend; token×price aggregate).
+    case mistral = "Mistral"
 
     public var id: String { rawValue }
 
@@ -156,6 +158,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .deepgram: return "waveform.path"
         case .manus: return "m.circle"
         case .abacus: return "a.square"
+        case .mistral: return "wind"
         }
     }
 }
