@@ -618,6 +618,16 @@ public enum ProviderRegistry {
             cliNames: ["t3chat", "t3"], webDomain: "t3.chat"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-18: cookie collector — Xiaomi MiMo token-plan
+            // quota (used/limit) + monetary balance; `.quota` when a live plan
+            // exists else `.statusOnly`. Requires serviceToken + userId cookies.
+            kind: .mimo, displayName: "MiMo", category: .cloud,
+            supportedSources: [.auto, .web],
+            supportsQuota: true, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: ["mimo"], webDomain: "xiaomimimo.com"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
