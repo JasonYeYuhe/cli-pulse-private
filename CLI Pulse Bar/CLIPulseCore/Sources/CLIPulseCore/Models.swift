@@ -90,6 +90,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case codebuff = "Codebuff"
     // v1.23.0 Phase C-7: api-key .statusOnly collector (Token header; projects→usage aggregate).
     case deepgram = "Deepgram"
+    // v1.23.0 Phase C-8: cookie collector (session_id→Bearer; .quota — monthly + refresh pools).
+    case manus = "Manus"
 
     public var id: String { rawValue }
 
@@ -150,6 +152,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .azureOpenAI: return "a.circle"
         case .codebuff: return "b.circle"
         case .deepgram: return "waveform.path"
+        case .manus: return "m.circle"
         }
     }
 }

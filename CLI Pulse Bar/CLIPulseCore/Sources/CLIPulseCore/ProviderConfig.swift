@@ -517,6 +517,17 @@ public enum ProviderRegistry {
             cliNames: ["deepgram", "dg"], webDomain: "deepgram.com"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-8: cookie collector — `session_id` value sent
+            // as a Bearer token (not a Cookie header); `.web` so the auth UI
+            // asks for a session cookie. Two capped credit pools → `.quota`
+            // (supportsCredits:false ⇒ treated as quota, per scoping).
+            kind: .manus, displayName: "Manus", category: .cloud,
+            supportedSources: [.auto, .web],
+            supportsQuota: true, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: ["manus"], webDomain: "manus.im"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
