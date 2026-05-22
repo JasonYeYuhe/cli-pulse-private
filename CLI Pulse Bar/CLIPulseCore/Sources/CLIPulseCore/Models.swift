@@ -108,6 +108,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case openaiAdmin = "OpenAI Admin"
     // v1.23.0 Phase C-16: cookie collector (.quota — 5-hour + weekly usage windows via Oasis-Token).
     case stepfun = "StepFun"
+    // v1.23.0 Phase C-17: cookie collector (.quota — 4-hour + month usage windows; tRPC/JSONL).
+    case t3chat = "T3 Chat"
 
     public var id: String { rawValue }
 
@@ -177,6 +179,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .llmProxy: return "arrow.triangle.swap"
         case .openaiAdmin: return "o.circle"
         case .stepfun: return "s.circle"
+        case .t3chat: return "t.circle"
         }
     }
 }
