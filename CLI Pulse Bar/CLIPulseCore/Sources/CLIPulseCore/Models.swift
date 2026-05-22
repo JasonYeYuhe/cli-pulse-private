@@ -102,6 +102,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case groq = "Groq"
     // v1.23.0 Phase C-13: api-key collector (.credits uncapped USD balance; dev API platform).
     case moonshot = "Moonshot"
+    // v1.23.0 Phase C-14: api-key collector (.statusOnly self-hosted proxy quota-stats aggregate).
+    case llmProxy = "LLM Proxy"
 
     public var id: String { rawValue }
 
@@ -168,6 +170,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .commandCode: return "c.square"
         case .groq: return "bolt.horizontal.circle"
         case .moonshot: return "moon.circle"
+        case .llmProxy: return "arrow.triangle.swap"
         }
     }
 }

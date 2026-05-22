@@ -578,6 +578,16 @@ public enum ProviderRegistry {
             cliNames: ["moonshot"], webDomain: "moonshot.ai"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-14: api-key collector — self-hosted LLM gateway
+            // quota-stats aggregate (env LLM_PROXY_BASE_URL). `.statusOnly`
+            // (min remaining-% + key/req/tok stats); aggregator category.
+            kind: .llmProxy, displayName: "LLM Proxy", category: .aggregator,
+            supportedSources: [.auto, .api],
+            supportsQuota: false, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: ["llmproxy", "llm-proxy"], webDomain: nil
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
