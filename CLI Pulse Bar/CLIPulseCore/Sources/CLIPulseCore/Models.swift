@@ -100,6 +100,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case commandCode = "Command Code"
     // v1.23.0 Phase C-12: api-key collector (.statusOnly Prometheus throughput rates).
     case groq = "Groq"
+    // v1.23.0 Phase C-13: api-key collector (.credits uncapped USD balance; dev API platform).
+    case moonshot = "Moonshot"
 
     public var id: String { rawValue }
 
@@ -165,6 +167,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .mistral: return "wind"
         case .commandCode: return "c.square"
         case .groq: return "bolt.horizontal.circle"
+        case .moonshot: return "moon.circle"
         }
     }
 }

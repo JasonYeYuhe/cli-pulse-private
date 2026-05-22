@@ -568,6 +568,16 @@ public enum ProviderRegistry {
             cliNames: ["groq"], webDomain: "groq.com"
         ),
         ProviderDescriptor(
+            // v1.23.0 Phase C-13: api-key collector — Moonshot DEVELOPER API
+            // platform USD balance (distinct from Kimi/Kimi K2 consumer chat).
+            // Uncapped balance ⇒ `.credits`.
+            kind: .moonshot, displayName: "Moonshot", category: .cloud,
+            supportedSources: [.auto, .api],
+            supportsQuota: false, supportsExactCost: false, supportsCredits: true,
+            requiresHelperBackend: false,
+            cliNames: ["moonshot"], webDomain: "moonshot.ai"
+        ),
+        ProviderDescriptor(
             kind: .volcanoEngine, displayName: "Volcano Engine (豆包)", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
