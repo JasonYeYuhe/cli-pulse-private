@@ -467,6 +467,10 @@ public final class LocalSessionServer: @unchecked Sendable {
             return handleStopSession(request: request)
         case .sendInput:
             return handleSendInput(request: request)
+        case .sendInputRaw:
+            return handleSendInputRaw(request: request)
+        case .resize:
+            return handleResize(request: request)
         case .getPendingApprovals:
             return handleGetPendingApprovals(request: request)
         case .approveAction:
@@ -561,6 +565,64 @@ public final class LocalSessionServer: @unchecked Sendable {
         } catch {
             return .err(id: request.id, code: .internalError, message: "send_input failed: \(error)")
         }
+    }
+
+    /// v1.24 Phase 2b — raw byte input from the in-app terminal viewport
+    /// (xterm.js `onData`). `payload_base64` is base64-encoded so we
+    /// preserve all control bytes (0x03 Ctrl-C, 0x04 Ctrl-D, ESC
+    /// sequences) without JSON-string-escape ambiguity.
+    private func handleSendInputRaw(request: WireRequest) -> WireResponse {
+        guard let sid = request.params["session_id"] as? String, !sid.isEmpty else {
+            return .err(id: request.id, code: .badRequest, message: "'session_id' must be a non-empty string")
+        }
+        guard let b64 = request.params["payload_base64"] as? String else {
+            return .err(id: request.id, code: .badRequest, message: "'payload_base64' must be a string")
+        }
+        guard let bytes = Data(base64Encoded: b64) else {
+            return .err(id: request.id, code: .badRequest, message: "'payload_base64' is not valid base64")
+        }
+        guard let mgr = hooks.sessionManager else {
+            return .err(id: request.id, code: .notImplemented, message: "session manager not configured")
+        }
+        do {
+            let written = try mgr.sendInputRaw(sessionId: sid, bytes: bytes)
+            if !written {
+                return .err(id: request.id, code: .sessionNotFound, message: "no managed session with id '\(sid)'")
+            }
+            return .ok(id: request.id, result: [
+                "session_id": sid,
+                "written": true,
+                "bytes": bytes.count,
+            ])
+        } catch {
+            return .err(id: request.id, code: .internalError, message: "send_input_raw failed: \(error)")
+        }
+    }
+
+    /// v1.24 Phase 2b — window-size update from the in-app terminal
+    /// viewport (xterm.js `onResize` / FitAddon). Triggers SIGWINCH
+    /// on the child via TIOCSWINSZ.
+    private func handleResize(request: WireRequest) -> WireResponse {
+        guard let sid = request.params["session_id"] as? String, !sid.isEmpty else {
+            return .err(id: request.id, code: .badRequest, message: "'session_id' must be a non-empty string")
+        }
+        let colsRaw = request.params["cols"] as? Int ?? -1
+        let rowsRaw = request.params["rows"] as? Int ?? -1
+        guard colsRaw > 0, colsRaw <= 1000, rowsRaw > 0, rowsRaw <= 1000 else {
+            return .err(id: request.id, code: .badRequest, message: "'cols' and 'rows' must be positive integers ≤ 1000")
+        }
+        guard let mgr = hooks.sessionManager else {
+            return .err(id: request.id, code: .notImplemented, message: "session manager not configured")
+        }
+        let ok = mgr.resize(sessionId: sid, cols: UInt16(colsRaw), rows: UInt16(rowsRaw))
+        if !ok {
+            return .err(id: request.id, code: .sessionNotFound, message: "no managed session with id '\(sid)' (or resize ioctl failed)")
+        }
+        return .ok(id: request.id, result: [
+            "session_id": sid,
+            "cols": colsRaw,
+            "rows": rowsRaw,
+        ])
     }
 
     private func handleGetPendingApprovals(request: WireRequest) -> WireResponse {

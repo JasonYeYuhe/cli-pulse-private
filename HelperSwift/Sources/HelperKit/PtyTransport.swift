@@ -26,6 +26,12 @@ public final class PtyTransport: @unchecked Sendable {
         let masterFD: Int32
         private(set) var closed: Bool = false
         private let closeLock = NSLock()
+        /// v1.24 Phase 2a (Codex MEDIUM M4): serializes write/read/close on
+        /// `masterFD`. The existing `closeLock` only guards the `closed`
+        /// flag, not the fd itself — concurrent `writeStdin` and
+        /// `markClosed` from different threads could race the fd lifetime.
+        /// Acquire `ioLock` BEFORE any read/write/close on `masterFD`.
+        let ioLock = NSLock()
 
         init(sessionId: String, pid: pid_t, masterFD: Int32) {
             self.sessionId = sessionId
@@ -38,7 +44,10 @@ public final class PtyTransport: @unchecked Sendable {
             if closed { return }
             closed = true
             // Best-effort close; ignore errors (the fd may already
-            // be invalidated by SIGPIPE / EBADF).
+            // be invalidated by SIGPIPE / EBADF). Held under ioLock
+            // so a concurrent writer/reader sees a consistent fd
+            // lifetime (Codex MEDIUM M4).
+            ioLock.lock(); defer { ioLock.unlock() }
             Darwin.close(masterFD)
         }
 
@@ -54,7 +63,16 @@ public final class PtyTransport: @unchecked Sendable {
         case spawnFailed(String)
         case readFailed(String)
         case writeFailed(String)
+        case ioctlFailed(String)
     }
+
+    /// Default initial PTY window size (Codex MEDIUM M2). Without setting
+    /// this at spawn the slave PTY opens 0×0 and ratatui-based CLIs
+    /// (Codex etc.) hard-newline after every CJK glyph. 80×24 is the
+    /// classic terminal default — callers override per the in-app
+    /// terminal's actual viewport.
+    public static let defaultCols: UInt16 = 80
+    public static let defaultRows: UInt16 = 24
 
     public init() {}
 
@@ -74,15 +92,26 @@ public final class PtyTransport: @unchecked Sendable {
         sessionId: String,
         argv: [String],
         env: [String: String] = [:],
-        cwd: String? = nil
+        cwd: String? = nil,
+        cols: UInt16 = PtyTransport.defaultCols,
+        rows: UInt16 = PtyTransport.defaultRows
     ) throws -> Handle {
         guard !argv.isEmpty else { throw TransportError.emptyArgv }
 
         // openpty allocates a master+slave PTY pair. The Foundation
         // surface doesn't expose openpty so we go to libutil.
+        //
+        // v1.24 Phase 2a (Codex MEDIUM M2): pass an initial `winsize` so
+        // the slave PTY opens at the caller's intended cols/rows. Without
+        // this the PTY defaults to 0×0 and ratatui-based CLIs (Codex)
+        // hard-newline after every double-width CJK glyph. The slave fd
+        // inherits this size when the child does its first read, so
+        // setting it on `openpty` is enough — no separate ioctl needed
+        // for the initial spawn.
         var masterFD: Int32 = -1
         var slaveFD: Int32 = -1
-        let openResult = openpty(&masterFD, &slaveFD, nil, nil, nil)
+        var initialWinsize = winsize(ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0)
+        let openResult = openpty(&masterFD, &slaveFD, nil, nil, &initialWinsize)
         if openResult != 0 {
             throw TransportError.openptyFailed(String(cString: strerror(errno)))
         }
@@ -97,6 +126,12 @@ public final class PtyTransport: @unchecked Sendable {
         var mergedEnv = ProcessInfo.processInfo.environment
         for (k, v) in env { mergedEnv[k] = v }
         if mergedEnv["TERM"] == nil { mergedEnv["TERM"] = "xterm-256color" }
+        // v1.24 Phase 2a: COLUMNS/LINES env hints for ncurses fallbacks
+        // (e.g. when a child shell doesn't ioctl(TIOCGWINSZ) at startup
+        // and relies on env-var probes instead). Caller-supplied env wins
+        // if explicitly set, so this is a default not an override.
+        if mergedEnv["COLUMNS"] == nil { mergedEnv["COLUMNS"] = String(cols) }
+        if mergedEnv["LINES"] == nil { mergedEnv["LINES"] = String(rows) }
         let envStrings: [String] = mergedEnv.map { "\($0.key)=\($0.value)" }
         let envCStrings: [UnsafeMutablePointer<CChar>?] = envStrings.map { strdup($0) } + [nil]
         defer {
@@ -219,9 +254,14 @@ public final class PtyTransport: @unchecked Sendable {
     /// Write to the PTY master. Returns bytes written, 0 on
     /// EPIPE / EBADF / EIO (peer closed), throws on unexpected
     /// errno.
+    ///
+    /// Held under `handle.ioLock` so a concurrent reader or closer
+    /// can't pull the fd out from under us mid-write (Codex MEDIUM M4).
     @discardableResult
     public func writeStdin(_ handle: Handle, _ data: Data) throws -> Int {
-        if handle.isClosed || data.isEmpty { return 0 }
+        if data.isEmpty { return 0 }
+        handle.ioLock.lock(); defer { handle.ioLock.unlock() }
+        if handle.isClosed { return 0 }
         let n: Int = data.withUnsafeBytes { ptr -> Int in
             guard let base = ptr.baseAddress else { return 0 }
             return Darwin.write(handle.masterFD, base, data.count)
@@ -239,7 +279,10 @@ public final class PtyTransport: @unchecked Sendable {
     /// Non-blocking read from the PTY master. Returns up to
     /// `maxBytes` bytes; empty Data when nothing is available
     /// (EWOULDBLOCK) OR when the peer has closed (EIO on Darwin).
+    ///
+    /// Held under `handle.ioLock` (Codex MEDIUM M4) — see `writeStdin`.
     public func readStdout(_ handle: Handle, maxBytes: Int = 4096) throws -> Data {
+        handle.ioLock.lock(); defer { handle.ioLock.unlock() }
         if handle.isClosed { return Data() }
         var buf = [UInt8](repeating: 0, count: maxBytes)
         let n = buf.withUnsafeMutableBufferPointer { ptr -> Int in
@@ -253,6 +296,25 @@ public final class PtyTransport: @unchecked Sendable {
         case EIO, EBADF: return Data()                     // child exited, slave closed
         default:
             throw TransportError.readFailed(String(cString: strerror(errno)))
+        }
+    }
+
+    // MARK: - winsize (v1.24 Phase 2a)
+
+    /// Update the PTY's window size in flight (e.g. when the WKWebView
+    /// container resizes). Sends SIGWINCH to the child via the kernel's
+    /// TIOCSWINSZ side effect, so ratatui / ncurses CLIs immediately
+    /// re-flow their viewport.
+    ///
+    /// `ioctl(TIOCSWINSZ)` on the MASTER fd propagates to the slave —
+    /// no need to touch the slave fd (which we no longer hold anyway).
+    /// Held under `handle.ioLock` so it can't race a concurrent close.
+    public func setWinsize(_ handle: Handle, cols: UInt16, rows: UInt16) throws {
+        handle.ioLock.lock(); defer { handle.ioLock.unlock() }
+        if handle.isClosed { return }
+        var ws = winsize(ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0)
+        if ioctl(handle.masterFD, TIOCSWINSZ, &ws) != 0 {
+            throw TransportError.ioctlFailed(String(cString: strerror(errno)))
         }
     }
 

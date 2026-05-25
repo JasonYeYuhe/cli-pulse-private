@@ -134,4 +134,118 @@ final class PtyTransportTests: XCTestCase {
         let written = try pty.writeStdin(handle, Data("x".utf8))
         XCTAssertEqual(written, 0)
     }
+
+    // MARK: - v1.24 Phase 2a: winsize + ioLock + raw stdin
+
+    /// Spawn with explicit cols/rows; verify the child sees them via
+    /// `stty size` (which the kernel populates from the slave PTY's
+    /// winsize set in openpty at spawn).
+    func testInitialWinsizeReachesChild() throws {
+        let pty = PtyTransport()
+        let handle = try pty.start(
+            sessionId: "WS1",
+            argv: ["/bin/sh", "-c", "stty size; exit"],
+            env: [:],
+            cols: 132, rows: 50
+        )
+        defer { pty.close(handle) }
+        var output = Data()
+        let deadline = Date().addingTimeInterval(2.0)
+        while Date() < deadline {
+            let chunk = try pty.readStdout(handle)
+            if !chunk.isEmpty { output.append(chunk) }
+            else if !pty.isAlive(handle) {
+                output.append(try pty.readStdout(handle))
+                break
+            }
+            usleep(20_000)
+        }
+        let s = String(data: output, encoding: .utf8) ?? ""
+        // `stty size` prints "<rows> <cols>" (rows first per POSIX).
+        XCTAssertTrue(s.contains("50 132"),
+                      "expected '50 132' in stty size output, got: \(s.debugDescription)")
+    }
+
+    /// COLUMNS/LINES env hints should be present in the child's
+    /// environment when not overridden by the caller.
+    func testColumnsLinesEnvDefaultsInjected() throws {
+        let pty = PtyTransport()
+        let handle = try pty.start(
+            sessionId: "WS2",
+            argv: ["/bin/sh", "-c", "echo \"C=$COLUMNS L=$LINES\"; exit"],
+            env: [:],
+            cols: 100, rows: 30
+        )
+        defer { pty.close(handle) }
+        var output = Data()
+        let deadline = Date().addingTimeInterval(2.0)
+        while Date() < deadline {
+            let chunk = try pty.readStdout(handle)
+            if !chunk.isEmpty { output.append(chunk) }
+            else if !pty.isAlive(handle) {
+                output.append(try pty.readStdout(handle))
+                break
+            }
+            usleep(20_000)
+        }
+        let s = String(data: output, encoding: .utf8) ?? ""
+        XCTAssertTrue(s.contains("C=100 L=30"),
+                      "expected 'C=100 L=30' from child env, got: \(s.debugDescription)")
+    }
+
+    /// Caller-supplied env should win over the COLUMNS/LINES defaults.
+    func testColumnsLinesEnvOverrideRespected() throws {
+        let pty = PtyTransport()
+        let handle = try pty.start(
+            sessionId: "WS3",
+            argv: ["/bin/sh", "-c", "echo \"C=$COLUMNS L=$LINES\"; exit"],
+            env: ["COLUMNS": "200", "LINES": "60"],
+            cols: 100, rows: 30
+        )
+        defer { pty.close(handle) }
+        var output = Data()
+        let deadline = Date().addingTimeInterval(2.0)
+        while Date() < deadline {
+            let chunk = try pty.readStdout(handle)
+            if !chunk.isEmpty { output.append(chunk) }
+            else if !pty.isAlive(handle) {
+                output.append(try pty.readStdout(handle))
+                break
+            }
+            usleep(20_000)
+        }
+        let s = String(data: output, encoding: .utf8) ?? ""
+        XCTAssertTrue(s.contains("C=200 L=60"),
+                      "expected caller env to win, got: \(s.debugDescription)")
+    }
+
+    /// setWinsize on a live handle updates the slave PTY without
+    /// throwing. We can't easily observe SIGWINCH from a `sh -c`
+    /// child, so we settle for: ioctl returns 0, no exception thrown.
+    func testSetWinsizeOnLiveHandleSucceeds() throws {
+        let pty = PtyTransport()
+        let handle = try pty.start(
+            sessionId: "WS4",
+            argv: ["/bin/sh", "-c", "sleep 1; exit"],
+            env: [:]
+        )
+        defer { pty.close(handle) }
+        usleep(50_000)
+        XCTAssertNoThrow(try pty.setWinsize(handle, cols: 120, rows: 40))
+        XCTAssertNoThrow(try pty.setWinsize(handle, cols: 80, rows: 24))
+    }
+
+    /// setWinsize on a closed handle is a no-op (early return),
+    /// not a throw — survives the inevitable resize-after-close
+    /// race the UI will produce.
+    func testSetWinsizeOnClosedHandleIsNoOp() throws {
+        let pty = PtyTransport()
+        let handle = try pty.start(
+            sessionId: "WS5",
+            argv: ["/bin/sh", "-c", "exit 0"],
+            env: [:]
+        )
+        pty.close(handle)
+        XCTAssertNoThrow(try pty.setWinsize(handle, cols: 100, rows: 30))
+    }
 }
