@@ -38,6 +38,12 @@ final class LocaleOverrideStoreTests: XCTestCase {
         XCTAssertEqual(translated, "概览")
     }
 
+    func test_setTraditionalChinese_resolvesToZhHantLproj() {
+        LocaleOverrideStore.shared.set("zh-Hant")
+        let translated = NSLocalizedString("tab.overview", bundle: LocaleOverrideStore.shared.bundle, comment: "")
+        XCTAssertEqual(translated, "概覽")
+    }
+
     func test_unknownOverride_fallsBackToBaseBundle() {
         LocaleOverrideStore.shared.set("xx-Unknown")
         // Should NOT crash; should resolve via the base `.module` bundle.
