@@ -211,10 +211,18 @@ public struct ClaudeOAuthStrategy: ClaudeSourceStrategy, Sendable {
         }
         var extra: ExtraUsage? = nil
         if let e = json["extra_usage"] as? [String: Any] {
+            // v1.24 Phase 1 Item #7 (CodexBar 11f92065): Anthropic's
+            // `/api/oauth/usage` returns `monthly_limit` and `used_credits`
+            // in MINOR units (cents) — the same convention as the Web API
+            // (`/api/organizations/{orgId}/overage_spend_limit`, where
+            // ClaudeWebStrategy.fetchOverageSpendLimit already divides by 100).
+            // Convert here so downstream display (which expects dollars)
+            // doesn't show 100× values. Upstream lesson: the SpendLimit-vs-OAuth
+            // distinction is irrelevant — both endpoints emit cents.
             extra = ExtraUsage(
                 isEnabled: e["is_enabled"] as? Bool ?? false,
-                monthlyLimit: (e["monthly_limit"] as? NSNumber)?.doubleValue,
-                usedCredits: (e["used_credits"] as? NSNumber)?.doubleValue,
+                monthlyLimit: (e["monthly_limit"] as? NSNumber).map { $0.doubleValue / 100.0 },
+                usedCredits: (e["used_credits"] as? NSNumber).map { $0.doubleValue / 100.0 },
                 utilization: intFromJSON(e["utilization"]),
                 currency: e["currency"] as? String
             )
