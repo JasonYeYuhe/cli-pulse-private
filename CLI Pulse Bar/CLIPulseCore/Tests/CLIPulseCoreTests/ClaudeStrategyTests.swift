@@ -234,6 +234,9 @@ final class ClaudeStrategyTests: XCTestCase {
     }
 
     func testOAuthParseUsageWithExtraUsage() throws {
+        // v1.24 Phase 1 Item #7 (CodexBar 11f92065): values are in cents
+        // (minor units); parseUsage now divides by 100 so downstream
+        // display sees dollars. 5000 cents → $50.00, 1234.56 cents → $12.3456.
         let json = """
         {
             "five_hour": { "utilization": 10 },
@@ -243,7 +246,28 @@ final class ClaudeStrategyTests: XCTestCase {
         let usage = try ClaudeOAuthStrategy.parseUsage(json)
         XCTAssertNotNil(usage.extraUsage)
         XCTAssertTrue(usage.extraUsage!.isEnabled)
-        XCTAssertEqual(usage.extraUsage!.monthlyLimit!, 5000.0, accuracy: 0.01)
+        XCTAssertEqual(usage.extraUsage!.monthlyLimit!, 50.0, accuracy: 0.01)
+        XCTAssertEqual(usage.extraUsage!.usedCredits!, 12.3456, accuracy: 0.0001)
+    }
+
+    /// v1.24 Phase 1 Item #7 (CodexBar 11f92065) regression: pin the
+    /// cents → dollars conversion explicitly. Anthropic's
+    /// `/api/oauth/usage` extra_usage block delivers `monthly_limit` and
+    /// `used_credits` in MINOR units (cents) — same convention as
+    /// `/api/organizations/.../overage_spend_limit` (Web API, already
+    /// divides by 100 in `ClaudeWebStrategy.fetchOverageSpendLimit`).
+    /// Pre-fix this path returned raw cents, producing 100× values on
+    /// the dashboard.
+    func testOAuthParseUsageExtraUsageMinorUnits() throws {
+        let json = """
+        {
+            "extra_usage": { "is_enabled": true, "monthly_limit": 10000, "used_credits": 7500, "currency": "USD" }
+        }
+        """.data(using: .utf8)!
+        let usage = try ClaudeOAuthStrategy.parseUsage(json)
+        // 10000 cents → $100.00, 7500 cents → $75.00 (NOT 10000.0 / 7500.0).
+        XCTAssertEqual(usage.extraUsage!.monthlyLimit!, 100.0, accuracy: 0.001)
+        XCTAssertEqual(usage.extraUsage!.usedCredits!, 75.0, accuracy: 0.001)
     }
 
     /// Regression: Anthropic's /api/oauth/usage returns `utilization` as a
