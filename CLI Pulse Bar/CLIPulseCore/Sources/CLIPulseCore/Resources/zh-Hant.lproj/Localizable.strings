@@ -1,0 +1,748 @@
+/* CLI Pulse — 繁體中文 */
+
+/* ── 標籤頁 ── */
+"tab.overview" = "概覽";
+"tab.providers" = "服務商";
+"tab.sessions" = "會話";
+"tab.alerts" = "告警";
+"tab.settings" = "設定";
+
+/* ── 概覽 / 儀表盤 ── */
+"dashboard.title" = "儀表盤";
+"dashboard.updated" = "更新於 %@";
+"dashboard.server_online" = "伺服器線上";
+"dashboard.server_offline" = "伺服器離線";
+"dashboard.no_data" = "暫無資料";
+"dashboard.connect_helper" = "在這臺 Mac 上開始使用 AI 工具，使用量會自動出現在這裡。";
+"dashboard.local_mode_ready_title" = "本地模式已就緒";
+"dashboard.local_mode_ready_body" = "在這臺 Mac 上使用 Claude Code、Codex、Ollama 或其他 AI 工具，使用量會自動顯示在這裡。隨時可在「設定」裡登入，把資料同步到 iPhone。";
+
+/* ── Local Mode Guide (iter18 — shown on macOS Overview while in unauth local mode) ── */
+"local_mode_guide.title" = "本地模式";
+"local_mode_guide.body" = "正在本地採集這臺 Mac 的使用情況。在「設定」裡登入即可在多裝置間同步。";
+"local_mode_guide.bullet1" = "在這臺 Mac 上使用 Claude Code、Codex、Ollama 或其他 AI 工具";
+"local_mode_guide.bullet2" = "如果看不到 token 資料，請在「設定」裡授予資料夾存取權限";
+"local_mode_guide.bullet3" = "稍後登入即可把使用量同步到 iPhone 等裝置";
+"local_mode_guide.sign_in_cta" = "登入以同步";
+
+/* ── Welcome Mode Choice (iter19 — shown on macOS Overview when unauth + no local mode picked) ── */
+"welcome_choice.title" = "歡迎使用 CLI Pulse";
+"welcome_choice.subtitle" = "選擇你想要的 AI 工具使用追蹤方式：";
+"welcome_choice.sign_in_title" = "登入以同步";
+"welcome_choice.sign_in_body" = "在 iPhone、Watch 等同帳號裝置間同步使用情況。";
+"welcome_choice.local_mode_title" = "使用本地模式";
+"welcome_choice.local_mode_body" = "只追蹤這臺 Mac 的使用情況——無需帳號，不上傳任何資料。";
+"welcome_choice.footnote" = "可以隨時在「設定」裡切換模式。";
+"dashboard.usage_today" = "今日用量";
+"dashboard.cost_today" = "今日費用";
+"dashboard.est_cost" = "預估費用";
+"dashboard.requests" = "請求數";
+"dashboard.active_sessions" = "活躍會話";
+"dashboard.online_devices" = "裝置";
+"dashboard.unresolved_alerts" = "告警";
+"dashboard.cost_summary" = "費用概覽";
+"dashboard.today" = "今日";
+"dashboard.30day_est" = "30天預估";
+"dashboard.provider_usage" = "服務商用量";
+"dashboard.top_projects" = "熱門專案";
+"dashboard.no_projects" = "暫無跟蹤的專案";
+"dashboard.risk_signals" = "風險訊號";
+"dashboard.activity" = "活動";
+"dashboard.quick_stats" = "快速統計";
+"dashboard.monitor" = "監控";
+"dashboard.manage" = "管理";
+"dashboard.no_unresolved_alerts" = "無未解決告警";
+
+/* ── 服務商 ── */
+"providers.title" = "服務商";
+"providers.show_all" = "顯示全部";
+"providers.hide_disabled" = "隱藏已禁用";
+"providers.tracked" = "跟蹤中";
+"providers.no_providers" = "無服務商";
+"providers.no_data" = "無服務商資料";
+"providers.empty_hint" = "Mac 上的助手執行後將顯示服務商資料";
+"providers.all_hidden" = "所有服務商已隱藏";
+"providers.show_all_hint" = "點按「顯示全部」檢視已禁用的服務商";
+"providers.this_week" = "本週";
+"providers.quota" = "配額";
+"providers.status" = "狀態";
+
+/* ── 會話 ── */
+"sessions.title" = "會話";
+"sessions.select" = "選擇會話";
+"sessions.select_hint" = "從列表中選擇一個會話檢視詳情";
+"sessions.no_sessions" = "無會話";
+"sessions.empty_hint" = "檢測到 AI 工具執行時將顯示會話";
+"sessions.running" = "執行中";
+"sessions.details" = "會話詳情";
+"sessions.count_running" = "%d 執行中";
+
+/* ── 告警 ── */
+"alerts.title" = "告警";
+"alerts.all_clear" = "一切正常";
+"alerts.no_alerts" = "無告警";
+"alerts.no_unresolved" = "無未解決告警";
+"alerts.no_matching" = "無匹配告警";
+"alerts.open" = "未處理";
+"alerts.resolved" = "已解決";
+"alerts.all" = "全部";
+"alerts.filter" = "篩選";
+"alerts.ack" = "確認";
+"alerts.acknowledge" = "確認";
+"alerts.resolve" = "解決";
+"alerts.snooze" = "暫緩";
+"alerts.snooze_minutes" = "%d 分鐘";
+"alerts.created" = "建立時間";
+"alerts.related" = "關聯";
+"alerts.actions" = "操作";
+"alerts.severity_critical" = "嚴重";
+"alerts.severity_warning" = "警告";
+"alerts.unresolved_count" = "%d 未解決";
+
+/* ── 設定 ── */
+"settings.title" = "設定";
+"settings.account" = "帳戶";
+"settings.general" = "通用";
+"settings.server" = "伺服器";
+"settings.server_name" = "Supabase (東京)";
+"settings.status" = "狀態";
+"settings.connected" = "已連線";
+"settings.disconnected" = "未連線";
+"settings.paired" = "已同步";
+"settings.not_paired" = "未同步";
+"settings.connection" = "同步狀態";
+"settings.refresh_cadence" = "重新整理頻率";
+"settings.refresh_interval" = "重新整理間隔";
+"settings.subscription" = "訂閱";
+"settings.current_plan" = "當前方案";
+"settings.manage_subscription" = "管理訂閱";
+"settings.upgrade_pro" = "升級到 Pro";
+"settings.providers" = "服務商";
+"settings.devices" = "裝置";
+"settings.data_retention" = "資料保留";
+"settings.days" = "天";
+"settings.notifications" = "通知";
+"settings.desktop_notifications" = "桌面通知";
+"settings.desktop_notifications_hint" = "配額不足或出錯時傳送提醒";
+"settings.session_quota_notifications" = "會話配額通知";
+"settings.session_quota_hint" = "5小時會話配額用完時通知";
+"settings.alert_notifications" = "告警通知";
+"settings.session_quota_alerts" = "會話配額提醒";
+"settings.check_provider_status" = "檢查服務商狀態";
+"settings.cost_tracking" = "費用追蹤";
+"settings.display" = "顯示";
+"settings.show_cost_estimates" = "顯示費用預估";
+"settings.compact_mode" = "緊湊模式";
+"settings.menu_bar_mode" = "選單欄模式";
+"settings.reorder_providers" = "排序服務商";
+"settings.reorder_hint" = "拖拽排序，點按啟用/禁用";
+"settings.manage_providers" = "管理服務商";
+"settings.advanced" = "高階";
+"settings.hide_personal_info" = "隱藏個人資訊";
+"settings.force_refresh" = "強制重新整理所有資料";
+"settings.about" = "關於";
+"settings.version" = "版本";
+"settings.build" = "構建";
+"settings.privacy_policy" = "隱私政策";
+"settings.terms_of_use" = "使用條款";
+"settings.github" = "GitHub 倉庫";
+"settings.sign_out" = "退出登入";
+"settings.sign_in" = "登入";
+"settings.sign_in_email" = "郵箱登入";
+"settings.sign_in_hint" = "登入以開始使用";
+"settings.appearance" = "外觀";
+"settings.appearance_system" = "跟隨系統";
+"settings.appearance_light" = "淺色";
+"settings.appearance_dark" = "深色";
+"settings.email" = "郵箱";
+"settings.name" = "姓名";
+
+/* ── 認證 / 登入 ── */
+"auth.title" = "CLI Pulse";
+"auth.subtitle" = "監控你的 AI 程式設計工具";
+"auth.or" = "或";
+"auth.try_demo" = "試用演示";
+"auth.welcome" = "歡迎";
+"auth.watch_hint" = "在 iPhone 上登入或在下方輸入憑據";
+"auth.send_code" = "傳送驗證碼";
+"auth.verify_code" = "驗證";
+"auth.enter_code" = "輸入驗證碼";
+"auth.code_sent" = "已傳送";
+"auth.code_sent_to" = "驗證碼已傳送至 %@";
+"auth.resend_code" = "重新傳送";
+"auth.back_to_email" = "返回";
+"auth.code_placeholder" = "輸入驗證碼";
+"auth.password_optional" = "密碼（可選）";
+"auth.password_placeholder" = "輸入密碼";
+
+/* ── 訂閱 ── */
+"subscription.title" = "訂閱";
+"subscription.pro_title" = "CLI Pulse Pro";
+"subscription.unlock" = "解鎖 CLI Pulse 的全部功能";
+"subscription.monthly" = "月付";
+"subscription.yearly_save" = "年付（省 17%）";
+"subscription.popular" = "熱門";
+"subscription.not_available" = "暫不可用";
+"subscription.restore" = "恢復購買";
+"subscription.free" = "免費";
+"subscription.pro" = "Pro";
+"subscription.team" = "團隊";
+"subscription.free_description" = "個人基礎監控";
+"subscription.pro_description" = "高階監控與擴充套件歷史";
+"subscription.team_description" = "團隊全功能監控";
+"subscription.everything_in_pro" = "包含 Pro 的所有功能";
+"subscription.unlimited_devices" = "無限裝置";
+"subscription.data_retention_365" = "365天資料保留";
+"subscription.team_dashboards" = "團隊儀表盤";
+"subscription.shared_alerts" = "共享告警和規則";
+"subscription.admin_controls" = "管理員控制";
+"subscription.unlimited_providers" = "無限服務商";
+"subscription.up_to_5_devices" = "最多 5 臺裝置";
+"subscription.data_retention_90" = "90天資料保留";
+"subscription.priority_alerts" = "優先告警";
+"subscription.cost_analytics" = "費用分析";
+"subscription.per_year" = "/年";
+"subscription.per_month" = "/月";
+"subscription.upgrade_pro" = "升級到 Pro";
+"subscription.switch_pro" = "切換到 Pro";
+"subscription.switch_team" = "切換到團隊版";
+
+/* ── 關於 ── */
+"about.title" = "關於 CLI Pulse Bar";
+"about.description" = "從選單欄監控你的 AI 程式設計工具。跟蹤 Claude、Codex、Gemini 等 20+ 服務商的用量、費用和告警。";
+"about.copyright" = "© 2025 CLI Pulse 貢獻者";
+"about.report_issue" = "報告問題";
+
+/* ── 小元件 ── */
+"widget.usage_title" = "用量";
+"widget.usage_description" = "在鎖屏上快速檢視使用百分比。";
+"widget.overview_title" = "用量概覽";
+"widget.overview_description" = "一目瞭然地監控 AI 程式設計工具使用情況。";
+"widget.app_name" = "CLI Pulse";
+"widget.no_data" = "暫無資料";
+"widget.no_provider_data" = "無服務商資料";
+"widget.used" = "已使用";
+
+/* ── 時間 ── */
+"time.just_now" = "剛剛";
+"time.ago" = "前";
+
+/* ── 通用 ── */
+"common.online" = "線上";
+"common.offline" = "離線";
+"common.refresh_all" = "全部重新整理";
+"common.cancel" = "取消";
+"common.done" = "完成";
+"common.save" = "儲存";
+"common.delete" = "刪除";
+"common.enabled" = "已啟用";
+"common.today" = "今日";
+"common.no_data" = "暫無資料";
+"common.navigation" = "導航";
+"common.data" = "資料";
+"common.refresh" = "重新整理";
+"common.ok" = "好";
+
+/* ── 帳戶 ── */
+"account.delete_account" = "刪除帳戶";
+"account.delete_confirm_title" = "刪除帳戶";
+"account.delete_confirm_message" = "這將永久刪除您的帳戶和所有相關資料。此操作無法撤銷。";
+"account.unlimited" = "無限";
+
+/* ── 會話詳情 ── */
+"detail.provider" = "服務商";
+"detail.project" = "專案";
+"detail.device" = "裝置";
+"detail.started" = "開始時間";
+"detail.usage" = "用量";
+"detail.cost" = "費用";
+"detail.requests" = "請求數";
+"detail.errors" = "錯誤";
+"detail.remaining" = "剩餘";
+"detail.remaining_value" = "剩餘 %@";
+"detail.usage_today" = "%@ 今日";
+
+/* ── 配額 ── */
+"quota.low" = "不足";
+"quota.moderate" = "中等";
+"quota.ok" = "正常";
+
+/* ── 登入 ── */
+"login.email_placeholder" = "you@example.com";
+"login.name_placeholder" = "您的姓名";
+
+/* ── 顯示模式 ── */
+"display.icon" = "圖示";
+"display.percent" = "百分比";
+"display.pace" = "用量進度";
+"display.most_used" = "最常用";
+
+/* ── 狀態 ── */
+"status.running" = "執行中";
+"status.idle" = "空閒";
+"status.failed" = "失敗";
+"status.syncing" = "同步中";
+"status.online" = "線上";
+"status.offline" = "離線";
+"status.degraded" = "降級";
+"status.operational" = "正常執行";
+"status.down" = "已停止";
+"status.disabled" = "已禁用";
+"status.ended" = "已結束";
+
+/* ── 徽章 ── */
+"badge.free" = "免費";
+"badge.pro" = "專業";
+"badge.team" = "團隊";
+"badge.exact" = "精確";
+"badge.estimated" = "預估";
+"badge.unavailable" = "不可用";
+"badge.high" = "高";
+"badge.medium" = "中";
+"badge.low" = "低";
+"badge.cloud" = "雲端";
+"badge.local" = "本地";
+"badge.aggregator" = "聚合";
+"badge.ide" = "IDE";
+
+/* ── 引導 / 同步設定 ── */
+"onboarding.how_it_works" = "CLI Pulse 工作原理";
+"onboarding.cloud_sync_title" = "雲同步";
+"onboarding.cloud_sync_desc" = "Mac 應用會在本地掃描 AI 工具使用情況並上傳到你的帳戶。任何使用同一帳戶登入的裝置（包括 iPhone）都會自動顯示資料。";
+"onboarding.not_bluetooth" = "這不是藍芽或直接裝置配對——同步以帳戶為單位。";
+"onboarding.setup_steps_title" = "開始使用";
+"onboarding.step1_mac" = "在 Mac 應用上登入";
+"onboarding.step2_helper" = "在此裝置上用同一帳戶登入";
+"onboarding.step3_phone" = "資料將自動顯示在這裡";
+"onboarding.local_mode_title" = "本地模式";
+"onboarding.local_mode_desc" = "檢測在此 Mac 上執行的 AI 工具，無需雲設定。";
+"onboarding.cloud_mode_title" = "雲同步（可選）";
+"onboarding.cloud_mode_desc" = "助手指令碼將資料同步到雲端，可在任何裝置（包括 iPhone）上檢視。";
+"onboarding.ios_waiting" = "等待資料";
+"onboarding.ios_waiting_desc" = "在 Mac 應用上用同一帳戶登入即可，使用資料會自動出現在這裡——無需手動配對。";
+"onboarding.check_sync" = "檢查同步狀態";
+"onboarding.set_up_sync" = "設定雲同步";
+"onboarding.synced_mode" = "雲同步 — 資料在裝置間同步";
+"onboarding.not_synced_hint" = "登入後即可將使用資料同步到你的帳戶。任何使用同一帳戶登入的裝置（包括 iPhone）都會自動看到資料。";
+"onboarding.helper_not_connected_yet" = "助手尚未連線。請執行上方命令後重試。";
+
+/* ── 團隊 ── */
+"team.title" = "團隊";
+"team.requires_pro_hint" = "團隊功能需要 Pro 或 Team 訂閱";
+"team.no_teams" = "暫無團隊。建立一個開始使用。";
+"team.members" = "成員";
+"team.pending_invites" = "待處理邀請";
+"team.pending" = "待處理";
+"team.invite" = "邀請";
+"team.make_admin" = "設為管理員";
+"team.make_member" = "設為成員";
+"team.remove" = "移除";
+"team.create_team" = "建立團隊";
+"team.team_name" = "團隊名稱";
+"team.create" = "建立";
+"team.invite_member" = "邀請成員";
+"team.email_address" = "郵箱地址";
+"team.send_invite" = "傳送邀請";
+
+/* ── 整合 ── */
+"integrations.title" = "整合";
+"integrations.webhook_notifications" = "Webhook 通知";
+"integrations.webhook_hint" = "向 Discord、Slack 或自定義端點傳送告警";
+"integrations.webhook_url_placeholder" = "Webhook URL (Discord / Slack)";
+"integrations.test_webhook" = "測試 Webhook";
+"integrations.event_filter" = "事件過濾";
+"integrations.event_filter_hint" = "僅對匹配的告警傳送 Webhook（留空 = 全部）";
+"integrations.filter_severities" = "嚴重級別";
+"integrations.filter_types" = "告警型別";
+"integrations.filter_providers" = "服務商";
+"integrations.filter_all" = "全部";
+
+/* ── Auth (OAuth) ── */
+"auth.sign_in_google" = "使用 Google 登入";
+"auth.sign_in_github" = "使用 GitHub 登入";
+"auth.sign_in_cancelled" = "已取消登入";
+"auth.sign_in_failed_generic" = "登入失敗，請重試。";
+"auth.sign_in_failed_state_mismatch" = "登入失敗：安全校驗不匹配，請重試。";
+"auth.link_cancelled" = "已取消關聯";
+"auth.link_failed_generic" = "關聯失敗，請重試。";
+"auth.link_failed_state_mismatch" = "關聯失敗：安全校驗不匹配，請重試。";
+
+/* ── 預測 ── */
+"forecast.title" = "費用預測";
+"forecast.month_end" = "月末預估";
+"forecast.so_far" = "已花費";
+"forecast.confidence" = "置信範圍";
+"forecast.estimate" = "預估";
+"forecast.insufficient_data" = "資料不足，無法預測";
+
+// v1.10 P3-2: accessibility labels
+"a11y.dismiss_error" = "關閉錯誤";
+"a11y.dismiss_tier_warning" = "關閉套餐限制提醒";
+"a11y.configure_provider" = "配置 %@";
+"a11y.configuration_error_title" = "配置錯誤";
+"a11y.configuration_error_body" = "缺少 SUPABASE_ANON_KEY — API 呼叫將失敗。";
+
+/* ── 認證 / 帳戶 ── */
+"auth.password_sign_in" = "登入";
+"auth.use_email_code" = "改用郵箱驗證碼";
+"auth.use_password" = "使用密碼登入";
+"auth.password_label" = "密碼";
+"auth.use_local_mode" = "使用本地模式";
+"auth.use_local_mode_hint" = "只顯示這臺 Mac 的使用情況。可以稍後登入以在多裝置間同步。";
+"auth.watch_phone_prompt" = "在 iPhone 上開啟 CLI Pulse 以登入";
+"auth.watch_phone_unreachable" = "無法連線到 iPhone。請確保 CLI Pulse 已在 iPhone 上開啟，或在下方手動登入。";
+"auth.watch_complete_sign_in" = "完成登入";
+"auth.watch_email_fallback" = "改用郵箱登入";
+"auth.apple_no_token" = "Apple 授權未返回身份令牌";
+"auth.apple_nonce_failed" = "無法生成安全的登入隨機數，請重試。";
+"account.linked_accounts" = "已關聯帳戶";
+"account.linked_accounts_footer" = "關聯 Apple、Google 或 GitHub 後均可登入同一 CLI Pulse 帳戶。";
+"account.unlink_confirm_title" = "取消關聯此帳戶？";
+"account.unlink_with_provider" = "取消關聯 %@";
+"account.unlink_message" = "您將無法再使用 %@ 登入。可以稍後重新關聯。";
+"account.linked_status" = "已關聯";
+"account.not_linked_status" = "未關聯";
+"account.unlink" = "取消關聯";
+"account.link" = "關聯";
+"account.delete_long_message" = "這將永久刪除您的帳戶和所有相關資料，包括會話、裝置、提醒和團隊成員資格。此操作無法撤銷。";
+"account.delete_continue" = "繼續";
+"account.delete_confirm_step_title" = "確認刪除";
+"account.delete_confirm_placeholder" = "輸入 DELETE 以確認";
+"account.delete_confirm_button" = "刪除我的帳戶";
+"account.delete_confirm_step_message" = "輸入 DELETE 以確認永久刪除帳戶。";
+"account.delete_failed_title" = "未能刪除帳戶";
+"account.delete_failed_generic" = "未能刪除你的帳戶，帳戶仍然有效。請檢查網路後重試，或先登出再重新登入以重新整理登入狀態。";
+"account.delete_session_expired" = "登入狀態在刪除帳戶之前已過期。你的帳戶仍然有效——請重新登入後，從「設定」裡再次點選「刪除帳戶」。";
+
+/* ── 儀表盤補充 (i18n sweep) ── */
+"dashboard.export_cost_report" = "匯出成本報告";
+"dashboard.export_sessions" = "匯出會話";
+"dashboard.export_providers" = "匯出服務商";
+"dashboard.export_pdf" = "匯出 PDF 報告";
+"dashboard.export" = "匯出";
+"dashboard.subscriptions" = "訂閱";
+"dashboard.subscription_utilization" = "訂閱使用率";
+"dashboard.total_monthly" = "月度合計";
+"dashboard.no_enabled_with_data" = "沒有已啟用且包含資料的服務商";
+"dashboard.tap_review_claude" = "點按可檢視 Mac 上正在執行的 Claude 工具呼叫";
+
+/* ── 設定補充 (i18n sweep) ── */
+"settings.show_cost_summary" = "顯示成本摘要";
+"settings.show_cost_summary_hint" = "顯示今日及 30 天預估支出";
+"settings.auto_poll_status" = "自動輪詢服務商狀態頁";
+"settings.quota_alert_thresholds" = "配額告警閾值";
+"settings.quota_alert_thresholds_hint" = "當服務商配額超過這些百分比時觸發告警。";
+"settings.warning_pct" = "警告：%d%%";
+"settings.critical_pct" = "嚴重：%d%%";
+"settings.warning_threshold_pct" = "警告閾值：%d%%";
+"settings.critical_threshold_pct" = "嚴重閾值：%d%%";
+"settings.reset_thresholds_defaults" = "恢復預設閾值";
+"settings.reset" = "重置";
+"settings.privacy" = "隱私";
+"settings.test_webhook" = "測試 Webhook";
+"settings.remote_control" = "遠端控制";
+"settings.remote_control_iphone_hint" = "透過此 iPhone 審批 Claude 的工具呼叫";
+"settings.pending_approvals" = "待審批";
+"settings.privacy_redacted_hint" = "CLI Pulse 僅上傳每個請求的脫敏摘要——絕不上傳 API 金鑰、Cookie 或完整的對話內容。";
+
+/* ── 顯示補充 (i18n sweep) ── */
+"display.mode" = "顯示模式";
+"display.merge_menu_bar_icons" = "合併選單欄圖示";
+"display.merge_menu_bar_hint" = "單圖示 + 服務商切換器";
+"display.content_mode" = "內容模式";
+"display.reorder_hint" = "選擇要在「概覽」標籤頁顯示的服務商，拖動可重新排序。";
+
+/* ── 訂閱補充 (i18n sweep) ── */
+"subscription.loading_plans" = "正在載入方案…";
+"subscription.unavailable" = "當前無法獲取訂閱方案。";
+"subscription.retry" = "重試";
+"subscription.view_all_plans" = "檢視全部方案與詳情";
+
+/* ── 服務商補充 (i18n sweep) ── */
+"providers.configure_hint" = "為每個服務商配置資料來源、憑據和顯示方式。";
+"providers.source_label" = "來源：%@";
+"providers.key_set" = "已設定金鑰";
+"providers.limited_free" = "免費方案受限";
+"providers.disabled_badge" = "已禁用";
+"providers.grant_access_title" = "授予訪問以檢視 token 數與成本";
+"providers.grant_access_body" = "CLI Pulse 需要讀取 ~/.codex/sessions/ 與 ~/.claude/projects/";
+"providers.open_settings" = "開啟「設定」";
+
+/* ── 服務商配置 ── */
+"provider_config.data_source" = "資料來源";
+"provider_config.account_label" = "帳號標籤";
+"provider_config.account_placeholder" = "例如：team-A、dev-box";
+"provider_config.api_key" = "API 金鑰";
+"provider_config.show_key" = "顯示金鑰";
+"provider_config.hide_key" = "隱藏金鑰";
+"provider_config.keychain_notice" = "僅儲存在 Mac 鑰匙串中，絕不會上傳。";
+"provider_config.cookie_source" = "Cookie 來源";
+"provider_config.manual_cookie_header" = "手動 Cookie 頭";
+"provider_config.auto_import_note" = "自動從已登入的瀏覽器匯入會話 Cookie。macOS 可能會請求一次鑰匙串訪問；若未找到，請在下方手動貼上。";
+"provider_config.auto_import_failed" = "無法自動匯入會話 Cookie，請手動貼上：";
+"provider_config.capabilities" = "能力";
+"provider_config.cap_quota" = "配額";
+"provider_config.cap_exact_cost" = "精確成本";
+"provider_config.cap_credits" = "積分";
+"provider_config.cap_status_poll" = "狀態輪詢";
+"provider_config.requires_helper_sync" = "配額／套餐資料需要後臺 helper 同步。";
+"provider_config.google_oauth" = "Google OAuth";
+"provider_config.disconnect" = "斷開連線";
+"provider_config.connect_gemini" = "連線 Gemini";
+"provider_config.gemini_uses_google" = "使用你的 Google 帳號，無需 API 金鑰。";
+"provider_config.gemini_cli_fallback" = "Gemini CLI 回退";
+"provider_config.gemini_cli_fallback_note" = "當 CLI Pulse 的 Gemini 登入無法重新整理時，回退到 Gemini CLI 自身的憑證。僅限直接下載版。";
+"provider_config.claude_code" = "Claude Code";
+"provider_config.connect_claude_code" = "連線 Claude Code";
+"provider_config.claude_keychain_hint" = "讀取你已有的 Claude Code 登入資訊。macOS 會請求一次授權——請點「始終允許」。";
+"provider_config.claude_read_failed" = "無法讀取 Claude Code 憑據。如果你拒絕了授權，請重試，或先安裝／啟動 Claude Code。";
+"provider_config.test_connection" = "測試連線";
+"provider_config.testing" = "測試中…";
+
+/* ── 引導向導 ── */
+"onboarding_wizard.welcome_title" = "歡迎使用 CLI Pulse";
+"onboarding_wizard.welcome_subtitle" = "在一處監控 AI 程式設計工具的\n使用量、成本與配額。";
+"onboarding_wizard.get_started" = "開始使用";
+"onboarding_wizard.what_does" = "CLI Pulse 能做什麼";
+"onboarding_wizard.continue" = "繼續";
+"onboarding_wizard.back" = "返回";
+"onboarding_wizard.privacy_title" = "資料由你掌控";
+"onboarding_wizard.privacy_body" = "下面清楚說明哪些資料留在 Mac 上，哪些會同步到你的帳戶。";
+"onboarding_wizard.sign_in_title" = "登入";
+"onboarding_wizard.sign_in_subtitle" = "登入以同步資料——首次驗證時會建立你的帳戶。";
+"onboarding_wizard.skip" = "暫時跳過";
+"onboarding_wizard.code_sent_to" = "驗證碼已傳送至 %@";
+"onboarding_wizard.verify" = "驗證";
+"onboarding_wizard.back_to_email" = "返回郵箱";
+"onboarding_wizard.all_set_title" = "全部就緒";
+"onboarding_wizard.all_set_body" = "Mac 應用執行時資料會自動同步。在任何其他裝置上用同一帳號登入，使用資料就會出現——無需配對或額外設定。";
+"onboarding_wizard.helper_hint" = "需要為無介面伺服器或 Claude 遠端審批使用可選 helper？引導完成後請開啟「設定 → Helper」。";
+"onboarding_wizard.done" = "完成";
+"onboarding_wizard.close" = "關閉引導";
+
+/* ── 高階 ── */
+"advanced.launch_at_login" = "登入時自動啟動";
+"advanced.background_sync" = "啟用後臺同步";
+"advanced.background_sync_hint" = "將使用資料同步到雲端，供 iOS／Watch／Android 使用";
+"advanced.full_details" = "詳細資訊：";
+"advanced.hide_emails" = "在介面中隱藏郵箱地址";
+"advanced.track_git" = "追蹤 git 活動（Yield Score）";
+"advanced.track_git_hint" = "僅雜湊後的提交後設資料——不上傳訊息、diff 或路徑";
+"advanced.git_consent_title" = "啟用 git 活動追蹤？";
+"advanced.enable" = "啟用";
+"advanced.git_consent_body" = "CLI Pulse 會掃描有 AI 會話活動的專案的 git 日誌。僅會上傳提交雜湊、專案路徑的 HMAC、提交時間戳以及合併提交標記。提交訊息、diff、檔案路徑和作者身份永遠不會上傳。";
+"advanced.remote_control" = "遠端控制（階段 1：Claude 審批）";
+"advanced.remote_control_hint" = "透過 iPhone 或 Mac 審批 Claude 工具呼叫 · 預設關閉";
+"advanced.remote_consent_title" = "啟用遠端控制？";
+"advanced.token" = "令牌";
+"advanced.providers_loaded" = "已載入服務商";
+"advanced.last_refresh" = "上次重新整理";
+"advanced.never" = "從未";
+
+/* ── 遠端審批 ── */
+"remote_approvals.title" = "遠端審批";
+"remote_approvals.disabled_hint" = "已禁用 · 設定 → 隱私";
+"remote_approvals.refresh" = "重新整理";
+"remote_approvals.close" = "關閉";
+"remote_approvals.off_title" = "遠端控制已關閉";
+"remote_approvals.off_body_mac" = "在「設定 → 隱私」中開啟遠端控制，即可透過 iPhone 或 Mac 審批 Claude 的工具呼叫。CLI Pulse 僅上傳脫敏摘要，絕不會上傳對話內容或 API 金鑰。";
+"remote_approvals.off_body_ios" = "在「設定 → 隱私」中開啟遠端控制，即可審批 Mac 上執行的 Claude 工具呼叫。CLI Pulse 僅上傳脫敏摘要，絕不會上傳對話內容或 API 金鑰。";
+"remote_approvals.open_settings" = "開啟「設定」";
+"remote_approvals.no_pending" = "暫無待審批請求";
+"remote_approvals.updated_prefix" = "更新於 ";
+"remote_approvals.per_request_note_mac" = "此處的「批准」僅對當前請求生效——不會新增 Claude Code 的「始終允許」規則。下次 Claude 需要相同工具時還會再次請求。要設定長期規則，請使用 Claude Code 自帶的「Always Allow」。";
+"remote_approvals.per_request_note_ios" = "「批准」僅對當前請求生效——不會建立 Claude Code 的「始終允許」規則。下次 Claude 需要相同工具時仍會在此再次請求。要設定長期規則，請在 Mac 上使用 Claude Code 自帶的「Always Allow」。批准後會在 Mac 上執行該工具呼叫。";
+"remote_approvals.deny" = "拒絕";
+"remote_approvals.approve" = "批准";
+"remote_approvals.high_risk_warning" = "高風險——請在 Mac 上本地審批。";
+
+/* ── Yield Score ── */
+"yield.title" = "Yield Score";
+"yield.help_estimated" = "當無法獲取精確的 API 價格時，成本根據 token 使用量估算。";
+"yield.empty_body" = "追蹤每次提交的 AI 成本以檢視你的 Yield Score。";
+"yield.empty_enable_hint" = "在「設定 → 隱私 → 追蹤 git 活動」中啟用。";
+"yield.view_detail" = "檢視詳情";
+"yield.detail_title" = "Yield Score 詳情";
+"yield.detail_body" = "當無法獲取精確的 API 價格時，成本根據 token 使用量估算。合併提交不計入歸因。";
+
+/* ── 選單欄 ── */
+"menu_bar.tier_migration" = "已保留你最常用的 %d 個服務商以適配免費方案。已禁用 %d 個——可在「設定 → 服務商」中編輯。";
+"menu_bar.edit" = "編輯";
+"menu_bar.app_version" = "CLI Pulse v%@";
+"menu_bar.quit" = "退出 CLI Pulse";
+
+/* ── 配對 ── */
+"pairing.helper_intro" = "後臺 helper 會將使用資料同步到雲端，方便你在 iOS、Watch、Android 上檢視。";
+"pairing.set_up_helper" = "設定後臺 Helper";
+"pairing.manual_setup" = "手動設定（終端）";
+"pairing.your_code" = "你的程式碼：";
+"pairing.copy" = "複製到剪貼簿";
+
+/* ── Watch ── */
+"watch.couldnt_load_data" = "未能載入資料";
+"watch.couldnt_load_providers" = "未能載入服務商";
+"watch.retry" = "重試";
+"watch.pull_to_refresh" = "下拉重新整理";
+
+/* ── 小元件補充 ── */
+"widget.sign_in_to_view" = "登入以檢視使用情況";
+
+/* ── 通用補充 ── */
+"common.retry" = "重試";
+"common.close" = "關閉";
+"common.disconnect" = "斷開連線";
+
+/* ── 語言切換 (iter22) ── */
+"language.title" = "語言";
+"language.system_default" = "系統預設";
+
+/* ── 遠端審批 i18n leftovers ── */
+"remote_approvals.pending_count" = "%d 項待審批";
+"remote_approvals.entry_label_none" = "開啟遠端審批（無待審批）";
+"remote_approvals.entry_label_with_count" = "開啟遠端審批（%d 項待審批）";
+"remote_approvals.entry_help_none" = "開啟遠端審批——當前無待審批請求";
+"remote_approvals.entry_help_with_count" = "%d 項遠端審批待處理";
+"remote_approvals.unknown_tool" = "未知工具";
+"remote_approvals.no_summary" = "（無摘要）";
+"remote_approvals.expires" = "%@ 過期";
+
+/* ── 其他 i18n 收尾 ── */
+"alerts.resolve_all" = "全部解決";
+"yield.no_commits" = "無提交";
+"yield.estimated_badge" = "· 估算";
+"yield.range_picker" = "範圍";
+"yield.empty_no_attribution" = "此期間沒有歸因到任何提交。請在已追蹤的倉庫中寫些程式碼。";
+"yield.detail_subtitle" = "%@ · 按每次提交成本排序（越低越好）";
+"yield.commits_count" = "%d 次提交";
+"yield.commits_count_decimal" = "%.1f 次提交";
+"yield.ambiguous_count" = "%d 項歧義";
+"menu_bar.quit_full" = "退出 CLI Pulse Bar";
+
+/* ── iter22 廣義清掃 ── */
+"common.no_provider_selected" = "未選擇服務商";
+"cost.exact" = "精確";
+"cost.estimated" = "估算";
+"cost.tokens_suffix" = "· %@ I/O tokens";
+"cost.tokens_short_suffix" = "· %@";
+"cost.thirty_day_precise" = "30 天";
+"cost.tokens_value" = "%@ I/O tokens";
+"cost.day_progress" = "%d/%d 天";
+"cost.by_model" = "按模型";
+"watch.unread_count" = "%d 條未讀";
+"watch.snooze_15" = "15 分鐘";
+"watch.snooze_30" = "30 分鐘";
+"watch.snooze_60" = "1 小時";
+"widget.alerts_summary" = "%d 條告警 • CLI Pulse";
+"widget.percent_left" = "%@ 剩餘 %d%%";
+"widget.quota_fallback" = "配額";
+"dashboard.pending_approval_count" = "%d 項待審批";
+"team.members_count" = "%d 位成員";
+"team.tokens_count" = "%d tokens";
+"team.error_loading" = "無法載入團隊，請稍後重試。";
+"providers.quota_data_unavailable" = "配額資料不可用";
+"advanced.sync_just_now" = "剛剛同步";
+"advanced.sync_minutes_ago" = "%d 分鐘前同步";
+"advanced.helper_running" = "執行中";
+"advanced.helper_not_running" = "未執行";
+"advanced.privacy_keys_title" = "服務商 API 金鑰與 Cookie";
+"advanced.privacy_keys_detail" = "僅儲存在 macOS 鑰匙串 · 永不上傳";
+"advanced.privacy_logs_title" = "會話日誌 (~/.codex/sessions、~/.claude/projects)";
+"advanced.privacy_logs_detail" = "透過你授權的資料夾在本機掃描";
+"advanced.privacy_metrics_title" = "使用指標（token 數、成本、模型名）";
+"advanced.privacy_metrics_detail" = "同步到你的 CLI Pulse 帳戶，供 iPhone / Watch 使用";
+"advanced.privacy_email_title" = "登入郵箱";
+"advanced.privacy_email_detail" = "傳送至認證後端用於登入";
+"onboarding_wizard.privacy_keys_title" = "API 金鑰僅留在本機";
+"onboarding_wizard.privacy_keys_detail" = "服務商 API 金鑰和會話 Cookie（OpenAI、Anthropic、Google 等）僅儲存在 macOS 鑰匙串中，用於直接呼叫對應服務，絕不會上傳給我們。";
+"onboarding_wizard.privacy_logs_title" = "會話日誌在本機掃描";
+"onboarding_wizard.privacy_logs_detail" = "CLI Pulse 在本機讀取 ~/.codex/sessions/ 與 ~/.claude/projects/ 計算 token 數。檔案內容絕不會離開你的裝置。";
+"onboarding_wizard.privacy_metrics_title" = "使用指標會同步到你的帳戶";
+"onboarding_wizard.privacy_metrics_detail" = "Token 數、成本預估、模型名和日期會傳送到你的 CLI Pulse 帳戶，讓 iPhone 與 Apple Watch 看到相同的歷史。";
+
+/* ── Apple 共享 PDF 報告 ── */
+"pdf.title" = "CLI Pulse 月度報告";
+"pdf.generated" = "生成時間：%@";
+"pdf.summary" = "概要";
+"pdf.today_usage" = "今日使用量";
+"pdf.today_estimated_cost" = "今日預估成本";
+"pdf.active_sessions" = "活躍會話";
+"pdf.online_devices" = "線上裝置";
+"pdf.unresolved_alerts" = "未解決告警";
+"pdf.cost_forecast" = "成本預測";
+"pdf.month_end_estimate" = "月末預估";
+"pdf.spent_so_far" = "已花費";
+"pdf.confidence_range" = "置信區間";
+"pdf.progress" = "進度";
+"pdf.progress_value" = "%d/%d 天";
+"pdf.provider_breakdown" = "服務商明細";
+"pdf.h_provider" = "服務商";
+"pdf.h_week_usage" = "本週使用量";
+"pdf.h_est_cost" = "預估成本";
+"pdf.h_remaining" = "剩餘";
+"pdf.h_quota" = "配額";
+"pdf.na" = "無";
+"pdf.top_sessions" = "成本最高會話";
+"pdf.h_project" = "專案";
+"pdf.h_cost" = "成本";
+"pdf.h_usage" = "使用量";
+"pdf.h_status" = "狀態";
+"pdf.daily_trend" = "每日成本趨勢（過去 30 天）";
+"pdf.footer" = "CLI Pulse v%@ • %@";
+
+/* ── 資料夾存取 ── */
+"folder_access.title" = "CLI 工具訪問";
+"folder_access.intro" = "授予對 CLI 工具憑據目錄的讀取權限，使 CLI Pulse 能夠追蹤你的使用情況。";
+"folder_access.granted" = "已授權";
+"folder_access.not_installed" = "未安裝";
+"folder_access.grant" = "授權";
+"folder_access.grant_all" = "一次性全部授權";
+"folder_access.rescan_title" = "重新掃描 token 快取";
+"folder_access.rescan_detail" = "如果總數看起來不對，從頭開始重建";
+"folder_access.force_rescan" = "強制重掃";
+"folder_access.panel_message" = "選擇你的主目錄，以授予 CLI Pulse 訪問所有 CLI 工具憑據的權限";
+"folder_access.panel_prompt" = "授予訪問";
+
+/* ── 訂閱計費切換 ── */
+"subscription.billing" = "計費";
+
+/* ── v1.14 Pro 終身買斷 IAP ── */
+"subscription.lifetime" = "Pro 終身版";
+"subscription.lifetime_description" = "全平臺 Pro 功能,永久有效。一次買斷,不再續訂。";
+"subscription.lifetime_owned" = "你已擁有 Pro 終身版";
+"subscription.one_time" = "一次性";
+"subscription.one_time_badge" = "一次買斷";
+"subscription.buy_lifetime" = "購買終身版";
+
+/* ── v1.18.2 D-2: Anthropic 高峰視窗指示器(Claude 卡片) ── */
+
+
+/* ── v1.21 D7: Remote Control privacy-critical consent body ── */
+"advanced.remote_consent_body" = "開啟遠端控制後,CLI Pulse 可以:\n• 上傳每次 Claude 權限請求的脫敏摘要(工具名、簡短描述、風險等級)\n• 上傳終端輸出的末尾片段及會話狀態\n• 將您的遠端「同意 / 拒絕」轉發回本地 helper\n\n永遠不會離開您裝置的內容:\n• 服務商 API 金鑰、Cookie、OAuth 令牌\n• 完整對話內容或會話日誌檔案\n• 完整專案路徑(僅上傳 basename 加 HMAC)\n\n此處的「同意」僅對當前請求生效,不會新增 Claude Code 的「Always Allow」規則。下次 Claude 需要使用同一工具時仍會再次詢問。如需設定長期規則,請在 Mac 上使用 Claude Code 自帶的「Always Allow」介面。\n\n同意請求即表示在您的 Mac 上執行該工具呼叫。請僅同意您能夠理解的請求。";
+
+/* ── Swarm View (v1.22 P0 — 智慧體叢集總控) ── */
+"tab.swarm" = "叢集";
+"swarm.title" = "叢集";
+"swarm.no_swarms" = "暫無活躍叢集";
+"swarm.empty_hint" = "在 git worktree 中執行 agent,它們會按倉庫和分支分組顯示在這裡。";
+"swarm.disabled_hint" = "開啟遠端控制以檢視你的 agent 叢集。";
+"swarm.stale" = "已過期";
+"swarm.worktree" = "worktree";
+"swarm.blocked_badge" = "已阻塞";
+"swarm.agents" = "%d 個 agent";
+"swarm.blocked" = "%d 個阻塞";
+"swarm.last_seen" = "%@前活躍";
+"swarm.oldest_blocked" = "已阻塞 %@";
+"swarm.summary" = "%d 個叢集 · %d 個 agent · %d 個阻塞";
+
+/* CodexBar-parity v1.23.0 G4 — pace/forecast text (UI-consumer follow-on i18n) */
+"usage_pace.on_track" = "節奏正常";
+"usage_pace.in_deficit" = "超出 %@%%";
+"usage_pace.in_reserve" = "結餘 %@%%";
+"usage_pace.lasts_until_reset" = "可用至重置";
+"usage_pace.runs_out_now" = "即將耗盡";
+"usage_pace.runs_out_in" = "%@後耗盡";
+"usage_pace.projected_empty_now" = "預計即將用盡";
+"usage_pace.projected_empty_in" = "預計 %@後用盡";
+"usage_pace.run_out_risk" = "≈ 耗盡風險 %@%%";
+"usage_pace.summary_with_right" = "節奏：%@ · %@";
+"usage_pace.summary_left_only" = "節奏：%@";

@@ -516,6 +516,9 @@ struct MenuBarView: View {
             Button(action: { LocaleOverrideStore.shared.set("zh-Hans") }) {
                 Label("简体中文", systemImage: localeOverride.override == "zh-Hans" ? "checkmark" : "")
             }
+            Button(action: { LocaleOverrideStore.shared.set("zh-Hant") }) {
+                Label("繁體中文", systemImage: localeOverride.override == "zh-Hant" ? "checkmark" : "")
+            }
             Button(action: { LocaleOverrideStore.shared.set("ja") }) {
                 Label("日本語", systemImage: localeOverride.override == "ja" ? "checkmark" : "")
             }
