@@ -25,6 +25,10 @@ public enum SupportedMethod: String, CaseIterable, Sendable {
     case listSessions = "list_sessions"
     case stopSession = "stop_session"
     case sendInput = "send_input"
+    // v1.24 Phase 2b — in-app terminal: raw byte input (no CR-append)
+    // and window-size updates for the WKWebView xterm.js viewport.
+    case sendInputRaw = "send_input_raw"
+    case resize
     // Phase 3 Iter 2B
     case subscribeEvents = "subscribe_events"
     case approveAction = "approve_action"

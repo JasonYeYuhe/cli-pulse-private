@@ -362,6 +362,47 @@ public final class ManagedSessionManager: @unchecked Sendable {
         return true
     }
 
+    /// Raw byte write to the PTY master with NO payload transformation.
+    /// v1.24 Phase 2a (Codex MEDIUM M3) — for the in-app terminal path
+    /// where the JS xterm.js viewport sends individual keystrokes and
+    /// control bytes (e.g. `0x03` Ctrl-C, `0x04` Ctrl-D, arrow ESC
+    /// sequences). The legacy `sendInput` CR-appends, which would
+    /// corrupt these bytes (turning Ctrl-C into `0x03\r`).
+    @discardableResult
+    public func sendInputRaw(sessionId: String, bytes: Data) throws -> Bool {
+        lock.lock()
+        let rec = sessions[sessionId]
+        lock.unlock()
+        guard let rec else { return false }
+        guard !bytes.isEmpty else { return true }
+        let n: Int
+        do {
+            n = try transport.writeStdin(rec.handle, bytes)
+        } catch {
+            throw ManagerError.writeFailed("\(error)")
+        }
+        return n > 0
+    }
+
+    /// Forward a window-size update to the underlying PTY for the
+    /// in-app terminal viewport (v1.24 Phase 2b). The kernel side
+    /// effect sends SIGWINCH to the child so ratatui / ncurses CLIs
+    /// re-flow their layout. Returns false if `sessionId` isn't owned
+    /// or the underlying ioctl failed.
+    @discardableResult
+    public func resize(sessionId: String, cols: UInt16, rows: UInt16) -> Bool {
+        lock.lock()
+        let rec = sessions[sessionId]
+        lock.unlock()
+        guard let rec else { return false }
+        do {
+            try transport.setWinsize(rec.handle, cols: cols, rows: rows)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     // MARK: - drain loop
 
     private func drainLoop(record: ManagedSessionRecord) {
