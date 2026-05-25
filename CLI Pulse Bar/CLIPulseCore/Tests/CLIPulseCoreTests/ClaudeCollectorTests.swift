@@ -25,6 +25,10 @@ final class ClaudeCollectorTests: XCTestCase {
     }
 
     func testParseUsageWithExtraUsage() throws {
+        // v1.24 Phase 1 Item #7 (CodexBar 11f92065): /api/oauth/usage emits
+        // monthly_limit and used_credits in MINOR units (cents); parseUsage
+        // divides by 100 so downstream sees dollars.
+        // 5000 cents → $50.00, 1234.56 cents → $12.3456.
         let json = """
         {
             "five_hour": { "utilization": 10, "resets_at": "2026-04-02T22:00:00Z" },
@@ -38,8 +42,8 @@ final class ClaudeCollectorTests: XCTestCase {
         let usage = try ClaudeCollector.parseUsage(json)
         XCTAssertNotNil(usage.extraUsage)
         XCTAssertTrue(usage.extraUsage!.isEnabled)
-        XCTAssertEqual(usage.extraUsage!.monthlyLimit!, 5000.0, accuracy: 0.01)
-        XCTAssertEqual(usage.extraUsage!.usedCredits!, 1234.56, accuracy: 0.01)
+        XCTAssertEqual(usage.extraUsage!.monthlyLimit!, 50.0, accuracy: 0.01)
+        XCTAssertEqual(usage.extraUsage!.usedCredits!, 12.3456, accuracy: 0.0001)
     }
 
     func testParseUsageMinimal() throws {
