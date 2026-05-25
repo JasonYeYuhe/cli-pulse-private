@@ -103,7 +103,12 @@ public struct OpenAIAdminCollector: ProviderCollector, Sendable {
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // v1.24 Phase 1 Item #6 (CodexBar 94f831a2): retry once on transient
+        // failures (408/429/5xx + .timedOut / .networkConnectionLost / DNS).
+        // OpenAI's admin API occasionally 503s under load; one extra attempt
+        // converts most user-visible "Unavailable" cycles into a successful
+        // fetch. Idempotent GET is safe to repeat.
+        let (data, response) = try await httpDataWithRetry(request, retryPolicy: .transientIdempotent)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 401 || status == 403 {
             // A regular `sk-` key lacks org-cost scope ⇒ be explicit (Gemini C-15 R1 Q2).
