@@ -40,6 +40,14 @@ public final class ManagedSessionManager: @unchecked Sendable {
     private let transport: PtyTransport
     private let registry: ApprovalRegistry?
     private let broker: EventBroker?
+    /// v1.24 Phase 2c slice 2: optional terminal Broadcast publisher.
+    /// When non-nil, each stdout chunk is also handed off to the
+    /// publisher (which redacts + ships to the configured sink).
+    /// Default `nil` = no Broadcast traffic, matching v1.24.0's
+    /// "ship the seam, light it up later" plan §2d feature-flag
+    /// posture. Real sinks (e.g. Supabase Realtime POST) are passed
+    /// in by the daemon wire-up.
+    private let broadcastPublisher: TerminalBroadcastPublisher?
     /// Phase 4D iter10 (Codex P1③.A): hook is no longer installed
     /// globally in `~/.claude/settings.json`. Instead the helper
     /// injects an ephemeral settings JSON at spawn time via
@@ -104,12 +112,14 @@ public final class ManagedSessionManager: @unchecked Sendable {
         broker: EventBroker? = nil,
         config: Config = Config(),
         getHelperArgv0: @escaping @Sendable () -> String? = { nil },
-        providerRegistry: ProviderSpawnerRegistry? = nil
+        providerRegistry: ProviderSpawnerRegistry? = nil,
+        broadcastPublisher: TerminalBroadcastPublisher? = nil
     ) {
         self.config = config
         self.transport = transport
         self.registry = registry
         self.broker = broker
+        self.broadcastPublisher = broadcastPublisher
         self.getHelperArgv0 = getHelperArgv0
         // v1.15: default registry wires Claude with inline-settings
         // injection (same hook semantics as Phase 4D iter10) +
@@ -456,10 +466,20 @@ public final class ManagedSessionManager: @unchecked Sendable {
             do {
                 let chunk = try transport.readStdout(record.handle, maxBytes: config.drainChunkBytes)
                 if !chunk.isEmpty {
-                    // v1.24 Phase 2c: feed the tail buffer for
-                    // get_tail_snapshot foreground-recovery. Stored
-                    // verbatim; redaction happens at read time.
+                    // v1.24 Phase 2c slice 1: feed the tail buffer
+                    // for get_tail_snapshot foreground-recovery.
+                    // Stored verbatim; redaction at read time.
                     record.tailBuffer.append(chunk)
+                    // v1.24 Phase 2c slice 2: also hand off to the
+                    // terminal Broadcast publisher when configured.
+                    // Publisher redacts + ships to sink; this call
+                    // is fire-and-forget (actor handles its own
+                    // queue/drop policy).
+                    if let publisher = broadcastPublisher {
+                        let sid = record.sessionId
+                        let payload = chunk
+                        Task { await publisher.submit(sessionId: sid, chunk: payload) }
+                    }
                     let text = String(data: chunk, encoding: .utf8) ?? String(decoding: chunk, as: UTF8.self)
                     broker?.publish([
                         "event": "output_delta",
