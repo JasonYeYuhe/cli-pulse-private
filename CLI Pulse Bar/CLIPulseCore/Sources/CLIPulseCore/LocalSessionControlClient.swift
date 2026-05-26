@@ -492,6 +492,57 @@ public final class LocalSessionControlClient: SessionControlClient {
         )
     }
 
+    // MARK: - v1.24 Phase 2+3: in-app terminal RPC wrappers
+
+    /// Raw byte input — preserves control bytes (0x03 Ctrl-C, 0x04
+    /// Ctrl-D, ESC sequences) without the CR-append `sendInput`
+    /// applies. Used by `TerminalView` in the in-app terminal path.
+    /// Payload travels base64-encoded so JSON-string-escape can't
+    /// corrupt arbitrary byte values.
+    public func sendInputRaw(sessionId: String, bytes: Data) async throws {
+        _ = try await send(
+            method: "send_input_raw",
+            params: [
+                "session_id": sessionId,
+                "payload_base64": bytes.base64EncodedString(),
+            ]
+        )
+    }
+
+    /// Window-size update. Triggers `ioctl(TIOCSWINSZ)` on the
+    /// child's master PTY → SIGWINCH → ratatui / ncurses CLIs
+    /// re-flow their viewport. Cols/rows clamped to (0, 1000] on
+    /// the helper side; this client validates the same range so we
+    /// don't waste a round-trip on obvious garbage.
+    public func resize(sessionId: String, cols: Int, rows: Int) async throws {
+        guard cols > 0, cols <= 1000, rows > 0, rows <= 1000 else {
+            throw SessionControlError.invalidResponse(
+                "resize: cols/rows must be positive integers ≤ 1000 (got \(cols)×\(rows))"
+            )
+        }
+        _ = try await send(
+            method: "resize",
+            params: ["session_id": sessionId, "cols": cols, "rows": rows]
+        )
+    }
+
+    /// Foreground-recovery snapshot — returns up to `maxBytes`
+    /// (default 8192, capped at 65 536 on the helper) of the most
+    /// recent stdout, redacted. Powers the iOS WKWebView's
+    /// background→foreground recovery; the Mac TerminalView calls
+    /// this when an existing session is being attached to a fresh
+    /// view (e.g. window re-opened).
+    public func getTailSnapshot(sessionId: String, maxBytes: Int = 8192) async throws -> Data {
+        let result = try await send(
+            method: "get_tail_snapshot",
+            params: ["session_id": sessionId, "max_bytes": maxBytes]
+        )
+        guard let b64 = result["bytes_base64"] as? String else {
+            throw SessionControlError.invalidResponse("get_tail_snapshot: missing bytes_base64")
+        }
+        return Data(base64Encoded: b64) ?? Data()
+    }
+
     // MARK: - Iter 2B: streaming + approvals
 
     /// Open a long-lived `subscribe_events` stream. The returned
