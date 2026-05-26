@@ -109,6 +109,43 @@ public final class RemoteSessionControlClient: SessionControlClient {
         }
     }
 
+    /// v1.25 Phase 4 slice 2: forward raw xterm.js keystroke bytes
+    /// to the helper. `bytes` may contain 0x03 Ctrl-C / arrow ESC
+    /// sequences / partial multi-byte UTF-8 — base64 encoding is
+    /// the JSON-safe wire shape. Helper decodes and writes verbatim
+    /// via `sendInputRaw` (no CR-append). Requires server v0.50 +
+    /// helper v1.25+.
+    public func sendInputRaw(sessionId: String, bytes: Data) async throws {
+        if bytes.isEmpty { return }
+        do {
+            _ = try await api.remoteSendCommand(
+                sessionId: sessionId,
+                kind: .input_raw,
+                payload: bytes.base64EncodedString()
+            )
+        } catch {
+            throw mapRemoteError(error)
+        }
+    }
+
+    /// v1.25 Phase 4 slice 2: forward viewport size change. Helper
+    /// `ioctl(TIOCSWINSZ)`s the PTY which signals SIGWINCH to the
+    /// child process. Skips the RPC for non-positive dims so a
+    /// half-laid-out xterm.js (cols=0 mid-rotation) can't queue a
+    /// bad command.
+    public func resize(sessionId: String, cols: UInt16, rows: UInt16) async throws {
+        if cols == 0 || rows == 0 { return }
+        do {
+            _ = try await api.remoteSendCommand(
+                sessionId: sessionId,
+                kind: .resize,
+                payload: "\(cols)x\(rows)"
+            )
+        } catch {
+            throw mapRemoteError(error)
+        }
+    }
+
     /// Map APIClient transport-layer errors to the protocol's typed
     /// surface. Anything we don't recognise falls through as
     /// `internalError(description)` rather than getting silently

@@ -1024,6 +1024,18 @@ public enum RemoteCommandKind: String, Codable, Sendable {
     case prompt
     case stop
     case interrupt
+    /// v1.25 Phase 4 slice 2: raw xterm.js keystroke bytes
+    /// (base64 payload). Helper writes verbatim to the PTY,
+    /// preserving control bytes (0x03 Ctrl-C / 0x04 Ctrl-D /
+    /// arrow ESC sequences). Requires server migration v0.50
+    /// + helper v1.25+; older helpers reject with "unknown
+    /// command kind" (fail-safe).
+    case input_raw
+    /// v1.25 Phase 4 slice 2: viewport resize signal. Payload
+    /// is "<cols>x<rows>" (e.g. "80x24"). Helper forwards to
+    /// `ioctl(TIOCSWINSZ)` → SIGWINCH so ratatui / ncurses
+    /// reflow on phone rotation / soft-keyboard show.
+    case resize
 }
 
 /// One Claude / Codex / shell session running under the helper.

@@ -209,6 +209,21 @@ public actor RemoteAgentCloud {
                 _ = sessionManager.interruptSession(sessionId)
                 outcome = (true, "")
             }
+        case "input_raw":
+            // v1.25 Phase 4 slice 2: payload is base64-encoded raw
+            // bytes from xterm.js's `onData`. Decode and write
+            // VERBATIM to the PTY master (no CR-append) so 0x03
+            // Ctrl-C / 0x04 Ctrl-D / arrow ESC sequences land in
+            // the child process intact. Inert until v0.50
+            // migration applies (server rejects the kind), so
+            // legacy helpers stay safe.
+            outcome = handleInputRaw(sessionId: sessionId, payload: payload)
+        case "resize":
+            // v1.25 Phase 4 slice 2: payload is "<cols>x<rows>"
+            // (e.g. "80x24"). Forward to PTY via
+            // `setWinsize(TIOCSWINSZ)` so ratatui / ncurses CLIs
+            // reflow on phone rotation / soft-keyboard show.
+            outcome = handleResize(sessionId: sessionId, payload: payload)
         default:
             outcome = (false, "unknown command kind: \"\(kind)\"")
         }
@@ -320,6 +335,77 @@ public actor RemoteAgentCloud {
             return (false, "child exited")
         }
         return ok ? (true, "") : (false, "child exited")
+    }
+
+    /// v1.25 Phase 4 slice 2: write raw xterm.js keystroke bytes
+    /// verbatim to the PTY. `payload` is base64; an empty / malformed
+    /// payload is rejected up-front so the queue marks it failed
+    /// instead of silently dropping. Exposed `internal` (file-private
+    /// in practice since this file is the only consumer) so the
+    /// payload-parse logic is unit-testable via
+    /// `decodeInputRawPayload(_:)`.
+    private func handleInputRaw(sessionId: String, payload: String) -> (Bool, String) {
+        if sessionId.isEmpty {
+            return (false, "input_raw requires session_id")
+        }
+        if !sessionManager.ownsSession(sessionId) {
+            return (false, "session not running on this helper")
+        }
+        guard let bytes = Self.decodeInputRawPayload(payload) else {
+            return (false, "input_raw payload must be non-empty base64")
+        }
+        let ok: Bool
+        do {
+            ok = try sessionManager.sendInputRaw(sessionId: sessionId, bytes: bytes)
+        } catch {
+            return (false, "child exited")
+        }
+        return ok ? (true, "") : (false, "child exited")
+    }
+
+    /// Pure parser. Returns nil for empty / non-base64 payloads.
+    /// Public so unit tests can pin the wire shape without
+    /// instantiating `RemoteAgentCloud` (which needs a live RPC
+    /// caller + session manager).
+    static func decodeInputRawPayload(_ payload: String) -> Data? {
+        if payload.isEmpty { return nil }
+        guard let data = Data(base64Encoded: payload), !data.isEmpty else {
+            return nil
+        }
+        return data
+    }
+
+    /// v1.25 Phase 4 slice 2: forward window-size update to the PTY.
+    /// Payload is "<cols>x<rows>" (e.g. "80x24"). Both dimensions
+    /// must be positive and fit in UInt16 — xterm.js can produce
+    /// huge values when the viewport is mid-animation; clamp at
+    /// 32767 (UInt16 max) so the ioctl doesn't reject.
+    private func handleResize(sessionId: String, payload: String) -> (Bool, String) {
+        if sessionId.isEmpty {
+            return (false, "resize requires session_id")
+        }
+        if !sessionManager.ownsSession(sessionId) {
+            return (false, "session not running on this helper")
+        }
+        guard let (cols, rows) = Self.decodeResizePayload(payload) else {
+            return (false, "resize payload must be '<cols>x<rows>' (1..32767 each)")
+        }
+        let ok = sessionManager.resize(sessionId: sessionId, cols: cols, rows: rows)
+        return ok ? (true, "") : (false, "resize failed (ioctl)")
+    }
+
+    /// Pure parser for the resize payload. Returns nil for any
+    /// non-conforming shape (missing 'x', non-numeric, zero, or
+    /// >32767). Public so unit tests can pin it.
+    static func decodeResizePayload(_ payload: String) -> (cols: UInt16, rows: UInt16)? {
+        let parts = payload.split(separator: "x", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return nil }
+        guard let cols = Int(parts[0]),
+              let rows = Int(parts[1]),
+              cols > 0, rows > 0,
+              cols <= 32767, rows <= 32767
+        else { return nil }
+        return (UInt16(cols), UInt16(rows))
     }
 
     private func completeCommand(cmdId: String, ok: Bool, error: String) async {

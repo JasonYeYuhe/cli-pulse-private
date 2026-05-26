@@ -34,22 +34,41 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
     /// ends (any error, peer close, or `coordinator.cancel()`).
     /// Optional — most callers don't need to react.
     public let onDisconnect: ((Error?) -> Void)?
+    /// v1.25 Phase 4 slice 2: caller-supplied keystroke forwarder.
+    /// Fired once per xterm.js `onData` event with raw UTF-8 bytes
+    /// (control sequences encoded inline). Typically wired to
+    /// `RemoteSessionControlClient.sendInputRaw` so the helper writes
+    /// these bytes verbatim to the PTY. Optional — slice 1 left this
+    /// nil to ship the read-only path first.
+    public let onStdin: ((Data) -> Void)?
+    /// v1.25 Phase 4 slice 2: caller-supplied viewport-resize
+    /// forwarder. Fired when xterm.js's ResizeObserver picks up a
+    /// layout change (phone rotation, soft-keyboard show/hide).
+    /// Typically wired to `RemoteSessionControlClient.resize` so the
+    /// helper PTY `ioctl(TIOCSWINSZ)`s and the child gets SIGWINCH.
+    public let onResize: ((Int, Int) -> Void)?
 
     public init(
         sessionId: String,
         streamConfig: RemoteSessionEventStream.Configuration,
-        onDisconnect: ((Error?) -> Void)? = nil
+        onDisconnect: ((Error?) -> Void)? = nil,
+        onStdin: ((Data) -> Void)? = nil,
+        onResize: ((Int, Int) -> Void)? = nil
     ) {
         self.sessionId = sessionId
         self.streamConfig = streamConfig
         self.onDisconnect = onDisconnect
+        self.onStdin = onStdin
+        self.onResize = onResize
     }
 
     public func makeCoordinator() -> Coordinator {
         Coordinator(
             sessionId: sessionId,
             streamConfig: streamConfig,
-            onDisconnect: onDisconnect
+            onDisconnect: onDisconnect,
+            onStdin: onStdin,
+            onResize: onResize
         )
     }
 
@@ -92,6 +111,8 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
         var sessionId: String
         let streamConfig: RemoteSessionEventStream.Configuration
         let onDisconnect: ((Error?) -> Void)?
+        let onStdin: ((Data) -> Void)?
+        let onResize: ((Int, Int) -> Void)?
         weak var view: RemoteTerminalView?
 
         /// Tracks the session id the active subscription is bound
@@ -105,11 +126,15 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
         init(
             sessionId: String,
             streamConfig: RemoteSessionEventStream.Configuration,
-            onDisconnect: ((Error?) -> Void)?
+            onDisconnect: ((Error?) -> Void)?,
+            onStdin: ((Data) -> Void)? = nil,
+            onResize: ((Int, Int) -> Void)? = nil
         ) {
             self.sessionId = sessionId
             self.streamConfig = streamConfig
             self.onDisconnect = onDisconnect
+            self.onStdin = onStdin
+            self.onResize = onResize
             self.stream = RemoteSessionEventStream(config: streamConfig)
             super.init()
         }
@@ -156,17 +181,27 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
             _ view: RemoteTerminalView,
             didReceiveStdin data: String
         ) {
-            // No-op in slice 1. Slice 2 will forward to a
-            // `remoteSendInput(sessionId, bytes:)` RPC via the host
-            // closure.
+            // v1.25 Phase 4 slice 2: hand off to the host's
+            // `sendInputRaw` callback. xterm.js's `onData` emits
+            // raw UTF-8 strings (including control bytes encoded
+            // as their ASCII equivalents), so `Data(data.utf8)`
+            // round-trips byte-equal. Empty strings (which xterm.js
+            // never sends but defensive) are skipped — sink would
+            // throw `notConfigured` on empty payloads.
+            guard let onStdin = onStdin, !data.isEmpty else { return }
+            onStdin(Data(data.utf8))
         }
 
         public func remoteTerminalView(
             _ view: RemoteTerminalView,
             didResizeTo cols: Int, rows: Int
         ) {
-            // No-op in slice 1. Slice 2 will forward to a `resize`
-            // RPC via the host closure.
+            // v1.25 Phase 4 slice 2: hand off to the host's
+            // `resize` callback. xterm.js's ResizeObserver can fire
+            // mid-layout with 0×0; guard so we don't queue a bad
+            // command. The receiver should also clamp on its end.
+            guard let onResize = onResize, cols > 0, rows > 0 else { return }
+            onResize(cols, rows)
         }
     }
 }

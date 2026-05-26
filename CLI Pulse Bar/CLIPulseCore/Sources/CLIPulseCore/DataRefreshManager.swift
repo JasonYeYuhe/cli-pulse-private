@@ -2302,6 +2302,57 @@ extension AppState {
         }
     }
 
+    /// v1.25 Phase 4 slice 2: send raw xterm.js keystroke bytes
+    /// (including 0x03 Ctrl-C / 0x04 Ctrl-D / arrow ESC sequences)
+    /// to a managed session. Base64-encoded over the wire so JSON
+    /// can carry arbitrary bytes; helper decodes and writes
+    /// verbatim to the PTY (no CR-append). Fire-and-forget — the
+    /// UI doesn't surface per-keystroke errors because typing on
+    /// a phone keyboard is already best-effort. Requires backend
+    /// migration v0.50 + helper v1.25+.
+    public func sendRemoteSessionInputRaw(sessionId: String, bytes: Data) async {
+        guard remoteControlEnabled else { return }
+        if bytes.isEmpty { return }
+        do {
+            _ = try await api.remoteSendCommand(
+                sessionId: sessionId,
+                kind: .input_raw,
+                payload: bytes.base64EncodedString()
+            )
+        } catch {
+            // Don't blat the user with a per-keystroke error
+            // banner; surface the most recent transport problem in
+            // the existing `remoteSessionsError` so the inline-
+            // terminal area shows a single "send failed" hint
+            // instead of a stream of toasts.
+            remoteSessionsError = "Input failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// v1.25 Phase 4 slice 2: notify the remote helper that the
+    /// xterm.js viewport changed size. Helper PTY `ioctl(TIOCSWINSZ)`s
+    /// which signals SIGWINCH so ratatui / ncurses reflow. Skips
+    /// zero dims so a half-laid-out terminal mid-rotation doesn't
+    /// queue a bad command.
+    public func resizeRemoteSession(
+        sessionId: String, cols: UInt16, rows: UInt16
+    ) async {
+        guard remoteControlEnabled else { return }
+        if cols == 0 || rows == 0 { return }
+        do {
+            _ = try await api.remoteSendCommand(
+                sessionId: sessionId,
+                kind: .resize,
+                payload: "\(cols)x\(rows)"
+            )
+        } catch {
+            // Same posture as sendRemoteSessionInputRaw — resize
+            // failures shouldn't pop a banner; the next successful
+            // resize implicitly fixes the state.
+            remoteSessionsError = "Resize failed: \(error.localizedDescription)"
+        }
+    }
+
     /// Stop a managed session. Helper sends SIGTERM to the child PTY's
     /// process group and posts a `status='stopped'` event when the child
     /// exits. The session row stays in the table until retention prunes
