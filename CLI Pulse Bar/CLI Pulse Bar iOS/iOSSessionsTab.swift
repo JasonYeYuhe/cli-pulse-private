@@ -954,7 +954,16 @@ struct ManagedSessionDetailView: View {
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
             )
-            Text("Interactive terminal. Soft-keyboard helper bar (Esc / Ctrl-C / arrows) lands in the next release.")
+            // v1.25 Phase 4 slice 3: soft-keyboard helper bar.
+            // Same dispatch as xterm.js's onData → keystrokes
+            // flow through the helper's `input_raw` path so the
+            // PTY sees them indistinguishably from typed input.
+            RemoteTerminalKeyBar { [sessionId = currentSession.id] bytes in
+                Task { await state.sendRemoteSessionInputRaw(
+                    sessionId: sessionId, bytes: bytes
+                ) }
+            }
+            Text("Interactive terminal. Tap a key to send. Lifecycle (background-disconnect / auto-reconnect) lands in the next release.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
