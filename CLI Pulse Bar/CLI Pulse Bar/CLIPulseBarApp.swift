@@ -51,6 +51,19 @@ struct CLIPulseBarApp: App {
                 }
                 .keyboardShortcut("r", modifiers: .command)
             }
+            // v1.24 Phase 3 — in-app terminal entry. DEVID-only;
+            // MAS builds get nothing here (helper-mediated MAS PTY
+            // is post-v1.24, per plan §R1 + Gemini LOW). The
+            // sandbox probe is a constant per process so the check
+            // happens once at scene build.
+            if MASSandboxGate.canHostInAppTerminal {
+                CommandMenu("Terminal") {
+                    Button("New Terminal — Claude") {
+                        openWindow(id: "terminal-claude")
+                    }
+                    .keyboardShortcut("t", modifiers: [.command, .shift])
+                }
+            }
         }
 
         Window(L10n.about.title, id: "about") {
@@ -76,6 +89,18 @@ struct CLIPulseBarApp: App {
                 .environmentObject(appState.authState)
                 .environmentObject(appState.alertState)
                 .environmentObject(appState.providerState)
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+
+        // v1.24 Phase 3 — in-app terminal window scene. Registered
+        // unconditionally (SwiftUI requires the scene to exist for
+        // `openWindow(id:)` to be a no-op on MAS where the menu
+        // button is hidden anyway). The TerminalSessionView body
+        // spawns a managed Claude session via the helper RPC and
+        // streams stdout into the xterm.js viewport.
+        Window("Terminal — Claude", id: "terminal-claude") {
+            TerminalSessionView(provider: "claude")
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
