@@ -163,19 +163,54 @@ case "daemon":
     // command, and Claude's hook subprocess fail-to-exec'd,
     // breaking structured approval. _NSGetExecutablePath is
     // launchd-safe.
-    let sessionManager = ManagedSessionManager(
-        transport: PtyTransport(),
-        registry: registry,
-        broker: broker,
-        getHelperArgv0: { ExecutablePath.current() }
-    )
-
     // Phase 4D P1.2 (Codex): persist the local-control kill switch
     // in the same `~/.cli-pulse-helper.json` file the Python helper
     // uses, so the macOS app's Sessions toggle survives across
     // helper restarts AND so flipping the toggle in either backend
     // takes effect in the other.
+    //
+    // v1.25 Phase 2c slice 4: configStore is also the source of
+    // truth for `remote_realtime_enabled` (terminal-mirror kill
+    // switch). It must be built BEFORE the broadcast publisher so
+    // we know which sink to plug in, and the publisher in turn
+    // must be passed to `ManagedSessionManager` at init time —
+    // hence the construction order: configStore → publisher →
+    // sessionManager.
     let configStore = HelperConfigStore()
+
+    // v1.25 Phase 2c slice 4: build the terminal-broadcast
+    // publisher when the helper is paired AND the kill switch
+    // hasn't been flipped off. The publisher's `submit(...)` path
+    // is fire-and-forget and rate-bounded; an unpaired or kill-
+    // switched helper passes `nil` so the manager's drain loop
+    // skips the broadcast hop entirely (no wasted redaction work).
+    let bootCloudCfg = configStore.cloudConfigSnapshot()
+    let broadcastPublisher: TerminalBroadcastPublisher?
+    if bootCloudCfg.isPaired && configStore.remoteRealtimeEnabled {
+        let sink = SupabaseRealtimeBroadcastSink(
+            configProvider: { configStore.cloudConfigSnapshot() }
+        )
+        broadcastPublisher = TerminalBroadcastPublisher(sink: sink)
+        FileHandle.standardError.write(Data(
+            "cli_pulse_helper (Swift): terminal Broadcast publisher active (Supabase Realtime sink)\n".utf8
+        ))
+    } else {
+        broadcastPublisher = nil
+        let why = bootCloudCfg.isPaired
+            ? "remote_realtime_enabled=false"
+            : "unpaired"
+        FileHandle.standardError.write(Data(
+            "cli_pulse_helper (Swift): terminal Broadcast publisher inactive (\(why))\n".utf8
+        ))
+    }
+
+    let sessionManager = ManagedSessionManager(
+        transport: PtyTransport(),
+        registry: registry,
+        broker: broker,
+        getHelperArgv0: { ExecutablePath.current() },
+        broadcastPublisher: broadcastPublisher
+    )
     let server = LocalSessionServer(
         config: LocalSessionServer.Configuration(socketPath: socketPath),
         hooks: LocalSessionServer.Hooks(
