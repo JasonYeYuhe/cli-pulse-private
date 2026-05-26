@@ -76,6 +76,13 @@ public final class ManagedSessionManager: @unchecked Sendable {
         let spawnedAtMono: TimeInterval
         var status: String = "running"
         var drainThread: Thread?
+        /// v1.24 Phase 2c slice 1: fixed-capacity tail buffer for
+        /// `get_tail_snapshot` (Gemini HIGH from in-app-terminal plan).
+        /// When an iOS WKWebView returns from background, the client
+        /// fetches the last N bytes of this buffer instead of replaying
+        /// the full event stream. 64 KB ≈ several screens of terminal
+        /// output; bytes are stored verbatim and redacted at read time.
+        let tailBuffer = TerminalRingBuffer(capacity: 65536)
         init(
             sessionId: String,
             provider: String,
@@ -403,6 +410,36 @@ public final class ManagedSessionManager: @unchecked Sendable {
         }
     }
 
+    /// Return up to `maxBytes` of the most recent stdout for the
+    /// session, with `Redactor.redact` applied (v1.24 Phase 2c slice 1,
+    /// Gemini HIGH). Powers the iOS WKWebView's foreground-recovery
+    /// path — when the WebView resumes after a network blip, fetch the
+    /// last N bytes and `term.write()` it directly, skipping full
+    /// event replay (which would risk WebKit OOM on backlog burst).
+    ///
+    /// Returns `nil` if the session isn't owned. Empty `Data` if
+    /// there's nothing buffered yet (brand-new session). UTF-8 decode
+    /// is lossy on chunk boundaries — acceptable for a best-effort
+    /// "catch-up snapshot." Redaction matches the `EventUploader` /
+    /// `RemoteAgentCloud.swift:456` path so secrets never leak through
+    /// this RPC.
+    public func getTailSnapshot(sessionId: String, maxBytes: Int) -> Data? {
+        let cappedMax = max(0, min(maxBytes, 65536))
+        lock.lock()
+        let rec = sessions[sessionId]
+        lock.unlock()
+        guard let rec else { return nil }
+        let raw = rec.tailBuffer.tail(maxBytes: cappedMax)
+        if raw.isEmpty { return Data() }
+        // Decode → redact → re-encode. Lossy UTF-8 is the right
+        // failure mode for terminal content: a half-finished codepoint
+        // at the leading boundary becomes a Unicode replacement, which
+        // xterm.js renders as ▯ — a visible-but-harmless artifact.
+        let text = String(data: raw, encoding: .utf8) ?? String(decoding: raw, as: UTF8.self)
+        let redacted = Redactor.redact(text)
+        return Data(redacted.utf8)
+    }
+
     // MARK: - drain loop
 
     private func drainLoop(record: ManagedSessionRecord) {
@@ -419,6 +456,10 @@ public final class ManagedSessionManager: @unchecked Sendable {
             do {
                 let chunk = try transport.readStdout(record.handle, maxBytes: config.drainChunkBytes)
                 if !chunk.isEmpty {
+                    // v1.24 Phase 2c: feed the tail buffer for
+                    // get_tail_snapshot foreground-recovery. Stored
+                    // verbatim; redaction happens at read time.
+                    record.tailBuffer.append(chunk)
                     let text = String(data: chunk, encoding: .utf8) ?? String(decoding: chunk, as: UTF8.self)
                     broker?.publish([
                         "event": "output_delta",

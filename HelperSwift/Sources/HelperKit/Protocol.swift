@@ -29,6 +29,8 @@ public enum SupportedMethod: String, CaseIterable, Sendable {
     // and window-size updates for the WKWebView xterm.js viewport.
     case sendInputRaw = "send_input_raw"
     case resize
+    // v1.24 Phase 2c slice 1 — foreground-recovery snapshot.
+    case getTailSnapshot = "get_tail_snapshot"
     // Phase 3 Iter 2B
     case subscribeEvents = "subscribe_events"
     case approveAction = "approve_action"
