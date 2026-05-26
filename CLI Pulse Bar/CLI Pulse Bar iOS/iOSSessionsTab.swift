@@ -578,6 +578,22 @@ struct ManagedSessionDetailView: View {
     /// has nothing to say.
     @State private var showRawOutput: Bool = false
 
+    /// v1.25 Phase 4 slice 1: opt-in xterm.js terminal that subscribes
+    /// to the Realtime broadcast channel `term:<session_id>` and
+    /// renders raw stdout bytes in real time. Independent from
+    /// `showOutput` (which polls the durable event log); the two
+    /// surfaces target different latency / fidelity tradeoffs.
+    /// Default OFF — Phase 4 slice 1 is read-only and treated as a
+    /// preview behind an explicit user opt-in. Slice 2 lights up
+    /// keystrokes; slice 4 adds lifecycle / reconnect.
+    @State private var showLiveTerminal: Bool = false
+
+    /// Cached Supabase config snapshot for the live-terminal
+    /// subscription. Loaded once on appear; the actor hop is one-
+    /// shot so the body can pass a value type into the
+    /// representable without re-awaiting on every frame.
+    @State private var realtimeConfig: RemoteSessionEventStream.Configuration?
+
     /// Latest server-side row for this session, falling back to the
     /// navigation-captured snapshot. Use this for every render-time
     /// decision (status, device name, label) so the detail view doesn't
@@ -764,6 +780,20 @@ struct ManagedSessionDetailView: View {
                     outputPanel
                 }
 
+                // v1.25 Phase 4 slice 1: live xterm.js terminal,
+                // gated on RC + paired Supabase + running session.
+                // Hidden in cold/ended states so the toggle doesn't
+                // mislead the user into thinking there's something
+                // to subscribe to.
+                if state.remoteControlEnabled
+                    && realtimeConfig != nil
+                    && (isRunning || isPending) {
+                    showLiveTerminalToggle
+                    if showLiveTerminal, let cfg = realtimeConfig {
+                        liveTerminalPanel(streamConfig: cfg)
+                    }
+                }
+
                 Text(footerHelpText)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -773,6 +803,14 @@ struct ManagedSessionDetailView: View {
         .navigationTitle(currentSession.client_label ?? ProviderDisplay.defaultLabel(for: currentSession.provider))
         .navigationBarTitleDisplayMode(.inline)
         .task {
+            // v1.25 Phase 4 slice 1: fetch the Supabase config once
+            // so the live-terminal representable has a value type to
+            // pass to its RemoteSessionEventStream without awaiting
+            // an actor on every body recompute.
+            if realtimeConfig == nil {
+                realtimeConfig = await state.api.realtimeConfiguration()
+            }
+
             // Detail view owns its own refresh loop because SwiftUI may
             // pause the parent `iOSSessionsTab` task while a destination
             // view is shown via `NavigationLink`. Without this, a
@@ -848,6 +886,56 @@ struct ManagedSessionDetailView: View {
                 }
             ))
             .labelsHidden()
+        }
+    }
+
+    /// v1.25 Phase 4 slice 1: opt-in toggle for the Realtime
+    /// xterm.js subscription. Lower-latency than `showOutput`'s
+    /// polled event list (target <600 ms vs polling's 3 s) but
+    /// has-no-replay semantics — toggling on shows future bytes,
+    /// not the session's history. The polled output panel remains
+    /// the canonical "what did the session do so far?" surface.
+    private var showLiveTerminalToggle: some View {
+        HStack(spacing: 8) {
+            Image(systemName: showLiveTerminal ? "terminal.fill" : "terminal")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(showLiveTerminal ? "Hide live terminal" : "Show live terminal")
+                    .font(.subheadline.weight(.medium))
+                Text("Beta · low-latency stream")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+            Toggle("", isOn: $showLiveTerminal)
+                .labelsHidden()
+        }
+    }
+
+    /// v1.25 Phase 4 slice 1: hosts `RemoteTerminalViewRepresentable`
+    /// in a fixed-height container. Phone real estate is tight, so
+    /// 280 pt is the MVP — enough for ~12 rows of mono text at
+    /// the default xterm.js font size. Phase 4 slice 4 will add a
+    /// "tap to fullscreen" affordance.
+    @ViewBuilder
+    private func liveTerminalPanel(
+        streamConfig: RemoteSessionEventStream.Configuration
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            RemoteTerminalViewRepresentable(
+                sessionId: currentSession.id,
+                streamConfig: streamConfig
+            )
+            .frame(height: 280)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+            )
+            Text("Streaming output from the Mac helper. Tap output to scroll. Input controls land in the next release.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

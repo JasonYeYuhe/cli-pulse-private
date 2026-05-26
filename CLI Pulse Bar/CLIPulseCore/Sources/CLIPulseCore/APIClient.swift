@@ -41,6 +41,21 @@ public actor APIClient {
         self.session = URLSession(configuration: config)
     }
 
+    /// v1.25 Phase 4 slice 1: expose Supabase URL + anon key so
+    /// `RemoteTerminalViewRepresentable` can build a
+    /// `RemoteSessionEventStream` without duplicating the
+    /// Bundle.main / env-var resolution that the iOS app's
+    /// APIClient owns. Returned by value; no auth tokens included
+    /// because Realtime broadcast subscribes on the project anon
+    /// key alone (topic confidentiality rests on the server-
+    /// generated session UUID).
+    public func realtimeConfiguration() -> RemoteSessionEventStream.Configuration {
+        RemoteSessionEventStream.Configuration(
+            supabaseURL: supabaseURL,
+            supabaseAnonKey: supabaseAnonKey
+        )
+    }
+
     public func updateToken(_ token: String?) {
         self.accessToken = token
     }
