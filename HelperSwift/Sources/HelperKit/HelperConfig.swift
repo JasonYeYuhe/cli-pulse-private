@@ -62,6 +62,25 @@ public final class HelperConfigStore: @unchecked Sendable {
         return (raw["local_control_enabled"] as? Bool) ?? false
     }
 
+    /// v1.25 Phase 2c slice 4: kill switch for the Realtime
+    /// BROADCAST terminal-mirror path (plan §2d feature flag).
+    /// **Defaults to `true`** so a fresh install / paired helper
+    /// publishes terminal stdout to `term:<session_id>` Realtime
+    /// channels by default — the iOS subscriber path (Phase 4)
+    /// can't see anything if this is off. Users / ops who need
+    /// to kill the path (e.g. Supabase quota brake) flip this to
+    /// false; the daemon falls back to `NoopBroadcastSink` and no
+    /// HTTP POSTs hit `/realtime/v1/api/broadcast`.
+    ///
+    /// Reads from the same legacy JSON path as `localControlEnabled`.
+    /// AppGroupConfigReader doesn't expose this — runtime UI for
+    /// flipping it lives in a future slice; for now, ops edits the
+    /// JSON directly.
+    public var remoteRealtimeEnabled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return (raw["remote_realtime_enabled"] as? Bool) ?? true
+    }
+
     /// Cloud pairing fields — Phase 4E Slice 3 read-only. Empty
     /// string when the helper is unpaired (Python helper's `pair`
     /// flow hasn't run); callers treat empty as "skip cloud RPCs"

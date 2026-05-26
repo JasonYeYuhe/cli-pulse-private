@@ -59,6 +59,13 @@ class HelperConfig:
     # opted-out. Both the S1 hook tagging and the S1b heartbeat honor
     # this single flag.
     swarm_enabled: bool = False
+    # v1.25 Phase 2c slice 4: kill switch for the Swift helper's
+    # Realtime BROADCAST terminal-mirror path. Defaults True (opt-out).
+    # The Python helper does NOT publish to Realtime; this field exists
+    # only so Python's save_config() round-trips the key without
+    # dropping it. Authoritative reader is Swift's
+    # HelperConfigStore.remoteRealtimeEnabled.
+    remote_realtime_enabled: bool = True
 
 
 def now_iso() -> str:

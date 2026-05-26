@@ -208,6 +208,87 @@ final class HelperConfigStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.helperSecret, "modern-secret")
     }
 
+    // MARK: - remoteRealtimeEnabled (v1.25 Phase 2c slice 4)
+
+    func testRemoteRealtimeEnabledDefaultsTrueOnMissingFile() {
+        // Default is TRUE — terminal mirror is opt-out. Missing file
+        // = fresh install / unpaired = default behavior.
+        XCTAssertTrue(makeStore().remoteRealtimeEnabled,
+                      "missing config must read as ENABLED — terminal mirror is opt-out")
+    }
+
+    func testRemoteRealtimeEnabledDefaultsTrueOnMissingKey() throws {
+        // Existing config without the new key still defaults true.
+        // A pre-v1.25 helper.json that has device_id+helper_secret
+        // but no `remote_realtime_enabled` key must NOT silently
+        // disable the feature.
+        let path = tmp.appendingPathComponent("cfg.json")
+        try Data(#"{"device_id":"d","helper_secret":"s"}"#.utf8).write(to: path)
+        let store = HelperConfigStore(path: path)
+        XCTAssertTrue(store.remoteRealtimeEnabled)
+    }
+
+    func testRemoteRealtimeEnabledRespectsPersistedFalse() throws {
+        // Kill switch: ops sets `false` to stop Realtime broadcasts.
+        let path = tmp.appendingPathComponent("cfg.json")
+        try Data(#"{"remote_realtime_enabled":false}"#.utf8).write(to: path)
+        let store = HelperConfigStore(path: path)
+        XCTAssertFalse(store.remoteRealtimeEnabled)
+    }
+
+    func testRemoteRealtimeEnabledRespectsPersistedTrue() throws {
+        // Explicit true round-trip. Distinct from default-true so a
+        // future flip of the default (e.g. opt-in for v2) can't
+        // silently break explicit user opt-ins.
+        let path = tmp.appendingPathComponent("cfg.json")
+        try Data(#"{"remote_realtime_enabled":true}"#.utf8).write(to: path)
+        let store = HelperConfigStore(path: path)
+        XCTAssertTrue(store.remoteRealtimeEnabled)
+    }
+
+    func testRemoteRealtimeEnabledIsIndependentFromLocalControl() throws {
+        // The two kill switches are orthogonal — one gates UDS local
+        // control, the other gates the Supabase Realtime broadcast
+        // path. Both must read correctly in every combination.
+        for (localControl, realtime) in [(false, false), (false, true),
+                                          (true, false), (true, true)] {
+            let path = tmp.appendingPathComponent("cfg-\(localControl)-\(realtime).json")
+            let seed: [String: Any] = [
+                "local_control_enabled": localControl,
+                "remote_realtime_enabled": realtime,
+            ]
+            try JSONSerialization.data(withJSONObject: seed).write(to: path)
+            let store = HelperConfigStore(path: path)
+            XCTAssertEqual(store.localControlEnabled, localControl,
+                           "local_control_enabled mismatch for \(localControl)/\(realtime)")
+            XCTAssertEqual(store.remoteRealtimeEnabled, realtime,
+                           "remote_realtime_enabled mismatch for \(localControl)/\(realtime)")
+        }
+    }
+
+    func testSetLocalControlEnabledPreservesRealtimeKey() throws {
+        // Read-modify-write of local_control_enabled must NOT
+        // clobber remote_realtime_enabled — Swift's HelperConfigStore
+        // keeps unknown keys in `raw` so Python's older writer's
+        // fields survive a Swift rewrite. Verify the new key
+        // participates in that preservation.
+        let path = tmp.appendingPathComponent("cfg.json")
+        let seed: [String: Any] = [
+            "device_id": "d",
+            "helper_secret": "s",
+            "remote_realtime_enabled": false,
+            "local_control_enabled": false,
+        ]
+        try JSONSerialization.data(withJSONObject: seed).write(to: path)
+        let store = HelperConfigStore(path: path)
+        store.setLocalControlEnabled(true)
+        let after = try JSONSerialization.jsonObject(with: try Data(contentsOf: path))
+            as? [String: Any] ?? [:]
+        XCTAssertEqual(after["local_control_enabled"] as? Bool, true)
+        XCTAssertEqual(after["remote_realtime_enabled"] as? Bool, false,
+                       "remote_realtime_enabled must survive a setLocalControlEnabled write")
+    }
+
     // MARK: - StoredConfig schema parity check
 
     func testStoredConfigSchemaMatchesAppEncoding() throws {
