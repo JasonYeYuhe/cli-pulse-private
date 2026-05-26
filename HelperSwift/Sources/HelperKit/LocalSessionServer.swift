@@ -471,6 +471,8 @@ public final class LocalSessionServer: @unchecked Sendable {
             return handleSendInputRaw(request: request)
         case .resize:
             return handleResize(request: request)
+        case .getTailSnapshot:
+            return handleGetTailSnapshot(request: request)
         case .getPendingApprovals:
             return handleGetPendingApprovals(request: request)
         case .approveAction:
@@ -597,6 +599,31 @@ public final class LocalSessionServer: @unchecked Sendable {
         } catch {
             return .err(id: request.id, code: .internalError, message: "send_input_raw failed: \(error)")
         }
+    }
+
+    /// v1.24 Phase 2c slice 1 — return up to `max_bytes` (default
+    /// 8192, capped at 65536) of the most-recent stdout, redacted.
+    /// Powers the iOS WKWebView's foreground-recovery path.
+    /// Result: `{ session_id, bytes_base64, bytes }`.
+    private func handleGetTailSnapshot(request: WireRequest) -> WireResponse {
+        guard let sid = request.params["session_id"] as? String, !sid.isEmpty else {
+            return .err(id: request.id, code: .badRequest, message: "'session_id' must be a non-empty string")
+        }
+        let maxBytes = (request.params["max_bytes"] as? Int) ?? 8192
+        guard maxBytes >= 0 else {
+            return .err(id: request.id, code: .badRequest, message: "'max_bytes' must be non-negative")
+        }
+        guard let mgr = hooks.sessionManager else {
+            return .err(id: request.id, code: .notImplemented, message: "session manager not configured")
+        }
+        guard let snap = mgr.getTailSnapshot(sessionId: sid, maxBytes: maxBytes) else {
+            return .err(id: request.id, code: .sessionNotFound, message: "no managed session with id '\(sid)'")
+        }
+        return .ok(id: request.id, result: [
+            "session_id": sid,
+            "bytes_base64": snap.base64EncodedString(),
+            "bytes": snap.count,
+        ])
     }
 
     /// v1.24 Phase 2b — window-size update from the in-app terminal
