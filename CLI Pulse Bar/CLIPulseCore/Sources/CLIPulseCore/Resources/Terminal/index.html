@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<!--
+  v1.24 Phase 3 — xterm.js Mac Bar in-app terminal.
+  Hosts a 5.5.0 xterm.js Terminal inside a WKWebView. Posts three
+  message kinds to the native side via `webkit.messageHandlers.terminal`:
+
+    { kind: "ready" }              — sent once when DOM is wired up
+    { kind: "stdin", data: "…" }   — user keystrokes (string, raw)
+    { kind: "resize", cols, rows } — viewport size after a layout change
+
+  The native side calls `window.pushChunk('<base64-stdout>')` to
+  display bytes from the PTY. pushChunk decodes base64, then JS-side
+  rAF coalescer batches multiple incoming chunks into a single
+  `term.write()` per frame — paired with TerminalOutputCoalescer on
+  the Swift side, total bridge crossings stay ~60/sec at worst.
+
+  Single-file bundle: no external network deps. xterm.js / addon-fit
+  / addon-web-links / xterm.css are vendored sibling files loaded
+  via relative paths (SPM `.process("Resources")` keeps the whole
+  Terminal/ folder structure intact in the resource bundle).
+
+  Vendoring (MIT, see LICENSE.xterm in the same folder):
+    @xterm/xterm           5.5.0
+    @xterm/addon-fit       0.10.0
+    @xterm/addon-web-links 0.11.0
+-->
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>CLI Pulse Terminal</title>
+  <link rel="stylesheet" href="xterm.css" />
+  <style>
+    /* Match the menubar popover background; xterm.css applies its own
+       black canvas style which we override here. */
+    html, body, #root {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #111;
+      color: #eee;
+      font-family: -apple-system, "SF Mono", Menlo, monospace;
+    }
+    /* Hide the cursor block on Safari focus rings around the xterm root. */
+    #root .xterm.focus, #root .xterm:focus { outline: none; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="xterm.js"></script>
+  <script src="addon-fit.js"></script>
+  <script src="addon-web-links.js"></script>
+  <script>
+    (function () {
+      var term = new Terminal({
+        fontFamily: '"SF Mono", Menlo, monospace',
+        fontSize: 13,
+        scrollback: 5000,
+        cursorBlink: true,
+        theme: { background: '#111', foreground: '#eee' }
+      });
+      var fitAddon = new FitAddon.FitAddon();
+      var webLinksAddon = new WebLinksAddon.WebLinksAddon();
+      term.loadAddon(fitAddon);
+      term.loadAddon(webLinksAddon);
+
+      var root = document.getElementById('root');
+      term.open(root);
+      try { fitAddon.fit(); } catch (e) { /* no-op until DOM measures */ }
+
+      // ── Native → JS chunk pump (rAF-batched) ───────────────────
+      // Codex HIGH H1 mitigation is split: Swift-side 16 ms coalesce
+      // is in TerminalOutputCoalescer; this rAF batcher is the
+      // matching JS-side guard against any residual bursts. Multiple
+      // pushChunk calls within a frame merge into one term.write().
+      var pendingChunks = [];
+      var rafScheduled = false;
+      function decodeB64(b64) {
+        var bin = atob(b64);
+        // xterm.js write() accepts both string and Uint8Array; keep
+        // bytes raw so ANSI escapes survive the bridge intact.
+        var bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return bytes;
+      }
+      window.pushChunk = function (b64) {
+        pendingChunks.push(decodeB64(b64));
+        if (!rafScheduled) {
+          rafScheduled = true;
+          requestAnimationFrame(function () {
+            rafScheduled = false;
+            var merged = pendingChunks;
+            pendingChunks = [];
+            for (var i = 0; i < merged.length; i++) term.write(merged[i]);
+          });
+        }
+      };
+
+      // ── JS → native: keystrokes ───────────────────────────────
+      term.onData(function (d) {
+        try {
+          window.webkit.messageHandlers.terminal.postMessage({ kind: 'stdin', data: d });
+        } catch (e) {
+          // Bridge unavailable (e.g. preview / standalone HTML
+          // open). Drop silently.
+        }
+      });
+
+      // ── JS → native: window-size on layout changes ────────────
+      var lastCols = -1, lastRows = -1;
+      function pushSize() {
+        try { fitAddon.fit(); } catch (e) { return; }
+        if (term.cols === lastCols && term.rows === lastRows) return;
+        lastCols = term.cols;
+        lastRows = term.rows;
+        try {
+          window.webkit.messageHandlers.terminal.postMessage({
+            kind: 'resize', cols: term.cols, rows: term.rows
+          });
+        } catch (e) { /* see above */ }
+      }
+      var resizeObserver = new ResizeObserver(pushSize);
+      resizeObserver.observe(document.body);
+      // Initial size after layout settles.
+      requestAnimationFrame(pushSize);
+
+      // ── Ready ping so the native side knows we can pushChunk. ─
+      try {
+        window.webkit.messageHandlers.terminal.postMessage({ kind: 'ready' });
+      } catch (e) { /* preview mode */ }
+
+      // Expose minimal control surface to tests / DevTools.
+      window.__CLIPulseTerminal = {
+        term: term,
+        fitAddon: fitAddon,
+        version: '0.1.0'
+      };
+    })();
+  </script>
+</body>
+</html>
