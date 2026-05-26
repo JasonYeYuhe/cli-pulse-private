@@ -917,6 +917,14 @@ struct ManagedSessionDetailView: View {
     /// 280 pt is the MVP — enough for ~12 rows of mono text at
     /// the default xterm.js font size. Phase 4 slice 4 will add a
     /// "tap to fullscreen" affordance.
+    ///
+    /// Slice 2 wires `onStdin` and `onResize` to the new
+    /// `sendRemoteSessionInputRaw` / `resizeRemoteSession`
+    /// helpers on `AppState`. Both are fire-and-forget — the
+    /// existing `remoteSessionsError` banner already surfaces
+    /// transport failures from the prompt path; per-keystroke
+    /// errors would be too noisy. **Effective only after the
+    /// backend v0.50 migration applies + helper v1.25 ships.**
     @ViewBuilder
     private func liveTerminalPanel(
         streamConfig: RemoteSessionEventStream.Configuration
@@ -924,7 +932,21 @@ struct ManagedSessionDetailView: View {
         VStack(alignment: .leading, spacing: 4) {
             RemoteTerminalViewRepresentable(
                 sessionId: currentSession.id,
-                streamConfig: streamConfig
+                streamConfig: streamConfig,
+                onStdin: { [sessionId = currentSession.id] bytes in
+                    Task { await state.sendRemoteSessionInputRaw(
+                        sessionId: sessionId, bytes: bytes
+                    ) }
+                },
+                onResize: { [sessionId = currentSession.id] cols, rows in
+                    let clampedCols = UInt16(min(max(cols, 1), 32767))
+                    let clampedRows = UInt16(min(max(rows, 1), 32767))
+                    Task { await state.resizeRemoteSession(
+                        sessionId: sessionId,
+                        cols: clampedCols,
+                        rows: clampedRows
+                    ) }
+                }
             )
             .frame(height: 280)
             .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -932,7 +954,7 @@ struct ManagedSessionDetailView: View {
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
             )
-            Text("Streaming output from the Mac helper. Tap output to scroll. Input controls land in the next release.")
+            Text("Interactive terminal. Soft-keyboard helper bar (Esc / Ctrl-C / arrows) lands in the next release.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)

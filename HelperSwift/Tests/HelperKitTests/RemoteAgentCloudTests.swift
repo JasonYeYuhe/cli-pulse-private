@@ -82,6 +82,121 @@ final class RemoteAgentCloudTests: XCTestCase {
 
     // MARK: - command dispatch
 
+    // MARK: - v1.25 Phase 4 slice 2: input_raw / resize parsers
+
+    func test_decodeInputRawPayload_accepts_base64() {
+        let bytes = Data([0x68, 0x69, 0x03, 0x0A])  // "hi" + Ctrl-C + \n
+        let b64 = bytes.base64EncodedString()
+        XCTAssertEqual(RemoteAgentCloud.decodeInputRawPayload(b64), bytes)
+    }
+
+    func test_decodeInputRawPayload_rejects_empty() {
+        XCTAssertNil(RemoteAgentCloud.decodeInputRawPayload(""))
+    }
+
+    func test_decodeInputRawPayload_rejects_non_base64() {
+        XCTAssertNil(RemoteAgentCloud.decodeInputRawPayload("not base64!!"))
+    }
+
+    func test_decodeInputRawPayload_rejects_empty_base64_decoded() {
+        // "" base64 → empty Data → reject so we don't enqueue a
+        // no-op write.
+        // The base64 encoding of "" is also "". Above test
+        // already covers; pin a defensive non-"" input that
+        // decodes to empty: not possible with valid base64,
+        // but a single padding char "=" rejects.
+        XCTAssertNil(RemoteAgentCloud.decodeInputRawPayload("="))
+    }
+
+    func test_decodeResizePayload_accepts_standard_dims() {
+        let parsed = RemoteAgentCloud.decodeResizePayload("80x24")
+        XCTAssertEqual(parsed?.cols, 80)
+        XCTAssertEqual(parsed?.rows, 24)
+    }
+
+    func test_decodeResizePayload_accepts_large_iPad_dims() {
+        let parsed = RemoteAgentCloud.decodeResizePayload("200x60")
+        XCTAssertEqual(parsed?.cols, 200)
+        XCTAssertEqual(parsed?.rows, 60)
+    }
+
+    func test_decodeResizePayload_rejects_zero_dims() {
+        XCTAssertNil(RemoteAgentCloud.decodeResizePayload("0x24"))
+        XCTAssertNil(RemoteAgentCloud.decodeResizePayload("80x0"))
+    }
+
+    func test_decodeResizePayload_rejects_negative_dims() {
+        XCTAssertNil(RemoteAgentCloud.decodeResizePayload("-1x24"))
+    }
+
+    func test_decodeResizePayload_rejects_oversize() {
+        // > UInt16.max would overflow the ioctl. Defend at parse.
+        XCTAssertNil(RemoteAgentCloud.decodeResizePayload("80x99999"))
+    }
+
+    func test_decodeResizePayload_rejects_missing_separator() {
+        XCTAssertNil(RemoteAgentCloud.decodeResizePayload("80,24"))
+        XCTAssertNil(RemoteAgentCloud.decodeResizePayload("80 24"))
+        XCTAssertNil(RemoteAgentCloud.decodeResizePayload("8024"))
+    }
+
+    func test_decodeResizePayload_rejects_non_numeric() {
+        XCTAssertNil(RemoteAgentCloud.decodeResizePayload("eightyx24"))
+        XCTAssertNil(RemoteAgentCloud.decodeResizePayload("80xtwenty-four"))
+    }
+
+    func test_dispatch_input_raw_for_unknown_session_completes_failed() async throws {
+        // Mirror test_dispatch_stop_for_unknown_session_completes_failed —
+        // the helper must report failure (not silently delivered) when
+        // routing input_raw to a session it doesn't own. Otherwise a
+        // stale iOS row would silently consume keystrokes that never
+        // reach the user's PTY.
+        let cmdId = UUID().uuidString
+        let bytes = Data("ls\r".utf8).base64EncodedString()
+        let rpc = FakeRPCCaller()
+        rpc.responses["remote_helper_pull_commands"] = { _ in
+            return [[
+                "id": cmdId,
+                "session_id": UUID().uuidString,
+                "kind": "input_raw",
+                "payload": bytes,
+            ]]
+        }
+        let uploader = makeUploader(rpc: rpc)
+        let manager = ManagedSessionManager(transport: PtyTransport())
+        let cloud = makeCloud(rpc: rpc, uploader: uploader, sessionManager: manager)
+
+        _ = await cloud.tick()
+
+        let completes = rpc.calls(for: "remote_helper_complete_command")
+        XCTAssertEqual(completes.count, 1)
+        XCTAssertEqual(completes.first?.params["p_status"] as? String, "failed")
+        let err = (completes.first?.params["p_error"] as? String) ?? ""
+        XCTAssertTrue(err.contains("session not running"),
+                      "expected 'session not running' surfaced, got: \(err)")
+    }
+
+    func test_dispatch_resize_for_unknown_session_completes_failed() async throws {
+        let cmdId = UUID().uuidString
+        let rpc = FakeRPCCaller()
+        rpc.responses["remote_helper_pull_commands"] = { _ in
+            return [[
+                "id": cmdId,
+                "session_id": UUID().uuidString,
+                "kind": "resize",
+                "payload": "80x24",
+            ]]
+        }
+        let uploader = makeUploader(rpc: rpc)
+        let manager = ManagedSessionManager(transport: PtyTransport())
+        let cloud = makeCloud(rpc: rpc, uploader: uploader, sessionManager: manager)
+
+        _ = await cloud.tick()
+
+        let completes = rpc.calls(for: "remote_helper_complete_command")
+        XCTAssertEqual(completes.first?.params["p_status"] as? String, "failed")
+    }
+
     func test_dispatch_unknown_kind_marks_failed() async throws {
         let cmdId = UUID().uuidString
         let rpc = FakeRPCCaller()
