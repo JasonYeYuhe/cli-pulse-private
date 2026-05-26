@@ -548,6 +548,12 @@ struct iOSSessionsTab: View {
 
 struct ManagedSessionDetailView: View {
     @EnvironmentObject var state: AppState
+    /// v1.25 Phase 4 slice 4: drives the live-terminal Coordinator's
+    /// pause/resume so the WS disconnects when the app backgrounds
+    /// (Gemini HIGH §4e: avoid WebKit OOM on resume-burst) and
+    /// resubscribes on foreground.
+    @Environment(\.scenePhase) private var scenePhase
+
     /// Snapshot taken at the moment of navigation. The view's polling
     /// loop refreshes `state.remoteSessions` independently, so we render
     /// from `currentSession` (below) — which falls back to this initial
@@ -933,6 +939,7 @@ struct ManagedSessionDetailView: View {
             RemoteTerminalViewRepresentable(
                 sessionId: currentSession.id,
                 streamConfig: streamConfig,
+                scenePhase: scenePhase,
                 onStdin: { [sessionId = currentSession.id] bytes in
                     Task { await state.sendRemoteSessionInputRaw(
                         sessionId: sessionId, bytes: bytes
@@ -963,7 +970,7 @@ struct ManagedSessionDetailView: View {
                     sessionId: sessionId, bytes: bytes
                 ) }
             }
-            Text("Interactive terminal. Tap a key to send. Lifecycle (background-disconnect / auto-reconnect) lands in the next release.")
+            Text("Interactive terminal. Backgrounding the app disconnects the stream; foreground resubscribes (no replay).")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
