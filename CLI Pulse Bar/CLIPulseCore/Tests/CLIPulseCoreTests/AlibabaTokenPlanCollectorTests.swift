@@ -91,6 +91,78 @@ final class AlibabaTokenPlanCollectorTests: XCTestCase {
         XCTAssertTrue(result.usage.status_text.contains("500 credits left"), result.usage.status_text)
     }
 
+    // MARK: - v1.26 A3 — GetSubscriptionSummary endpoint shape
+
+    /// New subscription-summary payload (CodexBar 3be413f). The `Data`
+    /// envelope carries `TotalValue` / `TotalSurplusValue` / `TotalCount` /
+    /// `NearestExpireDate`. `used` is derived from total - remaining.
+    func test_parseUsage_subscriptionSummary_topLevelData() throws {
+        let s = try parse(#"""
+        {"Success":true,"Code":"200","Data":{"TotalCount":1,"TotalValue":1000,"TotalSurplusValue":875,"NearestExpireDate":1701000000000}}
+        """#)
+        XCTAssertEqual(s.planName, "TOKEN PLAN")
+        XCTAssertEqual(s.total ?? -1, 1000, accuracy: 0.001)
+        XCTAssertEqual(s.remaining ?? -1, 875, accuracy: 0.001)
+        XCTAssertEqual(s.used ?? -1, 125, accuracy: 0.001) // derived total-remaining
+        XCTAssertEqual(try XCTUnwrap(s.resetsAt).timeIntervalSince1970, 1_701_000_000, accuracy: 1)
+    }
+
+    /// Nested under `successResponse.body` — some cookie variants wrap.
+    func test_parseUsage_subscriptionSummary_nestedSuccessResponseBody() throws {
+        let body = #"{"success":true,"data":{"totalCount":1,"totalSurplusValue":750,"totalValue":1000}}"#
+        let outer = ["successResponse": ["body": body]] as [String: Any]
+        let data = try JSONSerialization.data(withJSONObject: outer)
+        let s = try AlibabaTokenPlanCollector.parseUsage(data)
+        XCTAssertEqual(s.planName, "TOKEN PLAN")
+        XCTAssertEqual(s.total ?? -1, 1000, accuracy: 0.001)
+        XCTAssertEqual(s.remaining ?? -1, 750, accuracy: 0.001)
+        XCTAssertEqual(s.used ?? -1, 250, accuracy: 0.001)
+    }
+
+    /// Empty subscription — `TotalCount: 0`, no quota fields. Surfaces
+    /// as status-only (no synthetic plan name).
+    func test_parseUsage_emptySubscription_stayVisible_noQuotaWindow() throws {
+        let s = try parse(#"{"Success":true,"Data":{"TotalCount":0}}"#)
+        XCTAssertNil(s.planName)
+        XCTAssertNil(s.total)
+        XCTAssertNil(s.remaining)
+    }
+
+    /// `Success: false` (or `success: false`) — login-related messages map to
+    /// `missingCredentials`, others to `parseFailed`.
+    func test_throwIfError_unsuccessfulSummary_loginVsApiError() {
+        XCTAssertThrowsError(try parse(#"{"Success":false,"Message":"needlogin"}"#)) {
+            guard case CollectorError.missingCredentials = $0 else {
+                return XCTFail("expected missingCredentials, got \($0)")
+            }
+        }
+        XCTAssertThrowsError(try parse(#"{"success":false,"message":"Subscription lookup failed"}"#)) {
+            guard case CollectorError.parseFailed = $0 else {
+                return XCTFail("expected parseFailed, got \($0)")
+            }
+        }
+    }
+
+    /// Request body sanity — the new shape MUST carry product/action
+    /// query params and a `{"ProductCode": "..."}` `params` value.
+    func test_requestBody_carriesSubscriptionSummaryParams() {
+        let bodyData = AlibabaTokenPlanCollector.requestBody(secToken: "TOK")
+        let body = String(data: bodyData, encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains("product=BssOpenAPI-V3"), body)
+        XCTAssertTrue(body.contains("action=GetSubscriptionSummary"), body)
+        XCTAssertTrue(body.contains("ProductCode"), body)
+        XCTAssertTrue(body.contains("sfm_tokenplanteams_dp_cn"), body)
+        XCTAssertTrue(body.contains("sec_token=TOK"), body)
+        // legacy shape NOT present
+        XCTAssertFalse(body.contains("cornerstoneParam"), body)
+        XCTAssertFalse(body.contains("queryTokenPlanInstanceInfoRequest"), body)
+    }
+
+    func test_requestBody_omitsSecTokenQueryWhenAbsent() {
+        let body = String(data: AlibabaTokenPlanCollector.requestBody(secToken: nil), encoding: .utf8) ?? ""
+        XCTAssertFalse(body.contains("sec_token="), body)
+    }
+
     // MARK: - Availability
 
     func test_isAvailable_matrix() {
