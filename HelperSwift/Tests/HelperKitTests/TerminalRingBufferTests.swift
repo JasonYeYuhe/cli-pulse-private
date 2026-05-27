@@ -116,6 +116,79 @@ final class TerminalRingBufferTests: XCTestCase {
         XCTAssertEqual(rb.tail(maxBytes: 4), Data([3,4,5,6]))
     }
 
+    // MARK: - concurrency (Phase A0, v1.26)
+
+    /// Codex HIGH: the helper drain loop calls `append` from one
+    /// thread while `ManagedSessionManager.getTailSnapshot` reads
+    /// `tail()` from another — without external synchronization.
+    /// `TerminalRingBuffer` is now self-locking; this test pins the
+    /// contract by hammering append (background queue) against tail
+    /// (current thread) and asserting (1) no crash, (2) every tail
+    /// returns a length within the buffer's documented bounds.
+    /// Run under TSAN locally to verify no remaining races.
+    func test_concurrentAppendAndTail_neverCrashes_lengthInBounds() {
+        let rb = TerminalRingBuffer(capacity: 2048)
+        let writeQueue = DispatchQueue(label: "rb.write", qos: .userInitiated)
+        let writeIterations = 5_000
+        let chunk = Data(repeating: 0x41, count: 32) // "AAA…" 32 B
+
+        let done = expectation(description: "writes done")
+        writeQueue.async {
+            for _ in 0..<writeIterations {
+                rb.append(chunk)
+            }
+            done.fulfill()
+        }
+
+        // Hammer reads from the test thread concurrently.
+        for _ in 0..<writeIterations {
+            let snap = rb.tail(maxBytes: 1024)
+            // Bound: never exceeds the cap we asked for, never the
+            // ring capacity, and never the live `size`.
+            XCTAssertLessThanOrEqual(snap.count, 1024)
+            XCTAssertLessThanOrEqual(snap.count, rb.capacity)
+            XCTAssertLessThanOrEqual(snap.count, rb.size)
+        }
+
+        wait(for: [done], timeout: 30.0)
+        // Final state: buffer is full (5000 × 32 B = 160_000 B ≫ 2048).
+        XCTAssertEqual(rb.size, rb.capacity)
+        XCTAssertEqual(rb.tail(maxBytes: 1024).count, 1024)
+    }
+
+    /// Two writers + one reader. Stresses the append critical section
+    /// against itself plus a concurrent reader. Asserts the buffer
+    /// invariants (size never exceeds capacity, every tail length is
+    /// within the asked-for cap and the live size).
+    func test_concurrentTwoWritersOneReader_invariantsHold() {
+        let rb = TerminalRingBuffer(capacity: 1024)
+        let q1 = DispatchQueue(label: "rb.write1", qos: .userInitiated)
+        let q2 = DispatchQueue(label: "rb.write2", qos: .userInitiated)
+        let iterations = 2_000
+        let dataA = Data(repeating: 0x61, count: 16)
+        let dataB = Data(repeating: 0x62, count: 16)
+
+        let doneA = expectation(description: "writerA")
+        let doneB = expectation(description: "writerB")
+        q1.async {
+            for _ in 0..<iterations { rb.append(dataA) }
+            doneA.fulfill()
+        }
+        q2.async {
+            for _ in 0..<iterations { rb.append(dataB) }
+            doneB.fulfill()
+        }
+
+        for _ in 0..<iterations {
+            let snap = rb.tail(maxBytes: 256)
+            XCTAssertLessThanOrEqual(snap.count, 256)
+            XCTAssertLessThanOrEqual(rb.size, rb.capacity)
+        }
+
+        wait(for: [doneA, doneB], timeout: 30.0)
+        XCTAssertEqual(rb.size, rb.capacity)
+    }
+
     // MARK: - redaction round-trip (mirrors ManagedSessionManager.getTailSnapshot)
 
     /// `getTailSnapshot` performs: ring buffer → tail bytes → UTF-8
