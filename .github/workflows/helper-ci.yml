@@ -9,6 +9,9 @@ on:
     paths:
       - 'helper/**'
       - '.github/workflows/helper-ci.yml'
+  # v1.26 C2: manual retrigger trigger so a future Actions outage
+  # can be unstuck without an empty-commit push.
+  workflow_dispatch: {}
 
 concurrency:
   group: helper-ci-${{ github.ref }}
