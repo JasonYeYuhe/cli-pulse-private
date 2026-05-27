@@ -8,10 +8,14 @@ import Foundation
 /// render "where the session landed while I was away," skipping the
 /// expensive full-event-replay.
 ///
-/// Threading: callers must synchronize externally. The helper's drain
-/// loop is the only writer per session; the RPC handler is the only
-/// reader and the manager already holds `lock` while resolving the
-/// session record.
+/// Threading: fully thread-safe. All mutating and reading operations
+/// (`append`, `tail`, `clear`, `size`) take an internal `NSLock` so
+/// callers can hit the buffer from any thread without external
+/// synchronization. This was promoted from "single-writer/single-reader,
+/// external sync required" (v1.24) to fully self-locking after Codex
+/// flagged a real race in v1.25 — `ManagedSessionManager.getTailSnapshot`
+/// drops `lock` before reading the buffer while the drain loop appends
+/// without holding it (Phase A0 hotfix, v1.26).
 ///
 /// Bytes stored verbatim (no redaction). Redaction happens at the
 /// read side (`getTailSnapshot` decodes → `Redactor.redact` →
@@ -29,7 +33,20 @@ public final class TerminalRingBuffer {
     private var head: Int = 0
 
     /// Number of valid bytes currently buffered (0...capacity).
-    private(set) var size: Int = 0
+    private var _size: Int = 0
+
+    /// Serializes all mutations and reads. `NSLock` (not `os_unfair_lock`)
+    /// because the critical sections do memcpy-sized work; the queue
+    /// fairness + Swift-bridge ergonomics outweigh the unlocked path's
+    /// nanosecond edge for this workload.
+    private let lock = NSLock()
+
+    /// Thread-safe snapshot of the buffered byte count.
+    public var size: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _size
+    }
 
     public init(capacity: Int) {
         precondition(capacity > 0, "TerminalRingBuffer capacity must be positive")
@@ -45,15 +62,17 @@ public final class TerminalRingBuffer {
     public func append(_ data: Data) {
         if data.isEmpty { return }
 
+        lock.lock()
+        defer { lock.unlock() }
+
         // If the incoming span alone exceeds capacity, only the last
         // `capacity` bytes can possibly survive. Truncate up front so
         // we never copy bytes we'd immediately discard.
-        let effective: Data
         if data.count >= capacity {
-            effective = data.suffix(capacity)
+            let effective = data.suffix(capacity)
             // The new bytes will completely replace existing content.
             head = 0
-            size = capacity
+            _size = capacity
             effective.withUnsafeBytes { src in
                 storage.withUnsafeMutableBytes { dst in
                     guard let s = src.baseAddress, let d = dst.baseAddress else { return }
@@ -63,7 +82,7 @@ public final class TerminalRingBuffer {
             return
         }
 
-        let n = effective_count(data)
+        let n = data.count
         // Two-segment copy if the write wraps past `capacity`.
         let firstSpan = min(n, capacity - head)
         let secondSpan = n - firstSpan
@@ -82,19 +101,16 @@ public final class TerminalRingBuffer {
         }
 
         head = (head + n) % capacity
-        size = min(capacity, size + n)
-    }
-
-    private func effective_count(_ data: Data) -> Int {
-        // Helper for tests' clarity; in production all callers ensure
-        // data.count < capacity here.
-        data.count
+        _size = min(capacity, _size + n)
     }
 
     /// Return up to `maxBytes` of the most-recently-appended bytes,
     /// in stream (not storage) order. Empty if the buffer is empty.
     public func tail(maxBytes: Int) -> Data {
-        let n = min(max(0, maxBytes), size)
+        lock.lock()
+        defer { lock.unlock() }
+
+        let n = min(max(0, maxBytes), _size)
         if n == 0 { return Data() }
 
         // Start offset in storage: walk `n` bytes backwards from
@@ -114,7 +130,9 @@ public final class TerminalRingBuffer {
 
     /// Drop all buffered bytes; ready to reuse for a new session.
     public func clear() {
+        lock.lock()
+        defer { lock.unlock() }
         head = 0
-        size = 0
+        _size = 0
     }
 }
