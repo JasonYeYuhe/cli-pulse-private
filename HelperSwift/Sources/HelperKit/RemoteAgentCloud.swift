@@ -224,6 +224,17 @@ public actor RemoteAgentCloud {
             // `setWinsize(TIOCSWINSZ)` so ratatui / ncurses CLIs
             // reflow on phone rotation / soft-keyboard show.
             outcome = handleResize(sessionId: sessionId, payload: payload)
+        case "tail_snapshot":
+            // v1.26 Phase B2: foreground-recovery. Payload is a
+            // decimal maxBytes (defaults to 8192 if empty /
+            // unparseable). Snapshot is read from
+            // ManagedSessionManager's per-session TerminalRingBuffer
+            // (already redacted via Redactor), then PUBLISHED over
+            // the same Realtime broadcast channel as live stdout
+            // chunks — event kind `tail_snapshot_result`. Inert
+            // until v0.51 migration applies (server rejects the
+            // kind), so legacy helpers stay safe.
+            outcome = await handleTailSnapshot(sessionId: sessionId, payload: payload)
         default:
             outcome = (false, "unknown command kind: \"\(kind)\"")
         }
@@ -406,6 +417,48 @@ public actor RemoteAgentCloud {
               cols <= 32767, rows <= 32767
         else { return nil }
         return (UInt16(cols), UInt16(rows))
+    }
+
+    /// v1.26 Phase B2: read the most-recent N bytes of the session's
+    /// PTY ring buffer (already redacted via Redactor) and publish them
+    /// via the Realtime broadcast channel as event `tail_snapshot_result`.
+    /// The iOS side `Coordinator.resume()` uses this to "catch up"
+    /// after a background→foreground cycle without paying for a full
+    /// event-log replay. Returns success even when the snapshot is
+    /// empty (brand-new session) — the iOS side handles the empty
+    /// case the same as a missed broadcast (it just drains its
+    /// pendingSnapshotBuffer with no prefix).
+    private func handleTailSnapshot(sessionId: String, payload: String) async -> (Bool, String) {
+        if sessionId.isEmpty {
+            return (false, "tail_snapshot requires session_id")
+        }
+        if !sessionManager.ownsSession(sessionId) {
+            return (false, "session not running on this helper")
+        }
+        let maxBytes = Self.decodeTailSnapshotPayload(payload)
+        // `publishTailSnapshot` self-locks via TerminalRingBuffer
+        // (v1.26 A0 hotfix), redacts via Redactor (idempotent —
+        // safe re-run inside the publisher), and POSTs over the
+        // existing term:<sid> Realtime channel as event
+        // `tail_snapshot_result`. Returns false when there's
+        // nothing to publish (empty buffer / no publisher
+        // configured) — counted as a success here so the queue
+        // marks the command delivered; iOS times out at 2 s and
+        // proceeds without recovery, which is the cold-start UX.
+        _ = await sessionManager.publishTailSnapshot(sessionId: sessionId, maxBytes: maxBytes)
+        return (true, "")
+    }
+
+    /// Pure parser for the tail_snapshot payload. Accepts a decimal
+    /// `maxBytes` (e.g. "8192"); clamps to [0, 65536] which matches
+    /// the ring buffer's capacity. An empty / unparseable payload
+    /// defaults to 8192 — the value the iOS side sends today.
+    /// Public so unit tests can pin the wire shape.
+    static func decodeTailSnapshotPayload(_ payload: String) -> Int {
+        let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return 8192 }
+        guard let n = Int(trimmed) else { return 8192 }
+        return max(0, min(n, 65536))
     }
 
     private func completeCommand(cmdId: String, ok: Bool, error: String) async {

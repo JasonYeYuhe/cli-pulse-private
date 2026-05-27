@@ -91,6 +91,40 @@ final class TerminalBroadcastPublisherTests: XCTestCase {
         XCTAssertEqual(sink.captured.first?.event, "stderr")
     }
 
+    /// v1.26 B2: tail-snapshot results flow via the SAME publisher
+    /// + SAME `term:<sid>` channel as live stdout. Only the `event`
+    /// field changes ("tail_snapshot_result"). Pin the routing so a
+    /// future refactor doesn't accidentally split into a separate
+    /// channel that iOS isn't subscribed to.
+    func test_tailSnapshotEventRoutesOnTermChannel() async {
+        let sink = CapturingSink()
+        let pub = TerminalBroadcastPublisher(sink: sink)
+        await pub.submit(
+            sessionId: "sess-T",
+            channel: "tail_snapshot_result",
+            chunk: Data("scrollback...".utf8))
+        await pub.awaitDrained()
+        let cap = sink.captured.first
+        XCTAssertEqual(cap?.channel, "term:sess-T")
+        XCTAssertEqual(cap?.event, "tail_snapshot_result")
+        XCTAssertEqual(String(data: cap?.redactedBytes ?? Data(), encoding: .utf8), "scrollback...")
+    }
+
+    /// v1.26 B2: even the snapshot path runs through the redactor —
+    /// the publisher contract is "sinks never see raw bytes." The
+    /// helper-side `getTailSnapshot` already redacts; the publisher
+    /// re-runs redaction (idempotent, no double-marker drift).
+    func test_tailSnapshotResultRedactsBeforeSink() async {
+        let sink = CapturingSink()
+        let pub = TerminalBroadcastPublisher(sink: sink)
+        let raw = Data("Authorization: Bearer sk-ant-api03-secret-1234567890abcdef\nready\n".utf8)
+        await pub.submit(sessionId: "s", channel: "tail_snapshot_result", chunk: raw)
+        await pub.awaitDrained()
+        let body = String(data: sink.captured.first?.redactedBytes ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains(Redactor.redactionMarker))
+        XCTAssertFalse(body.contains("sk-ant-api03-secret-1234567890abcdef"))
+    }
+
     func test_emptyChunkIsNoOp() async {
         let sink = CapturingSink()
         let pub = TerminalBroadcastPublisher(sink: sink)

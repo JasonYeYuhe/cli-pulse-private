@@ -1036,6 +1036,16 @@ public enum RemoteCommandKind: String, Codable, Sendable {
     /// `ioctl(TIOCSWINSZ)` → SIGWINCH so ratatui / ncurses
     /// reflow on phone rotation / soft-keyboard show.
     case resize
+    /// v1.26 Phase B2: foreground-recovery snapshot request.
+    /// Payload is the requested maxBytes as a decimal string
+    /// (e.g. "8192"). Helper reads the session's redacted PTY
+    /// ring buffer and publishes the snapshot via the existing
+    /// Realtime broadcast channel as event `tail_snapshot_result`
+    /// (NOT a durable event row — broadcast-only, best-effort
+    /// recovery). Requires server migration v0.51 + helper v1.26+;
+    /// older helpers reject with "unknown command kind" (fail-
+    /// safe — iOS times out at 2 s and proceeds without recovery).
+    case tail_snapshot
 }
 
 /// One Claude / Codex / shell session running under the helper.
