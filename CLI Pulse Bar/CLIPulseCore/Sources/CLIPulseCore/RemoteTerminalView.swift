@@ -68,6 +68,16 @@ public final class RemoteTerminalView: UIView {
         let config = WKWebViewConfiguration()
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
         let messageHandler = RemoteTerminalBridgeHandler()
+        // v1.26 B1: iOS phones have a tight memory budget; 5000 lines
+        // × ~80 cols × ~4 bytes ≈ 1.6 MB per session for the scrollback
+        // alone. Inject `window.TERMINAL_CONFIG = {scrollback: 500}`
+        // before the bundled JS reads it. Mac side never injects, so
+        // it keeps the default 5000.
+        let scrollbackScript = WKUserScript(
+            source: Self.scrollbackConfigScript(scrollback: Self.iosScrollbackLines),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true)
+        config.userContentController.addUserScript(scrollbackScript)
         config.userContentController.add(messageHandler, name: "terminal")
 
         self.webView = WKWebView(frame: .zero, configuration: config)
@@ -138,6 +148,25 @@ public final class RemoteTerminalView: UIView {
             return
         }
         webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+    }
+
+    /// iOS scrollback line cap (v1.26 B1). 500 × 80 col × 4 B ≈
+    /// 160 KB per session — enough for "what did this just print"
+    /// recall, capped before WKWebView starts paging on multi-session
+    /// hosts. Mac side gets the JS default (5000) because the popover
+    /// has memory headroom and power-user scrollback is the value-add.
+    public static let iosScrollbackLines = 500
+
+    /// WKUserScript source that sets `window.TERMINAL_CONFIG` before
+    /// `index.html` runs. Unit-testable without instantiating
+    /// WKWebView (`feedback_filtered_swift_test_blind_spot`): tests
+    /// pin the literal shape against the JS-side read.
+    public static func scrollbackConfigScript(scrollback: Int) -> String {
+        // Defensive clamp: never inject 0 / negative; JS-side already
+        // ignores invalid values but spelling it out here makes the
+        // injection contract obvious.
+        let n = max(1, scrollback)
+        return "window.TERMINAL_CONFIG = { scrollback: \(n) };"
     }
 
     /// URL of the bundled index.html, if present. Same lookup as

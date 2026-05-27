@@ -52,10 +52,19 @@
   <script src="addon-web-links.js"></script>
   <script>
     (function () {
+      // v1.26 B1: native side can override defaults by injecting
+      //   window.TERMINAL_CONFIG = { scrollback: N }
+      // via WKUserScript at .atDocumentStart. iOS sets 500 (phone
+      // memory budget — 5000 × 80 col × 4 B ≈ 1.6 MB / session is
+      // too steep). Mac leaves defaults (5000). Read once at boot.
+      var config = (typeof window.TERMINAL_CONFIG === 'object' && window.TERMINAL_CONFIG !== null)
+        ? window.TERMINAL_CONFIG : {};
+      var scrollback = (typeof config.scrollback === 'number' && config.scrollback > 0)
+        ? config.scrollback : 5000;
       var term = new Terminal({
         fontFamily: '"SF Mono", Menlo, monospace',
         fontSize: 13,
-        scrollback: 5000,
+        scrollback: scrollback,
         cursorBlink: true,
         theme: { background: '#111', foreground: '#eee' }
       });

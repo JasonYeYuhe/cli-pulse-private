@@ -101,6 +101,49 @@ final class RemoteTerminalViewTests: XCTestCase {
         ]))
     }
 
+    // MARK: - v1.26 B1: scrollback cap injection
+
+    func test_iosScrollbackLines_isPhoneSafeDefault() {
+        // Phones are tight on RAM; 500 lines × 80 col × 4 B ≈ 160 KB
+        // per session. Don't bump without measuring multi-session
+        // WKWebView pressure.
+        XCTAssertEqual(RemoteTerminalView.iosScrollbackLines, 500)
+    }
+
+    func test_scrollbackConfigScript_setsTerminalConfigGlobal() {
+        let js = RemoteTerminalView.scrollbackConfigScript(scrollback: 500)
+        // Must set the same global the bundled index.html reads.
+        XCTAssertTrue(js.contains("window.TERMINAL_CONFIG"))
+        XCTAssertTrue(js.contains("scrollback"))
+        XCTAssertTrue(js.contains("500"))
+    }
+
+    func test_scrollbackConfigScript_clampsNonPositiveToOne() {
+        // JS-side already ignores invalid values, but spell out the
+        // injection contract — never emit 0 / negative, which xterm.js
+        // documents as "disable scrollback entirely" and would clear
+        // the buffer on every resize.
+        XCTAssertTrue(RemoteTerminalView.scrollbackConfigScript(scrollback: 0).contains(": 1 "))
+        XCTAssertTrue(RemoteTerminalView.scrollbackConfigScript(scrollback: -10).contains(": 1 "))
+    }
+
+    /// The bundled index.html must read `window.TERMINAL_CONFIG.scrollback`
+    /// (the contract `scrollbackConfigScript` writes to). This pins the
+    /// JS-side shape so a refactor of the HTML can't silently break the
+    /// iOS cap. Mac side gets the default (5000) because it never
+    /// injects a `TERMINAL_CONFIG`.
+    func test_bundledIndexHTML_readsTerminalConfigScrollback() throws {
+        let url = try XCTUnwrap(RemoteTerminalView.resourceURL)
+        let html = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(html.contains("window.TERMINAL_CONFIG"),
+                      "index.html must consume window.TERMINAL_CONFIG.scrollback")
+        XCTAssertTrue(html.contains("config.scrollback"),
+                      "index.html must read .scrollback off the config")
+        // Default-fallback path stays at 5000 (Mac, no injection).
+        XCTAssertTrue(html.contains("5000"),
+                      "index.html must keep 5000 as the fallback default")
+    }
+
     // MARK: - resourceURL
 
     func test_resourceURL_finds_bundled_index_html() {
