@@ -450,6 +450,33 @@ public final class ManagedSessionManager: @unchecked Sendable {
         return Data(redacted.utf8)
     }
 
+    /// v1.26 Phase B2: publish a tail-snapshot over the Realtime
+    /// broadcast channel as event `tail_snapshot_result`. Reads
+    /// from the ring buffer via `getTailSnapshot` (already redacted)
+    /// and hands off to the `TerminalBroadcastPublisher` (Phase 2c
+    /// slice 2), which re-runs redaction (idempotent) and POSTs.
+    ///
+    /// Returns `true` when a publish was attempted (publisher present
+    /// AND session owned), `false` otherwise. The publisher itself
+    /// is fire-and-forget — a `true` return doesn't guarantee
+    /// delivery. iOS times out at 2 s if no broadcast arrives.
+    @discardableResult
+    public func publishTailSnapshot(sessionId: String, maxBytes: Int) async -> Bool {
+        guard let publisher = broadcastPublisher else { return false }
+        guard let snapshot = getTailSnapshot(sessionId: sessionId, maxBytes: maxBytes) else {
+            return false
+        }
+        // Empty snapshot for a brand-new session: don't publish.
+        // The iOS side will time out at 2 s and drain its (also
+        // empty) buffer — same UX as the v1.25 baseline.
+        if snapshot.isEmpty { return false }
+        await publisher.submit(
+            sessionId: sessionId,
+            channel: "tail_snapshot_result",
+            chunk: snapshot)
+        return true
+    }
+
     // MARK: - drain loop
 
     private func drainLoop(record: ManagedSessionRecord) {

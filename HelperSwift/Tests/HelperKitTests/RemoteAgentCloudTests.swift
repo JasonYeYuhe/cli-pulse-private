@@ -176,6 +176,60 @@ final class RemoteAgentCloudTests: XCTestCase {
                       "expected 'session not running' surfaced, got: \(err)")
     }
 
+    // MARK: - v1.26 Phase B2: tail_snapshot parser + dispatch
+
+    func test_decodeTailSnapshotPayload_acceptsDecimal() {
+        XCTAssertEqual(RemoteAgentCloud.decodeTailSnapshotPayload("8192"), 8192)
+        XCTAssertEqual(RemoteAgentCloud.decodeTailSnapshotPayload("0"), 0)
+        XCTAssertEqual(RemoteAgentCloud.decodeTailSnapshotPayload("1"), 1)
+    }
+
+    func test_decodeTailSnapshotPayload_defaultsTo8192OnEmpty() {
+        XCTAssertEqual(RemoteAgentCloud.decodeTailSnapshotPayload(""), 8192)
+        XCTAssertEqual(RemoteAgentCloud.decodeTailSnapshotPayload("   "), 8192)
+    }
+
+    func test_decodeTailSnapshotPayload_defaultsTo8192OnGarbage() {
+        XCTAssertEqual(RemoteAgentCloud.decodeTailSnapshotPayload("not a number"), 8192)
+        XCTAssertEqual(RemoteAgentCloud.decodeTailSnapshotPayload("8192bytes"), 8192)
+    }
+
+    func test_decodeTailSnapshotPayload_clampsTo65536() {
+        // Ring buffer capacity. Larger requests truncate at parse.
+        XCTAssertEqual(RemoteAgentCloud.decodeTailSnapshotPayload("999999"), 65536)
+        XCTAssertEqual(RemoteAgentCloud.decodeTailSnapshotPayload("65536"), 65536)
+        XCTAssertEqual(RemoteAgentCloud.decodeTailSnapshotPayload("-50"), 0)
+    }
+
+    func test_dispatch_tail_snapshot_for_unknown_session_completes_failed() async throws {
+        // The helper must report failure when iOS requests a
+        // snapshot of a session it doesn't own (e.g. wrong device,
+        // session moved). Otherwise iOS waits the full 2 s timeout
+        // for a snapshot that can never arrive.
+        let cmdId = UUID().uuidString
+        let rpc = FakeRPCCaller()
+        rpc.responses["remote_helper_pull_commands"] = { _ in
+            return [[
+                "id": cmdId,
+                "session_id": UUID().uuidString,
+                "kind": "tail_snapshot",
+                "payload": "8192",
+            ]]
+        }
+        let uploader = makeUploader(rpc: rpc)
+        let manager = ManagedSessionManager(transport: PtyTransport())
+        let cloud = makeCloud(rpc: rpc, uploader: uploader, sessionManager: manager)
+
+        _ = await cloud.tick()
+
+        let completes = rpc.calls(for: "remote_helper_complete_command")
+        XCTAssertEqual(completes.count, 1)
+        XCTAssertEqual(completes.first?.params["p_status"] as? String, "failed")
+        let err = (completes.first?.params["p_error"] as? String) ?? ""
+        XCTAssertTrue(err.contains("session not running"),
+                      "expected 'session not running' surfaced, got: \(err)")
+    }
+
     func test_dispatch_resize_for_unknown_session_completes_failed() async throws {
         let cmdId = UUID().uuidString
         let rpc = FakeRPCCaller()

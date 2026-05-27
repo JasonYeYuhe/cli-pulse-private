@@ -2353,6 +2353,32 @@ extension AppState {
         }
     }
 
+    /// v1.26 Phase B2: request the helper publish a redacted
+    /// tail snapshot of the session's PTY ring buffer on the
+    /// Realtime broadcast channel (event `tail_snapshot_result`).
+    /// Fired by `RemoteTerminalViewRepresentable.Coordinator` on
+    /// a warm subscribe (resubscribe after we've seen chunks for
+    /// this session before — background→foreground / auto-reconnect).
+    /// Fire-and-forget: failures are silently dropped — the iOS
+    /// Coordinator times out at 2 s and proceeds without recovery.
+    /// Requires backend migration v0.51 + helper v1.26+; older
+    /// helpers reject the kind, error swallowed.
+    public func requestRemoteSessionTailSnapshot(sessionId: String, maxBytes: Int) async {
+        guard remoteControlEnabled else { return }
+        if sessionId.isEmpty { return }
+        do {
+            _ = try await api.remoteSendCommand(
+                sessionId: sessionId,
+                kind: .tail_snapshot,
+                payload: "\(max(0, maxBytes))"
+            )
+        } catch {
+            // Silent. The Coordinator's 2 s timeout handles
+            // missing snapshots; a banner per resume would be
+            // noisy on flaky networks.
+        }
+    }
+
     /// Stop a managed session. Helper sends SIGTERM to the child PTY's
     /// process group and posts a `status='stopped'` event when the child
     /// exits. The session row stays in the table until retention prunes

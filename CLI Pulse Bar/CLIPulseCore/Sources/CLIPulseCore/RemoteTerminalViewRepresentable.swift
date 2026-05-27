@@ -45,6 +45,16 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
     /// v1.25 Phase 4 slice 2: caller-supplied viewport-resize
     /// forwarder. Typically wired to `RemoteSessionControlClient.resize`.
     public let onResize: ((Int, Int) -> Void)?
+    /// v1.26 Phase B2: caller-supplied snapshot-request forwarder.
+    /// Fired on a **warm** subscribe (resubscribe after we've seen
+    /// chunks for this session before — e.g. background→foreground
+    /// or auto-reconnect). Typically wired to
+    /// `state.requestRemoteSessionTailSnapshot(...)` →
+    /// APIClient `remote_app_send_command(.tail_snapshot)`.
+    /// Fire-and-forget; the Coordinator times out at 2 s and
+    /// drains the pending buffer without a recovery prefix if no
+    /// `tail_snapshot_result` broadcast arrives.
+    public let onRequestTailSnapshot: ((String, Int) -> Void)?
 
     public init(
         sessionId: String,
@@ -52,7 +62,8 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
         scenePhase: ScenePhase = .active,
         onDisconnect: ((Error?) -> Void)? = nil,
         onStdin: ((Data) -> Void)? = nil,
-        onResize: ((Int, Int) -> Void)? = nil
+        onResize: ((Int, Int) -> Void)? = nil,
+        onRequestTailSnapshot: ((String, Int) -> Void)? = nil
     ) {
         self.sessionId = sessionId
         self.streamConfig = streamConfig
@@ -60,6 +71,7 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
         self.onDisconnect = onDisconnect
         self.onStdin = onStdin
         self.onResize = onResize
+        self.onRequestTailSnapshot = onRequestTailSnapshot
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -68,7 +80,8 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
             streamConfig: streamConfig,
             onDisconnect: onDisconnect,
             onStdin: onStdin,
-            onResize: onResize
+            onResize: onResize,
+            onRequestTailSnapshot: onRequestTailSnapshot
         )
     }
 
@@ -122,6 +135,17 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
         let onDisconnect: ((Error?) -> Void)?
         let onStdin: ((Data) -> Void)?
         let onResize: ((Int, Int) -> Void)?
+        /// v1.26 B2: when set, the Coordinator calls this with
+        /// `(sessionId, maxBytes)` on a **warm** subscribe (i.e. a
+        /// resubscribe after we've seen chunks for this session
+        /// before). The host wires this to
+        /// `state.requestRemoteSessionTailSnapshot(...)` →
+        /// APIClient `remote_app_send_command(.tail_snapshot)`.
+        /// Helper publishes the snapshot via the same Realtime
+        /// channel as live stdout (event `tail_snapshot_result`).
+        /// Fire-and-forget — failures are surfaced via the 2 s
+        /// timeout (drain pending buffer, proceed without prefix).
+        let onRequestTailSnapshot: ((String, Int) -> Void)?
         weak var view: RemoteTerminalView?
 
         /// Tracks the session id the active subscription is bound
@@ -138,18 +162,54 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
         private(set) var reconnectAttempt: Int = 0
         private var reconnectTask: Task<Void, Never>?
 
+        /// v1.26 B2: foreground-recovery state machine.
+        /// `nil` = direct-write mode; non-`nil` = buffer live
+        /// chunks while we wait for `tail_snapshot_result`. When
+        /// the snapshot arrives (or the 2 s timeout fires) we
+        /// drain the buffer into the terminal and revert to
+        /// direct-write.
+        ///
+        /// Mutated only by `subscribeIfNeeded`, `routeChunk`, and
+        /// `drainBufferAndSwitchToDirectWrite`. The non-`private`
+        /// setter is a test seam (state-machine cases are easier to
+        /// seed than to drive through a live WS); production code
+        /// must go through those methods.
+        var pendingSnapshotBuffer: [Data]?
+        private var snapshotTimeoutTask: Task<Void, Never>?
+        /// Session id we've seen at least one chunk for. Drives
+        /// the cold/warm subscribe distinction: cold subscribes
+        /// (no prior chunks for `sessionId`) skip the snapshot
+        /// request entirely — nothing to recover. Same test-seam
+        /// posture as `pendingSnapshotBuffer`.
+        var lastChunkedSessionId: String?
+        /// Snapshot request timeout (Plan §B2). 2 s — long enough
+        /// for the round-trip through Postgres → helper → Realtime
+        /// → WS in normal conditions, short enough that the user
+        /// doesn't notice a wedge if the snapshot never arrives.
+        public static let snapshotTimeoutSeconds: TimeInterval = 2.0
+        /// Snapshot maxBytes the iOS side asks for. Matches the
+        /// helper-side parser's default (`decodeTailSnapshotPayload`
+        /// defaults to 8192 on empty payload too).
+        public static let snapshotMaxBytes: Int = 8192
+        /// v1.26 B2: routing event name the helper publishes
+        /// snapshots under. Pinned here + helper-side so a typo
+        /// can't silently break recovery.
+        public static let snapshotEventName: String = "tail_snapshot_result"
+
         init(
             sessionId: String,
             streamConfig: RemoteSessionEventStream.Configuration,
             onDisconnect: ((Error?) -> Void)?,
             onStdin: ((Data) -> Void)? = nil,
-            onResize: ((Int, Int) -> Void)? = nil
+            onResize: ((Int, Int) -> Void)? = nil,
+            onRequestTailSnapshot: ((String, Int) -> Void)? = nil
         ) {
             self.sessionId = sessionId
             self.streamConfig = streamConfig
             self.onDisconnect = onDisconnect
             self.onStdin = onStdin
             self.onResize = onResize
+            self.onRequestTailSnapshot = onRequestTailSnapshot
             self.stream = RemoteSessionEventStream(config: streamConfig)
             super.init()
         }
@@ -162,6 +222,28 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
         func subscribeIfNeeded() {
             if isPaused || isCancelled { return }
             if activeSessionId == sessionId, cancellable != nil { return }
+
+            // v1.26 B2: warm-subscribe detection. If we've already
+            // seen at least one chunk for this exact sessionId, the
+            // resubscribe is filling a known gap (background-resume
+            // or WS reconnect) — request a snapshot and buffer
+            // incoming chunks until it arrives. A cold subscribe
+            // (no prior chunks) skips the RPC entirely, since
+            // there's no history to recover.
+            //
+            // Codex/Gemini B2 race fix: subscribe FIRST and start
+            // buffering BEFORE we fire the RPC, so any chunks the
+            // helper emits between snapshot-read and our subscribe
+            // hitting the broadcast topic are captured (the naïve
+            // "request → await → subscribe" order would lose
+            // those).
+            let isWarmSubscribe =
+                lastChunkedSessionId == sessionId
+                && onRequestTailSnapshot != nil
+            if isWarmSubscribe {
+                pendingSnapshotBuffer = []
+            }
+
             let sid = sessionId
             let weakView = view  // captured by handlers
             let userDisconnectCB = onDisconnect
@@ -173,8 +255,9 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
                     // attempt 0 (Codex M1: don't accumulate backoff
                     // across periods of healthy traffic).
                     DispatchQueue.main.async {
-                        self?.reconnectAttempt = 0
-                        weakView?.pushStdout(chunk.data)
+                        guard let self = self else { return }
+                        self.reconnectAttempt = 0
+                        self.routeChunk(chunk, into: weakView)
                     }
                 },
                 onDisconnect: { [weak self] err in
@@ -185,6 +268,84 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
                 }
             )
             activeSessionId = sid
+
+            // Now that the subscription is live AND the buffer is
+            // primed, fire the snapshot RPC and start the timeout.
+            // Order matters: buffer must be non-nil before any
+            // chunk callback can fire.
+            if isWarmSubscribe, let cb = onRequestTailSnapshot {
+                cb(sid, Self.snapshotMaxBytes)
+                startSnapshotTimeout()
+            }
+        }
+
+        /// v1.26 B2: per-chunk dispatch. Routes `tail_snapshot_result`
+        /// frames into the buffer-drain path; live `stdout` / `stderr`
+        /// frames either go direct or buffer (depending on whether
+        /// we're waiting on a snapshot). The drain ordering is:
+        /// **snapshot first, then buffered chunks in arrival order**
+        /// — this matches the helper's broadcast ordering and
+        /// reproduces a coherent terminal state on the iOS side.
+        func routeChunk(
+            _ chunk: RemoteSessionEventStream.TerminalChunk,
+            into view: RemoteTerminalView?
+        ) {
+            // Always remember we've seen a chunk for this session,
+            // even before drain — a session that just produced a
+            // result chunk has clearly emitted before, so the next
+            // resubscribe should warm-pattern.
+            lastChunkedSessionId = sessionId
+
+            if chunk.event == Self.snapshotEventName {
+                drainBufferAndSwitchToDirectWrite(snapshot: chunk.data, into: view)
+                return
+            }
+            if pendingSnapshotBuffer != nil {
+                // Append to pending buffer. Capacity is implicitly
+                // bounded by the 2 s timeout — at typical chunk
+                // rates this is dozens of small payloads at most.
+                pendingSnapshotBuffer?.append(chunk.data)
+                return
+            }
+            // Direct-write mode (cold subscribe or post-drain).
+            view?.pushStdout(chunk.data)
+        }
+
+        private func startSnapshotTimeout() {
+            snapshotTimeoutTask?.cancel()
+            let weakSelf = self
+            snapshotTimeoutTask = Task { [weak weakSelf] in
+                let nanos = UInt64(Self.snapshotTimeoutSeconds * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: nanos)
+                guard !Task.isCancelled, let s = weakSelf else { return }
+                await MainActor.run {
+                    // Snapshot never arrived. Drain whatever
+                    // accumulated and switch to direct write —
+                    // the user sees the live chunks unprefixed,
+                    // which is the same UX as the v1.25 baseline.
+                    s.drainBufferAndSwitchToDirectWrite(snapshot: nil, into: s.view)
+                }
+            }
+        }
+
+        /// Common drain helper: writes the snapshot (if present),
+        /// then the buffered chunks in order, then nils the buffer
+        /// + cancels the timeout. Idempotent — calling with an
+        /// already-drained buffer is a no-op.
+        func drainBufferAndSwitchToDirectWrite(
+            snapshot: Data?,
+            into view: RemoteTerminalView?
+        ) {
+            snapshotTimeoutTask?.cancel()
+            snapshotTimeoutTask = nil
+            let buffered = pendingSnapshotBuffer ?? []
+            pendingSnapshotBuffer = nil
+            if let snapshot = snapshot, !snapshot.isEmpty {
+                view?.pushStdout(snapshot)
+            }
+            for chunk in buffered {
+                view?.pushStdout(chunk)
+            }
         }
 
         /// v1.25 Phase 4 slice 4: terminal cancel — no further
@@ -196,6 +357,11 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
             cancellable?.cancel()
             cancellable = nil
             activeSessionId = nil
+            // v1.26 B2: also tear down the snapshot path so a
+            // stale timeout can't fire after cancel.
+            snapshotTimeoutTask?.cancel()
+            snapshotTimeoutTask = nil
+            pendingSnapshotBuffer = nil
         }
 
         // MARK: - scenePhase lifecycle (slice 4)
@@ -228,6 +394,14 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
             // "same session, paused" and reattach without churn.
             // `subscribeIfNeeded` checks isPaused; we just nil out
             // cancellable so resume rebuilds.
+            //
+            // v1.26 B2: any pending snapshot is orphaned — drop the
+            // timeout task and the buffer. resume() will warm-
+            // subscribe (since lastChunkedSessionId is preserved)
+            // and issue a fresh snapshot RPC.
+            snapshotTimeoutTask?.cancel()
+            snapshotTimeoutTask = nil
+            pendingSnapshotBuffer = nil
         }
 
         func resume() {

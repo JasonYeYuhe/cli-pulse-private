@@ -953,6 +953,18 @@ struct ManagedSessionDetailView: View {
                         cols: clampedCols,
                         rows: clampedRows
                     ) }
+                },
+                onRequestTailSnapshot: { [sessionId = currentSession.id] sid, maxBytes in
+                    // v1.26 B2: warm-subscribe foreground-recovery.
+                    // Coordinator fires this when it knows we've
+                    // seen output for this session before (so
+                    // there's history worth recovering). Fire-and-
+                    // forget — the 2 s timeout in the Coordinator
+                    // covers missing snapshots.
+                    guard sid == sessionId else { return }
+                    Task { await state.requestRemoteSessionTailSnapshot(
+                        sessionId: sessionId, maxBytes: maxBytes
+                    ) }
                 }
             )
             .frame(height: 280)
