@@ -144,6 +144,42 @@ final class RemoteTerminalViewTests: XCTestCase {
                       "index.html must keep 5000 as the fallback default")
     }
 
+    // MARK: - v1.26 B3: JS bridge crash defense
+
+    /// `decodeB64` is the rAF batcher's first action on every native
+    /// pushChunk call. A misconfigured proxy or rogue DevTools script
+    /// could send malformed base64; `atob` would throw
+    /// `InvalidCharacterError` and surface a noisy bridge error.
+    /// Pin the try/catch so a refactor can't silently regress it.
+    func test_bundledIndexHTML_defendsAgainstMalformedBase64() throws {
+        let url = try XCTUnwrap(RemoteTerminalView.resourceURL)
+        let html = try String(contentsOf: url, encoding: .utf8)
+        // The try/catch must wrap atob; verify both pieces are there
+        // and that the catch returns null (so pushChunk can short-circuit).
+        XCTAssertTrue(html.contains("try {"),
+                      "decodeB64 must wrap atob in try")
+        XCTAssertTrue(html.contains("atob(b64)"),
+                      "decodeB64 must still call atob — defense is wrapping, not replacing")
+        XCTAssertTrue(html.contains("return null;"),
+                      "decodeB64 catch must return null sentinel for pushChunk to drop")
+    }
+
+    /// `term.write` should never throw on well-formed Uint8Array, but
+    /// a future xterm.js upgrade or a corrupt write should not strand
+    /// `pendingChunks` at length > 0 forever — the rAF callback drains
+    /// the buffer in every frame, and a swallow-and-continue keeps
+    /// the pump from wedging on one bad chunk.
+    func test_bundledIndexHTML_termWriteIsExceptionSafe() throws {
+        let url = try XCTUnwrap(RemoteTerminalView.resourceURL)
+        let html = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(html.contains("term.write(merged[i])"),
+                      "rAF loop must call term.write per merged chunk")
+        // The swallow comment is the discoverable marker for the
+        // try/catch around term.write.
+        XCTAssertTrue(html.contains("swallow"),
+                      "rAF loop's term.write must be wrapped in try/catch")
+    }
+
     // MARK: - resourceURL
 
     func test_resourceURL_finds_bundled_index_html() {
