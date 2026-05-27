@@ -14,6 +14,11 @@ on:
       - 'CLI Pulse Bar/**'
       - 'android/**'
       - '.github/workflows/lint-ci.yml'
+  # v1.26 C2: lets us manually retrigger after a GitHub Actions repo-
+  # wide outage (2026-05-26 PM: 5.5 h zero runs) without an empty
+  # commit. swift-ci already exposes this trigger; mirror it on the
+  # other four workflows for symmetric incident recovery.
+  workflow_dispatch: {}
 
 concurrency:
   group: lint-ci-${{ github.ref }}
