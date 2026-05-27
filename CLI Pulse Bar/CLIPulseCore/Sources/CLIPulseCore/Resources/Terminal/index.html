@@ -85,22 +85,41 @@
       var pendingChunks = [];
       var rafScheduled = false;
       function decodeB64(b64) {
-        var bin = atob(b64);
-        // xterm.js write() accepts both string and Uint8Array; keep
-        // bytes raw so ANSI escapes survive the bridge intact.
-        var bytes = new Uint8Array(bin.length);
-        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        return bytes;
+        // v1.26 B3 defense: atob throws on malformed input
+        // (InvalidCharacterError). The Swift-side encoder uses
+        // Data.base64EncodedString() which never produces invalid
+        // base64 — but a misconfigured proxy / IDE-injected scripts
+        // could synthesize a pushChunk call, and an uncaught throw
+        // would surface through evaluateJavaScript as a noisy
+        // bridge error. Drop and continue.
+        try {
+          var bin = atob(b64);
+          // xterm.js write() accepts both string and Uint8Array; keep
+          // bytes raw so ANSI escapes survive the bridge intact.
+          var bytes = new Uint8Array(bin.length);
+          for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          return bytes;
+        } catch (e) {
+          return null;
+        }
       }
       window.pushChunk = function (b64) {
-        pendingChunks.push(decodeB64(b64));
+        var bytes = decodeB64(b64);
+        if (bytes === null || bytes.length === 0) return;
+        pendingChunks.push(bytes);
         if (!rafScheduled) {
           rafScheduled = true;
           requestAnimationFrame(function () {
             rafScheduled = false;
             var merged = pendingChunks;
             pendingChunks = [];
-            for (var i = 0; i < merged.length; i++) term.write(merged[i]);
+            for (var i = 0; i < merged.length; i++) {
+              // term.write should never throw on well-formed Uint8Array,
+              // but a future xterm.js upgrade or a corrupt write could
+              // — guard the loop so one bad chunk doesn't strand
+              // pendingChunks at length > 0 forever.
+              try { term.write(merged[i]); } catch (e) { /* swallow */ }
+            }
           });
         }
       };
