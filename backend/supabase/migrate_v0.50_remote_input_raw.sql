@@ -1,25 +1,21 @@
 -- ============================================================
 -- v0.50 — Accept `input_raw` and `resize` command kinds for the
 -- in-app remote terminal (v1.25 Phase 4 slice 2).
--- Date: 2026-05-26
+-- Date: 2026-05-26 (drafted) · APPLIED to prod 2026-05-28 (jizav.../gkjw...)
 --
 -- Goal:
 -- The v1.25 iOS in-app terminal needs to forward raw xterm.js
 -- keystrokes (including control bytes like 0x03 Ctrl-C / 0x04
 -- Ctrl-D / arrow ESC sequences) and viewport-resize signals to
 -- the Mac helper's PTY. The existing `prompt` command kind
--- CR-appends payloads (correct semantics for "send a prompt to
--- the spawned Claude") but corrupts raw byte streams. The
--- existing `interrupt` kind sends SIGINT but doesn't carry a
--- payload.
+-- CR-appends payloads (correct for "send a prompt to the spawned
+-- Claude") but corrupts raw byte streams. The existing
+-- `interrupt` kind sends SIGINT but doesn't carry a payload.
 --
 -- Two new kinds:
 --   * `input_raw` — payload is **base64-encoded raw bytes** the
 --     helper decodes and writes verbatim to the PTY master fd
 --     (helper-side: `ManagedSessionManager.sendInputRaw(bytes:)`).
---     Base64 keeps the wire shape JSON-safe for the byte ranges
---     UTF-8 can't round-trip (control bytes, partial multi-byte
---     boundaries the keystroke timing may produce).
 --   * `resize` — payload is `"<cols>x<rows>"` (e.g. `"80x24"`).
 --     Helper parses and calls `ManagedSessionManager.resize`
 --     which `ioctl(TIOCSWINSZ)`s the master fd, generating
@@ -28,39 +24,45 @@
 -- Architecture:
 -- Only `remote_app_send_command`'s allowed-kinds whitelist
 -- needs to change. The downstream pipeline
--- (`remote_helper_pull_commands` → helper queue) is
--- already kind-agnostic — it forwards `(kind, payload)` to
--- `RemoteAgentCloud.dispatch` which has its own `switch` on
--- kind. Helper-side changes ship in the same PR but are
--- inert until this migration is applied.
+-- (`remote_helper_pull_commands` → helper queue) is already
+-- kind-agnostic — it forwards `(kind, payload)` to
+-- `RemoteAgentCloud.dispatch` which has its own switch on
+-- kind. Helper-side changes ship in the same PR but are inert
+-- until this migration is applied.
 --
--- The `remote_session_commands.kind` check constraint (added
--- in v0.39, line 51 of `migrate_v0.39_remote_session_input.sql`)
--- already accepts `'start'` as a write-only synthetic kind;
--- extend it the same way for `'input_raw'` and `'resize'`.
+-- IMPORTANT — production-fidelity body:
+-- The applied function body preserves every production semantic
+-- accumulated since v0.39:
+--   * `returns jsonb` (NOT `returns table`)
+--   * `_remote_control_enabled_for_caller()` gate (v0.27 RC gate)
+--   * `for update` row lock on `remote_sessions`
+--   * On stop-pending: cancels existing pending commands +
+--     transitions session to 'stopped' + writes a synthetic
+--     failed 'stop' command row (v0.41 P0 stop-cancel behavior)
+--   * `left(coalesce(p_payload, ''), 8192)` payload cap
+--   * `set search_path to 'pg_catalog', 'public', 'extensions'`
+--
+-- The only delta vs v0.41's function body is the allowed-kinds
+-- whitelist.
 --
 -- Safety:
 --   * Backward-compatible: existing `'prompt'`/`'stop'`/
 --     `'interrupt'` flows unchanged.
---   * The helper-side dispatch for `'input_raw'` / `'resize'`
+--   * Helper-side dispatch for `'input_raw'` / `'resize'`
 --     no-ops on a helper that hasn't been updated to v1.25
---     (the `switch` falls through to `default → "unknown
---     command kind"`, which marks the command failed but
---     keeps the queue draining). Pre-v1.25 helpers stay
---     functional.
---   * No new tables, no new columns, no RLS changes — the
---     queue already enforces "user can only enqueue commands
---     against sessions they own" via `remote_app_send_command`
---     itself.
+--     (the switch falls through to default → "unknown command
+--     kind", which marks the command failed but keeps the
+--     queue draining). Pre-v1.25 helpers stay functional.
+--   * No new tables, no new columns, no RLS changes.
 --
 -- Rollback:
--- `drop function remote_app_send_command(uuid, text, text);`
--- then re-create with the v0.41 body. The
--- `remote_session_commands.kind` check constraint can be
--- restored via:
---   alter table remote_session_commands drop constraint if exists ...;
---   alter table remote_session_commands add constraint kind_check
+--   alter table remote_session_commands
+--     drop constraint remote_session_commands_kind_check;
+--   alter table remote_session_commands
+--     add constraint remote_session_commands_kind_check
 --     check (kind in ('prompt', 'stop', 'interrupt', 'start'));
+--   drop function remote_app_send_command(uuid, text, text);
+--   -- restore the v0.41 function body.
 -- ============================================================
 
 -- 1. Loosen the table-level kind check to accept the two new
@@ -75,99 +77,109 @@ alter table public.remote_session_commands
     'stop',
     'interrupt',
     'start',
-    'input_raw',  -- v0.50: raw xterm.js bytes (base64 payload)
-    'resize'      -- v0.50: viewport resize ("<cols>x<rows>" payload)
+    'input_raw',
+    'resize'
   ));
 
--- 2. Replace `remote_app_send_command` to accept the new kinds.
---    Body matches v0.41's logic for the existing kinds; the only
---    delta is the allowed-kinds list. Keep the pending-cancel
---    early-out for `'stop'` (v0.41 P0 behavior).
-create or replace function public.remote_app_send_command(
+-- 2. Re-create `remote_app_send_command` with the v0.41 body +
+--    extended allowed-kinds list.  Must DROP first because the
+--    function's return signature is jsonb (not table) and Postgres
+--    rejects return-type changes via CREATE OR REPLACE.
+drop function if exists public.remote_app_send_command(uuid, text, text);
+
+create function public.remote_app_send_command(
   p_session_id uuid,
   p_kind text,
   p_payload text default ''
 )
-returns table (command_id uuid)
+returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path to 'pg_catalog', 'public', 'extensions'
 as $$
 declare
-  v_user_id uuid;
+  v_user_id uuid := auth.uid();
   v_device_id uuid;
   v_status text;
-  v_cmd_id uuid;
+  v_command_id uuid;
 begin
-  -- v0.50: accept input_raw and resize. Reject everything else
-  -- so a buggy client can't sneak a typo'd kind into the queue.
+  if v_user_id is null then
+    raise exception 'Not authenticated';
+  end if;
+  if not public._remote_control_enabled_for_caller() then
+    raise exception 'Remote Control is disabled';
+  end if;
   if p_kind not in ('prompt', 'stop', 'interrupt', 'input_raw', 'resize') then
     raise exception 'Invalid command kind: %', p_kind;
   end if;
 
-  -- Caller must own the session. JWT-gated; no service-role
-  -- bypass needed because the helper-side path goes through a
-  -- different RPC (`remote_helper_pull_commands`).
-  select user_id, device_id, status
-    into v_user_id, v_device_id, v_status
-    from public.remote_sessions
-   where id = p_session_id
-     and user_id = auth.uid();
+  select device_id, status
+    into v_device_id, v_status
+  from public.remote_sessions
+  where id = p_session_id and user_id = v_user_id
+  for update;
 
-  if not found then
-    raise exception 'Session not found or unauthorized';
+  if v_device_id is null then
+    raise exception 'Session not found';
   end if;
 
   -- v0.41 P0: stopping a 'pending' session means the helper
-  -- hasn't picked up the 'start' yet; the simplest cancel is
-  -- to flip the session status to 'cancelled' so the helper's
-  -- next pull skips the queued start. No `'stop'` queue row
-  -- needed in that case — the helper would just race a stop
-  -- against a session that never spawned.
+  -- hasn't picked up the 'start' yet; cancel any queued
+  -- commands + transition the session to 'stopped' + insert a
+  -- synthetic failed 'stop' row so the audit trail records it.
   if p_kind = 'stop' and v_status = 'pending' then
+    update public.remote_session_commands
+       set status = 'failed',
+           completed_at = now(),
+           error_message = 'cancelled before helper pickup'
+     where session_id = p_session_id
+       and status = 'pending';
+
     update public.remote_sessions
-       set status = 'cancelled'
+       set status = 'stopped',
+           last_event_at = now()
      where id = p_session_id;
-    -- Return NULL command id; client treats it as a no-op
-    -- success.
-    return query select null::uuid as command_id;
-    return;
+
+    insert into public.remote_session_commands (
+      user_id, device_id, session_id, kind, payload, status,
+      completed_at, error_message
+    ) values (
+      v_user_id, v_device_id, p_session_id, 'stop',
+      left(coalesce(p_payload, ''), 8192),
+      'failed',
+      now(),
+      'cancelled before helper pickup'
+    )
+    returning id into v_command_id;
+
+    return jsonb_build_object('command_id', v_command_id);
   end if;
 
   -- Queue the command. Helper picks it up via
-  -- `remote_helper_pull_commands` on its 1 s (or 200 ms post-
-  -- v1.25 fast-tick) loop.
+  -- `remote_helper_pull_commands` on its 200 ms (v1.25) loop.
   insert into public.remote_session_commands (
-    user_id, device_id, session_id, kind, payload, status, created_at
+    user_id, device_id, session_id, kind, payload, status
   ) values (
     v_user_id, v_device_id, p_session_id, p_kind,
-    coalesce(p_payload, ''), 'queued', now()
+    left(coalesce(p_payload, ''), 8192),
+    'pending'
   )
-  returning id into v_cmd_id;
+  returning id into v_command_id;
 
-  return query select v_cmd_id as command_id;
+  return jsonb_build_object('command_id', v_command_id);
 end;
 $$;
 
 grant execute on function public.remote_app_send_command(uuid, text, text) to authenticated;
 
 -- ============================================================
--- Verify:
+-- Verify (after apply):
+--   select pg_get_constraintdef(oid) from pg_constraint
+--    where conname = 'remote_session_commands_kind_check';
+--   -- → must include 'input_raw' and 'resize'
 --
---   -- happy path:
---   select public.remote_app_send_command(
---     '<owned-session-uuid>'::uuid, 'input_raw', 'AwQK'  -- base64("\x03\x04\n")
---   );
---   -- → returns a command_id; helper.remote_session_commands gets a row.
---
---   -- resize:
---   select public.remote_app_send_command(
---     '<owned-session-uuid>'::uuid, 'resize', '80x24'
---   );
---
---   -- rejection (mistyped kind):
---   select public.remote_app_send_command(
---     '<owned-session-uuid>'::uuid, 'inpoot_raw', ''
---   );
---   -- → ERROR: Invalid command kind: inpoot_raw
+--   select pg_get_function_result(oid) from pg_proc
+--    where proname = 'remote_app_send_command'
+--      and pronamespace = 'public'::regnamespace;
+--   -- → 'jsonb'
 -- ============================================================
