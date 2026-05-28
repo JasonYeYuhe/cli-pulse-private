@@ -161,6 +161,57 @@ final class RemoteTerminalSnapshotRecoveryTests: XCTestCase {
         XCTAssertNil(c.pendingSnapshotBuffer)
     }
 
+    // MARK: - Codex hotfix: late snapshot drop
+
+    /// Codex MEDIUM (v1.26.0 hotfix): a `tail_snapshot_result` that
+    /// arrives AFTER the 2 s timeout has already fired must be
+    /// dropped — by that point direct-write has been emitting
+    /// newer live chunks for some non-zero duration, and writing
+    /// the stale snapshot now would inject older content AFTER
+    /// newer output (visible reorder / duplication).
+    func test_lateSnapshot_afterTimeout_isDropped() {
+        let c = C(
+            sessionId: "sess-late",
+            streamConfig: Self.streamConfig,
+            onDisconnect: nil,
+            onRequestTailSnapshot: { _, _ in }
+        )
+        // Simulate: warm subscribe primed the buffer; timeout fired
+        // → buffer drained to nil; live chunks have started direct-
+        // writing.
+        c.pendingSnapshotBuffer = []
+        c.drainBufferAndSwitchToDirectWrite(snapshot: nil, into: nil)
+        XCTAssertNil(c.pendingSnapshotBuffer)
+
+        // Live chunk arrives after timeout (normal direct-write).
+        c.routeChunk(.init(event: "stdout", data: Data("LIVE-after-timeout".utf8)), into: nil)
+
+        // Now the stale snapshot finally arrives. Must be DROPPED —
+        // not drained into the view (would visibly reorder).
+        c.routeChunk(.init(event: C.snapshotEventName, data: Data("STALE-snap".utf8)), into: nil)
+        XCTAssertNil(c.pendingSnapshotBuffer,
+                     "late snapshot must not revive the buffer or change mode")
+
+        // Subsequent live chunk still direct-writes (no buffer revival).
+        c.routeChunk(.init(event: "stdout", data: Data("more-live".utf8)), into: nil)
+        XCTAssertNil(c.pendingSnapshotBuffer)
+    }
+
+    /// A snapshot that arrives while buffer IS still pending (the
+    /// happy path) is unaffected — drain proceeds as designed.
+    func test_snapshot_arrivingDuringPendingBuffer_drainsNormally() {
+        let c = C(
+            sessionId: "sess-on-time",
+            streamConfig: Self.streamConfig,
+            onDisconnect: nil,
+            onRequestTailSnapshot: { _, _ in }
+        )
+        c.pendingSnapshotBuffer = []
+        c.routeChunk(.init(event: "stdout", data: Data("LIVE-1".utf8)), into: nil)
+        c.routeChunk(.init(event: C.snapshotEventName, data: Data("SNAP".utf8)), into: nil)
+        XCTAssertNil(c.pendingSnapshotBuffer)
+    }
+
     // MARK: - cancel / pause cleanup
 
     func test_cancel_clearsPendingSnapshotState() {
