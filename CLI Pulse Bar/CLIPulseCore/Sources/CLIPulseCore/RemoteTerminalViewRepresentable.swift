@@ -297,6 +297,19 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
             lastChunkedSessionId = sessionId
 
             if chunk.event == Self.snapshotEventName {
+                // Codex MEDIUM (v1.26.0 hotfix): a snapshot that
+                // arrives AFTER the 2 s timeout has already fired
+                // is stale by definition — direct-write has been
+                // emitting newer live chunks for some duration.
+                // Writing the snapshot now would inject older
+                // content AFTER the newer output, producing
+                // visual reorder / duplication. Drop it.
+                //
+                // We detect "timeout already fired" via
+                // pendingSnapshotBuffer == nil — drain sets it
+                // nil, and a fresh subscribe would have set it
+                // back to [] before any chunk could arrive.
+                guard pendingSnapshotBuffer != nil else { return }
                 drainBufferAndSwitchToDirectWrite(snapshot: chunk.data, into: view)
                 return
             }
