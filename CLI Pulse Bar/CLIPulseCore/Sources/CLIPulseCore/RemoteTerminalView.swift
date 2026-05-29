@@ -187,6 +187,13 @@ public final class RemoteTerminalView: UIView {
         case ready
         case stdin(String)
         case resize(cols: Int, rows: Int)
+        /// v1.26.1 telemetry: the JS bundle caught an exception in a
+        /// last-resort guard (e.g. `term.write` swallow) and is
+        /// reporting it so the native side can surface to Sentry —
+        /// otherwise the swallow is invisible (Gemini FYI). `context`
+        /// identifies the guard site; `message` is the JS error
+        /// string (scrubbed by SentryLogger before send).
+        case jsError(context: String, message: String)
     }
 
     /// Pure parser for JS bridge message dictionaries. Returns nil
@@ -209,6 +216,12 @@ public final class RemoteTerminalView: UIView {
                   cols > 0, rows > 0
             else { return nil }
             return .resize(cols: cols, rows: rows)
+        case "jserror":
+            guard let context = dict["context"] as? String,
+                  let message = dict["message"] as? String,
+                  !context.isEmpty
+            else { return nil }
+            return .jsError(context: context, message: message)
         default:
             return nil
         }
@@ -227,6 +240,15 @@ public final class RemoteTerminalView: UIView {
             delegate?.remoteTerminalView(self, didReceiveStdin: data)
         case .resize(let cols, let rows):
             delegate?.remoteTerminalView(self, didResizeTo: cols, rows: rows)
+        case .jsError(let context, let message):
+            // v1.26.1 telemetry: surface the swallowed JS guard to
+            // Sentry. The JS side rate-limits to one report per
+            // terminal load (see index.html `jsErrorReported`), so
+            // this can't spam event quota. SentryLogger scrubs the
+            // message before send.
+            SentryLogger.captureWarning(
+                message,
+                category: "remote-terminal.\(context)")
         }
     }
 

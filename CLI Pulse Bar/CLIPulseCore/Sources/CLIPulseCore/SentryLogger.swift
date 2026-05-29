@@ -93,6 +93,43 @@ public enum SentryLogger {
         #endif
     }
 
+    // MARK: - Lightweight event API (v1.26.1)
+
+    /// Record a structured breadcrumb. Safe to call before/without
+    /// `start()` (sentry-cocoa drops breadcrumbs when the SDK isn't
+    /// running) and on DEBUG builds (start() is skipped there).
+    /// All `data` values pass through the same `beforeBreadcrumb`
+    /// scrubber configured in `start()`, so sensitive keys are
+    /// redacted before they ever leave the device.
+    public static func breadcrumb(
+        category: String,
+        message: String,
+        level: SentryLevel = .info,
+        data: [String: Any]? = nil
+    ) {
+        let crumb = Breadcrumb()
+        crumb.level = level
+        crumb.category = category
+        crumb.message = message
+        if let data { crumb.data = data }
+        SentrySDK.addBreadcrumb(crumb)
+    }
+
+    /// Capture a non-fatal warning as a Sentry event. Use sparingly
+    /// — this consumes event quota, unlike breadcrumbs. Intended for
+    /// "should never happen" guards (e.g. a swallowed JS bridge
+    /// exception) where we want field visibility into how often the
+    /// last-resort path actually fires. Message is redacted via the
+    /// `beforeSend` scrubber.
+    public static func captureWarning(
+        _ message: String,
+        category: String,
+        data: [String: Any]? = nil
+    ) {
+        breadcrumb(category: category, message: message, level: .warning, data: data)
+        SentrySDK.capture(message: "[\(category)] \(message)")
+    }
+
     private static func scrub(event: Event) -> Event? {
         if let user = event.user {
             user.email = nil

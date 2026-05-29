@@ -180,6 +180,52 @@ final class RemoteTerminalViewTests: XCTestCase {
                       "rAF loop's term.write must be wrapped in try/catch")
     }
 
+    // MARK: - v1.26.1 telemetry: jsError bridge message
+
+    func test_parseBridgeMessage_jsError() {
+        let msg = RemoteTerminalView.parseBridgeMessage([
+            "kind": "jserror",
+            "context": "term_write",
+            "message": "TypeError: cannot read x",
+        ])
+        XCTAssertEqual(msg, .jsError(context: "term_write", message: "TypeError: cannot read x"))
+    }
+
+    func test_parseBridgeMessage_jsError_rejects_missing_fields() {
+        // No context → reject (we key the Sentry category on it).
+        XCTAssertNil(RemoteTerminalView.parseBridgeMessage([
+            "kind": "jserror",
+            "message": "boom",
+        ]))
+        // No message → reject.
+        XCTAssertNil(RemoteTerminalView.parseBridgeMessage([
+            "kind": "jserror",
+            "context": "term_write",
+        ]))
+        // Empty context → reject (would produce a useless category).
+        XCTAssertNil(RemoteTerminalView.parseBridgeMessage([
+            "kind": "jserror",
+            "context": "",
+            "message": "boom",
+        ]))
+    }
+
+    /// The bundled index.html must report the swallowed term.write
+    /// throw to native (rate-limited once per load) so the guard
+    /// isn't invisible in the field.
+    func test_bundledIndexHTML_reportsTermWriteSwallowToNative() throws {
+        let url = try XCTUnwrap(RemoteTerminalView.resourceURL)
+        let html = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(html.contains("reportJsError"),
+                      "index.html must define a reportJsError bridge hop")
+        XCTAssertTrue(html.contains("jsErrorReported"),
+                      "reportJsError must be rate-limited once per load")
+        XCTAssertTrue(html.contains("'jserror'") || html.contains("\"jserror\""),
+                      "reportJsError must post a 'jserror' bridge kind")
+        XCTAssertTrue(html.contains("reportJsError('term_write'"),
+                      "term.write catch must call reportJsError('term_write', e)")
+    }
+
     // MARK: - resourceURL
 
     func test_resourceURL_finds_bundled_index_html() {

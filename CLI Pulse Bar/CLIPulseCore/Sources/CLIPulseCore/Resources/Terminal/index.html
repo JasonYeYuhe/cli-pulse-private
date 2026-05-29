@@ -84,6 +84,26 @@
       // pushChunk calls within a frame merge into one term.write().
       var pendingChunks = [];
       var rafScheduled = false;
+
+      // v1.26.1 telemetry: surface a swallowed JS-guard exception to
+      // the native side (→ Sentry) exactly ONCE per terminal load.
+      // The guards below are last-resort "should never fire" paths;
+      // without this report they're invisible in the field (Gemini
+      // FYI). Rate-limited to one post per load so a misbehaving
+      // stream can't spam Sentry event quota.
+      var jsErrorReported = false;
+      function reportJsError(context, err) {
+        if (jsErrorReported) return;
+        jsErrorReported = true;
+        try {
+          window.webkit.messageHandlers.terminal.postMessage({
+            kind: 'jserror',
+            context: context,
+            message: String((err && err.message) || err || 'unknown')
+          });
+        } catch (e) { /* bridge unavailable (preview / standalone) */ }
+      }
+
       function decodeB64(b64) {
         // v1.26 B3 defense: atob throws on malformed input
         // (InvalidCharacterError). The Swift-side encoder uses
@@ -117,8 +137,10 @@
               // term.write should never throw on well-formed Uint8Array,
               // but a future xterm.js upgrade or a corrupt write could
               // — guard the loop so one bad chunk doesn't strand
-              // pendingChunks at length > 0 forever.
-              try { term.write(merged[i]); } catch (e) { /* swallow */ }
+              // pendingChunks at length > 0 forever. v1.26.1: report
+              // the first such throw to native (→ Sentry) so the
+              // swallow isn't invisible; keep swallowing to stay alive.
+              try { term.write(merged[i]); } catch (e) { reportJsError('term_write', e); }
             }
           });
         }

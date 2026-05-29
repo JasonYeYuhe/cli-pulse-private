@@ -161,6 +161,77 @@ final class RemoteTerminalSnapshotRecoveryTests: XCTestCase {
         XCTAssertNil(c.pendingSnapshotBuffer)
     }
 
+    // MARK: - v1.26.1 telemetry: snapshot outcome emission
+
+    /// A snapshot arriving in-window emits `.recovered` with the
+    /// count of live chunks that were buffered during the wait.
+    func test_recovery_emitsRecoveredOutcome_withBufferedCount() {
+        var outcomes: [C.SnapshotOutcome] = []
+        let c = C(
+            sessionId: "sess-tel-1",
+            streamConfig: Self.streamConfig,
+            onDisconnect: nil,
+            onRequestTailSnapshot: { _, _ in },
+            onSnapshotOutcome: { outcomes.append($0) }
+        )
+        c.pendingSnapshotBuffer = []
+        c.routeChunk(.init(event: "stdout", data: Data("A".utf8)), into: nil)
+        c.routeChunk(.init(event: "stdout", data: Data("B".utf8)), into: nil)
+        c.routeChunk(.init(event: C.snapshotEventName, data: Data("SNAP".utf8)), into: nil)
+        XCTAssertEqual(outcomes, [.recovered(bufferedChunks: 2)])
+    }
+
+    /// Timeout resolution emits `.timedOut` with the buffered count.
+    func test_timeout_emitsTimedOutOutcome_withBufferedCount() {
+        var outcomes: [C.SnapshotOutcome] = []
+        let c = C(
+            sessionId: "sess-tel-2",
+            streamConfig: Self.streamConfig,
+            onDisconnect: nil,
+            onRequestTailSnapshot: { _, _ in },
+            onSnapshotOutcome: { outcomes.append($0) }
+        )
+        c.pendingSnapshotBuffer = []
+        c.routeChunk(.init(event: "stdout", data: Data("X".utf8)), into: nil)
+        c.resolveSnapshotTimeout()
+        XCTAssertEqual(outcomes, [.timedOut(bufferedChunks: 1)])
+    }
+
+    /// A timeout that fires AFTER the snapshot already drained the
+    /// buffer must NOT emit a second outcome (no double-report).
+    func test_timeoutAfterRecovery_doesNotDoubleReport() {
+        var outcomes: [C.SnapshotOutcome] = []
+        let c = C(
+            sessionId: "sess-tel-3",
+            streamConfig: Self.streamConfig,
+            onDisconnect: nil,
+            onRequestTailSnapshot: { _, _ in },
+            onSnapshotOutcome: { outcomes.append($0) }
+        )
+        c.pendingSnapshotBuffer = []
+        c.routeChunk(.init(event: C.snapshotEventName, data: Data("SNAP".utf8)), into: nil)
+        XCTAssertEqual(outcomes, [.recovered(bufferedChunks: 0)])
+        // Late timeout fires — buffer already nil, must be a no-op.
+        c.resolveSnapshotTimeout()
+        XCTAssertEqual(outcomes, [.recovered(bufferedChunks: 0)], "timeout after recovery must not double-report")
+    }
+
+    /// Cold start (no warm subscribe) never emits an outcome — there
+    /// was nothing to recover.
+    func test_coldStart_emitsNoOutcome() {
+        var outcomes: [C.SnapshotOutcome] = []
+        let c = C(
+            sessionId: "sess-tel-4",
+            streamConfig: Self.streamConfig,
+            onDisconnect: nil,
+            onRequestTailSnapshot: { _, _ in },
+            onSnapshotOutcome: { outcomes.append($0) }
+        )
+        // No pendingSnapshotBuffer seeded; direct-write from first chunk.
+        c.routeChunk(.init(event: "stdout", data: Data("hi".utf8)), into: nil)
+        XCTAssertTrue(outcomes.isEmpty)
+    }
+
     // MARK: - Codex hotfix: late snapshot drop
 
     /// Codex MEDIUM (v1.26.0 hotfix): a `tail_snapshot_result` that
