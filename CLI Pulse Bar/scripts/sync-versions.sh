@@ -440,10 +440,25 @@ done
 if $SYNC_OK && ! $DRY_RUN; then
     cd "$REPO_ROOT"
     if [[ -n "$(git status --porcelain "${BUMP_FILES[@]}" 2>/dev/null)" ]]; then
+        # main is branch-protected (required "CI Gate" check), so we can no
+        # longer push the bump straight to main. Open a PR from a bump branch
+        # and let auto-merge land it once CI Gate passes. This also means the
+        # version bump is actually CI-validated before it hits main.
+        BUMP_BRANCH="chore/sync-versions-v$TARGET_VERSION"
+        git checkout -B "$BUMP_BRANCH"
         git add "${BUMP_FILES[@]}"
         git commit -m "chore: sync versions to v$TARGET_VERSION (iOS ↔ Android)"
-        git push origin main
-        log "✓ Version bump committed and pushed"
+        git push -u origin "$BUMP_BRANCH" --force-with-lease
+        gh pr create --base main --head "$BUMP_BRANCH" \
+            --title "chore: sync versions to v$TARGET_VERSION" \
+            --body "Automated cross-platform version sync (iOS ↔ Android) to v$TARGET_VERSION. Auto-merges once CI Gate passes." \
+            2>/dev/null || true
+        # --auto merges when required checks pass; --admin is NOT used so the
+        # gate is genuinely enforced. Needs repo 'Allow auto-merge' enabled.
+        gh pr merge "$BUMP_BRANCH" --auto --merge 2>/dev/null \
+            && log "✓ Version bump PR opened on $BUMP_BRANCH (auto-merge armed)" \
+            || log "⚠ Version bump pushed to $BUMP_BRANCH — open/merge the PR manually"
+        git checkout main
     fi
 elif ! $SYNC_OK && ! $DRY_RUN; then
     # Roll back ALL bumped files (pbxproj + gradle + 5 Info.plists)
