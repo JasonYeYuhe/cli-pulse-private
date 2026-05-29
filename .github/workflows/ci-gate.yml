@@ -1,0 +1,99 @@
+name: CI Gate
+
+# Single, always-running required status check for branch protection on main.
+#
+# Why this exists: all the real CI workflows (Swift CI, Android CI, Helper CI,
+# Supabase CI) are PATH-FILTERED — they only trigger when their paths change.
+# GitHub branch protection requires a named check to *report*; a required check
+# whose workflow never runs (because the PR didn't touch its paths) blocks the
+# PR forever. So we can't require those path-filtered checks directly.
+#
+# Instead this gate runs on EVERY pull request (no path filter) and, for each
+# real gate-workflow that actually ran on this commit, waits for it and requires
+# success. Gate-workflows that didn't run (path not touched) are N/A. The result
+# is one check, "CI Gate / gate", that is safe to mark required: it's green for
+# docs-only PRs, green when the relevant suites pass, red when any real gate
+# fails — and it never deadlocks.
+#
+# Workflow NAMES are unique (job names like "test" are not), so we match on the
+# workflow's `name:` field via the Actions runs API.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ci-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Wait for + require the real gate workflows
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # The authoritative gate workflows. A PR that doesn't touch a given
+          # workflow's paths simply won't have a run for it (→ N/A). Lint is
+          # intentionally excluded (warning-only); CI Gate excludes itself.
+          GATES=("Swift CI" "Android CI" "Helper CI" "Supabase CI")
+
+          # Give GitHub time to create the path-triggered runs for this SHA so
+          # we don't race and call a still-uncreated run "N/A".
+          echo "Settling 90s to let triggered workflow runs register for $HEAD_SHA ..."
+          sleep 90
+
+          DEADLINE=$(( $(date +%s) + 2400 ))   # 40 min hard cap
+
+          while :; do
+            RUNS=$(gh api --paginate \
+              "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=100" \
+              --jq '.workflow_runs[] | {name, status, conclusion, id}')
+
+            pending=0
+            for wf in "${GATES[@]}"; do
+              # latest run for this workflow name on this SHA (highest id)
+              latest=$(echo "$RUNS" | jq -s --arg n "$wf" \
+                'map(select(.name==$n)) | sort_by(.id) | last')
+              if [ "$latest" = "null" ] || [ -z "$latest" ]; then
+                echo "• $wf: no run for this commit → N/A"
+                continue
+              fi
+              status=$(echo "$latest" | jq -r '.status')
+              concl=$(echo "$latest" | jq -r '.conclusion')
+              if [ "$status" != "completed" ]; then
+                echo "• $wf: $status … (waiting)"
+                pending=$((pending+1))
+                continue
+              fi
+              case "$concl" in
+                success|skipped|neutral)
+                  echo "• $wf: $concl ✓" ;;
+                *)
+                  echo "::error::Required workflow '$wf' concluded '$concl' — gate fails."
+                  exit 1 ;;
+              esac
+            done
+
+            if [ "$pending" -eq 0 ]; then
+              echo "All applicable gate workflows passed (or N/A). CI Gate green."
+              exit 0
+            fi
+
+            if [ "$(date +%s)" -gt "$DEADLINE" ]; then
+              echo "::error::Timed out after 40m waiting for gate workflows to complete."
+              exit 1
+            fi
+            sleep 20
+          done
