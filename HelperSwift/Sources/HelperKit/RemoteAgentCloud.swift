@@ -259,9 +259,13 @@ public actor RemoteAgentCloud {
         } else if !payload.isEmpty {
             return (false, "invalid start payload")
         }
-        if provider != "claude" {
-            return (false, "provider \"\(provider)\" not supported in iter 1")
-        }
+        // No cloud-layer provider allowlist: ManagedSessionManager
+        // validates the provider against the ProviderSpawnerRegistry
+        // (Claude / Codex / Gemini) and throws .unsupportedProvider for
+        // anything unknown — caught below. The old `provider != "claude"`
+        // gate here silently blocked Codex/Gemini remote sessions that
+        // the local LocalSessionServer path already supported (2026-05-29
+        // audit). Delegating keeps the two paths consistent.
 
         // Pre-set the env var so remote_hook can bind permission
         // requests back to this session. extraEnv merges via the

@@ -69,11 +69,12 @@ public final class ApprovalRegistry: @unchecked Sendable {
     @discardableResult
     public func registerSession(_ sessionId: String, claudePid: Int? = nil) -> String {
         let token = Self.generateToken()
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
         // Re-spawn of the same id → invalidate the prior generation's
         // pending approvals so a stale wait can never resolve.
+        var effects = CancellationEffects()
         if managedSessions[sessionId] != nil {
-            cancelSessionLocked(sessionId, reason: "resession")
+            effects = cancelSessionLocked(sessionId, reason: "resession")
         }
         managedSessions[sessionId] = ManagedSessionRecord(
             sessionId: sessionId,
@@ -81,6 +82,9 @@ public final class ApprovalRegistry: @unchecked Sendable {
             claudePid: claudePid,
             startedAtMono: ProcessInfo.processInfo.systemUptime
         )
+        lock.unlock()
+        // Wake/publish AFTER releasing `lock` (see flushCancellation).
+        flushCancellation(effects)
         return token
     }
 
@@ -100,13 +104,15 @@ public final class ApprovalRegistry: @unchecked Sendable {
     public func unregisterSession(_ sessionId: String) {
         lock.lock()
         let existed = managedSessions.removeValue(forKey: sessionId) != nil
-        let cancelled = cancelSessionLocked(sessionId, reason: "stop")
+        let effects = cancelSessionLocked(sessionId, reason: "stop")
         lock.unlock()
+        // Wake/publish AFTER releasing `lock` (see flushCancellation).
+        flushCancellation(effects)
         if existed {
             // Lifecycle log mirrors the Python helper's INFO line so
             // operators can tail the same string in either build.
             FileHandle.standardError.write(Data(
-                "approvals: unregistered session=\(sessionId) cancelled=\(cancelled)\n".utf8
+                "approvals: unregistered session=\(sessionId) cancelled=\(effects.cancelledCount)\n".utf8
             ))
         }
     }
@@ -452,17 +458,33 @@ public final class ApprovalRegistry: @unchecked Sendable {
 
     // MARK: - private
 
-    /// Cancel every pending approval bound to `sessionId`. Caller
-    /// must hold `lock`. Returns count.
-    @discardableResult
-    private func cancelSessionLocked(_ sessionId: String, reason: String) -> Int {
-        guard let bucket = pendingBySession.removeValue(forKey: sessionId) else {
-            return 0
-        }
-        var cancelled = 0
-        let now = Date().timeIntervalSince1970
-        var resolvedRows: [PendingApproval] = []
+    /// Deferred side-effects of a cancellation. These MUST run only
+    /// after the registry `lock` is released — see `flushCancellation`.
+    private struct CancellationEffects {
+        var cancelledCount = 0
         var conditionsToWake: [NSCondition] = []
+        var resolvedRows: [PendingApproval] = []
+    }
+
+    /// Cancel every pending approval bound to `sessionId`. Caller
+    /// MUST hold `lock`. This only mutates the in-memory maps and
+    /// *collects* the waiters to wake + rows to publish; it does NOT
+    /// broadcast or publish itself. The caller MUST drop `lock` and
+    /// then call `flushCancellation(_:)` with the returned effects.
+    ///
+    /// Why the split: `waitForDecision` holds a per-approval
+    /// `NSCondition` lock and then reaches for the registry `lock`
+    /// (condition→lock). If cancellation broadcast on that same
+    /// condition while holding `lock` (lock→condition), the two
+    /// orderings invert into an ABBA deadlock. Deferring the
+    /// broadcast to after `lock.unlock()` mirrors the safe ordering
+    /// `decide` already uses.
+    private func cancelSessionLocked(_ sessionId: String, reason: String) -> CancellationEffects {
+        var effects = CancellationEffects()
+        guard let bucket = pendingBySession.removeValue(forKey: sessionId) else {
+            return effects
+        }
+        let now = Date().timeIntervalSince1970
         for (aid, row) in bucket {
             if row.status != .pending { continue }
             var updated = row
@@ -471,26 +493,35 @@ public final class ApprovalRegistry: @unchecked Sendable {
             updated.decidedAtWall = now
             updated.decidedComment = reason
             approvalIdToSession.removeValue(forKey: aid)
-            // Capture condition so we can wake blocked
-            // waitForDecision callers after dropping lock.
+            // Capture condition so the caller can wake blocked
+            // waitForDecision callers AFTER dropping `lock`.
             if let cv = approvalConditions[aid] {
-                conditionsToWake.append(cv)
+                effects.conditionsToWake.append(cv)
             }
-            resolvedRows.append(updated)
-            cancelled += 1
+            effects.resolvedRows.append(updated)
+            effects.cancelledCount += 1
         }
+        return effects
+    }
+
+    /// Run the deferred side-effects of a cancellation. MUST be
+    /// called WITHOUT holding `lock` (the cv broadcast acquires the
+    /// per-approval condition lock, which `waitForDecision` holds
+    /// while reaching for `lock` — broadcasting under `lock` would
+    /// deadlock). Safe to call with empty effects (no-op).
+    private func flushCancellation(_ effects: CancellationEffects) {
         // Wake any blocked waiters. Each broadcast is a no-op for
         // unrelated waiters (their condition.wait(until:) loop
         // re-checks status and goes back to sleep).
-        for cv in conditionsToWake {
+        for cv in effects.conditionsToWake {
             cv.lock()
             cv.broadcast()
             cv.unlock()
         }
-        // broker.publish takes its own lock, but the broker's
-        // lock is independent of this registry's lock so there's
-        // no nested-lock hazard.
-        for row in resolvedRows {
+        // broker.publish takes its own lock, but the broker's lock is
+        // independent of this registry's lock so there's no nested-lock
+        // hazard (and we're not holding `lock` here anyway).
+        for row in effects.resolvedRows {
             broker?.publish([
                 "event": "approval_resolved",
                 "session_id": row.sessionId,
@@ -498,10 +529,9 @@ public final class ApprovalRegistry: @unchecked Sendable {
                 "decision": "cancelled",
                 "status": row.status.rawValue,
                 "approval": row.toDictSafe(),
-                "ts": now,
+                "ts": row.decidedAtWall ?? Date().timeIntervalSince1970,
             ])
         }
-        return cancelled
     }
 
     /// Generate a fresh per-session capability token. 32 bytes of
