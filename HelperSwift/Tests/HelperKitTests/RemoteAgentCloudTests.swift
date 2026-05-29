@@ -50,6 +50,18 @@ final class RemoteAgentCloudTests: XCTestCase {
         }
     }
 
+    /// Deterministic spawner for delegation tests: resolves to a
+    /// caller-supplied argv so a managed spawn succeeds without a real
+    /// provider CLI on PATH. `["/bin/sh", "-c", "sleep 100"]` gives a
+    /// long-lived child the drain loop can observe as running.
+    struct StubSpawner: ProviderSpawner {
+        let name: String
+        let argvTokens: [String]
+        func isAvailable() -> Bool { true }
+        func argv(extraEnv: [String: String], helperArgv0: String?) -> [String] { argvTokens }
+        func supportsRemoteApproval() -> Bool { false }
+    }
+
     private static let testCloudConfig = HelperConfigStore.CloudConfig(
         deviceId: "11111111-2222-3333-4444-555555555555",
         helperSecret: "stub-secret-for-tests",
@@ -274,7 +286,13 @@ final class RemoteAgentCloudTests: XCTestCase {
         XCTAssertTrue(((completes.first?.params["p_error"] as? String) ?? "").contains("explode"))
     }
 
-    func test_dispatch_start_rejects_non_claude_provider() async throws {
+    func test_dispatch_start_delegates_nonclaude_provider_to_manager() async throws {
+        // Regression for the removed `provider != "claude"` cloud-layer
+        // gate (2026-05-29 audit). Non-Claude providers must flow through
+        // ManagedSessionManager's spawner registry, not be hard-rejected
+        // by RemoteAgentCloud. Stub codex with a long-lived harmless
+        // binary so the spawn deterministically succeeds whether or not a
+        // real `codex` is on PATH.
         let cmdId = UUID().uuidString
         let sid = UUID().uuidString
         let rpc = FakeRPCCaller()
@@ -287,13 +305,53 @@ final class RemoteAgentCloudTests: XCTestCase {
             ]]
         }
         let uploader = makeUploader(rpc: rpc)
-        let manager = ManagedSessionManager(transport: PtyTransport())
+        let registry = ProviderSpawnerRegistry(spawners: [
+            StubSpawner(name: "codex", argvTokens: ["/bin/sh", "-c", "sleep 100"]),
+        ])
+        let manager = ManagedSessionManager(transport: PtyTransport(), providerRegistry: registry)
+        let cloud = makeCloud(rpc: rpc, uploader: uploader, sessionManager: manager)
+        defer { _ = manager.stopSession(sid.lowercased()) }  // kill the sleep child
+
+        _ = await cloud.tick()
+
+        // Delegated + spawned, NOT gate-rejected.
+        let completes = rpc.calls(for: "remote_helper_complete_command")
+        XCTAssertEqual(completes.count, 1)
+        XCTAssertEqual(completes.first?.params["p_status"] as? String, "delivered",
+                       "codex start must delegate to the manager and succeed, not be gate-rejected")
+        // The post-spawn registration ran → confirms the success path.
+        XCTAssertEqual(rpc.calls(for: "remote_helper_register_session").count, 1)
+    }
+
+    func test_dispatch_start_unknown_provider_fails_via_manager() async throws {
+        // A provider with no registered spawner still fails — but via the
+        // manager's .unsupportedProvider → spawn-failed path, not the old
+        // cloud gate. Proves the cloud layer no longer owns the allowlist.
+        let cmdId = UUID().uuidString
+        let sid = UUID().uuidString
+        let rpc = FakeRPCCaller()
+        rpc.responses["remote_helper_pull_commands"] = { _ in
+            return [[
+                "id": cmdId,
+                "session_id": sid,
+                "kind": "start",
+                "payload": #"{"provider":"nonsense-xyz"}"#,
+            ]]
+        }
+        let uploader = makeUploader(rpc: rpc)
+        let registry = ProviderSpawnerRegistry(spawners: [
+            StubSpawner(name: "codex", argvTokens: ["/bin/sh", "-c", "sleep 100"]),
+        ])
+        let manager = ManagedSessionManager(transport: PtyTransport(), providerRegistry: registry)
         let cloud = makeCloud(rpc: rpc, uploader: uploader, sessionManager: manager)
 
         _ = await cloud.tick()
 
         let completes = rpc.calls(for: "remote_helper_complete_command")
         XCTAssertEqual(completes.first?.params["p_status"] as? String, "failed")
+        XCTAssertEqual(completes.first?.params["p_error"] as? String, "spawn failed")
+        // No session should have been registered for an unspawnable provider.
+        XCTAssertTrue(rpc.calls(for: "remote_helper_register_session").isEmpty)
     }
 
     func test_dispatch_start_rejects_invalid_session_id() async throws {

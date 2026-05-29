@@ -139,6 +139,52 @@ final class ApprovalRegistryHookTests: XCTestCase {
         }
     }
 
+    /// ABBA-deadlock regression (2026-05-29 audit). `waitForDecision`
+    /// holds the per-approval NSCondition and then reaches for the
+    /// registry lock (condition→lock). The cancel path must therefore
+    /// wake waiters only AFTER dropping the registry lock — never
+    /// lock→condition, which would invert the order into a deadlock.
+    /// This races a soon-to-block waiter against a session cancel many
+    /// times to hit the tight window between `condition.lock()` and
+    /// `lock.lock()`. A regression would hang one iteration; the
+    /// per-iteration watchdog fails fast instead of wedging the suite.
+    func testCancelDuringWaitDoesNotDeadlock() {
+        let iterations = 500
+        for i in 0..<iterations {
+            let r = ApprovalRegistry()
+            let sid = "S-\(i)"
+            _ = r.registerSession(sid)
+            guard let pending = try? r.createPending(
+                sessionId: sid, kind: "Bash",
+                title: "x", summary: "", toolMetadata: [:]
+            ) else {
+                XCTFail("createPending failed at iter \(i)"); return
+            }
+
+            let done = DispatchSemaphore(value: 0)
+            // A waiter that, if not woken by the cancel, would block
+            // for the full (long) timeout — so a return proves the
+            // cancel woke it, not a timeout masking a deadlock.
+            DispatchQueue.global().async {
+                _ = try? r.waitForDecision(
+                    sessionId: sid, approvalId: pending.approvalId, timeout: 30.0
+                )
+                done.signal()
+            }
+            // Race the cancel against the waiter entering the wait.
+            DispatchQueue.global().async {
+                r.unregisterSession(sid)
+            }
+
+            // Correct registry resolves the waiter in well under a ms;
+            // a deadlock would block forever.
+            if done.wait(timeout: .now() + 5.0) == .timedOut {
+                XCTFail("waitForDecision did not return after cancel at iter \(i) — ABBA deadlock regression")
+                return
+            }
+        }
+    }
+
     func testWaitForDecisionTimesOut() throws {
         let r = ApprovalRegistry()
         _ = r.registerSession("S")

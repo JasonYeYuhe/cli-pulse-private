@@ -82,6 +82,11 @@ public final class ManagedSessionManager: @unchecked Sendable {
         let clientLabel: String?
         let handle: PtyTransport.Handle
         let spawnedAtMono: TimeInterval
+        // Mutable fields below are governed by `ManagedSessionManager.lock`.
+        // `status` is read/written only under that lock. `drainThread` is
+        // assigned once before the record is published into `sessions` and
+        // never mutated afterward (see startSession), so post-publication
+        // it is effectively immutable.
         var status: String = "running"
         var drainThread: Thread?
         /// v1.24 Phase 2c slice 1: fixed-capacity tail buffer for
@@ -258,6 +263,20 @@ public final class ManagedSessionManager: @unchecked Sendable {
             spawnedAtMono: ProcessInfo.processInfo.systemUptime
         )
 
+        // Build the drain thread and stash its handle on the record
+        // BEFORE the record is published into `sessions`. Once it's in
+        // the dict the record is shared with listSessions / stopSession /
+        // the drain loop, and from that point every mutable field
+        // (`status`) is touched only under `lock`. Initializing
+        // `drainThread` pre-publication keeps the record fully formed
+        // before it becomes visible, so there's no unlocked write to an
+        // already-shared object.
+        let drain = Thread { [weak self] in
+            self?.drainLoop(record: record)
+        }
+        drain.name = "cli-pulse-drain-\(sessionId)"
+        record.drainThread = drain
+
         lock.lock()
         sessions[sessionId] = record
         lock.unlock()
@@ -269,12 +288,9 @@ public final class ManagedSessionManager: @unchecked Sendable {
             "client_label": clientLabel ?? NSNull(),
         ])
 
-        // Kick off the drain loop on its own Thread.
-        let drain = Thread { [weak self] in
-            self?.drainLoop(record: record)
-        }
-        drain.name = "cli-pulse-drain-\(sessionId)"
-        record.drainThread = drain
+        // Start AFTER publication: a fast-exiting child's drain loop must
+        // find the record in `sessions` (=== identity check) when it
+        // flips status to stopped/errored, else the status write is lost.
         drain.start()
 
         return Summary(
