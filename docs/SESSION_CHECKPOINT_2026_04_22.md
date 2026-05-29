@@ -210,7 +210,7 @@ is still small enough (< 15 files / < 2000 LOC).
   `sbp_e157…5ff7` expires 06 May 2026
 - App Store API Key: `DMMFP6XTXX`, Issuer
   `c5671c11-49ec-47d9-bd38-5e3c1a249416`
-- Demo account: `demo@clipulse.app` / `DemoReview2026!`
+- Demo account: `demo@clipulse.app` / `<DEMO_PW_REDACTED>`
 
 Continuation prompt for the next session lives in
 `/Users/jason/.claude/projects/-Users-jason-Documents-cli-pulse/memory/handoff_2026_04_22.md`

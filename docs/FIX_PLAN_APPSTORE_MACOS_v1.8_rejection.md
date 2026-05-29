@@ -9,14 +9,14 @@
 
 ## Issue 1: Demo Account Login (Guideline 2.1)
 
-**Problem**: Reviewer provided credentials `demo@clipulse.app / DemoReview2026!` but the macOS app's login UI only offers OTP (email code) sign-in. There is no password field. The backend `signInWithPassword()` already works — the UI just doesn't expose it.
+**Problem**: Reviewer provided credentials `demo@clipulse.app / <DEMO_PW_REDACTED>` but the macOS app's login UI only offers OTP (email code) sign-in. There is no password field. The backend `signInWithPassword()` already works — the UI just doesn't expose it.
 
 **Root cause**: `SettingsTab.swift` loginSection only renders OTP flow (email → 6-digit code). No password input.
 
 **Fix**:
 1. Add a password sign-in toggle/section to `SettingsTab.loginSection` — email field + password field + "Sign In" button
 2. Keep OTP as the primary flow, add "Sign in with password" as secondary option
-3. Reset demo account password via Supabase admin API to ensure `DemoReview2026!` works
+3. Reset demo account password via Supabase admin API to ensure `<DEMO_PW_REDACTED>` works
 
 **Files changed**:
 - `CLI Pulse Bar/CLI Pulse Bar/SettingsTab.swift` — add password login UI

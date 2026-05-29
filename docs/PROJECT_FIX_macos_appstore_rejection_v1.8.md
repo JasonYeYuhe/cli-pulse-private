@@ -9,10 +9,10 @@
 ## Issues Fixed
 
 ### 1. Guideline 2.1 — Demo Account Login
-**Problem**: macOS login UI only had OTP (email code), no password field. Reviewer couldn't use demo@clipulse.app / DemoReview2026!  
+**Problem**: macOS login UI only had OTP (email code), no password field. Reviewer couldn't use demo@clipulse.app / <DEMO_PW_REDACTED>  
 **Fix**: Added password sign-in toggle to `SettingsTab.loginSection` + reset demo password in Supabase  
 **Files**: `CLI Pulse Bar/CLI Pulse Bar/SettingsTab.swift`  
-**Supabase**: `UPDATE auth.users SET encrypted_password = crypt('DemoReview2026!', gen_salt('bf')) WHERE email = 'demo@clipulse.app'`
+**Supabase**: `UPDATE auth.users SET encrypted_password = crypt('<DEMO_PW_REDACTED>', gen_salt('bf')) WHERE email = 'demo@clipulse.app'`
 
 ### 2. Guideline 2.1(b) — IAP Not Locatable
 **Problem**: IAP only accessible via separate window behind "Upgrade to Pro" button — not discoverable  
