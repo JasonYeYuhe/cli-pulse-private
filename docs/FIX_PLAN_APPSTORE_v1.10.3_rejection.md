@@ -16,7 +16,7 @@ Revision history:
 
 ## Root Cause
 
-The ASC demo credentials `demo@clipulse.app / DemoReview2026!` no longer authenticate. Verified:
+The ASC demo credentials `demo@clipulse.app / <DEMO_PW_REDACTED>` no longer authenticate. Verified:
 
 ```
 POST https://gkjwsxotmwrgqsvfijzs.supabase.co/auth/v1/token?grant_type=password
@@ -48,7 +48,7 @@ SERVICE_KEY='<service_role jwt>'
 curl -X PUT 'https://gkjwsxotmwrgqsvfijzs.supabase.co/auth/v1/admin/users/2bbcf049-dd9f-4ec5-8162-52b157bdff4b' \
   -H "apikey: $SERVICE_KEY" -H "Authorization: Bearer $SERVICE_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"password":"DemoReview2026!","email_confirm":true}'
+  -d '{"password":"<DEMO_PW_REDACTED>","email_confirm":true}'
 ```
 Per Supabase docs, this also terminates existing sessions. Do not touch `identities` / `aal` / recovery tokens manually — the admin endpoint is the complete path.
 
@@ -56,7 +56,7 @@ Per Supabase docs, this also terminates existing sessions. Do not touch `identit
 ```bash
 curl -X POST 'https://gkjwsxotmwrgqsvfijzs.supabase.co/auth/v1/token?grant_type=password' \
   -H 'Content-Type: application/json' -H "apikey: $ANON_KEY" \
-  -d '{"email":"demo@clipulse.app","password":"DemoReview2026!"}'
+  -d '{"email":"demo@clipulse.app","password":"<DEMO_PW_REDACTED>"}'
 # → expect HTTP 200 + access_token in JSON body
 ```
 
@@ -103,7 +103,7 @@ This uploads both iOS build 37 and macOS build 37 to ASC. Submit both with the r
 **iOS**:
 ```
 Demo account:
-  demo@clipulse.app / DemoReview2026!
+  demo@clipulse.app / <DEMO_PW_REDACTED>
 
 Sign-in path: on the welcome screen, fill BOTH the email and
 password fields, then tap "Sign In". (Password sign-in only.)
@@ -112,7 +112,7 @@ password fields, then tap "Sign In". (Password sign-in only.)
 **macOS** (build 37):
 ```
 Demo account:
-  demo@clipulse.app / DemoReview2026!
+  demo@clipulse.app / <DEMO_PW_REDACTED>
 
 Sign-in path: during the first-launch onboarding wizard,
 at the "Sign In" step, fill BOTH the email and password
