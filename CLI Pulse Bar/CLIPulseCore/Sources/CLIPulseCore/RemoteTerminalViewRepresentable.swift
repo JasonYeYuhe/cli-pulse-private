@@ -55,6 +55,10 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
     /// drains the pending buffer without a recovery prefix if no
     /// `tail_snapshot_result` broadcast arrives.
     public let onRequestTailSnapshot: ((String, Int) -> Void)?
+    /// v1.26.1 telemetry: caller-supplied foreground-recovery outcome
+    /// sink. Wired to a Sentry breadcrumb so we get field visibility
+    /// into recovery success rate.
+    public let onSnapshotOutcome: ((Coordinator.SnapshotOutcome) -> Void)?
 
     public init(
         sessionId: String,
@@ -63,7 +67,8 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
         onDisconnect: ((Error?) -> Void)? = nil,
         onStdin: ((Data) -> Void)? = nil,
         onResize: ((Int, Int) -> Void)? = nil,
-        onRequestTailSnapshot: ((String, Int) -> Void)? = nil
+        onRequestTailSnapshot: ((String, Int) -> Void)? = nil,
+        onSnapshotOutcome: ((Coordinator.SnapshotOutcome) -> Void)? = nil
     ) {
         self.sessionId = sessionId
         self.streamConfig = streamConfig
@@ -72,6 +77,7 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
         self.onStdin = onStdin
         self.onResize = onResize
         self.onRequestTailSnapshot = onRequestTailSnapshot
+        self.onSnapshotOutcome = onSnapshotOutcome
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -81,7 +87,8 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
             onDisconnect: onDisconnect,
             onStdin: onStdin,
             onResize: onResize,
-            onRequestTailSnapshot: onRequestTailSnapshot
+            onRequestTailSnapshot: onRequestTailSnapshot,
+            onSnapshotOutcome: onSnapshotOutcome
         )
     }
 
@@ -146,7 +153,26 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
         /// Fire-and-forget — failures are surfaced via the 2 s
         /// timeout (drain pending buffer, proceed without prefix).
         let onRequestTailSnapshot: ((String, Int) -> Void)?
+        /// v1.26.1 telemetry: fired once per warm-subscribe recovery
+        /// attempt with the resolved outcome. The host wires this to
+        /// a Sentry breadcrumb so we get field visibility into the
+        /// real-world success rate of foreground-recovery (Gemini FYI:
+        /// the 2 s timeout was previously a silent path). Pure data —
+        /// the Coordinator never touches Sentry directly, keeping the
+        /// state machine unit-testable.
+        let onSnapshotOutcome: ((SnapshotOutcome) -> Void)?
         weak var view: RemoteTerminalView?
+
+        /// v1.26.1 telemetry: resolution of a warm-subscribe
+        /// foreground-recovery attempt.
+        public enum SnapshotOutcome: Equatable {
+            /// `tail_snapshot_result` arrived in the 2 s window;
+            /// `bufferedChunks` live chunks were drained after it.
+            case recovered(bufferedChunks: Int)
+            /// 2 s elapsed with no snapshot; `bufferedChunks` live
+            /// chunks were drained unprefixed (v1.25 baseline UX).
+            case timedOut(bufferedChunks: Int)
+        }
 
         /// Tracks the session id the active subscription is bound
         /// to. Diverges from `sessionId` momentarily when the
@@ -202,7 +228,8 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
             onDisconnect: ((Error?) -> Void)?,
             onStdin: ((Data) -> Void)? = nil,
             onResize: ((Int, Int) -> Void)? = nil,
-            onRequestTailSnapshot: ((String, Int) -> Void)? = nil
+            onRequestTailSnapshot: ((String, Int) -> Void)? = nil,
+            onSnapshotOutcome: ((SnapshotOutcome) -> Void)? = nil
         ) {
             self.sessionId = sessionId
             self.streamConfig = streamConfig
@@ -210,6 +237,7 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
             self.onStdin = onStdin
             self.onResize = onResize
             self.onRequestTailSnapshot = onRequestTailSnapshot
+            self.onSnapshotOutcome = onSnapshotOutcome
             self.stream = RemoteSessionEventStream(config: streamConfig)
             super.init()
         }
@@ -310,7 +338,12 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
                 // nil, and a fresh subscribe would have set it
                 // back to [] before any chunk could arrive.
                 guard pendingSnapshotBuffer != nil else { return }
+                // v1.26.1 telemetry: snapshot landed in-window =
+                // successful recovery. Capture the buffered count
+                // before drain nils it.
+                let recoveredCount = pendingSnapshotBuffer?.count ?? 0
                 drainBufferAndSwitchToDirectWrite(snapshot: chunk.data, into: view)
+                onSnapshotOutcome?(.recovered(bufferedChunks: recoveredCount))
                 return
             }
             if pendingSnapshotBuffer != nil {
@@ -331,14 +364,22 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
                 let nanos = UInt64(Self.snapshotTimeoutSeconds * 1_000_000_000)
                 try? await Task.sleep(nanoseconds: nanos)
                 guard !Task.isCancelled, let s = weakSelf else { return }
-                await MainActor.run {
-                    // Snapshot never arrived. Drain whatever
-                    // accumulated and switch to direct write —
-                    // the user sees the live chunks unprefixed,
-                    // which is the same UX as the v1.25 baseline.
-                    s.drainBufferAndSwitchToDirectWrite(snapshot: nil, into: s.view)
-                }
+                await MainActor.run { s.resolveSnapshotTimeout() }
             }
+        }
+
+        /// Snapshot-timeout resolution, extracted from the timer Task
+        /// so it's unit-testable without a 2 s wait. Drains whatever
+        /// accumulated and switches to direct write — the user sees
+        /// the live chunks unprefixed (v1.25 baseline UX). Guarded on
+        /// still-pending so a timeout racing a just-arrived snapshot
+        /// doesn't double-drain or double-report. Emits the
+        /// `.timedOut` telemetry outcome (v1.26.1).
+        func resolveSnapshotTimeout() {
+            guard pendingSnapshotBuffer != nil else { return }
+            let missedCount = pendingSnapshotBuffer?.count ?? 0
+            drainBufferAndSwitchToDirectWrite(snapshot: nil, into: view)
+            onSnapshotOutcome?(.timedOut(bufferedChunks: missedCount))
         }
 
         /// Common drain helper: writes the snapshot (if present),

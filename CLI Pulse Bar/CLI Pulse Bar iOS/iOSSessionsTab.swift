@@ -965,6 +965,26 @@ struct ManagedSessionDetailView: View {
                     Task { await state.requestRemoteSessionTailSnapshot(
                         sessionId: sessionId, maxBytes: maxBytes
                     ) }
+                },
+                onSnapshotOutcome: { outcome in
+                    // v1.26.1 telemetry: record foreground-recovery
+                    // result as a Sentry breadcrumb (no PII — just
+                    // the outcome + buffered count). Gives us field
+                    // visibility into recovery success rate; the 2 s
+                    // timeout was previously a silent path (Gemini FYI).
+                    switch outcome {
+                    case .recovered(let buffered):
+                        SentryLogger.breadcrumb(
+                            category: "remote-terminal.recovery",
+                            message: "tail_snapshot recovered",
+                            data: ["buffered_chunks": buffered])
+                    case .timedOut(let buffered):
+                        SentryLogger.breadcrumb(
+                            category: "remote-terminal.recovery",
+                            message: "tail_snapshot timed out (2s)",
+                            level: .warning,
+                            data: ["buffered_chunks": buffered])
+                    }
                 }
             )
             .frame(height: 280)
