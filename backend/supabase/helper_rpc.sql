@@ -165,6 +165,11 @@ begin
     raise exception 'Device not found or unauthorized';
   end if;
 
+  -- v0.25: serialize concurrent syncs from the same device so two helper
+  -- instances (e.g. a relaunch overlapping the old process) can't race and
+  -- mark each other's sessions Ended.
+  perform pg_advisory_xact_lock(hashtextextended(p_device_id::text, 0));
+
   -- Guard against oversized payloads (DoS prevention)
   if jsonb_array_length(p_sessions) > 500 then
     raise exception 'Too many sessions (max 500)';
@@ -178,7 +183,7 @@ begin
 
   for v_session in select * from jsonb_array_elements(p_sessions) loop
     v_synced_ids := v_synced_ids || left(v_session->>'id', 128);
-    insert into public.sessions (id, user_id, device_id, name, provider, project, status, total_usage, estimated_cost, requests, error_count, collection_confidence, started_at, last_active_at, synced_at)
+    insert into public.sessions (id, user_id, device_id, name, provider, project, status, total_usage, estimated_cost, requests, error_count, collection_confidence, project_hash, started_at, last_active_at, synced_at)
     values (
       left(v_session->>'id', 128), v_user_id, p_device_id,
       coalesce(v_session->>'name', ''), v_session->>'provider',
@@ -188,6 +193,7 @@ begin
       coalesce((v_session->>'requests')::integer, 0),
       coalesce((v_session->>'error_count')::integer, 0),
       coalesce(v_session->>'collection_confidence', 'medium'),
+      nullif(v_session->>'project_hash', ''),
       least(coalesce((v_session->>'started_at')::timestamptz, now()), now() + interval '10 minutes'),
       least(coalesce((v_session->>'last_active_at')::timestamptz, now()), now() + interval '10 minutes'), now()
     )
@@ -196,6 +202,7 @@ begin
       total_usage = excluded.total_usage, estimated_cost = excluded.estimated_cost,
       requests = excluded.requests, error_count = excluded.error_count,
       collection_confidence = excluded.collection_confidence,
+      project_hash = coalesce(excluded.project_hash, public.sessions.project_hash),
       last_active_at = excluded.last_active_at, synced_at = now();
     v_session_count := v_session_count + 1;
   end loop;
@@ -205,7 +212,8 @@ begin
     -- Normal case: end sessions not reported in this sync
     update public.sessions set status = 'Ended'
     where device_id = p_device_id and user_id = v_user_id
-      and status = 'Running' and id != all(v_synced_ids);
+      and status = 'Running' and id != all(v_synced_ids)
+      and last_active_at < now() - interval '10 minutes';
   else
     -- Empty sync (helper restart/crash): end stale sessions older than 10 minutes
     -- to prevent ghost sessions, while giving a grace period for transient issues

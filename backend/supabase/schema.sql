@@ -354,7 +354,9 @@ create policy "Users can manage own quotas"
 -- ── Views for dashboard aggregations ──
 
 -- Today's usage per provider
-create or replace view public.provider_usage_today as
+-- v0.54: security_invoker so the caller's sessions RLS applies (was DEFINER →
+-- bypassed RLS, exposed all users' aggregates). Unused/legacy view.
+create or replace view public.provider_usage_today with (security_invoker = true) as
 select
   s.user_id,
   s.provider,
@@ -366,7 +368,8 @@ where s.last_active_at >= current_date and s.last_active_at < current_date + int
 group by s.user_id, s.provider;
 
 -- This week's usage per provider
-create or replace view public.provider_usage_week as
+-- v0.54: security_invoker (see provider_usage_today note).
+create or replace view public.provider_usage_week with (security_invoker = true) as
 select
   s.user_id,
   s.provider,
