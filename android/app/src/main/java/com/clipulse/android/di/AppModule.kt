@@ -64,8 +64,12 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideDashboardRepository(supabase: SupabaseClient, cacheDao: CacheDao): DashboardRepository =
-        DashboardRepository(supabase, cacheDao)
+    fun provideDashboardRepository(
+        supabase: SupabaseClient,
+        cacheDao: CacheDao,
+        tokenStore: TokenStore,
+    ): DashboardRepository =
+        DashboardRepository(supabase, cacheDao, tokenStore)
 
     @Provides
     @Singleton

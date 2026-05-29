@@ -622,8 +622,15 @@ class SupabaseClient(
             val responseBody = r.body?.string() ?: ""
             if (!r.isSuccessful) throw ApiError.Http(r.code, responseBody)
             val json = JSONObject(responseBody)
-            val at = json.getString("access_token")
-            val rt = json.getString("refresh_token")
+            // Use optString + explicit guard (not throwing getString) so a
+            // partial/non-conforming token response surfaces as a typed
+            // ApiError instead of an uncaught JSONException crashing the
+            // auth flow — matches refreshAccessToken's pattern.
+            val at = json.optString("access_token")
+            val rt = json.optString("refresh_token")
+            if (at.isBlank() || rt.isBlank()) {
+                throw ApiError.Http(r.code, "OAuth code exchange: missing access/refresh token in response")
+            }
             val user = json.optJSONObject("user")
             val uid = user?.optString("id") ?: ""
             val meta = user?.optJSONObject("user_metadata")
