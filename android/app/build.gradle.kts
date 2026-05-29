@@ -48,7 +48,16 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
-            signingConfig = signingConfigs.getByName("release")
+            // The upload keystore (cli-pulse-upload.jks) is gitignored, so CI
+            // doesn't have it. Fall back to debug signing when it's absent so
+            // CI still validates the release build (compile + R8/minify) and
+            // the job goes green on the real signal (unit tests + release
+            // compile). Local + release pipelines have the keystore present
+            // and sign with the real upload key. Never distribute a CI artifact.
+            signingConfig = if (file("cli-pulse-upload.jks").exists())
+                signingConfigs.getByName("release")
+            else
+                signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
