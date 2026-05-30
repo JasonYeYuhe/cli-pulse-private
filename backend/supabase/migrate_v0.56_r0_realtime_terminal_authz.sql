@@ -34,6 +34,7 @@ create policy "read own remote session terminal"
     and exists (
       select 1 from public.remote_sessions rs
       where rs.user_id = (select auth.uid())
+        and rs.realtime_private is true   -- server-enforce the gate (Codex HIGH)
         and 'term:' || rs.id::text = realtime.topic()
     )
   );
@@ -48,9 +49,19 @@ create policy "broadcast own remote session terminal"
     and exists (
       select 1 from public.remote_sessions rs
       where rs.user_id = (select auth.uid())
+        and rs.realtime_private is true   -- server-enforce the gate (Codex HIGH)
         and 'term:' || rs.id::text = realtime.topic()
     )
   );
+
+-- B2/B1b CONTRACT (both reviewers): the helper/edge MUST send `"private": true`
+--   in the /realtime/v1/api/broadcast payload AND the client MUST join with
+--   config.private=true. RLS here only governs PRIVATE messages — an omitted
+--   `private` flag is treated as PUBLIC and bypasses these policies entirely.
+-- ACCEPTED LIMITATION (Codex LOW): the INSERT policy authorizes any owner JWT, so
+--   a signed-in client for the SAME user could also broadcast to its own session
+--   topic (self-injection). Cross-user injection is closed; self-injection is out
+--   of scope for v1.27 (a `realtime_purpose` custom claim could tighten it later).
 
 -- (3) Helper broadcast authorization (called by the mint-realtime-token edge fn).
 -- Gate done RIGHT (Codex CRITICAL): ASSIGN the gated-auth result, CHECK non-null,
@@ -73,19 +84,26 @@ begin
   if v_user is null then
     raise exception 'unauthorized' using errcode = '42501';
   end if;
+  -- Only mint for sessions actually in private mode (gate server-enforced):
+  -- a public-mode session must use the legacy anon/public path, never this.
   select rs.user_id into v_owner
   from public.remote_sessions rs
   where rs.id = p_session_id
     and rs.device_id = p_device_id
-    and rs.user_id = v_user;
+    and rs.user_id = v_user
+    and rs.realtime_private is true;
   if v_owner is null then
-    raise exception 'session not owned by device' using errcode = '42501';
+    raise exception 'session not authorized for private broadcast' using errcode = '42501';
   end if;
   return v_owner;
 end;
 $$;
-revoke all on function public.remote_helper_authorize_broadcast(uuid, text, uuid) from public;
-grant execute on function public.remote_helper_authorize_broadcast(uuid, text, uuid) to anon;
+-- Explicit, auditable grants (Codex HIGH): the mint-realtime-token edge fn calls
+-- this with the service role; a direct helper call (anon + helper_secret) also works.
+revoke all on function public.remote_helper_authorize_broadcast(uuid, text, uuid)
+  from public, anon, authenticated, service_role;
+grant execute on function public.remote_helper_authorize_broadcast(uuid, text, uuid)
+  to anon, service_role;
 
 -- (4) Re-emit remote_app_request_session_start — set realtime_private atomically.
 -- Body = prod (pg_get_functiondef 2026-05-30); ONLY change: realtime_private in
