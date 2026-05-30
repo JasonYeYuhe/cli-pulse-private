@@ -119,7 +119,18 @@ fi
 XCODE_PROJECT="$PROJECT_ROOT/CLI Pulse Bar/CLI Pulse Bar.xcodeproj"
 PBXPROJ="$XCODE_PROJECT/project.pbxproj"
 read_build_setting() {
-    grep -E "^\s+$1 = " "$PBXPROJ" | head -1 | sed -E "s/.*$1 = ([^;]+);.*/\1/" | tr -d ' \t'
+    # All target×config entries must agree (sync-versions.sh keeps them in
+    # lockstep). Guard against divergence instead of silently taking head -1:
+    # emit nothing on a multi-value mismatch so the caller fails closed.
+    # Mirrors the Apple-side guard in scripts/check-versions.sh.
+    local vals
+    vals=$(grep -E "^\s+$1 = " "$PBXPROJ" | sed -E "s/.*$1 = ([^;]+);.*/\1/" | tr -d ' \t' | sort -u)
+    if [[ -n "$vals" && "$(printf '%s\n' "$vals" | wc -l | tr -d ' ')" -gt 1 ]]; then
+        echo "error: inconsistent $1 in pbxproj — run scripts/sync-versions.sh:" >&2
+        printf '  %s\n' "$vals" >&2
+        return 0
+    fi
+    printf '%s' "$vals"
 }
 APP_VERSION="$(read_build_setting MARKETING_VERSION)"
 APP_BUILD="$(read_build_setting CURRENT_PROJECT_VERSION)"
