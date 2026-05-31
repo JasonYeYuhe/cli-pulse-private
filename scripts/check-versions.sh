@@ -68,4 +68,25 @@ if [[ "$apple" != "$android" ]]; then
   exit 1
 fi
 
+# Android versionCode monotonicity — Google Play REJECTS a build whose
+# versionCode did not strictly increase. If this change bumps versionName vs
+# origin/main, versionCode must have increased too. Degrades gracefully: if the
+# origin/main baseline can't be read (offline / no remote), it skips rather than
+# emitting a false failure. (Play rejects non-incrementing codes anyway; this
+# just catches it in CI before an upload round-trip.)
+git -C "$repo_root" fetch --quiet --depth=1 origin main 2>/dev/null || true
+base_gradle=$(git -C "$repo_root" show origin/main:android/app/build.gradle.kts 2>/dev/null || true)
+cur_code=$(grep -E '^[[:space:]]*versionCode[[:space:]]*=' "$gradle" | head -1 | grep -oE '[0-9]+' | head -1)
+if [[ -n "$base_gradle" && -n "$cur_code" ]]; then
+  base_code=$(printf '%s\n' "$base_gradle" | grep -E '^[[:space:]]*versionCode[[:space:]]*=' | head -1 | grep -oE '[0-9]+' | head -1)
+  base_name=$(printf '%s\n' "$base_gradle" | grep -E '^[[:space:]]*versionName[[:space:]]*=' | head -1 | sed -E 's/.*=[[:space:]]*"([^"]+)".*/\1/')
+  if [[ -n "$base_code" && "$android" != "$base_name" && "$cur_code" -le "$base_code" ]]; then
+    echo "::error::versionName changed ($base_name → $android) but Android versionCode did not increase ($base_code → $cur_code). Google Play will reject this. Bump versionCode in android/app/build.gradle.kts." >&2
+    exit 1
+  fi
+  echo "Android versionCode:      $cur_code (origin/main baseline $base_code)"
+else
+  echo "Android versionCode:      ${cur_code:-?} (no origin/main baseline — monotonicity check skipped)"
+fi
+
 echo "OK — versions match."
