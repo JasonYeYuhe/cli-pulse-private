@@ -297,6 +297,63 @@ class SupabaseClient(
         parseRemoteSwarms(rpcArray("remote_app_list_swarms"))
     }
 
+    // ── Remote managed sessions (v1.27 E1) ───────────────
+    // Android mirror of the iOS APIClient `remote_app_*` calls. JWT-gated +
+    // RC-gated server-side (return [] / throw when Remote Control is off). The
+    // `p_*` param names match the Postgres function signatures exactly.
+
+    /** `remote_app_list_sessions` → the caller's pending/running managed sessions. */
+    suspend fun remoteListSessions(): List<RemoteSession> = withContext(Dispatchers.IO) {
+        parseRemoteSessions(rpcArray("remote_app_list_sessions"))
+    }
+
+    /** `remote_app_list_session_events` → ordered output events with id > afterId. */
+    suspend fun remoteListSessionEvents(
+        sessionId: String,
+        afterId: Long = 0L,
+        limit: Int = 200,
+    ): List<RemoteSessionEvent> = withContext(Dispatchers.IO) {
+        val params = JSONObject()
+            .put("p_session_id", sessionId)
+            .put("p_after_id", afterId)
+            .put("p_limit", limit)
+        parseRemoteSessionEvents(rpcArray("remote_app_list_session_events", params))
+    }
+
+    /**
+     * `remote_app_request_session_start` → create a pending session + enqueue
+     * the `start` command. Returns (session_id, command_id).
+     */
+    suspend fun remoteRequestSessionStart(
+        deviceId: String,
+        provider: String = "claude",
+        cwdBasename: String = "",
+        cwdHmac: String? = null,
+        clientLabel: String? = null,
+    ): Pair<String, String> = withContext(Dispatchers.IO) {
+        val params = JSONObject()
+            .put("p_device_id", deviceId)
+            .put("p_provider", provider)
+            .put("p_cwd_basename", cwdBasename)
+        if (cwdHmac != null) params.put("p_cwd_hmac", cwdHmac)
+        if (clientLabel != null) params.put("p_client_label", clientLabel)
+        val r = rpc("remote_app_request_session_start", params)
+        r.optString("session_id") to r.optString("command_id")
+    }
+
+    /** `remote_app_send_command` → enqueue a command for the session. Returns command_id. */
+    suspend fun remoteSendCommand(
+        sessionId: String,
+        kind: RemoteCommandKind,
+        payload: String = "",
+    ): String = withContext(Dispatchers.IO) {
+        val params = JSONObject()
+            .put("p_session_id", sessionId)
+            .put("p_kind", kind.wire)
+            .put("p_payload", payload)
+        rpc("remote_app_send_command", params).optString("command_id")
+    }
+
     // ── Alerts ───────────────────────────────────────────
 
     suspend fun alerts(): List<AlertRecord> = withContext(Dispatchers.IO) {
@@ -1104,5 +1161,45 @@ internal fun parseRemoteSwarms(arr: JSONArray): List<RemoteSwarmDevice> =
             ageS = d.optDouble("age_s", 0.0),
             stale = d.optBoolean("stale", false),
             swarms = swarms,
+        )
+    }
+
+/**
+ * v1.27 E1 — pure `remote_app_list_sessions` JSON → model parser, extracted
+ * from [SupabaseClient.remoteListSessions] for unit-testability (mirrors
+ * parseRemoteSwarms). Lenient `opt*` reads; nullable fields decode an absent
+ * key or SQL/JSON null to `null`, a present value (incl. "") to the string.
+ */
+internal fun parseRemoteSessions(arr: JSONArray): List<RemoteSession> =
+    (0 until arr.length()).map { i ->
+        val d = arr.getJSONObject(i)
+        RemoteSession(
+            id = d.optString("id"),
+            deviceId = d.optString("device_id"),
+            deviceName = if (d.isNull("device_name")) null else d.optString("device_name"),
+            provider = d.optString("provider"),
+            cwdBasename = d.optString("cwd_basename"),
+            cwdHmac = if (d.isNull("cwd_hmac")) null else d.optString("cwd_hmac"),
+            status = d.optString("status"),
+            clientLabel = if (d.isNull("client_label")) null else d.optString("client_label"),
+            createdAt = d.optString("created_at"),
+            lastEventAt = if (d.isNull("last_event_at")) null else d.optString("last_event_at"),
+        )
+    }
+
+/**
+ * v1.27 E1 — pure `remote_app_list_session_events` JSON → model parser.
+ * `id` is a Postgres bigserial → `optLong`.
+ */
+internal fun parseRemoteSessionEvents(arr: JSONArray): List<RemoteSessionEvent> =
+    (0 until arr.length()).map { i ->
+        val d = arr.getJSONObject(i)
+        RemoteSessionEvent(
+            id = d.optLong("id"),
+            sessionId = d.optString("session_id"),
+            seq = d.optInt("seq"),
+            kind = d.optString("kind"),
+            payload = d.optString("payload"),
+            createdAt = d.optString("created_at"),
         )
     }
