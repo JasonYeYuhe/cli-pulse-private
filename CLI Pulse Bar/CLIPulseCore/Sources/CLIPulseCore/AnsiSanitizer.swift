@@ -43,13 +43,23 @@ public enum AnsiSanitizer {
         // params, so it skipped at the space, failed to match, and the
         // raw `[0 q` leaked through to the iOS transcript view.
         let pattern = "\u{1B}\\[[0-9;?<>=]*[ -/]*[@-~]"
-        return try! NSRegularExpression(pattern: pattern, options: [])
+        guard let re = try? NSRegularExpression(pattern: pattern, options: []) else {
+            // Pattern is a compile-time literal — a failure here is a bad edit,
+            // not a runtime condition. Surface it loudly (release-equivalent to try!).
+            preconditionFailure("AnsiSanitizer: invalid regex literal: \(pattern)")
+        }
+        return re
     }()
 
     private static let oscPattern: NSRegularExpression = {
         // ESC ] ... BEL  OR  ESC ] ... ESC \
         let pattern = "\u{1B}\\][^\u{0007}\u{1B}]*(?:\u{0007}|\u{1B}\\\\)"
-        return try! NSRegularExpression(pattern: pattern, options: [])
+        guard let re = try? NSRegularExpression(pattern: pattern, options: []) else {
+            // Pattern is a compile-time literal — a failure here is a bad edit,
+            // not a runtime condition. Surface it loudly (release-equivalent to try!).
+            preconditionFailure("AnsiSanitizer: invalid regex literal: \(pattern)")
+        }
+        return re
     }()
 
     private static let strayEscPattern: NSRegularExpression = {
@@ -57,7 +67,12 @@ public enum AnsiSanitizer {
         // ESC 8 for save/restore cursor). Greedy enough to consume one
         // control byte without eating actual content.
         let pattern = "\u{1B}[7-9=>NOPVWXZ\\\\]?"
-        return try! NSRegularExpression(pattern: pattern, options: [])
+        guard let re = try? NSRegularExpression(pattern: pattern, options: []) else {
+            // Pattern is a compile-time literal — a failure here is a bad edit,
+            // not a runtime condition. Surface it loudly (release-equivalent to try!).
+            preconditionFailure("AnsiSanitizer: invalid regex literal: \(pattern)")
+        }
+        return re
     }()
 
     /// Remove ANSI/VT escape sequences from `raw`. Returns a string
@@ -126,14 +141,23 @@ public enum AnsiSanitizer {
         // move alphabet — those will fall through to stripCore's strip-
         // everything CSI regex (also fixed for intermediates).
         let pattern = "\u{1B}\\[[0-9;?<>=]*[ -/]*[A-MdefH]"
-        return try! NSRegularExpression(pattern: pattern, options: [])
+        guard let re = try? NSRegularExpression(pattern: pattern, options: []) else {
+            // Pattern is a compile-time literal — a failure here is a bad edit,
+            // not a runtime condition. Surface it loudly (release-equivalent to try!).
+            preconditionFailure("AnsiSanitizer: invalid regex literal: \(pattern)")
+        }
+        return re
     }()
 
     private static let inlineSpaceRunPattern: NSRegularExpression = {
         // Two-or-more spaces / tabs in a row. Newlines and CRs are
         // intentionally NOT in the class — line-break structure must
         // survive the collapse.
-        try! NSRegularExpression(pattern: "[ \\t]{2,}", options: [])
+        let pattern = "[ \\t]{2,}"
+        guard let re = try? NSRegularExpression(pattern: pattern, options: []) else {
+            preconditionFailure("AnsiSanitizer: invalid regex literal: \(pattern)")
+        }
+        return re
     }()
 
     private static func collapseInlineSpaces(_ s: String) -> String {
