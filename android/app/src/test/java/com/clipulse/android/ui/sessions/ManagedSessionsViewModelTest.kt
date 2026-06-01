@@ -4,6 +4,7 @@ import androidx.lifecycle.viewModelScope
 import com.clipulse.android.MainDispatcherRule
 import com.clipulse.android.data.model.DeviceRecord
 import com.clipulse.android.data.model.RemoteCommandKind
+import com.clipulse.android.data.model.RemotePermissionDecision
 import com.clipulse.android.data.model.RemoteSession
 import com.clipulse.android.data.remote.SupabaseClient
 import io.mockk.coEvery
@@ -265,6 +266,22 @@ class ManagedSessionsViewModelTest {
         vm.requestTailSnapshot("s1", 8192)
 
         coVerify { supabase.remoteSendCommand("s1", RemoteCommandKind.TailSnapshot, "8192") }
+        vm.viewModelScope.cancel()
+    }
+
+    // ── approvals (E7) ──────────────────────────────────────
+
+    @Test
+    fun `decideApproval decides then refreshes the pending list`() = runTest {
+        coEvery { supabase.remoteListSessions() } returns emptyList()
+        coEvery { supabase.devices() } returns emptyList()
+        coEvery { supabase.remoteListPendingApprovals() } returns emptyList()
+        coEvery { supabase.remoteDecidePermission(any(), any(), any(), any()) } returns Unit
+        val vm = ManagedSessionsViewModel(supabase)
+
+        vm.decideApproval("req1", RemotePermissionDecision.Approve)
+
+        coVerify { supabase.remoteDecidePermission("req1", RemotePermissionDecision.Approve, any(), any()) }
         vm.viewModelScope.cancel()
     }
 }

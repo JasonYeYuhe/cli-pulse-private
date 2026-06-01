@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.clipulse.android.data.model.DeviceRecord
 import com.clipulse.android.data.model.RemoteCommandKind
+import com.clipulse.android.data.model.RemotePermissionDecision
+import com.clipulse.android.data.model.RemotePermissionRequest
 import com.clipulse.android.data.model.RemoteSession
 import com.clipulse.android.data.model.managedSessionTargetDevice
 import com.clipulse.android.data.model.supportsManagedSessionProvider
@@ -33,6 +35,7 @@ data class ManagedSessionsUiState(
     val isLoading: Boolean = true,
     val sessions: List<RemoteSession> = emptyList(),
     val devices: List<DeviceRecord> = emptyList(),
+    val pendingApprovals: List<RemotePermissionRequest> = emptyList(),
     val error: String? = null,
     val isStarting: Boolean = false,
     /**
@@ -88,8 +91,11 @@ class ManagedSessionsViewModel @Inject constructor(
                 try {
                     val sessions = supabase.remoteListSessions()
                     val devices = supabase.devices()
+                    val approvals = runCatching { supabase.remoteListPendingApprovals() }
+                        .getOrDefault(_state.value.pendingApprovals)
                     _state.value = _state.value.copy(
-                        sessions = sessions, devices = devices, error = null,
+                        sessions = sessions, devices = devices,
+                        pendingApprovals = approvals, error = null,
                     )
                 } catch (_: Exception) { }
             }
@@ -102,8 +108,11 @@ class ManagedSessionsViewModel @Inject constructor(
             try {
                 val sessions = supabase.remoteListSessions()
                 val devices = supabase.devices()
+                val approvals = runCatching { supabase.remoteListPendingApprovals() }
+                    .getOrDefault(_state.value.pendingApprovals)
                 _state.value = _state.value.copy(
                     isLoading = false, sessions = sessions, devices = devices,
+                    pendingApprovals = approvals,
                 )
             } catch (e: Exception) {
                 _state.value = _state.value.copy(isLoading = false, error = e.message)
@@ -214,6 +223,24 @@ class ManagedSessionsViewModel @Inject constructor(
                     maxOf(0, maxBytes).toString(),
                 )
             } catch (_: Exception) { }
+        }
+    }
+
+    /**
+     * Approve or deny a pending remote permission request, then refresh the
+     * pending list. Mirrors iOS `decideRemoteApproval`. High-risk *approve* is
+     * gated in the UI (high-risk must be approved on the Mac directly).
+     */
+    fun decideApproval(requestId: String, decision: RemotePermissionDecision) {
+        viewModelScope.launch {
+            try {
+                supabase.remoteDecidePermission(requestId, decision)
+                _state.value = _state.value.copy(
+                    pendingApprovals = supabase.remoteListPendingApprovals(),
+                )
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(error = e.message)
+            }
         }
     }
 

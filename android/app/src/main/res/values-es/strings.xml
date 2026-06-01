@@ -253,4 +253,9 @@
     <string name="managed_terminal_soon_body">Transmite la salida de esta sesión en vivo. Solo lectura por ahora: el envío de entrada llegará en una actualización posterior.</string>
     <string name="managed_pending_note">Esperando a que el Helper inicie esta sesión.</string>
     <string name="managed_terminal_readonly_note">Salir de esta pantalla desconecta la transmisión; al volver se reconecta sin reproducción.</string>
+    <string name="managed_approval_title">Permiso pendiente</string>
+    <string name="managed_approval_high_risk">riesgo alto</string>
+    <string name="managed_approval_approve">Aprobar</string>
+    <string name="managed_approval_deny">Rechazar</string>
+    <string name="managed_approval_high_risk_note">Las solicitudes de alto riesgo deben aprobarse en el Mac.</string>
 </resources>
