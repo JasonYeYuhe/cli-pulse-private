@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -87,7 +88,11 @@ fun LazyListScope.managedSessionsSection(
         }
     } else {
         items(state.sessions, key = { "managed-${it.id}" }) { session ->
-            ManagedSessionRow(session = session, onClick = { onOpen(session.id) })
+            ManagedSessionRow(
+                session = session,
+                hasPendingApproval = state.pendingApprovals.any { it.sessionId == session.id },
+                onClick = { onOpen(session.id) },
+            )
         }
     }
 }
@@ -143,7 +148,11 @@ private fun ManagedSessionsHeader(
 }
 
 @Composable
-private fun ManagedSessionRow(session: RemoteSession, onClick: () -> Unit) {
+private fun ManagedSessionRow(
+    session: RemoteSession,
+    hasPendingApproval: Boolean,
+    onClick: () -> Unit,
+) {
     val kind = managedProviderKind(session.provider)
     val tint = kind?.let { providerColor(it) } ?: MaterialTheme.colorScheme.primary
     Card(
@@ -182,6 +191,21 @@ private fun ManagedSessionRow(session: RemoteSession, onClick: () -> Unit) {
                         session.deviceName,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (hasPendingApproval) {
+                    Spacer(Modifier.width(8.dp))
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = PulseWarning,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        stringResource(R.string.managed_approval_title),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = PulseWarning,
                     )
                 }
                 Spacer(Modifier.weight(1f))
