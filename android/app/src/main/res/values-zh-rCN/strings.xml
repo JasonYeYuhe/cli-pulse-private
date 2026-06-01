@@ -244,4 +244,16 @@
         <item quantity="other">已注册 %d 台设备</item>
     </plurals>
     <string name="swarm_widget_description">实时 agent 集群 — 一览 agent 数与阻塞数</string>
+    <!-- Managed sessions (v1.27 E2) -->
+    <string name="managed_sessions_header">托管会话</string>
+    <string name="managed_new">新建</string>
+    <string name="managed_empty_tap_new">暂无进行中的托管会话。点按"新建"即可启动。</string>
+    <string name="managed_empty_no_device">没有安装 Helper 的已配对 Mac。</string>
+    <string name="managed_upgrade_hint">Codex 和 Gemini 需要 %1$s 上的 CLI Pulse Helper 1.15+。Claude 仍可使用。</string>
+    <string name="managed_stop">停止会话</string>
+    <string name="managed_cancel">取消会话</string>
+    <string name="managed_ended_body">此托管会话已不再活动。请在"会话"标签页中新建一个以继续。</string>
+    <string name="managed_terminal_soon_title">实时终端</string>
+    <string name="managed_terminal_soon_body">交互式终端串流将在后续 CLI Pulse 更新中推出。你仍可在此启动和停止托管会话。</string>
+    <string name="managed_pending_note">正在等待 Helper 启动此会话。</string>
 </resources>

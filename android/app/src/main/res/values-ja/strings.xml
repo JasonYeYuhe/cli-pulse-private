@@ -245,4 +245,16 @@
         <item quantity="other">%d 台登録済み</item>
     </plurals>
     <string name="swarm_widget_description">リアルタイムのエージェントスウォーム — エージェント数とブロック数をひと目で</string>
+    <!-- Managed sessions (v1.27 E2) -->
+    <string name="managed_sessions_header">管理対象セッション</string>
+    <string name="managed_new">新規</string>
+    <string name="managed_empty_tap_new">アクティブな管理対象セッションはありません。「新規」をタップして開始します。</string>
+    <string name="managed_empty_no_device">ヘルパーがインストールされたペアリング済み Mac がありません。</string>
+    <string name="managed_upgrade_hint">Codex と Gemini には %1$s 上に CLI Pulse Helper 1.15 以降が必要です。Claude は引き続き使用できます。</string>
+    <string name="managed_stop">セッションを停止</string>
+    <string name="managed_cancel">セッションをキャンセル</string>
+    <string name="managed_ended_body">この管理対象セッションはアクティブではなくなりました。続行するにはセッションタブから新しく開始してください。</string>
+    <string name="managed_terminal_soon_title">ライブターミナル</string>
+    <string name="managed_terminal_soon_body">インタラクティブなターミナルのストリーミングは今後の CLI Pulse アップデートで提供されます。ここで管理対象セッションの開始と停止は引き続き行えます。</string>
+    <string name="managed_pending_note">ヘルパーがこのセッションを開始するのを待っています。</string>
 </resources>

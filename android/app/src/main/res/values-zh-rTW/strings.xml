@@ -239,4 +239,16 @@
         <item quantity="other">已註冊 %d 台裝置</item>
     </plurals>
     <string name="swarm_widget_description">即時 agent 叢集 — 一覽 agent 數與阻塞數</string>
+    <!-- Managed sessions (v1.27 E2) -->
+    <string name="managed_sessions_header">受管工作階段</string>
+    <string name="managed_new">新增</string>
+    <string name="managed_empty_tap_new">沒有進行中的受管工作階段。點選「新增」即可啟動。</string>
+    <string name="managed_empty_no_device">沒有安裝 Helper 的已配對 Mac。</string>
+    <string name="managed_upgrade_hint">Codex 與 Gemini 需要 %1$s 上的 CLI Pulse Helper 1.15+。Claude 仍可使用。</string>
+    <string name="managed_stop">停止工作階段</string>
+    <string name="managed_cancel">取消工作階段</string>
+    <string name="managed_ended_body">此受管工作階段已不再進行。請在「工作階段」分頁中新增一個以繼續。</string>
+    <string name="managed_terminal_soon_title">即時終端機</string>
+    <string name="managed_terminal_soon_body">互動式終端機串流將於後續 CLI Pulse 更新推出。你仍可在此啟動與停止受管工作階段。</string>
+    <string name="managed_pending_note">正在等待 Helper 啟動此工作階段。</string>
 </resources>

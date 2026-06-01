@@ -26,6 +26,7 @@ import com.clipulse.android.ui.login.LoginScreen
 import com.clipulse.android.ui.overview.OverviewScreen
 import com.clipulse.android.ui.providers.ProviderDetailRoute
 import com.clipulse.android.ui.providers.ProvidersScreen
+import com.clipulse.android.ui.sessions.ManagedSessionDetailRoute
 import com.clipulse.android.ui.sessions.SessionsScreen
 import com.clipulse.android.ui.devices.DevicesScreen
 import com.clipulse.android.ui.settings.SettingsScreen
@@ -163,7 +164,23 @@ fun AppNavigation(
                     onBack = { navController.popBackStack() },
                 )
             }
-            composable(Screen.Sessions.route) { SessionsScreen() }
+            composable(Screen.Sessions.route) {
+                SessionsScreen(
+                    onOpenManagedSession = { sessionId ->
+                        navController.navigate("managed_session/$sessionId")
+                    },
+                )
+            }
+            composable(
+                route = "managed_session/{sessionId}",
+                arguments = listOf(navArgument("sessionId") { type = NavType.StringType }),
+            ) { backStackEntry ->
+                val sessionId = backStackEntry.arguments?.getString("sessionId") ?: ""
+                ManagedSessionDetailRoute(
+                    sessionId = sessionId,
+                    onBack = { navController.popBackStack() },
+                )
+            }
             composable(Screen.Alerts.route) { AlertsScreen() }
             composable(Screen.Settings.route) {
                 SettingsScreen(

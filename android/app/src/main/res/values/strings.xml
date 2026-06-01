@@ -246,4 +246,16 @@
         <item quantity="one">%d device registered</item>
         <item quantity="other">%d devices registered</item>
     </plurals>
+    <!-- Managed sessions (v1.27 E2 — live remote-control sessions) -->
+    <string name="managed_sessions_header">Managed sessions</string>
+    <string name="managed_new">New</string>
+    <string name="managed_empty_tap_new">No active managed sessions. Tap New to start one.</string>
+    <string name="managed_empty_no_device">No paired Mac with the helper installed.</string>
+    <string name="managed_upgrade_hint">Codex and Gemini need CLI Pulse Helper 1.15+ on %1$s. Claude still works.</string>
+    <string name="managed_stop">Stop session</string>
+    <string name="managed_cancel">Cancel session</string>
+    <string name="managed_ended_body">This managed session is no longer active. Start a new one from the Sessions tab to keep working.</string>
+    <string name="managed_terminal_soon_title">Live terminal</string>
+    <string name="managed_terminal_soon_body">Interactive terminal streaming arrives in an upcoming CLI Pulse update. You can still start and stop managed sessions here.</string>
+    <string name="managed_pending_note">Waiting for the helper to start this session.</string>
 </resources>

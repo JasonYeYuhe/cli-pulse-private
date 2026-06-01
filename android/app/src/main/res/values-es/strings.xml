@@ -240,4 +240,16 @@
         <item quantity="other">%d dispositivos registrados</item>
     </plurals>
     <string name="swarm_widget_description">Enjambre de agentes en vivo: agentes y bloqueados de un vistazo</string>
+    <!-- Managed sessions (v1.27 E2) -->
+    <string name="managed_sessions_header">Sesiones gestionadas</string>
+    <string name="managed_new">Nueva</string>
+    <string name="managed_empty_tap_new">No hay sesiones gestionadas activas. Toca Nueva para iniciar una.</string>
+    <string name="managed_empty_no_device">No hay ningún Mac emparejado con el Helper instalado.</string>
+    <string name="managed_upgrade_hint">Codex y Gemini necesitan CLI Pulse Helper 1.15+ en %1$s. Claude sigue funcionando.</string>
+    <string name="managed_stop">Detener sesión</string>
+    <string name="managed_cancel">Cancelar sesión</string>
+    <string name="managed_ended_body">Esta sesión gestionada ya no está activa. Inicia una nueva desde la pestaña Sesiones para seguir trabajando.</string>
+    <string name="managed_terminal_soon_title">Terminal en vivo</string>
+    <string name="managed_terminal_soon_body">La transmisión del terminal interactivo llegará en una próxima actualización de CLI Pulse. Aún puedes iniciar y detener sesiones gestionadas aquí.</string>
+    <string name="managed_pending_note">Esperando a que el Helper inicie esta sesión.</string>
 </resources>

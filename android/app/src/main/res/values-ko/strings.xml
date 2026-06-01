@@ -239,4 +239,16 @@
         <item quantity="other">%d개 등록됨</item>
     </plurals>
     <string name="swarm_widget_description">실시간 에이전트 스웜 — 에이전트와 차단 현황을 한눈에</string>
+    <!-- Managed sessions (v1.27 E2) -->
+    <string name="managed_sessions_header">관리형 세션</string>
+    <string name="managed_new">새로 만들기</string>
+    <string name="managed_empty_tap_new">활성 관리형 세션이 없습니다. 새로 만들기를 눌러 시작하세요.</string>
+    <string name="managed_empty_no_device">헬퍼가 설치된 페어링된 Mac이 없습니다.</string>
+    <string name="managed_upgrade_hint">Codex와 Gemini는 %1$s에서 CLI Pulse Helper 1.15 이상이 필요합니다. Claude는 계속 사용할 수 있습니다.</string>
+    <string name="managed_stop">세션 중지</string>
+    <string name="managed_cancel">세션 취소</string>
+    <string name="managed_ended_body">이 관리형 세션은 더 이상 활성 상태가 아닙니다. 계속하려면 세션 탭에서 새 세션을 시작하세요.</string>
+    <string name="managed_terminal_soon_title">라이브 터미널</string>
+    <string name="managed_terminal_soon_body">대화형 터미널 스트리밍은 향후 CLI Pulse 업데이트에서 제공됩니다. 여기에서 관리형 세션을 시작하고 중지할 수 있습니다.</string>
+    <string name="managed_pending_note">헬퍼가 이 세션을 시작할 때까지 기다리는 중입니다.</string>
 </resources>
