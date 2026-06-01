@@ -198,4 +198,60 @@ class ManagedSessionsViewModelTest {
         coVerify { supabase.remoteSendCommand("s9", RemoteCommandKind.Stop, any()) }
         vm.viewModelScope.cancel()
     }
+
+    // ── input / resize (E5) ─────────────────────────────────
+
+    @Test
+    fun `sendInput base64-encodes raw bytes as an input_raw command`() = runTest {
+        coEvery { supabase.remoteListSessions() } returns emptyList()
+        coEvery { supabase.devices() } returns emptyList()
+        coEvery { supabase.remoteSendCommand(any(), any(), any()) } returns "cmd"
+        val vm = ManagedSessionsViewModel(supabase)
+
+        vm.sendInput("s1", byteArrayOf(0x03))
+
+        val expected = java.util.Base64.getEncoder().encodeToString(byteArrayOf(0x03))
+        coVerify { supabase.remoteSendCommand("s1", RemoteCommandKind.InputRaw, expected) }
+        vm.viewModelScope.cancel()
+    }
+
+    @Test
+    fun `sendInput ignores empty bytes`() = runTest {
+        coEvery { supabase.remoteListSessions() } returns emptyList()
+        coEvery { supabase.devices() } returns emptyList()
+        coEvery { supabase.remoteSendCommand(any(), any(), any()) } returns "cmd"
+        val vm = ManagedSessionsViewModel(supabase)
+
+        vm.sendInput("s1", ByteArray(0))
+
+        coVerify(exactly = 0) { supabase.remoteSendCommand(any(), any(), any()) }
+        vm.viewModelScope.cancel()
+    }
+
+    @Test
+    fun `sendResize formats cols x rows`() = runTest {
+        coEvery { supabase.remoteListSessions() } returns emptyList()
+        coEvery { supabase.devices() } returns emptyList()
+        coEvery { supabase.remoteSendCommand(any(), any(), any()) } returns "cmd"
+        val vm = ManagedSessionsViewModel(supabase)
+
+        vm.sendResize("s1", 80, 24)
+
+        coVerify { supabase.remoteSendCommand("s1", RemoteCommandKind.Resize, "80x24") }
+        vm.viewModelScope.cancel()
+    }
+
+    @Test
+    fun `sendResize skips non-positive dims`() = runTest {
+        coEvery { supabase.remoteListSessions() } returns emptyList()
+        coEvery { supabase.devices() } returns emptyList()
+        coEvery { supabase.remoteSendCommand(any(), any(), any()) } returns "cmd"
+        val vm = ManagedSessionsViewModel(supabase)
+
+        vm.sendResize("s1", 0, 24)
+        vm.sendResize("s1", 80, 0)
+
+        coVerify(exactly = 0) { supabase.remoteSendCommand(any(), any(), any()) }
+        vm.viewModelScope.cancel()
+    }
 }

@@ -10,6 +10,7 @@ import com.clipulse.android.data.model.supportsManagedSessionProvider
 import com.clipulse.android.data.model.supportsMultiCLIManagedSessions
 import com.clipulse.android.data.remote.SupabaseClient
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.util.Base64
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -158,6 +159,41 @@ class ManagedSessionsViewModel @Inject constructor(
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message)
             }
+        }
+    }
+
+    /**
+     * Fire-and-forget raw keystroke bytes for the live terminal as an
+     * `input_raw` command (base64 payload, no CR-append — control bytes such as
+     * 0x03 Ctrl-C reach the PTY intact). Mirrors iOS `sendRemoteSessionInputRaw`;
+     * per-keystroke errors are swallowed (too noisy to surface).
+     */
+    fun sendInput(sessionId: String, bytes: ByteArray) {
+        if (bytes.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                supabase.remoteSendCommand(
+                    sessionId,
+                    RemoteCommandKind.InputRaw,
+                    Base64.getEncoder().encodeToString(bytes),
+                )
+            } catch (_: Exception) { }
+        }
+    }
+
+    /**
+     * Fire-and-forget viewport resize (`"<cols>x<rows>"` payload), mirroring iOS
+     * `resizeRemoteSession`. Skips non-positive dims; clamps to the helper's
+     * UInt16 PTY bound.
+     */
+    fun sendResize(sessionId: String, cols: Int, rows: Int) {
+        if (cols <= 0 || rows <= 0) return
+        val c = cols.coerceIn(1, 32767)
+        val r = rows.coerceIn(1, 32767)
+        viewModelScope.launch {
+            try {
+                supabase.remoteSendCommand(sessionId, RemoteCommandKind.Resize, "${c}x${r}")
+            } catch (_: Exception) { }
         }
     }
 
