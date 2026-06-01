@@ -250,6 +250,7 @@
     <string name="managed_cancel">Cancelar sesión</string>
     <string name="managed_ended_body">Esta sesión gestionada ya no está activa. Inicia una nueva desde la pestaña Sesiones para seguir trabajando.</string>
     <string name="managed_terminal_soon_title">Terminal en vivo</string>
-    <string name="managed_terminal_soon_body">La transmisión del terminal interactivo llegará en una próxima actualización de CLI Pulse. Aún puedes iniciar y detener sesiones gestionadas aquí.</string>
+    <string name="managed_terminal_soon_body">Transmite la salida de esta sesión en vivo. Solo lectura por ahora: el envío de entrada llegará en una actualización posterior.</string>
     <string name="managed_pending_note">Esperando a que el Helper inicie esta sesión.</string>
+    <string name="managed_terminal_readonly_note">Salir de esta pantalla desconecta la transmisión; al volver se reconecta sin reproducción.</string>
 </resources>

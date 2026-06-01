@@ -255,6 +255,7 @@
     <string name="managed_cancel">セッションをキャンセル</string>
     <string name="managed_ended_body">この管理対象セッションはアクティブではなくなりました。続行するにはセッションタブから新しく開始してください。</string>
     <string name="managed_terminal_soon_title">ライブターミナル</string>
-    <string name="managed_terminal_soon_body">インタラクティブなターミナルのストリーミングは今後の CLI Pulse アップデートで提供されます。ここで管理対象セッションの開始と停止は引き続き行えます。</string>
+    <string name="managed_terminal_soon_body">このセッションの出力をライブで表示します。現在は読み取り専用で、入力の送信は今後の更新で提供されます。</string>
     <string name="managed_pending_note">ヘルパーがこのセッションを開始するのを待っています。</string>
+    <string name="managed_terminal_readonly_note">この画面を離れるとストリームが切断され、再度開くと再接続します(再生なし)。</string>
 </resources>
