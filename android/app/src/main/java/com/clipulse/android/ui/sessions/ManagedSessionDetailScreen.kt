@@ -55,6 +55,7 @@ fun ManagedSessionDetailRoute(
             onStop = { viewModel.stop(sessionId) },
             onSendInput = { bytes -> viewModel.sendInput(sessionId, bytes) },
             onSendResize = { cols, rows -> viewModel.sendResize(sessionId, cols, rows) },
+            onRequestTailSnapshot = { sid, maxBytes -> viewModel.requestTailSnapshot(sid, maxBytes) },
             onBack = onBack,
         )
         state.isLoading -> ManagedSessionDetailScaffold(
@@ -84,6 +85,7 @@ fun ManagedSessionDetailScreen(
     onStop: () -> Unit,
     onSendInput: (ByteArray) -> Unit,
     onSendResize: (cols: Int, rows: Int) -> Unit,
+    onRequestTailSnapshot: (sessionId: String, maxBytes: Int) -> Unit,
     onBack: () -> Unit,
 ) {
     val isPending = session.status.equals("pending", ignoreCase = true)
@@ -192,6 +194,7 @@ fun ManagedSessionDetailScreen(
                             config = rtConfig,
                             onSendInput = onSendInput,
                             onSendResize = onSendResize,
+                            onRequestTailSnapshot = onRequestTailSnapshot,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(280.dp)

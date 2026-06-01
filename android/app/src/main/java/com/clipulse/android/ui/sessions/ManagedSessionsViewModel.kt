@@ -197,6 +197,26 @@ class ManagedSessionsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Fire-and-forget tail-snapshot request (`tail_snapshot` command, payload =
+     * maxBytes as a string), used by the E6 terminal controller on a warm
+     * resubscribe to recover recent output. Mirrors iOS
+     * `requestRemoteSessionTailSnapshot`; older helpers reject the kind and the
+     * error is swallowed (the controller's 2 s timeout covers a missing snapshot).
+     */
+    fun requestTailSnapshot(sessionId: String, maxBytes: Int) {
+        if (sessionId.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                supabase.remoteSendCommand(
+                    sessionId,
+                    RemoteCommandKind.TailSnapshot,
+                    maxOf(0, maxBytes).toString(),
+                )
+            } catch (_: Exception) { }
+        }
+    }
+
     /** Clear the one-shot navigation trigger after the host has consumed it. */
     fun consumeStartedSession() {
         if (_state.value.startedSessionId != null) {

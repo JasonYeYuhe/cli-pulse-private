@@ -254,4 +254,17 @@ class ManagedSessionsViewModelTest {
         coVerify(exactly = 0) { supabase.remoteSendCommand(any(), any(), any()) }
         vm.viewModelScope.cancel()
     }
+
+    @Test
+    fun `requestTailSnapshot sends maxBytes as a tail_snapshot command`() = runTest {
+        coEvery { supabase.remoteListSessions() } returns emptyList()
+        coEvery { supabase.devices() } returns emptyList()
+        coEvery { supabase.remoteSendCommand(any(), any(), any()) } returns "cmd"
+        val vm = ManagedSessionsViewModel(supabase)
+
+        vm.requestTailSnapshot("s1", 8192)
+
+        coVerify { supabase.remoteSendCommand("s1", RemoteCommandKind.TailSnapshot, "8192") }
+        vm.viewModelScope.cancel()
+    }
 }
