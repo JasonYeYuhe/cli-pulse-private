@@ -249,6 +249,7 @@
     <string name="managed_cancel">取消工作階段</string>
     <string name="managed_ended_body">此受管工作階段已不再進行。請在「工作階段」分頁中新增一個以繼續。</string>
     <string name="managed_terminal_soon_title">即時終端機</string>
-    <string name="managed_terminal_soon_body">互動式終端機串流將於後續 CLI Pulse 更新推出。你仍可在此啟動與停止受管工作階段。</string>
+    <string name="managed_terminal_soon_body">即時檢視此工作階段的輸出。目前為唯讀 — 傳送輸入將於後續更新推出。</string>
     <string name="managed_pending_note">正在等待 Helper 啟動此工作階段。</string>
+    <string name="managed_terminal_readonly_note">離開此頁面會中斷串流;重新開啟會重新連線(不重播歷史)。</string>
 </resources>

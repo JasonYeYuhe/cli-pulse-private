@@ -20,7 +20,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.clipulse.android.R
+import androidx.compose.runtime.saveable.rememberSaveable
 import com.clipulse.android.data.model.RemoteSession
+import com.clipulse.android.data.remote.RemoteRealtimeConfig
+import com.clipulse.android.data.remote.SupabaseConfig
+import com.clipulse.android.terminal.RemoteTerminalPanel
 import com.clipulse.android.ui.components.LifecyclePollingEffect
 import com.clipulse.android.ui.components.icon
 
@@ -79,6 +83,7 @@ fun ManagedSessionDetailScreen(
     onBack: () -> Unit,
 ) {
     val isPending = session.status.equals("pending", ignoreCase = true)
+    val isRunning = session.status.equals("running", ignoreCase = true)
     val kind = managedProviderKind(session.provider)
     val tint = kind?.let { com.clipulse.android.ui.theme.providerColor(it) }
         ?: MaterialTheme.colorScheme.primary
@@ -145,27 +150,59 @@ fun ManagedSessionDetailScreen(
 
         Spacer(Modifier.height(16.dp))
 
-        // Live-terminal placeholder — the real stream arrives in E3/E4.
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Terminal, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        stringResource(R.string.managed_terminal_soon_title),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    stringResource(R.string.managed_terminal_soon_body),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+        // v1.27 E4b — read-only live terminal, gated on a running/pending
+        // session + a configured Supabase project. Default OFF (opt-in), the
+        // same posture as the iOS `showLiveTerminal` toggle. Sending input and
+        // reconnect-across-lifecycle land in E5/E6.
+        val rtConfig = remember {
+            if (SupabaseConfig.isConfigured) {
+                RemoteRealtimeConfig(SupabaseConfig.url, SupabaseConfig.anonKey)
+            } else {
+                null
             }
         }
+        if (rtConfig != null && (isRunning || isPending)) {
+            var showTerminal by rememberSaveable(session.id) { mutableStateOf(false) }
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Terminal, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            stringResource(R.string.managed_terminal_soon_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(checked = showTerminal, onCheckedChange = { showTerminal = it })
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        stringResource(R.string.managed_terminal_soon_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (showTerminal) {
+                        Spacer(Modifier.height(12.dp))
+                        RemoteTerminalPanel(
+                            sessionId = session.id,
+                            config = rtConfig,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(280.dp)
+                                .clip(MaterialTheme.shapes.medium),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            stringResource(R.string.managed_terminal_readonly_note),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
 
-        Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(16.dp))
+        }
 
         OutlinedButton(
             onClick = onStop,

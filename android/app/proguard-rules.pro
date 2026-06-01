@@ -33,3 +33,11 @@
 # SupabaseClient — JSON parsing of API responses
 -keep class com.clipulse.android.data.remote.** { *; }
 -keepclassmembers class com.clipulse.android.data.remote.** { *; }
+
+# v1.27 E4b — WebView JS bridge. R8 (isMinifyEnabled=true on release) would
+# otherwise strip/rename the @JavascriptInterface method, breaking the
+# AndroidBridge.postMessage(...) shim the xterm.js bundle calls. Keep every
+# @JavascriptInterface-annotated method (the RemoteTerminalWebView bridge).
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}

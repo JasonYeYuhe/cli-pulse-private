@@ -254,6 +254,7 @@
     <string name="managed_cancel">取消会话</string>
     <string name="managed_ended_body">此托管会话已不再活动。请在"会话"标签页中新建一个以继续。</string>
     <string name="managed_terminal_soon_title">实时终端</string>
-    <string name="managed_terminal_soon_body">交互式终端串流将在后续 CLI Pulse 更新中推出。你仍可在此启动和停止托管会话。</string>
+    <string name="managed_terminal_soon_body">实时查看此会话的输出。目前为只读 — 发送输入将在后续更新中推出。</string>
     <string name="managed_pending_note">正在等待 Helper 启动此会话。</string>
+    <string name="managed_terminal_readonly_note">离开此页面会断开串流;重新打开会重连(不重放历史)。</string>
 </resources>
