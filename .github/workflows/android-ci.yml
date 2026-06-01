@@ -64,6 +64,12 @@ jobs:
         # values-es / values-ko / values-zh-rTW were ~30% behind.
         run: python3 ../scripts/ci_check_android_strings_parity.py
 
+      - name: Terminal bundle parity guard (v1.27 E4)
+        # Fails CI if the vendored xterm.js bundle under android assets drifts
+        # from the iOS source of truth (all files byte-identical except the
+        # Android-shimmed index.html). Prevents silent xterm.js divergence (R3).
+        run: python3 ../scripts/ci_check_terminal_bundle_parity.py
+
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --no-daemon
 
