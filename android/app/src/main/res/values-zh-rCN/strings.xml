@@ -257,4 +257,9 @@
     <string name="managed_terminal_soon_body">实时查看此会话的输出。目前为只读 — 发送输入将在后续更新中推出。</string>
     <string name="managed_pending_note">正在等待 Helper 启动此会话。</string>
     <string name="managed_terminal_readonly_note">离开此页面会断开串流;重新打开会重连(不重放历史)。</string>
+    <string name="managed_approval_title">待处理权限</string>
+    <string name="managed_approval_high_risk">高风险</string>
+    <string name="managed_approval_approve">批准</string>
+    <string name="managed_approval_deny">拒绝</string>
+    <string name="managed_approval_high_risk_note">高风险请求必须在 Mac 上批准。</string>
 </resources>

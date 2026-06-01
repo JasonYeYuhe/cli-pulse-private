@@ -25,8 +25,13 @@ import com.clipulse.android.data.model.RemoteSession
 import com.clipulse.android.data.remote.RemoteRealtimeConfig
 import com.clipulse.android.data.remote.SupabaseConfig
 import com.clipulse.android.terminal.RemoteTerminalPanel
+import androidx.compose.material.icons.filled.Warning
+import com.clipulse.android.data.model.RemotePermissionDecision
+import com.clipulse.android.data.model.RemotePermissionRequest
 import com.clipulse.android.ui.components.LifecyclePollingEffect
 import com.clipulse.android.ui.components.icon
+import com.clipulse.android.ui.theme.PulseError
+import com.clipulse.android.ui.theme.PulseWarning
 
 /**
  * v1.27 E2 — navigation entry for a managed session's detail. Reuses
@@ -48,14 +53,17 @@ fun ManagedSessionDetailRoute(
     LifecyclePollingEffect(viewModel::setPolling)
     val state by viewModel.state.collectAsState()
     val session = state.sessions.find { it.id == sessionId }
+    val pendingApproval = state.pendingApprovals.firstOrNull { it.sessionId == sessionId }
 
     when {
         session != null -> ManagedSessionDetailScreen(
             session = session,
+            pendingApproval = pendingApproval,
             onStop = { viewModel.stop(sessionId) },
             onSendInput = { bytes -> viewModel.sendInput(sessionId, bytes) },
             onSendResize = { cols, rows -> viewModel.sendResize(sessionId, cols, rows) },
             onRequestTailSnapshot = { sid, maxBytes -> viewModel.requestTailSnapshot(sid, maxBytes) },
+            onDecideApproval = { id, decision -> viewModel.decideApproval(id, decision) },
             onBack = onBack,
         )
         state.isLoading -> ManagedSessionDetailScaffold(
@@ -82,10 +90,12 @@ fun ManagedSessionDetailRoute(
 @Composable
 fun ManagedSessionDetailScreen(
     session: RemoteSession,
+    pendingApproval: RemotePermissionRequest?,
     onStop: () -> Unit,
     onSendInput: (ByteArray) -> Unit,
     onSendResize: (cols: Int, rows: Int) -> Unit,
     onRequestTailSnapshot: (sessionId: String, maxBytes: Int) -> Unit,
+    onDecideApproval: (requestId: String, decision: RemotePermissionDecision) -> Unit,
     onBack: () -> Unit,
 ) {
     val isPending = session.status.equals("pending", ignoreCase = true)
@@ -144,6 +154,11 @@ fun ManagedSessionDetailScreen(
                     }
                 }
             }
+        }
+
+        if (pendingApproval != null) {
+            Spacer(Modifier.height(12.dp))
+            PendingApprovalCard(request = pendingApproval, onDecide = onDecideApproval)
         }
 
         if (isPending) {
@@ -230,6 +245,79 @@ fun ManagedSessionDetailScreen(
                     if (isPending) R.string.managed_cancel else R.string.managed_stop
                 )
             )
+        }
+    }
+}
+
+/**
+ * Inline pending-permission card (v1.27 E7), mirroring the iOS
+ * `pendingApprovalCard`. Approve is disabled for high-risk requests — those must
+ * be approved on the Mac directly.
+ */
+@Composable
+private fun PendingApprovalCard(
+    request: RemotePermissionRequest,
+    onDecide: (requestId: String, decision: RemotePermissionDecision) -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Warning, contentDescription = null, tint = PulseWarning)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    stringResource(R.string.managed_approval_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                if (request.isHighRisk) {
+                    Text(
+                        stringResource(R.string.managed_approval_high_risk),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = PulseError,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                request.toolName.ifBlank { request.provider },
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (request.summary.isNotBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    request.summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { onDecide(request.id, RemotePermissionDecision.Deny) }) {
+                    Text(stringResource(R.string.managed_approval_deny))
+                }
+                Button(
+                    onClick = { onDecide(request.id, RemotePermissionDecision.Approve) },
+                    enabled = !request.isHighRisk,
+                ) {
+                    Text(stringResource(R.string.managed_approval_approve))
+                }
+            }
+            if (request.isHighRisk) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    stringResource(R.string.managed_approval_high_risk_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = PulseError,
+                )
+            }
         }
     }
 }

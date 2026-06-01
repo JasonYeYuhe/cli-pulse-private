@@ -354,6 +354,33 @@ class SupabaseClient(
         rpc("remote_app_send_command", params).optString("command_id")
     }
 
+    // ── Remote permission approvals (v1.27 E7) ───────────
+    // Mirror of the iOS APIClient remote_app_list_pending_approvals /
+    // remote_app_decide_permission calls; JWT-gated + RC-gated server-side.
+
+    /** `remote_app_list_pending_approvals` → still-pending permission requests across the user's devices. */
+    suspend fun remoteListPendingApprovals(): List<RemotePermissionRequest> = withContext(Dispatchers.IO) {
+        parseRemotePermissionRequests(rpcArray("remote_app_list_pending_approvals"))
+    }
+
+    /**
+     * `remote_app_decide_permission` → approve/deny a pending request. `scope`
+     * defaults to `once` (server downgrades to `once` for Codex anyway, Phase 1).
+     */
+    suspend fun remoteDecidePermission(
+        requestId: String,
+        decision: RemotePermissionDecision,
+        scope: String = "once",
+        decidedByDeviceId: String? = null,
+    ): Unit = withContext(Dispatchers.IO) {
+        val params = JSONObject()
+            .put("p_request_id", requestId)
+            .put("p_decision", decision.wire)
+            .put("p_scope", scope)
+            .put("p_decided_by_device_id", decidedByDeviceId ?: JSONObject.NULL)
+        rpc("remote_app_decide_permission", params)
+    }
+
     // ── Alerts ───────────────────────────────────────────
 
     suspend fun alerts(): List<AlertRecord> = withContext(Dispatchers.IO) {
@@ -1201,5 +1228,29 @@ internal fun parseRemoteSessionEvents(arr: JSONArray): List<RemoteSessionEvent> 
             kind = d.optString("kind"),
             payload = d.optString("payload"),
             createdAt = d.optString("created_at"),
+        )
+    }
+
+/**
+ * v1.27 E7 — pure `remote_app_list_pending_approvals` JSON → model parser,
+ * extracted from [SupabaseClient.remoteListPendingApprovals] for unit-testability.
+ * Lenient `opt*` reads; nullable fields decode an absent key or SQL/JSON null to
+ * `null`. Mirrors the iOS RemotePermissionRequest wire shape 1:1.
+ */
+internal fun parseRemotePermissionRequests(arr: JSONArray): List<RemotePermissionRequest> =
+    (0 until arr.length()).map { i ->
+        val d = arr.getJSONObject(i)
+        RemotePermissionRequest(
+            id = d.optString("id"),
+            sessionId = if (d.isNull("session_id")) null else d.optString("session_id"),
+            deviceId = d.optString("device_id"),
+            deviceName = if (d.isNull("device_name")) null else d.optString("device_name"),
+            provider = d.optString("provider"),
+            toolName = d.optString("tool_name"),
+            summary = d.optString("summary"),
+            risk = d.optString("risk"),
+            status = d.optString("status"),
+            createdAt = d.optString("created_at"),
+            expiresAt = d.optString("expires_at"),
         )
     }

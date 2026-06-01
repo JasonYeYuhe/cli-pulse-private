@@ -252,4 +252,9 @@
     <string name="managed_terminal_soon_body">即時檢視此工作階段的輸出。目前為唯讀 — 傳送輸入將於後續更新推出。</string>
     <string name="managed_pending_note">正在等待 Helper 啟動此工作階段。</string>
     <string name="managed_terminal_readonly_note">離開此頁面會中斷串流;重新開啟會重新連線(不重播歷史)。</string>
+    <string name="managed_approval_title">待處理權限</string>
+    <string name="managed_approval_high_risk">高風險</string>
+    <string name="managed_approval_approve">核准</string>
+    <string name="managed_approval_deny">拒絕</string>
+    <string name="managed_approval_high_risk_note">高風險請求必須在 Mac 上核准。</string>
 </resources>
