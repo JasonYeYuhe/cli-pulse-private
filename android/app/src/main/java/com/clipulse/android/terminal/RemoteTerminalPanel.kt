@@ -8,22 +8,23 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import com.clipulse.android.data.remote.RemoteRealtimeConfig
-import com.clipulse.android.data.remote.RemoteSessionEventStream
 
 /**
- * v1.27 E4b/E5 — Compose host for the live terminal. Hosts a
- * [RemoteTerminalWebView] and subscribes the E3 [RemoteSessionEventStream] for
- * `sessionId`, pumping each stdout/stderr chunk into the WebView (E4b). E5 wires
- * the input path: xterm `onData` → [onSendInput] (raw bytes → `input_raw`),
- * `ResizeObserver` → [onSendResize] (→ `resize`), plus the soft-keyboard
- * [RemoteTerminalKeyBar] below the terminal. Reconnect across lifecycle is E6.
+ * v1.27 E4b/E5/E6 — Compose host for the live terminal. Hosts a
+ * [RemoteTerminalWebView] and drives it through a [RemoteTerminalController]:
+ * the controller owns the E3 stream subscription, the warm/cold snapshot
+ * recovery (E6), and the jittered reconnect; the Activity lifecycle pauses the
+ * stream on background and resumes (with a fresh tail-snapshot) on foreground.
  *
- * The subscription is cancelled when the panel leaves composition; the WebView
- * is destroyed in `onRelease` (after it has been detached, which
- * `WebView.destroy()` requires). Render + input are device-verified (no
- * instrumented tests in CI).
+ * Output: chunks → host `pushStdout` → coalescer → `window.pushChunk`.
+ * Input (E5): xterm `onData` → [onSendInput] (`input_raw`); `ResizeObserver` →
+ * [onSendResize] (`resize`); the [RemoteTerminalKeyBar] below the terminal.
+ *
+ * Render + reconnect/lifecycle are device-verified (no instrumented tests in CI);
+ * the controller's state machines are unit-tested in isolation.
  */
 @Composable
 fun RemoteTerminalPanel(
@@ -31,27 +32,33 @@ fun RemoteTerminalPanel(
     config: RemoteRealtimeConfig,
     onSendInput: (ByteArray) -> Unit,
     onSendResize: (cols: Int, rows: Int) -> Unit,
+    onRequestTailSnapshot: (sessionId: String, maxBytes: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val host = remember(sessionId) { RemoteTerminalWebView(context) }
 
     // Keep the host's input/resize callbacks pointed at the latest lambdas
-    // each recomposition (the host stores them as vars; xterm's onData and the
-    // ResizeObserver invoke them from the JS bridge).
+    // each recomposition (xterm's onData / ResizeObserver invoke them).
     SideEffect {
         host.onStdin = { data -> onSendInput(data.toByteArray(Charsets.UTF_8)) }
         host.onResize = { cols, rows -> onSendResize(cols, rows) }
     }
 
     DisposableEffect(sessionId) {
-        val stream = RemoteSessionEventStream(config)
-        val subscription = stream.subscribeTerminal(
+        val controller = RemoteTerminalController(
             sessionId = sessionId,
-            onChunk = { chunk -> host.pushStdout(chunk.data) },
-            onDisconnect = { /* E5: still no auto-reconnect — E6 owns backoff. */ },
+            config = config,
+            onWrite = { bytes -> host.pushStdout(bytes) },
+            onRequestTailSnapshot = onRequestTailSnapshot,
         )
-        onDispose { subscription.cancel() }
+        lifecycleOwner.lifecycle.addObserver(controller)
+        controller.start()
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(controller)
+            controller.cancel()
+        }
     }
 
     Column(modifier = modifier) {
