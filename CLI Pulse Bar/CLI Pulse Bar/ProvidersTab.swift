@@ -260,6 +260,11 @@ struct EnhancedProviderCard: View {
                                 .font(.system(size: 8))
                                 .foregroundStyle(.quaternary)
                         }
+                        // Provider service-status (incident/maintenance) — renders
+                        // nothing unless this provider's status page reports an issue.
+                        if let kind = ProviderKind(rawValue: provider.provider) {
+                            ServiceStatusBadge(provider: kind)
+                        }
                     }
                 }
                 Spacer()

@@ -60,6 +60,16 @@ public enum ServiceStatusIndicator: String, Codable, CaseIterable, Sendable {
     /// `maintenance` and `unknown` are intentionally excluded — neither is an
     /// unexpected outage.
     public var isIncident: Bool { severity >= ServiceStatusIndicator.minor.severity }
+
+    /// Whether the UI should surface a status badge at all: a real incident OR
+    /// planned maintenance. `operational` and `unknown` stay silent — no badge
+    /// clutter when all is well or when there is nothing meaningful to report.
+    public var shouldSurface: Bool {
+        switch self {
+        case .maintenance, .minor, .major, .critical: return true
+        case .operational, .unknown: return false
+        }
+    }
 }
 
 // MARK: - Snapshot
