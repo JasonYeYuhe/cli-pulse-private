@@ -162,8 +162,12 @@ class ManagedSessionsViewModel @Inject constructor(
             try {
                 supabase.remoteSendCommand(sessionId, RemoteCommandKind.Stop)
                 // Optimistic refresh — the row drops out of
-                // remote_app_list_sessions once the helper acks the stop.
-                val sessions = supabase.remoteListSessions()
+                // remote_app_list_sessions once the helper acks the stop. A
+                // refresh flap here must NOT surface as a "stop failed" error
+                // (the stop already succeeded); keep the prior snapshot, same as
+                // start().
+                val sessions = runCatching { supabase.remoteListSessions() }
+                    .getOrDefault(_state.value.sessions)
                 _state.value = _state.value.copy(sessions = sessions)
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message)
