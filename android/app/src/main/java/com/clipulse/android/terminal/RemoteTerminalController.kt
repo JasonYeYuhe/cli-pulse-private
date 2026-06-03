@@ -36,7 +36,15 @@ class RemoteTerminalController(
 ) : DefaultLifecycleObserver {
 
     private val stream = RemoteSessionEventStream(config, client)
-    private val coordinator = RemoteTerminalSnapshotCoordinator(sessionId, onWrite)
+    // onOutcome fires once the buffer drains (snapshot recovered OR 2 s timeout):
+    // cancel the still-pending timeout job so a timely recovery doesn't leave a
+    // coroutine ticking for the remainder of the window (matches the iOS
+    // Coordinator, which cancels snapshotTimeoutTask inside its drain helper).
+    private val coordinator = RemoteTerminalSnapshotCoordinator(
+        sessionId,
+        onWrite,
+        onOutcome = { snapshotTimeoutJob?.cancel() },
+    )
 
     private var cancellable: RemoteSessionEventStream.Cancellable? = null
     private var activeSessionId: String? = null

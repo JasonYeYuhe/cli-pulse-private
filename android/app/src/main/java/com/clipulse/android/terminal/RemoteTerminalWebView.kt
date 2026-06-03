@@ -4,8 +4,10 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import java.io.ByteArrayInputStream
 import java.util.Base64
 
 /**
@@ -78,6 +80,27 @@ class RemoteTerminalWebView(context: Context) {
                 val url = request.url?.toString().orEmpty()
                 return url != BUNDLE_URL
             }
+
+            // R2 hardening (post-merge audit): shouldOverrideUrlLoading only
+            // covers main-frame navigations — sub-resource loads (a fetch/XHR/
+            // WebSocket/img a future xterm.js addon or injected script might
+            // attempt) bypass it. Gate those here too: only the local
+            // `file://android_asset` bundle may load; everything else is denied
+            // with a 403 rather than reaching the network. Belt-and-suspenders
+            // (the vendored bundle has no outbound calls today, and
+            // allowFileAccessFromFileURLs is already off).
+            override fun shouldInterceptRequest(
+                view: WebView,
+                request: WebResourceRequest,
+            ): WebResourceResponse? =
+                if (shouldBlockResourceUrl(request.url?.toString())) {
+                    WebResourceResponse(
+                        "text/plain", "utf-8", 403, "Blocked",
+                        emptyMap(), ByteArrayInputStream(ByteArray(0)),
+                    )
+                } else {
+                    null // file:///android_asset/* — let the WebView serve it normally.
+                }
         }
         webView.addJavascriptInterface(Bridge(), BRIDGE_NAME)
         webView.loadUrl(BUNDLE_URL)
@@ -149,4 +172,18 @@ class RemoteTerminalWebView(context: Context) {
         const val BUNDLE_URL = "file:///android_asset/terminal/index.html"
         private const val BRIDGE_NAME = "AndroidBridge"
     }
+}
+
+/**
+ * R2 hardening predicate for [RemoteTerminalWebView]'s resource interceptor.
+ * The terminal only ever loads its bundled `file:///android_asset/terminal/`
+ * assets, so every other scheme (http/https/ws/data/content/javascript/…) is
+ * blocked — a future xterm.js addon or an injected script can't reach the
+ * network. Pure (no Android types) so it is unit-testable on the JVM, like
+ * [parseBridgeMessage].
+ */
+internal fun shouldBlockResourceUrl(url: String?): Boolean {
+    if (url.isNullOrBlank()) return true
+    val scheme = url.substringBefore(':', missingDelimiterValue = "").lowercase()
+    return scheme != "file"
 }

@@ -200,6 +200,25 @@ class ManagedSessionsViewModelTest {
         vm.viewModelScope.cancel()
     }
 
+    @Test
+    fun `stop does not surface an error when the post-stop refresh flaps`() = runTest {
+        // First call satisfies the init refresh; the second (stop's optimistic
+        // refresh) throws — that flap must not be reported as a failed stop.
+        coEvery { supabase.remoteListSessions() } returns
+            listOf(session(id = "s9")) andThenThrows RuntimeException("flap")
+        coEvery { supabase.devices() } returns listOf(mac())
+        coEvery { supabase.remoteSendCommand(any(), any(), any()) } returns "cmd-stop"
+        val vm = ManagedSessionsViewModel(supabase)
+
+        vm.stop("s9")
+
+        coVerify { supabase.remoteSendCommand("s9", RemoteCommandKind.Stop, any()) }
+        // Stop succeeded; the refresh flap is swallowed, prior snapshot retained.
+        assertNull(vm.state.value.error)
+        assertEquals(1, vm.state.value.sessions.size)
+        vm.viewModelScope.cancel()
+    }
+
     // ── input / resize (E5) ─────────────────────────────────
 
     @Test
