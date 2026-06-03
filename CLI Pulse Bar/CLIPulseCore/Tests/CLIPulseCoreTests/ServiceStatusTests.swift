@@ -51,6 +51,16 @@ final class ServiceStatusTests: XCTestCase {
         }
     }
 
+    func testShouldSurface() {
+        // silent when all is well or unknowable
+        XCTAssertFalse(ServiceStatusIndicator.operational.shouldSurface)
+        XCTAssertFalse(ServiceStatusIndicator.unknown.shouldSurface)
+        // surfaced for maintenance + every real incident level
+        for surfaced in [ServiceStatusIndicator.maintenance, .minor, .major, .critical] {
+            XCTAssertTrue(surfaced.shouldSurface, "\(surfaced) should surface a badge")
+        }
+    }
+
     func testMostSevereReduction() {
         let worst = [ServiceStatusIndicator.operational, .minor, .critical, .unknown]
             .max(by: { $0.severity < $1.severity })

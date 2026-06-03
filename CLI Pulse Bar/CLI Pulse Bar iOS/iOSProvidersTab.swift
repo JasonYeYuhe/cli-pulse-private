@@ -198,6 +198,11 @@ struct iOSEnhancedProviderCard: View {
                         if showCost {
                             CostStatusBadge(status: provider.cost_status_today)
                         }
+                        // Provider service-status (incident/maintenance) — renders
+                        // nothing unless this provider's status page reports an issue.
+                        if let kind = ProviderKind(rawValue: provider.provider) {
+                            ServiceStatusBadge(provider: kind)
+                        }
                     }
                 }
                 Spacer()
