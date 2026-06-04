@@ -9,6 +9,7 @@
 // verifiable on-device.
 
 import Foundation
+import UserNotifications
 
 // MARK: - CheckID → localized strings (no SwiftUI)
 
@@ -54,10 +55,53 @@ public extension RemoteControlHealth.Report {
     }
 }
 
+// MARK: - Inputs builders (plumbing for the Settings hosts)
+
+public extension RemoteControlHealth.Inputs {
+    /// Build inputs from live app state. The mac/helper checks use the
+    /// most-recently-synced Mac among `devices` as the representative device.
+    static func from(
+        isPaired: Bool,
+        remoteControlEnabled: Bool,
+        devices: [DeviceRecord],
+        notificationsAuthorized: Bool?,
+        realtimeConnected: Bool? = nil,
+        now: Date = Date()
+    ) -> RemoteControlHealth.Inputs {
+        let macs = devices.filter { $0.type.caseInsensitiveCompare("Mac") == .orderedSame }
+        let target = macs.max {
+            (sharedISO8601Parse($0.last_sync_at ?? "") ?? .distantPast)
+                < (sharedISO8601Parse($1.last_sync_at ?? "") ?? .distantPast)
+        }
+        return RemoteControlHealth.Inputs(
+            isPaired: isPaired,
+            remoteControlEnabled: remoteControlEnabled,
+            hasMac: target != nil,
+            macLastSyncAt: target.flatMap { sharedISO8601Parse($0.last_sync_at ?? "") },
+            helperVersion: target?.helper_version,
+            notificationsAuthorized: notificationsAuthorized,
+            realtimeConnected: realtimeConnected,
+            now: now
+        )
+    }
+}
+
+public extension RemoteControlHealth {
+    /// Current notification authorization for the `notifications` check
+    /// (true = authorized). Called from the Settings host's `.task`.
+    static func currentNotificationAuthorization() async -> Bool? {
+        await withCheckedContinuation { (cont: CheckedContinuation<Bool?, Never>) in
+            UNUserNotificationCenter.current().getNotificationSettings { settings in
+                cont.resume(returning: settings.authorizationStatus == .authorized)
+            }
+        }
+    }
+}
+
 #if canImport(SwiftUI)
 import SwiftUI
 
-extension RemoteControlHealth.Status {
+public extension RemoteControlHealth.Status {
     /// SF Symbol for the status icon.
     var iconName: String {
         switch self {
