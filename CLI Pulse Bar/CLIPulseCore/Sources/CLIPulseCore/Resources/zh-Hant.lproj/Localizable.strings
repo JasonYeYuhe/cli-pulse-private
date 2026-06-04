@@ -65,6 +65,24 @@
 "providers.show_all_hint" = "點按「顯示全部」檢視已禁用的服務商";
 "providers.search_placeholder" = "搜尋服務商";
 "providers.no_search_match" = "沒有符合的服務商";
+
+/* Remote Control diagnostics */
+"diagnostics.title" = "診斷";
+"diagnostics.overall_ok" = "一切正常";
+"diagnostics.overall_attention" = "需要注意";
+"diagnostics.copy" = "複製以供支援";
+"diagnostics.check_paired" = "帳戶已同步";
+"diagnostics.check_remote_control" = "遠端控制";
+"diagnostics.check_mac" = "Mac 可連線";
+"diagnostics.check_helper" = "助手已安裝";
+"diagnostics.check_notifications" = "通知";
+"diagnostics.check_realtime" = "即時連線";
+"diagnostics.fix_paired" = "請登入並同步你的 Mac。";
+"diagnostics.fix_remote_control" = "在「設定 → 隱私權」中開啟遠端控制。";
+"diagnostics.fix_mac" = "請確保你的 Mac 處於喚醒、連線狀態並正在執行 CLI Pulse。";
+"diagnostics.fix_helper" = "請在你的 Mac 上安裝或更新 CLI Pulse 助手。";
+"diagnostics.fix_notifications" = "允許通知以接收審批請求。";
+"diagnostics.fix_realtime" = "正在重新連線，請檢查你的網路連線。";
 "providers.this_week" = "本週";
 "providers.quota" = "配額";
 "providers.status" = "狀態";

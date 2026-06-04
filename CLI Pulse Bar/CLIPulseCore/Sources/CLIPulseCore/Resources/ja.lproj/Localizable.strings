@@ -65,6 +65,24 @@
 "providers.show_all_hint" = "「すべて表示」をタップして無効なプロバイダーを表示";
 "providers.search_placeholder" = "プロバイダーを検索";
 "providers.no_search_match" = "検索に一致するプロバイダーがありません";
+
+/* Remote Control diagnostics */
+"diagnostics.title" = "診断";
+"diagnostics.overall_ok" = "すべて正常";
+"diagnostics.overall_attention" = "要対応";
+"diagnostics.copy" = "サポート用にコピー";
+"diagnostics.check_paired" = "アカウント同期済み";
+"diagnostics.check_remote_control" = "リモートコントロール";
+"diagnostics.check_mac" = "Mac に到達可能";
+"diagnostics.check_helper" = "ヘルパー導入済み";
+"diagnostics.check_notifications" = "通知";
+"diagnostics.check_realtime" = "ライブ接続";
+"diagnostics.fix_paired" = "サインインして Mac を同期してください。";
+"diagnostics.fix_remote_control" = "設定 → プライバシーでリモートコントロールをオンにしてください。";
+"diagnostics.fix_mac" = "Mac がスリープせず、オンラインで CLI Pulse が動作していることを確認してください。";
+"diagnostics.fix_helper" = "Mac に CLI Pulse ヘルパーをインストールまたは更新してください。";
+"diagnostics.fix_notifications" = "承認リクエストを受け取るには通知を許可してください。";
+"diagnostics.fix_realtime" = "再接続中です。ネットワーク接続を確認してください。";
 "providers.this_week" = "今週";
 "providers.quota" = "クォータ";
 "providers.status" = "ステータス";

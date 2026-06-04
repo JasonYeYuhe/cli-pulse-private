@@ -65,6 +65,24 @@
 "providers.show_all_hint" = "点按「显示全部」查看已禁用的服务商";
 "providers.search_placeholder" = "搜索服务商";
 "providers.no_search_match" = "没有匹配的服务商";
+
+/* Remote Control diagnostics */
+"diagnostics.title" = "诊断";
+"diagnostics.overall_ok" = "一切正常";
+"diagnostics.overall_attention" = "需要注意";
+"diagnostics.copy" = "复制以供支持";
+"diagnostics.check_paired" = "账户已同步";
+"diagnostics.check_remote_control" = "远程控制";
+"diagnostics.check_mac" = "Mac 可访问";
+"diagnostics.check_helper" = "助手已安装";
+"diagnostics.check_notifications" = "通知";
+"diagnostics.check_realtime" = "实时连接";
+"diagnostics.fix_paired" = "请登录并同步你的 Mac。";
+"diagnostics.fix_remote_control" = "在“设置 → 隐私”中开启远程控制。";
+"diagnostics.fix_mac" = "请确保你的 Mac 处于唤醒、联网状态并正在运行 CLI Pulse。";
+"diagnostics.fix_helper" = "请在你的 Mac 上安装或更新 CLI Pulse 助手。";
+"diagnostics.fix_notifications" = "允许通知以接收审批请求。";
+"diagnostics.fix_realtime" = "正在重新连接，请检查你的网络连接。";
 "providers.this_week" = "本周";
 "providers.quota" = "配额";
 "providers.status" = "状态";
