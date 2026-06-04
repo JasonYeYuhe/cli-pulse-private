@@ -100,6 +100,8 @@ public enum L10n {
         public static var emptyHint: String { tr("providers.empty_hint") }
         public static var allHidden: String { tr("providers.all_hidden") }
         public static var showAllHint: String { tr("providers.show_all_hint") }
+        public static var searchPlaceholder: String { tr("providers.search_placeholder") }
+        public static var noSearchMatch: String { tr("providers.no_search_match") }
         public static var thisWeek: String { tr("providers.this_week") }
         public static var quota: String { tr("providers.quota") }
         public static var status: String { tr("providers.status") }
