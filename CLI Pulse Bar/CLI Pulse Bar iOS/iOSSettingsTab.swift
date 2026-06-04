@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import AuthenticationServices
 import CryptoKit
 import CLIPulseCore
@@ -20,6 +21,7 @@ struct iOSSettingsTab: View {
     // anywhere on this screen, so the user thought the delete succeeded.
     @State private var deleteAccountErrorMessage: String?
     @State private var alertThresholds: AlertThresholds = AlertThresholdsStore.load()
+    @State private var rcDiagNotifAuthorized: Bool? = nil
     @State private var showRemoteControlConsent = false
 
     private var isIPad: Bool { horizontalSizeClass == .regular }
@@ -326,6 +328,34 @@ struct iOSSettingsTab: View {
                         // iter5 P1: lock the toggle while a PATCH is in
                         // flight so re-entrant taps can't race the request.
                         .disabled(state.remoteControlSaving)
+
+                        // Remote Control diagnostics — a collapsible health
+                        // panel so the user (and support) can see why RC isn't
+                        // working. Label carries the overall status icon.
+                        let rcReport = RemoteControlHealth.evaluate(.from(
+                            isPaired: state.isPaired,
+                            remoteControlEnabled: state.remoteControlEnabled,
+                            devices: state.devices,
+                            notificationsAuthorized: rcDiagNotifAuthorized))
+                        DisclosureGroup {
+                            VStack(alignment: .leading, spacing: 10) {
+                                RemoteControlHealthView(report: rcReport)
+                                Button(L10n.diagnostics.copy) {
+                                    UIPasteboard.general.string = rcReport.supportText()
+                                }
+                                .font(.caption)
+                            }
+                            .padding(.vertical, 4)
+                            .task {
+                                rcDiagNotifAuthorized = await RemoteControlHealth.currentNotificationAuthorization()
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: rcReport.overall.iconName)
+                                    .foregroundStyle(rcReport.overall.tint)
+                                Text(L10n.diagnostics.title)
+                            }
+                        }
 
                         // Always-visible NavigationLink when Remote Control
                         // is on, even at zero pending — that's how the user

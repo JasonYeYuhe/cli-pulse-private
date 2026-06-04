@@ -17,6 +17,7 @@ struct AdvancedSection: View {
 
     @State private var showGitTrackingConsent = false
     @State private var showRemoteControlConsent = false
+    @State private var rcDiagNotifAuthorized: Bool? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -218,6 +219,8 @@ struct AdvancedSection: View {
                 remoteControlConsentCard
             }
 
+            remoteControlDiagnostics
+
             Divider()
 
             SectionHeader(title: "Debug", icon: "ladybug")
@@ -256,6 +259,42 @@ struct AdvancedSection: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                 }
+            }
+        }
+    }
+
+    /// Remote Control diagnostics — a collapsible health panel beneath the
+    /// toggle so the user (and support) can see *why* RC isn't working. The
+    /// disclosure label carries the overall status icon for an at-a-glance read.
+    private var remoteControlDiagnostics: some View {
+        let report = RemoteControlHealth.evaluate(.from(
+            isPaired: state.isPaired,
+            remoteControlEnabled: state.remoteControlEnabled,
+            devices: state.devices,
+            notificationsAuthorized: rcDiagNotifAuthorized))
+        return DisclosureGroup {
+            VStack(alignment: .leading, spacing: 8) {
+                RemoteControlHealthView(report: report)
+                Button(L10n.diagnostics.copy) {
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.setString(report.supportText(), forType: .string)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 10))
+                .foregroundStyle(PulseTheme.accent)
+            }
+            .padding(.top, 4)
+            .task {
+                rcDiagNotifAuthorized = await RemoteControlHealth.currentNotificationAuthorization()
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: report.overall.iconName)
+                    .foregroundStyle(report.overall.tint)
+                    .font(.system(size: 10))
+                Text(L10n.diagnostics.title)
+                    .font(.system(size: 11))
             }
         }
     }
