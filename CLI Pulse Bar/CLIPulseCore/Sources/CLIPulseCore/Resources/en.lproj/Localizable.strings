@@ -63,6 +63,8 @@
 "providers.empty_hint" = "Provider data appears once the helper is running on your Mac";
 "providers.all_hidden" = "All providers hidden";
 "providers.show_all_hint" = "Tap \"Show All\" to see disabled providers";
+"providers.search_placeholder" = "Search providers";
+"providers.no_search_match" = "No providers match your search";
 "providers.this_week" = "This Week";
 "providers.quota" = "Quota";
 "providers.status" = "Status";

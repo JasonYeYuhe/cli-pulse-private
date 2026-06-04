@@ -5,9 +5,18 @@ struct ProvidersTab: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var providerState: ProviderState
     @State private var showDisabled = false
+    @State private var searchText = ""
 
     private var sortedDetails: [ProviderDetail] {
         providerState.providerDetails.filter { showDisabled || $0.config.isEnabled }
+    }
+
+    /// `sortedDetails` narrowed by the search field (name match). Empty query =
+    /// all, so search is purely additive over the show-disabled filter.
+    private var filteredDetails: [ProviderDetail] {
+        sortedDetails.filter {
+            ProviderSearchFilter.matches(providerName: $0.provider.provider, query: searchText)
+        }
     }
 
     var body: some View {
@@ -30,6 +39,31 @@ struct ProvidersTab: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                 }
+
+                // Provider name search (CodexBar 0.32 parity) — filters the
+                // visible cards as you type.
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                    TextField(L10n.providers.searchPlaceholder, text: $searchText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 11))
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color.secondary.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
 
                 // v1.9.4: first-run nudge when the cost scanner came back
                 // empty because the App Sandbox hasn't been granted access to
@@ -56,8 +90,14 @@ struct ProvidersTab: View {
                         title: L10n.providers.allHidden,
                         subtitle: L10n.providers.showAllHint
                     )
+                } else if filteredDetails.isEmpty {
+                    EmptyStateView(
+                        icon: "magnifyingglass",
+                        title: L10n.providers.noSearchMatch,
+                        subtitle: ""
+                    )
                 } else {
-                    ForEach(sortedDetails) { detail in
+                    ForEach(filteredDetails) { detail in
                         EnhancedProviderCard(detail: detail, showCost: state.showCost) { newValue in
                             state.setProviderEnabled(detail.config.kind, isEnabled: newValue)
                         }

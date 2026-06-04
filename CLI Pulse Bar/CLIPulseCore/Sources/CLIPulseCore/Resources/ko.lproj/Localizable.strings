@@ -63,6 +63,8 @@
 "providers.empty_hint" = "Mac에서 도우미가 실행되면 공급자 데이터가 표시됩니다";
 "providers.all_hidden" = "모든 공급자가 숨겨짐";
 "providers.show_all_hint" = "\"모두 보기\"를 탭하여 비활성 공급자 표시";
+"providers.search_placeholder" = "공급자 검색";
+"providers.no_search_match" = "검색과 일치하는 공급자가 없습니다";
 "providers.this_week" = "이번 주";
 "providers.quota" = "할당량";
 "providers.status" = "상태";

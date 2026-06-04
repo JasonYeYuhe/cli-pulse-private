@@ -63,6 +63,8 @@
 "providers.empty_hint" = "Macでヘルパーを実行するとプロバイダーデータが表示されます";
 "providers.all_hidden" = "すべてのプロバイダーが非表示";
 "providers.show_all_hint" = "「すべて表示」をタップして無効なプロバイダーを表示";
+"providers.search_placeholder" = "プロバイダーを検索";
+"providers.no_search_match" = "検索に一致するプロバイダーがありません";
 "providers.this_week" = "今週";
 "providers.quota" = "クォータ";
 "providers.status" = "ステータス";

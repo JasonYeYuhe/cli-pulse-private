@@ -63,6 +63,8 @@
 "providers.empty_hint" = "Mac 上的助手运行后将显示服务商数据";
 "providers.all_hidden" = "所有服务商已隐藏";
 "providers.show_all_hint" = "点按「显示全部」查看已禁用的服务商";
+"providers.search_placeholder" = "搜索服务商";
+"providers.no_search_match" = "没有匹配的服务商";
 "providers.this_week" = "本周";
 "providers.quota" = "配额";
 "providers.status" = "状态";

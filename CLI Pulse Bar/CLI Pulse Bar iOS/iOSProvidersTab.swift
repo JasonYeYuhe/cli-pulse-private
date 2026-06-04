@@ -7,6 +7,7 @@ struct iOSProvidersTab: View {
     @EnvironmentObject var providerState: ProviderState
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showDisabled = false
+    @State private var searchText = ""
     /// v1.10.7: kinds the user just toggled OFF in this view's lifetime.
     /// Without this, the filter below drops the card the moment the toggle
     /// flips, so the user can't tap it back on — they thought the control
@@ -20,6 +21,14 @@ struct iOSProvidersTab: View {
             showDisabled
                 || $0.config.isEnabled
                 || recentlyToggledOff.contains($0.config.kind)
+        }
+    }
+
+    /// `visibleDetails` narrowed by the search field (name match). Empty query =
+    /// all, so search is additive over the show-disabled filter.
+    private var filteredDetails: [ProviderDetail] {
+        visibleDetails.filter {
+            ProviderSearchFilter.matches(providerName: $0.provider.provider, query: searchText)
         }
     }
 
@@ -71,13 +80,19 @@ struct iOSProvidersTab: View {
                             .buttonStyle(.borderedProminent)
                         }
                         .padding(.vertical, 40)
+                    } else if filteredDetails.isEmpty {
+                        // No provider matches the active search query.
+                        ContentUnavailableView {
+                            Label(L10n.providers.noSearchMatch, systemImage: "magnifyingglass")
+                        }
+                        .padding(.vertical, 40)
                     } else if isIPad {
                         // iPad: two-column grid
                         LazyVGrid(columns: [
                             GridItem(.flexible(), spacing: 12),
                             GridItem(.flexible(), spacing: 12),
                         ], spacing: 12) {
-                            ForEach(visibleDetails) { detail in
+                            ForEach(filteredDetails) { detail in
                                 iOSEnhancedProviderCard(detail: detail, showCost: state.showCost) { newValue in
                                     handleToggle(detail.config.kind, newValue: newValue)
                                 }
@@ -86,7 +101,7 @@ struct iOSProvidersTab: View {
                         .padding(.horizontal)
                     } else {
                         // iPhone: single column
-                        ForEach(visibleDetails) { detail in
+                        ForEach(filteredDetails) { detail in
                             iOSEnhancedProviderCard(detail: detail, showCost: state.showCost) { newValue in
                                 handleToggle(detail.config.kind, newValue: newValue)
                             }
@@ -118,6 +133,7 @@ struct iOSProvidersTab: View {
             .refreshable {
                 await state.refreshAll()
             }
+            .searchable(text: $searchText, prompt: L10n.providers.searchPlaceholder)
         }
     }
 

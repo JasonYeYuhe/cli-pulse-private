@@ -63,6 +63,8 @@
 "providers.empty_hint" = "Los datos aparecen cuando el auxiliar está ejecutándose en su Mac";
 "providers.all_hidden" = "Todos los proveedores ocultos";
 "providers.show_all_hint" = "Toque \"Mostrar todo\" para ver proveedores deshabilitados";
+"providers.search_placeholder" = "Buscar proveedores";
+"providers.no_search_match" = "Ningún proveedor coincide con tu búsqueda";
 "providers.this_week" = "Esta semana";
 "providers.quota" = "Cuota";
 "providers.status" = "Estado";
