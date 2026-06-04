@@ -116,6 +116,29 @@ public enum L10n {
         public static var quotaDataUnavailable: String { tr("providers.quota_data_unavailable") }
     }
 
+    // MARK: - Remote Control Diagnostics
+
+    public enum diagnostics {
+        public static var title: String { tr("diagnostics.title") }
+        public static var overallOk: String { tr("diagnostics.overall_ok") }
+        public static var overallAttention: String { tr("diagnostics.overall_attention") }
+        public static var copy: String { tr("diagnostics.copy") }
+
+        public static var checkPaired: String { tr("diagnostics.check_paired") }
+        public static var checkRemoteControl: String { tr("diagnostics.check_remote_control") }
+        public static var checkMac: String { tr("diagnostics.check_mac") }
+        public static var checkHelper: String { tr("diagnostics.check_helper") }
+        public static var checkNotifications: String { tr("diagnostics.check_notifications") }
+        public static var checkRealtime: String { tr("diagnostics.check_realtime") }
+
+        public static var fixPaired: String { tr("diagnostics.fix_paired") }
+        public static var fixRemoteControl: String { tr("diagnostics.fix_remote_control") }
+        public static var fixMac: String { tr("diagnostics.fix_mac") }
+        public static var fixHelper: String { tr("diagnostics.fix_helper") }
+        public static var fixNotifications: String { tr("diagnostics.fix_notifications") }
+        public static var fixRealtime: String { tr("diagnostics.fix_realtime") }
+    }
+
     // MARK: - Sessions
 
     public enum sessions {

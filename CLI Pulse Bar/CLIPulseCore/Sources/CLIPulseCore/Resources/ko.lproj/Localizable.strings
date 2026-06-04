@@ -65,6 +65,24 @@
 "providers.show_all_hint" = "\"모두 보기\"를 탭하여 비활성 공급자 표시";
 "providers.search_placeholder" = "공급자 검색";
 "providers.no_search_match" = "검색과 일치하는 공급자가 없습니다";
+
+/* Remote Control diagnostics */
+"diagnostics.title" = "진단";
+"diagnostics.overall_ok" = "모두 정상";
+"diagnostics.overall_attention" = "주의 필요";
+"diagnostics.copy" = "지원용으로 복사";
+"diagnostics.check_paired" = "계정 동기화됨";
+"diagnostics.check_remote_control" = "원격 제어";
+"diagnostics.check_mac" = "Mac 연결 가능";
+"diagnostics.check_helper" = "도우미 설치됨";
+"diagnostics.check_notifications" = "알림";
+"diagnostics.check_realtime" = "실시간 연결";
+"diagnostics.fix_paired" = "로그인하고 Mac을 동기화하세요.";
+"diagnostics.fix_remote_control" = "설정 → 개인정보 보호에서 원격 제어를 켜세요.";
+"diagnostics.fix_mac" = "Mac이 깨어 있고 온라인 상태이며 CLI Pulse가 실행 중인지 확인하세요.";
+"diagnostics.fix_helper" = "Mac에 CLI Pulse 도우미를 설치하거나 업데이트하세요.";
+"diagnostics.fix_notifications" = "승인 요청을 받으려면 알림을 허용하세요.";
+"diagnostics.fix_realtime" = "다시 연결 중입니다. 네트워크 연결을 확인하세요.";
 "providers.this_week" = "이번 주";
 "providers.quota" = "할당량";
 "providers.status" = "상태";

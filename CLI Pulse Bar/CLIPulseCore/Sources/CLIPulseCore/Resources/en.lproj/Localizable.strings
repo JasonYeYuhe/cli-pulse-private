@@ -65,6 +65,24 @@
 "providers.show_all_hint" = "Tap \"Show All\" to see disabled providers";
 "providers.search_placeholder" = "Search providers";
 "providers.no_search_match" = "No providers match your search";
+
+/* Remote Control diagnostics */
+"diagnostics.title" = "Diagnostics";
+"diagnostics.overall_ok" = "Everything's working";
+"diagnostics.overall_attention" = "Needs attention";
+"diagnostics.copy" = "Copy for support";
+"diagnostics.check_paired" = "Account synced";
+"diagnostics.check_remote_control" = "Remote Control";
+"diagnostics.check_mac" = "Mac reachable";
+"diagnostics.check_helper" = "Helper installed";
+"diagnostics.check_notifications" = "Notifications";
+"diagnostics.check_realtime" = "Live connection";
+"diagnostics.fix_paired" = "Sign in and sync your Mac.";
+"diagnostics.fix_remote_control" = "Turn on Remote Control in Settings → Privacy.";
+"diagnostics.fix_mac" = "Make sure your Mac is awake, online, and running CLI Pulse.";
+"diagnostics.fix_helper" = "Install or update the CLI Pulse helper on your Mac.";
+"diagnostics.fix_notifications" = "Allow notifications to get approval prompts.";
+"diagnostics.fix_realtime" = "Reconnecting — check your network connection.";
 "providers.this_week" = "This Week";
 "providers.quota" = "Quota";
 "providers.status" = "Status";
