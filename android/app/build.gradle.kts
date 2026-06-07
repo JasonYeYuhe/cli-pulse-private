@@ -32,7 +32,7 @@ android {
         applicationId = "com.clipulse.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 37
+        versionCode = 38
         versionName = "1.28.0"
 
         buildConfigField("String", "SUPABASE_URL",
