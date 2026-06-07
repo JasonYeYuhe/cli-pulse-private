@@ -313,6 +313,22 @@ final class AlertGeneratorTests: XCTestCase {
         XCTAssertTrue((alerts[0]["id"] as? String)?.contains("5h Window") == true)
     }
 
+    // M-2 (2026-06-07 review): the "remaining" parenthetical printed the
+    // raw absolute count with a `%` suffix — quota 200000 / remaining
+    // 60000 rendered as "80% used (60000% remaining)". Must show the
+    // remaining *percentage* (100 - usedPct), not the token count.
+    func testQuotaAlertMessageShowsRemainingPercentNotRawCount() {
+        // 140000 of 200000 used = 70% used, 30% remaining.
+        let p = makeProvider(quota: 200_000, remaining: 60_000)
+        let alerts = AlertGenerator.evaluateQuotaAlerts(providers: [p], thresholds: [50])
+        XCTAssertEqual(alerts.count, 1)
+        let message = alerts[0]["message"] as? String ?? ""
+        XCTAssertTrue(message.contains("70% used"), "got: \(message)")
+        XCTAssertTrue(message.contains("30% remaining"), "got: \(message)")
+        // The raw count must never appear as a bogus percentage.
+        XCTAssertFalse(message.contains("60000%"), "raw count leaked as %: \(message)")
+    }
+
     // P3 — Designs and Daily Routines on Claude must NOT generate quota
     // alerts even when 99% used. The brief explicitly excludes them this
     // round. Weekly at 99% in the same provider still alerts (Critical),
