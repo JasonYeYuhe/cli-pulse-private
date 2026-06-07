@@ -23,7 +23,8 @@ public actor APIClient {
     public init(
         token: String? = nil,
         supabaseURL: String? = nil,
-        supabaseAnonKey: String? = nil
+        supabaseAnonKey: String? = nil,
+        session: URLSession? = nil
     ) {
         self.accessToken = token
         self.supabaseURL = supabaseURL
@@ -34,11 +35,17 @@ public actor APIClient {
             ?? Bundle.main.infoDictionary?["SUPABASE_ANON_KEY"] as? String
             ?? ProcessInfo.processInfo.environment["CLI_PULSE_SUPABASE_ANON_KEY"]
             ?? ""
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 15
-        config.timeoutIntervalForResource = 30
-        config.waitsForConnectivity = true
-        self.session = URLSession(configuration: config)
+        // `session` injectable for tests (URLProtocol stub); production uses the
+        // configured default.
+        if let session {
+            self.session = session
+        } else {
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 15
+            config.timeoutIntervalForResource = 30
+            config.waitsForConnectivity = true
+            self.session = URLSession(configuration: config)
+        }
     }
 
     /// v1.25 Phase 4 slice 1: expose Supabase URL + anon key so
@@ -80,7 +87,27 @@ public actor APIClient {
 
     /// Attempt to refresh the access token using the stored refresh token.
     /// Returns the new access token and refresh token, or throws on failure.
+    /// In-flight refresh, so concurrent 401s coalesce onto ONE network refresh.
+    /// NEW-H5: Supabase rotates the refresh token one-time per use. APIClient is
+    /// an actor, but `refreshAccessToken` suspends at the network `await`, so
+    /// re-entrancy let multiple concurrent 401s each refresh with the SAME
+    /// captured token; the server rotated it on the first and rejected the rest,
+    /// which then wiped the freshly-set tokens → spurious forced logout.
+    private var inFlightRefresh: Task<(accessToken: String, refreshToken: String), Error>?
+
     public func refreshAccessToken() async throws -> (accessToken: String, refreshToken: String) {
+        // Single-flight: if a refresh is already running, await its result
+        // instead of starting a second one with the same (one-time) token.
+        if let existing = inFlightRefresh {
+            return try await existing.value
+        }
+        let task = Task { try await self.performRefresh() }
+        inFlightRefresh = task
+        defer { inFlightRefresh = nil }
+        return try await task.value
+    }
+
+    private func performRefresh() async throws -> (accessToken: String, refreshToken: String) {
         guard let currentRefreshToken = refreshToken else {
             throw APIError.tokenExpired
         }
@@ -95,15 +122,31 @@ public actor APIClient {
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            // Refresh failed — token is invalid
-            self.accessToken = nil
-            self.refreshToken = nil
+            // Refresh failed. Compare-and-clear: only wipe tokens if the stored
+            // refresh token is still the one we used — never clobber tokens a
+            // concurrent successful refresh already rotated in (NEW-H5).
+            if self.refreshToken == currentRefreshToken {
+                self.accessToken = nil
+                self.refreshToken = nil
+            }
             throw APIError.tokenExpired
         }
 
         let auth = try decode(SupabaseAuthResponse.self, from: data)
         let newAccess = auth.access_token
         let newRefresh = auth.refresh_token ?? currentRefreshToken
+
+        // Success-side stale guard (Codex review of NEW-H5): if the stored
+        // refresh token changed while we were awaiting the network — sign-out
+        // cleared it, a different account signed in, or `updateRefreshToken`
+        // landed — this result is stale. Do NOT resurrect the old session's
+        // tokens into actor state or persist them to Keychain; the actor
+        // already reflects the newer reality. Return what we fetched so the
+        // originating caller's retry doesn't spuriously throw, but leave the
+        // current auth state untouched.
+        guard self.refreshToken == currentRefreshToken else {
+            return (newAccess, newRefresh)
+        }
 
         self.accessToken = newAccess
         self.refreshToken = newRefresh
