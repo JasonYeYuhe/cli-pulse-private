@@ -276,6 +276,60 @@ final class SubscriptionTierResolutionTests: XCTestCase {
             "Even Lifetime must not displace Team — Team rank is strictly higher"
         )
     }
+
+    // MARK: - NEW-M9: server-authoritative reject must downgrade (not keep Pro)
+
+    func testReceiptResolution_verified_confirmsServerTier() {
+        let r = SubscriptionManager.resolveJWSReceipt(
+            .init(verified: true, tier: "team", error: nil),
+            localHighestTier: .pro
+        )
+        XCTAssertEqual(r.tier, .team)
+        XCTAssertEqual(r.state, .resolvedConfirmed)
+        XCTAssertEqual(r.source, "store-jws-server-verified")
+    }
+
+    func testReceiptResolution_authoritativeReject_downgradesToConfirmed() {
+        // 2xx + verified:false + error:nil = server says "not entitled" (refund/
+        // revoke/sandbox). A local StoreKit .pro must NOT survive it.
+        let r = SubscriptionManager.resolveJWSReceipt(
+            .init(verified: false, tier: "free", error: nil),
+            localHighestTier: .pro
+        )
+        XCTAssertEqual(r.tier, .free, "authoritative reject must downgrade, not keep local Pro")
+        XCTAssertEqual(r.state, .resolvedConfirmed, "an authoritative answer is CONFIRMED, not degraded")
+        XCTAssertEqual(r.source, "store-jws-server-rejected")
+        XCTAssertEqual(r.error, .receiptValidatorRejected)
+    }
+
+    func testReceiptResolution_transportError_keepsLocalTierDegraded() {
+        // A network/decode failure is NOT authoritative — keep the local
+        // StoreKit entitlement but mark degraded.
+        let r = SubscriptionManager.resolveJWSReceipt(
+            .init(verified: false, tier: "free", error: .receiptValidatorError),
+            localHighestTier: .pro
+        )
+        XCTAssertEqual(r.tier, .pro, "transient error must keep the local StoreKit tier")
+        XCTAssertEqual(r.state, .resolvedDegraded)
+        XCTAssertEqual(r.source, "local-only-fallback")
+        XCTAssertEqual(r.error, .receiptValidatorError)
+    }
+
+    // MARK: - NEW-M10: sign-out drops the server-granted tier
+
+    @MainActor
+    func testResetForSignOut_immediatelyDropsServerGrantedTier() {
+        let mgr = SubscriptionManager()
+        mgr.currentTier = .team
+        mgr.isLifetime = true
+        mgr.tierResolutionState = .resolvedConfirmed
+        mgr.resetForSignOut()
+        // Synchronous reset (the async StoreKit re-resolve can't interleave
+        // before this @MainActor method returns).
+        XCTAssertEqual(mgr.currentTier, .free, "sign-out must immediately drop the server-granted tier")
+        XCTAssertFalse(mgr.isLifetime)
+        XCTAssertEqual(mgr.tierResolutionState, .unresolved)
+    }
 }
 
 #endif

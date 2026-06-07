@@ -637,6 +637,11 @@ extension AppState {
         // plan" lock badges (Gemini 3.1 Pro review 2026-04-23).
         providerLimitMigrationCount = 0
         UserDefaults.standard.removeObject(forKey: "cli_pulse_providers_disabled_by_tier")
+        // NEW-M10: drop any server-granted subscription tier (admin grant /
+        // promo / Team membership) so a former Pro/Team user doesn't retain
+        // paid gates after signing out into no-account local mode. A real
+        // StoreKit (device-bound) entitlement re-resolves and persists.
+        subscriptionManager.resetForSignOut()
 
         // iter20 (2026-04-29): clear Remote Approvals + push-token client
         // state so same-session sign-out → sign-in (account switch without
