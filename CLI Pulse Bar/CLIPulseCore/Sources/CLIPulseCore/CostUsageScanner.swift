@@ -518,6 +518,17 @@ public enum CostUsageScanner {
             "gpt-5.4-mini": .init(inputCostPerToken: 7.5e-7, outputCostPerToken: 4.5e-6, cacheReadCostPerToken: 7.5e-8),
             "gpt-5.4-nano": .init(inputCostPerToken: 2e-7, outputCostPerToken: 1.25e-6, cacheReadCostPerToken: 2e-8),
             "gpt-5.4-pro": .init(inputCostPerToken: 3e-5, outputCostPerToken: 1.8e-4, cacheReadCostPerToken: nil),
+            // gpt-5.5 family — mirrors the Rust desktop `pricing.rs` table
+            // (H-10 cross-runtime parity). OpenAI hasn't published official
+            // billing yet; rates mirror gpt-5.4 as a best-known approximation
+            // (Codex emitted model="gpt-5.5" in the wild — without an entry
+            // macOS rendered $0 while Windows/Linux priced it). Approximate-
+            // but-non-zero beats zero for cost-aware UX; replace when official.
+            "gpt-5.5": .init(inputCostPerToken: 2.5e-6, outputCostPerToken: 1.5e-5, cacheReadCostPerToken: 2.5e-7),
+            "gpt-5.5-codex": .init(inputCostPerToken: 2.5e-6, outputCostPerToken: 1.5e-5, cacheReadCostPerToken: 2.5e-7),
+            "gpt-5.5-mini": .init(inputCostPerToken: 7.5e-7, outputCostPerToken: 4.5e-6, cacheReadCostPerToken: 7.5e-8),
+            "gpt-5.5-nano": .init(inputCostPerToken: 2e-7, outputCostPerToken: 1.25e-6, cacheReadCostPerToken: 2e-8),
+            "gpt-5.5-pro": .init(inputCostPerToken: 3e-5, outputCostPerToken: 1.8e-4, cacheReadCostPerToken: nil),
         ]
 
         private static let claudeModels: [String: ClaudeModel] = [
