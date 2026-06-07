@@ -275,6 +275,70 @@ public final class SubscriptionManager: ObservableObject {
         )
     }
 
+    struct StoreKitScan {
+        var activeSubs: [StoreKit.Transaction] = []
+        var highestTier: SubscriptionTier = .free
+        var highestJWS: String?
+        var highestProductID: String?
+        var sawLifetime = false
+    }
+
+    /// Scan `Transaction.currentEntitlements` — local, Apple-verified
+    /// on-device, **NO network** — and compute the highest device-bound tier.
+    /// Shared by `updateCurrentEntitlements` (which then server-confirms) and
+    /// `resetForSignOut` (which uses the StoreKit result directly, so it can't
+    /// race the sign-out token-clear into re-granting a server tier).
+    private func scanStoreKitEntitlements() async -> StoreKitScan {
+        var scan = StoreKitScan()
+        for await result in StoreKit.Transaction.currentEntitlements {
+            guard let transaction = try? checkVerified(result) else { continue }
+
+            // v1.14: a Lifetime purchase appears once in
+            // `currentEntitlements` as a Non-Consumable transaction with no
+            // `expirationDate`. Apple keeps it there forever (until refund).
+            // We surface it through `isLifetime` for UI and treat it as a
+            // .pro tier signal — Team (auto-renewable) still outranks
+            // Lifetime if both are active.
+            let txTier: SubscriptionTier
+            let txIsLifetime: Bool
+            switch transaction.productType {
+            case .autoRenewable:
+                scan.activeSubs.append(transaction)
+                if transaction.productID == Self.teamMonthlyID ||
+                   transaction.productID == Self.teamYearlyID {
+                    txTier = .team
+                } else if transaction.productID == Self.proMonthlyID ||
+                          transaction.productID == Self.proYearlyID {
+                    txTier = .pro
+                } else {
+                    txTier = .free
+                }
+                txIsLifetime = false
+            case .nonConsumable where transaction.productID == Self.proLifetimeID:
+                scan.activeSubs.append(transaction)
+                scan.sawLifetime = true
+                txTier = .pro
+                txIsLifetime = true
+            default:
+                txTier = .free
+                txIsLifetime = false
+            }
+
+            // Codex P1 (PR #41 review, 2026-05-08): see `shouldPromote`
+            // doc comment for the tie-break rationale.
+            let currentHighestIsLifetime = (scan.highestProductID == Self.proLifetimeID)
+            if Self.shouldPromote(
+                newTier: txTier, newIsLifetime: txIsLifetime,
+                currentTier: scan.highestTier, currentIsLifetime: currentHighestIsLifetime
+            ) {
+                scan.highestTier = txTier
+                scan.highestJWS = result.jwsRepresentation
+                scan.highestProductID = transaction.productID
+            }
+        }
+        return scan
+    }
+
     public func updateCurrentEntitlements() async {
         // v1.19 SR1: Developer ID Beta channel users have no Mac App
         // Store receipt — StoreKit's currentEntitlements stream is
@@ -300,61 +364,12 @@ public final class SubscriptionManager: ObservableObject {
         return
         #endif
 
-        var activeSubs: [StoreKit.Transaction] = []
-        var highestTier: SubscriptionTier = .free
-        var highestJWS: String?
-        var highestProductID: String?
-        var sawLifetime = false
-
-        for await result in StoreKit.Transaction.currentEntitlements {
-            guard let transaction = try? checkVerified(result) else { continue }
-
-            // v1.14: a Lifetime purchase appears once in
-            // `currentEntitlements` as a Non-Consumable transaction with no
-            // `expirationDate`. Apple keeps it there forever (until refund).
-            // We surface it through `isLifetime` for UI and treat it as a
-            // .pro tier signal — Team (auto-renewable) still outranks
-            // Lifetime if both are active.
-            let txTier: SubscriptionTier
-            let txIsLifetime: Bool
-            switch transaction.productType {
-            case .autoRenewable:
-                activeSubs.append(transaction)
-                if transaction.productID == Self.teamMonthlyID ||
-                   transaction.productID == Self.teamYearlyID {
-                    txTier = .team
-                } else if transaction.productID == Self.proMonthlyID ||
-                          transaction.productID == Self.proYearlyID {
-                    txTier = .pro
-                } else {
-                    txTier = .free
-                }
-                txIsLifetime = false
-            case .nonConsumable where transaction.productID == Self.proLifetimeID:
-                activeSubs.append(transaction)
-                sawLifetime = true
-                txTier = .pro
-                txIsLifetime = true
-            default:
-                txTier = .free
-                txIsLifetime = false
-            }
-
-            // Codex P1 (PR #41 review, 2026-05-08): see `shouldPromote`
-            // doc comment for the tie-break rationale.
-            let currentHighestIsLifetime = (highestProductID == Self.proLifetimeID)
-            if Self.shouldPromote(
-                newTier: txTier, newIsLifetime: txIsLifetime,
-                currentTier: highestTier, currentIsLifetime: currentHighestIsLifetime
-            ) {
-                highestTier = txTier
-                highestJWS = result.jwsRepresentation
-                highestProductID = transaction.productID
-            }
-        }
-
-        purchasedSubscriptions = activeSubs
-        isLifetime = sawLifetime
+        let scan = await scanStoreKitEntitlements()
+        var highestTier = scan.highestTier
+        let highestJWS = scan.highestJWS
+        let highestProductID = scan.highestProductID
+        purchasedSubscriptions = scan.activeSubs
+        isLifetime = scan.sawLifetime
 
         // Path 1: signed StoreKit 2 JWS exists → server-side validate.
         //
@@ -427,10 +442,25 @@ public final class SubscriptionManager: ObservableObject {
         tierResolutionState = .unresolved
         lastTierRefreshSource = nil
         lastTierRefreshError = nil
-        // Re-resolve from StoreKit; the server-tier path now fails closed
-        // (token cleared → 401 / no apiClient), so account-bound tiers stay
-        // dropped while a real StoreKit entitlement re-confirms.
-        Task { await updateCurrentEntitlements() }
+        // Re-resolve from StoreKit ONLY (no server call) so a device-bound
+        // purchase (Pro / Lifetime) survives while server-granted tiers stay
+        // dropped. updateCurrentEntitlements() would RACE the sign-out
+        // token-clear: its serverTier()/validate-receipt calls could reach the
+        // APIClient actor before sign-out nils the token and re-grant the
+        // just-dropped account tier (Codex review of NEW-M10).
+        Task { [weak self] in
+            guard let self else { return }
+            let scan = await self.scanStoreKitEntitlements()
+            self.purchasedSubscriptions = scan.activeSubs
+            self.isLifetime = scan.sawLifetime
+            self.currentTier = scan.highestTier
+            // A StoreKit entitlement is Apple-verified on-device; in no-account
+            // local mode there's no server to confirm against, so treat it as
+            // resolved rather than degraded.
+            self.tierResolutionState = .resolvedConfirmed
+            self.lastTierRefreshSource = "storekit-local-signout"
+            self.lastTierRefreshError = nil
+        }
     }
 
     /// Server-side tier override — set by admin in profiles.tier or
