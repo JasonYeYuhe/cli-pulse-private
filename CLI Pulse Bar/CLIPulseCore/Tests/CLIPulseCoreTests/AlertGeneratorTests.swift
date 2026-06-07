@@ -329,6 +329,19 @@ final class AlertGeneratorTests: XCTestCase {
         XCTAssertFalse(message.contains("60000%"), "raw count leaked as %: \(message)")
     }
 
+    // 3-way review nit (2026-06-07): over-quota (negative `remaining` →
+    // usedPct > 100) must not render a negative remaining percentage like
+    // "(-20% remaining)". Clamp at 0.
+    func testQuotaAlertMessageClampsRemainingAtZeroWhenOverQuota() {
+        let p = makeProvider(quota: 100, remaining: -20)  // 120% used
+        let alerts = AlertGenerator.evaluateQuotaAlerts(providers: [p], thresholds: [50])
+        XCTAssertEqual(alerts.count, 1)
+        let message = alerts[0]["message"] as? String ?? ""
+        XCTAssertTrue(message.contains("120% used"), "got: \(message)")
+        XCTAssertTrue(message.contains("0% remaining"), "got: \(message)")
+        XCTAssertFalse(message.contains("-"), "remaining % must not be negative: \(message)")
+    }
+
     // P3 — Designs and Daily Routines on Claude must NOT generate quota
     // alerts even when 99% used. The brief explicitly excludes them this
     // round. Weekly at 99% in the same provider still alerts (Critical),
