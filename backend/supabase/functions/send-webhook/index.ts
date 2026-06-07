@@ -9,49 +9,40 @@
 //   - Slack Block Kit format for hooks.slack.com URLs
 //   - Discord embed format for discord.com/api/webhooks URLs
 //   - Event filtering via user_settings.webhook_event_filter (JSON)
-//   - SSRF protection (HTTPS only, rejects private/loopback IPs)
+//   - SSRF protection (HTTPS only; literal-IP + DNS-resolved private/loopback
+//     blocking; redirect:"manual"; never echoes upstream body) — see ssrf.ts
 //   - 60-second deduplication per alert grouping_key
 
 // v1.9.7 P1-4: use built-in Deno.serve instead of the legacy
 // `deno.land/std@0.177.0/http/server.ts` import.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { resolveAndCheckHost, validateWebhookUrlShape } from "./ssrf.ts";
 
 const DEDUP_WINDOW_MS = 60_000;
+const MAX_BODY_BYTES = 102400;
 
-function isPrivateIP(hostname: string): boolean {
-  // Reject common private/reserved ranges
-  const patterns = [
-    /^127\./,
-    /^10\./,
-    /^172\.(1[6-9]|2\d|3[01])\./,
-    /^192\.168\./,
-    /^169\.254\./,
-    /^0\./,
-    /^localhost$/i,
-    /^::1$/,
-    /^fc00:/i,
-    /^fe80:/i,
-    /^fd/i,
-    /^::ffff:/i,       // IPv4-mapped IPv6 bypass
-    /^\[::ffff:/i,     // Bracketed form
-    /^0\.0\.0\.0$/,
-  ];
-  return patterns.some((p) => p.test(hostname));
-}
-
-function validateWebhookUrl(url: string): { valid: boolean; error?: string } {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "https:") {
-      return { valid: false, error: "Only HTTPS webhook URLs are allowed" };
+/** Read a request body with a hard byte cap. NEW-L21: content-length is absent
+ *  on chunked requests, so the header check alone is bypassable — enforce on
+ *  the bytes actually read. */
+async function readBodyCapped(req: Request, max: number): Promise<string> {
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      try { await reader.cancel(); } catch (_e) { /* ignore */ }
+      throw new Error("body too large");
     }
-    if (isPrivateIP(parsed.hostname)) {
-      return { valid: false, error: "Webhook URL must not point to private/internal addresses" };
-    }
-    return { valid: true };
-  } catch {
-    return { valid: false, error: "Invalid webhook URL" };
+    chunks.push(value);
   }
+  const buf = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+  return new TextDecoder().decode(buf);
 }
 
 const SEVERITY_COLORS: Record<string, number> = {
@@ -257,13 +248,20 @@ Deno.serve(async (req: Request) => {
       user_id_authoritative = user.id;
     }
 
-    // ── Request size guard ──
+    // ── Request size guard (NEW-L21) ──
     const contentLength = req.headers.get("content-length");
-    if (contentLength && parseInt(contentLength) > 102400) {
+    if (contentLength && parseInt(contentLength) > MAX_BODY_BYTES) {
       return new Response(JSON.stringify({ error: "Request too large" }), { status: 413 });
     }
-
-    const { user_id, alert } = await req.json();
+    // deno-lint-ignore no-explicit-any
+    let body: any;
+    try {
+      const raw = await readBodyCapped(req, MAX_BODY_BYTES);
+      body = JSON.parse(raw);
+    } catch {
+      return new Response(JSON.stringify({ error: "Invalid or oversized request body" }), { status: 400 });
+    }
+    const { user_id, alert } = body;
     if (!user_id || !alert) {
       return new Response(JSON.stringify({ error: "Missing user_id or alert" }), { status: 400 });
     }
@@ -322,10 +320,17 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ skipped: true, reason: "filtered" }), { status: 200 });
     }
 
-    // Validate URL
-    const validation = validateWebhookUrl(settings.webhook_url);
-    if (!validation.valid) {
-      return new Response(JSON.stringify({ error: validation.error }), { status: 400 });
+    // Validate URL (NEW-H3): HTTPS + literal-IP block (sync), then resolve the
+    // hostname and reject if it points at a private/internal address.
+    const shape = validateWebhookUrlShape(settings.webhook_url);
+    if (!shape.valid) {
+      return new Response(JSON.stringify({ error: shape.error }), { status: 400 });
+    }
+    if (shape.host?.kind === "dns-name") {
+      const dns = await resolveAndCheckHost(shape.host.host);
+      if (!dns.ok) {
+        return new Response(JSON.stringify({ error: dns.error }), { status: 400 });
+      }
     }
 
     // Build payload — auto-detect Slack vs Discord format
@@ -333,24 +338,32 @@ Deno.serve(async (req: Request) => {
       ? buildSlackPayload(alert)
       : buildDiscordPayload(alert);
 
-    // Send webhook (5s timeout to prevent tarpit attacks)
+    // Send webhook (5s timeout to prevent tarpit attacks).
+    // NEW-H3: redirect:"manual" so a 3xx to an internal host is NOT followed.
     const webhookResp = await fetch(settings.webhook_url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      redirect: "manual",
       signal: AbortSignal.timeout(5000),
     });
 
+    // A redirect (opaqueredirect under manual mode, or a 3xx) is refused — we
+    // never chase the Location, which could resolve to an internal address.
+    if (webhookResp.type === "opaqueredirect" ||
+        (webhookResp.status >= 300 && webhookResp.status < 400)) {
+      return new Response(JSON.stringify({ sent: false, reason: "redirect refused" }), { status: 502 });
+    }
+
     if (!webhookResp.ok) {
-      const body = await webhookResp.text().catch(() => "");
-      return new Response(
-        JSON.stringify({ sent: false, status: webhookResp.status, body: body.substring(0, 200) }),
-        { status: 502 },
-      );
+      // NEW-M3: never echo the upstream response body — that turns the SSRF
+      // surface into a read primitive. Return only the status code.
+      return new Response(JSON.stringify({ sent: false, status: webhookResp.status }), { status: 502 });
     }
 
     return new Response(JSON.stringify({ sent: true }), { status: 200 });
-  } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
+  } catch (_err) {
+    // NEW-M3: do not leak raw error text (may carry host/URL fragments).
+    return new Response(JSON.stringify({ error: "Internal error" }), { status: 500 });
   }
 });

@@ -107,6 +107,24 @@ jobs:
       - name: Every public table with user_id cascades to auth.users
         run: python3 backend/supabase/ci_check_user_id_cascade.py
 
+  edge-fn-deno-tests:
+    # M-9 (2026-06-07 review): the edge-function deno tests
+    # (send-approval-push privacy/auth, send-webhook SSRF) existed but CI
+    # never ran them — they could silently rot. Run them on every change.
+    name: Edge function deno tests (M-9)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Run edge-function deno tests
+        run: deno test backend/supabase/functions/
+
   # v1.21 F9 (DEFERRED to v1.22): live migration replay against a fresh
   # `supabase start` Postgres uncovers a deeper structural issue: the
   # baseline `schema.sql` is a current-state snapshot, and replaying
