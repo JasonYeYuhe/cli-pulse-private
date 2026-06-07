@@ -58,4 +58,23 @@ class ExportUtilTest {
         val out = ExportUtil.esc("=A1,B1")
         assertEquals("\"'=A1,B1\"", out)
     }
+
+    @Test
+    fun `leading carriage-return formula is quoted, not left to break the row`() {
+        // 3-way review catch: a leading `\r` is a CSV record break. Prefixing
+        // `'` alone is NOT enough — without quoting, the bare `\r` ends the row
+        // and `=1+1` starts a new unquoted cell that Excel executes. The field
+        // MUST be wrapped in quotes so the `\r` stays literal data.
+        val out = ExportUtil.esc("\r=1+1")
+        assertTrue("must be quoted so the CR can't break the record: $out", out.startsWith("\""))
+        assertEquals("\"'\r=1+1\"", out)
+    }
+
+    @Test
+    fun `leading carriage-return alone is quoted`() {
+        // Even a non-formula `\r`-leading value must be quoted (RFC-4180).
+        val out = ExportUtil.esc("\rplain")
+        assertTrue(out.startsWith("\""))
+        assertTrue(out.contains("\r"))
+    }
 }
