@@ -229,6 +229,52 @@ public final class SubscriptionManager: ObservableObject {
         return false
     }
 
+    /// Pure decision for how a StoreKit-JWS `validate-receipt` result maps to
+    /// (tier, resolution-state, source, error). Extracted so NEW-M9 is
+    /// unit-testable without a live StoreKit / network round-trip.
+    struct ReceiptResolution: Equatable {
+        let tier: SubscriptionTier
+        let state: TierResolutionState
+        let source: String
+        let error: TierRefreshErrorCategory?
+    }
+
+    nonisolated static func resolveJWSReceipt(
+        _ result: APIClient.ValidateReceiptResult,
+        localHighestTier: SubscriptionTier
+    ) -> ReceiptResolution {
+        if result.verified {
+            return ReceiptResolution(
+                tier: SubscriptionTier(rawValue: result.tier) ?? .free,
+                state: .resolvedConfirmed,
+                source: "store-jws-server-verified",
+                error: nil
+            )
+        }
+        if result.error == nil {
+            // NEW-M9: a 2xx response with verified:false is an AUTHORITATIVE
+            // reject (refunded / revoked / sandbox / invalid receipt). Trust
+            // the server tier and mark CONFIRMED so the entitlement gate stops
+            // honoring the stale local StoreKit tier. Previously this kept
+            // `highestTier` as degraded, so a refunded user retained Pro/Team.
+            return ReceiptResolution(
+                tier: SubscriptionTier(rawValue: result.tier) ?? .free,
+                state: .resolvedConfirmed,
+                source: "store-jws-server-rejected",
+                error: .receiptValidatorRejected
+            )
+        }
+        // Transport / decode error — not a confirmed answer. Keep the local
+        // StoreKit highest tier (Apple still surfaces the entitlement on-device)
+        // but mark degraded so the banner stays silent.
+        return ReceiptResolution(
+            tier: localHighestTier,
+            state: .resolvedDegraded,
+            source: "local-only-fallback",
+            error: .receiptValidatorError
+        )
+    }
+
     public func updateCurrentEntitlements() async {
         // v1.19 SR1: Developer ID Beta channel users have no Mac App
         // Store receipt — StoreKit's currentEntitlements stream is
@@ -326,25 +372,11 @@ public final class SubscriptionManager: ObservableObject {
                 transactionJWS: jwsString,
                 productId: productID
             )
-            if result.verified {
-                let serverTier = SubscriptionTier(rawValue: result.tier) ?? .free
-                currentTier = serverTier
-                tierResolutionState = .resolvedConfirmed
-                lastTierRefreshSource = "store-jws-server-verified"
-                lastTierRefreshError = nil
-                return
-            }
-            // Server reachable but said "not verified", OR a transport
-            // error happened. Either way we don't want to slap a
-            // confirmed-free on the user. Keep the local highestTier
-            // (so Pro features still light up if the StoreKit
-            // entitlement is real), but mark degraded.
-            currentTier = highestTier
-            tierResolutionState = .resolvedDegraded
-            lastTierRefreshSource = "local-only-fallback"
-            lastTierRefreshError = (result.error != nil)
-                ? .receiptValidatorError
-                : .receiptValidatorRejected
+            let resolved = Self.resolveJWSReceipt(result, localHighestTier: highestTier)
+            currentTier = resolved.tier
+            tierResolutionState = resolved.state
+            lastTierRefreshSource = resolved.source
+            lastTierRefreshError = resolved.error
             return
         }
 
@@ -380,6 +412,25 @@ public final class SubscriptionManager: ObservableObject {
         tierResolutionState = .resolvedConfirmed
         lastTierRefreshSource = "server-tier"
         lastTierRefreshError = nil
+    }
+
+    /// NEW-M10: on sign-out / entering local mode, drop any SERVER-granted
+    /// entitlement (admin grant / promo / Team membership — all account-bound)
+    /// immediately, then re-resolve from StoreKit so a device/Apple-ID-bound
+    /// local purchase (Pro / Lifetime) survives. Without this, `AuthManager`
+    /// cleared every other field but left `currentTier`, so a former .team/.pro
+    /// user kept paid gates after signing out into the no-account local mode.
+    public func resetForSignOut() {
+        currentTier = .free
+        isLifetime = false
+        purchasedSubscriptions = []
+        tierResolutionState = .unresolved
+        lastTierRefreshSource = nil
+        lastTierRefreshError = nil
+        // Re-resolve from StoreKit; the server-tier path now fails closed
+        // (token cleared → 401 / no apiClient), so account-bound tiers stay
+        // dropped while a real StoreKit entitlement re-confirms.
+        Task { await updateCurrentEntitlements() }
     }
 
     /// Server-side tier override — set by admin in profiles.tier or
