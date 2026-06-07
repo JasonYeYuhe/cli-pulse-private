@@ -142,7 +142,21 @@ final class ClaudePricingOpus47Tests: XCTestCase {
     /// surfaces a non-zero Today cost.
     func testEndToEnd_opus47SyntheticJsonlSurfacesNonZeroCost() throws {
         // 1. Build the fixture — schema-only, no real prompts.
-        let dayKey = "2026-05-05"
+        //
+        // dayKey must stay inside the scanner's `daysToScan: 30` window,
+        // which is relative to the wall clock. A hardcoded date silently
+        // fell out of the window once >30 days elapsed and broke this test
+        // in CI by calendar date (the entry was filtered → 0 buckets).
+        // Anchor it to "now" like the sibling Codex/session tests do:
+        // 3 days ago in UTC, comfortably within 30 days regardless of TZ.
+        let dayKey: String = {
+            let fmt = DateFormatter()
+            fmt.calendar = Calendar(identifier: .gregorian)
+            fmt.locale = Locale(identifier: "en_US_POSIX")
+            fmt.timeZone = TimeZone(identifier: "UTC")
+            fmt.dateFormat = "yyyy-MM-dd"
+            return fmt.string(from: Date().addingTimeInterval(-3 * 86_400))
+        }()
         let fixtureLines = [
             // Opus 4.7 — 100K cache_read + 1K output. At $0.50/M + $25/M
             // that's $0.05 + $0.025 = $0.075. We assert > $0 (the
