@@ -150,16 +150,30 @@ jobs:
         working-directory: CLI Pulse Bar
         run: |
           set -o pipefail
-          xcodebuild build \
-            -project "CLI Pulse Bar.xcodeproj" \
-            -scheme "${{ matrix.scheme }}" \
-            -destination "${{ matrix.destination }}" \
-            -configuration Debug \
-            -quiet \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM=""
+          # Retry-once wrapper for the intermittent SwiftPM binary-artifact
+          # flake: `failed downloading 'Sentry.xcframework.zip' ... already
+          # exists in file system / fatalError` during package resolution. It is
+          # transient (the same commit passes on re-run) and has repeatedly
+          # blocked unrelated PRs. A build is deterministic apart from this, so
+          # clearing the SwiftPM cache + retrying once recovers the flake while a
+          # genuine compile error still fails (both attempts) — no masking.
+          do_build() {
+            xcodebuild build \
+              -project "CLI Pulse Bar.xcodeproj" \
+              -scheme "${{ matrix.scheme }}" \
+              -destination "${{ matrix.destination }}" \
+              -configuration Debug \
+              -quiet \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGN_IDENTITY="" \
+              CODE_SIGN_STYLE=Manual \
+              DEVELOPMENT_TEAM=""
+          }
+          if ! do_build; then
+            echo "::warning::xcodebuild failed; clearing SwiftPM artifact cache and retrying once (Sentry xcframework resolution flake)"
+            rm -rf ~/Library/Caches/org.swift.swiftpm ~/Library/Developer/Xcode/DerivedData 2>/dev/null || true
+            do_build
+          fi
 
   test-helper-swift:
     # Phase 4D: Swift port of cli_pulse_helper. The HelperSwift/
