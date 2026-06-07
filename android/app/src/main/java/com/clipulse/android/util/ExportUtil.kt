@@ -100,7 +100,11 @@ object ExportUtil {
         // quote to force literal text. Numeric columns are written without
         // esc(), so legitimate negative numbers are unaffected.
         val safe = if (value.isNotEmpty() && value[0] in FORMULA_TRIGGERS) "'$value" else value
-        return if (safe.contains(",") || safe.contains("\"") || safe.contains("\n")) {
+        // Quote per RFC-4180 when the field contains a delimiter, quote, or
+        // line break. `\r` MUST be included: a bare carriage return is a record
+        // break, so without quoting a leading-`\r` formula payload would escape
+        // the `'` prefix onto the next row and execute (3-way review catch).
+        return if (safe.contains(",") || safe.contains("\"") || safe.contains("\n") || safe.contains("\r")) {
             "\"${safe.replace("\"", "\"\"")}\""
         } else safe
     }
