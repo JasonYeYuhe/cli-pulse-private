@@ -2,6 +2,7 @@ package com.clipulse.android.ui.settings
 
 import android.content.Intent
 import android.net.Uri
+import java.util.Locale
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -395,10 +396,28 @@ fun SettingsScreen(
     }
 }
 
+// H-7 (2026-06-07 review): the decimal field must use a FIXED locale for the
+// machine round-trip. With the default locale, `String.format("%.2f", 1.5)` in a
+// comma-decimal region (de/es/fr) renders "1,50"; the input filter then strips
+// the comma → "150"; `toDoubleOrNull()` → 150.0 — a silent 100× that quietly
+// disabled the budget alert. Display/parse with Locale.ROOT, and accept either
+// separator on input so a user typing their locale's comma still works.
+
+/// Format for the editable decimal field — always '.' decimal, locale-independent.
+internal fun formatDecimalRoot(value: Double): String = String.format(Locale.ROOT, "%.2f", value)
+
+/// Keep only digits and decimal separators (either '.' or ',') as the user types.
+internal fun sanitizeDecimalInput(raw: String): String =
+    raw.filter { c -> c.isDigit() || c == '.' || c == ',' }
+
+/// Parse the field text → Double, normalizing a comma decimal to '.'. Returns
+/// null for empty / malformed input (e.g. "1.5.0"), leaving the value unchanged.
+internal fun parseDecimalInput(text: String): Double? = text.replace(',', '.').toDoubleOrNull()
+
 @Composable
 private fun EditableDecimalRow(label: String, currentValue: Double, onUpdate: (Double) -> Unit) {
     var editing by remember { mutableStateOf(false) }
-    var textValue by remember(currentValue) { mutableStateOf(String.format("%.2f", currentValue)) }
+    var textValue by remember(currentValue) { mutableStateOf(formatDecimalRoot(currentValue)) }
 
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -408,18 +427,18 @@ private fun EditableDecimalRow(label: String, currentValue: Double, onUpdate: (D
         if (editing) {
             OutlinedTextField(
                 value = textValue,
-                onValueChange = { textValue = it.filter { c -> c.isDigit() || c == '.' } },
+                onValueChange = { textValue = sanitizeDecimalInput(it) },
                 modifier = Modifier.width(100.dp),
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodyMedium,
             )
             IconButton(onClick = {
                 editing = false
-                textValue.toDoubleOrNull()?.let { onUpdate(it) }
+                parseDecimalInput(textValue)?.let { onUpdate(it) }
             }) { Icon(Icons.Filled.Check, contentDescription = null) }
         } else {
             TextButton(onClick = { editing = true }) {
-                Text(String.format("%.2f", currentValue))
+                Text(formatDecimalRoot(currentValue))
             }
         }
     }
