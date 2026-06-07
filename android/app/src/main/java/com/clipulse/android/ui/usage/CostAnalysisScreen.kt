@@ -222,8 +222,12 @@ private fun DailyCostBars(costByDate: Map<String, Double>) {
     }
 }
 
-private fun formatCostCompact(cost: Double): String {
+// internal (not private) so CostAnalysisFormatTest can pin the 2-decimal output.
+internal fun formatCostCompact(cost: Double): String {
     if (cost < 0.01) return "<$0.01"
-    if (cost < 1.0) return String.format("$%.2f", cost)
-    return String.format("$%.1f", cost)
+    // Currency is always 2 decimals. The >=$1 branch previously used "$%.1f",
+    // rendering $220.00 as "$220.0" / $9.60 as "$9.6" (matches the Swift
+    // CostFormatter bug). Use Locale.ROOT so a comma-decimal device locale
+    // can't turn "$9.60" into "$9,60".
+    return String.format(java.util.Locale.ROOT, "$%.2f", cost)
 }

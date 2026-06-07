@@ -438,8 +438,12 @@ public struct CategoryBadge: View {
 public enum CostFormatter {
     public static func format(_ cost: Double) -> String {
         if cost < 0.01 { return "<$0.01" }
-        if cost < 1.0 { return String(format: "$%.2f", cost) }
-        return String(format: "$%.1f", cost)
+        // Currency is always 2 decimal places. The >=$1 branch previously used
+        // "$%.1f", which rendered $9.60 as "$9.6" and $220.00 as "$220.0" —
+        // the malformed cost/subscription figures on the dashboard. Match the
+        // 2-decimal convention used everywhere else (Pricing.formatCost,
+        // Android UsageBar.formatCost, the PDF export).
+        return String(format: "$%.2f", cost)
     }
 
     public static func formatUsage(_ usage: Int) -> String {
