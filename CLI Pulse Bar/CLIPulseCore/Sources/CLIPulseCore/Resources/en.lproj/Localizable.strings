@@ -444,6 +444,8 @@
 "provider_config.keychain_notice" = "Stored only in your Mac Keychain. Never uploaded.";
 "provider_config.cookie_source" = "Cookie source";
 "provider_config.manual_cookie_header" = "Manual cookie header";
+"provider_config.auto_import_note" = "Automatically import session cookies from a signed-in browser. macOS may ask once for Keychain access; if none are found, paste manually below.";
+"provider_config.auto_import_failed" = "Couldn't import session cookies automatically. Paste them manually:";
 "provider_config.capabilities" = "Capabilities";
 "provider_config.cap_quota" = "Quota";
 "provider_config.cap_exact_cost" = "Exact cost";
