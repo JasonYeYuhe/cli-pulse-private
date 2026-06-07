@@ -1,0 +1,27 @@
+-- migrate_v0.57: drop the stale, insecure helper_heartbeat(uuid, uuid) overload
+-- (2026-06-07 review NEW-H1v — verified against live prod via pg_get_functiondef)
+--
+-- Prod carried TWO helper_heartbeat overloads:
+--   1. helper_heartbeat(p_device_id uuid, p_helper_secret text, ...)  -- SECURE:
+--      auths via `helper_secret = encode(digest(p_helper_secret,'sha256'),'hex')`.
+--      Used by BOTH live clients — the macOS app (HelperAPIClient.heartbeat passes
+--      p_helper_secret) and the Tauri desktop (supabase.rs HelperHeartbeatRequest
+--      passes p_helper_secret). This one is the tracked body in helper_rpc.sql:111.
+--   2. helper_heartbeat(p_device_id uuid, p_user_id uuid, ...)  -- INSECURE:
+--      auths by `id = p_device_id AND user_id = p_user_id` ONLY (no secret), so
+--      anyone who knows/guesses a victim's device_id + user_id can mark their
+--      device Online and overwrite cpu/memory/last_seen_at (device-status spoof).
+--
+-- Overload #2 is vestigial (pre-helper_secret). No live caller exists — a repo
+-- grep finds it only in dead archive/backend-fastapi-legacy + migration defs.
+-- Dropping it removes the auth-bypass; overload #1 (the one clients actually
+-- call) is unaffected, since a (uuid, text, ...) call resolves to it regardless.
+--
+-- NOTE: NEW-H2v (team_members "Owner/admin can manage members" policy missing a
+-- WITH CHECK → admin can self-promote to owner via direct PostgREST) is a real,
+-- separate finding. Its fix is a self-referencing RLS WITH CHECK whose
+-- infinite-recursion behavior must be validated against an *authenticated* role
+-- (not the service_role used here, which bypasses RLS). Held for a
+-- recursion-tested follow-up migration rather than shipped blind.
+
+drop function if exists public.helper_heartbeat(uuid, uuid, integer, integer, integer);
