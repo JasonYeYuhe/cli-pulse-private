@@ -28,6 +28,23 @@ func usage() -> Never {
     exit(2)
 }
 
+/// Runs the SIGINT/SIGTERM stop body exactly once. Both signal
+/// `DispatchSource`s fire on `.global()` and can execute concurrently, so a
+/// simultaneous SIGINT+SIGTERM could otherwise double-run `server.stop()`
+/// (which reads/closes `listenFD` without synchronization). 3-way review
+/// hardening alongside the H-3 `sessionManager.shutdown()` wiring.
+private final class StopOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if fired { return false }
+        fired = true
+        return true
+    }
+}
+
 let args = Array(CommandLine.arguments.dropFirst())
 if args.isEmpty { usage() }
 
@@ -294,7 +311,10 @@ case "daemon":
     let sigSrcInt = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
     let sigSrcTerm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
     let stopSemaphore = DispatchSemaphore(value: 0)
+    // Run the stop body once even if SIGINT and SIGTERM arrive together.
+    let stopOnce = StopOnce()
     let handleStop: @Sendable () -> Void = {
+        guard stopOnce.claim() else { return }
         FileHandle.standardError.write(Data("shutting down\n".utf8))
         // Phase 4E Slice 4 (Gemini 2.5 Pro P0): cancellation alone
         // doesn't wait for the in-flight flush + shutdown inside
