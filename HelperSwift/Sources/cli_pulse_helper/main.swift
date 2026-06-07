@@ -312,6 +312,11 @@ case "daemon":
             }
             _ = drainSem.wait(timeout: .now() + 4.5)
         }
+        // H-3: terminate managed CLI subprocesses + close their PTYs before
+        // exiting. Each managed session runs in its own process group, so the
+        // daemon dying does NOT signal them — without this they orphan, holding
+        // a PTY + fds across every stop/restart (launchd KeepAlive churns them).
+        sessionManager.shutdown()
         server.stop()
         stopSemaphore.signal()
     }
