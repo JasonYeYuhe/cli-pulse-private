@@ -87,9 +87,21 @@ object ExportUtil {
         context.startActivity(Intent.createChooser(intent, "Export CLI Pulse Data"))
     }
 
-    private fun esc(value: String): String {
-        return if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
-            "\"${value.replace("\"", "\"\"")}\""
-        } else value
+    // Chars that make a spreadsheet cell execute as a formula when it's the
+    // first character (Excel / Google Sheets / LibreOffice). (M-12)
+    private const val FORMULA_TRIGGERS = "=+-@\t\r"
+
+    // internal (was private) so the formula-injection neutralization is unit-
+    // testable; the export writers are the only production callers.
+    internal fun esc(value: String): String {
+        // CSV formula injection: a field starting with = + - @ TAB or CR is run
+        // as a formula (=HYPERLINK(...), =cmd|'...'!A1, etc.), enabling data
+        // exfiltration / phishing when the export is opened. Prefix a single
+        // quote to force literal text. Numeric columns are written without
+        // esc(), so legitimate negative numbers are unaffected.
+        val safe = if (value.isNotEmpty() && value[0] in FORMULA_TRIGGERS) "'$value" else value
+        return if (safe.contains(",") || safe.contains("\"") || safe.contains("\n")) {
+            "\"${safe.replace("\"", "\"\"")}\""
+        } else safe
     }
 }
