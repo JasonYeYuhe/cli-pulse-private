@@ -18,10 +18,15 @@ import Foundation
 ///
 /// Pass 2 — token shape (catches bare tokens with no key context):
 ///   - sk-…, sk-ant-…, AIza…, ghp_…, github_pat_…
+///   - Stripe sk_/rk_/pk_ (live/test), Slack xox[abprs]-, npm_…,
+///     pypi-… (M1 backport — mirrors redaction.py's third-party set;
+///     Swift had drifted: Python gained these in v1.12.1, Swift did not)
 ///   - AKIA… (AWS access keys)
 ///   - Bearer <token>
 ///   - JWTs (eyJ.eyJ.eyJ three-segment base64url)
-///   - Long hex blobs (helper_secret-style, MD5/SHA, undashed UUIDs)
+///   - Long hex blobs (helper_secret-style SHA-256, 64 chars). 56-char
+///     floor (matching redaction.py v1.21 F4) so 40-char git SHAs and
+///     content hashes in terminal output aren't over-redacted.
 public enum Redactor {
 
     /// Marker used in place of redacted spans. Mirrors Python's
@@ -73,10 +78,22 @@ public enum Redactor {
         ("AIza[0-9A-Za-z_\\-]{20,}", []),
         ("ghp_[A-Za-z0-9]{20,}", []),
         ("github_pat_[A-Za-z0-9_]{20,}", []),
+        // Stripe — secret/restricted (sk_live_ / sk_test_ / rk_live_ /
+        // rk_test_) and publishable (pk_live_ / pk_test_). The `[sr]k_`
+        // prefix uses `_` (not `-`) so it does not collide with the
+        // dash-prefixed `sk-` Anthropic/OpenAI shape above.
+        ("[sr]k_(?:live|test)_[A-Za-z0-9]{16,}", []),
+        ("pk_(?:live|test)_[A-Za-z0-9]{16,}", []),
+        // Slack tokens — xoxa/xoxb/xoxp/xoxr/xoxs.
+        ("xox[abprs]-[A-Za-z0-9-]{10,}", []),
+        // NPM access tokens — `npm_` + base62 body.
+        ("npm_[A-Za-z0-9]{16,}", []),
+        // PyPI upload tokens — `pypi-` + base64url body.
+        ("pypi-[A-Za-z0-9_\\-]{16,}", []),
         ("AKIA[0-9A-Z]{12,}", []),
         ("Bearer\\s+[A-Za-z0-9._\\-]{16,}", [.caseInsensitive]),
         ("eyJ[A-Za-z0-9_\\-]{4,}\\.[A-Za-z0-9_\\-]{4,}\\.[A-Za-z0-9_\\-]{4,}", []),
-        ("\\b[A-Fa-f0-9]{32,}\\b", []),
+        ("\\b[A-Fa-f0-9]{56,}\\b", []),
     ]
 
     private static func applyRegex(
