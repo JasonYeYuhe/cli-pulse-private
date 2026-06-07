@@ -25,6 +25,12 @@ import {
   SignedDataVerifier,
   Environment,
 } from "npm:@apple/app-store-server-library@3";
+import {
+  isLifetimeProduct,
+  peekJWSEnvironment,
+  shouldPersistEntitlement,
+  tierForProduct,
+} from "./receipt.ts";
 
 // v1.21 F6: multi-root Apple CA hardcode.
 //
@@ -141,25 +147,11 @@ const APPLE_ROOT_CA_PEMS: readonly string[] = [
 const APPLE_BUNDLE_ID = "yyh.CLI-Pulse";
 const GOOGLE_PACKAGE_NAME = "com.clipulse.android";
 
-const PRODUCT_TIER_MAP: Record<string, string> = {
-  "com.clipulse.pro.monthly": "pro",
-  "com.clipulse.pro.yearly": "pro",
-  "com.clipulse.team.monthly": "team",
-  "com.clipulse.team.yearly": "team",
-  // v1.14: Pro Lifetime — Non-Consumable IAP. expiresDate is undefined,
-  // so the existing `payload.expiresDate && payload.expiresDate < Date.now()`
-  // check skips correctly (falsy short-circuits).
-  "com.clipulse.pro.lifetime": "pro",
-};
-
-// v1.14: product IDs that are one-time Non-Consumable purchases (no
-// expiresDate, no auto-renewal). Used to flag the subscriptions row with
-// is_lifetime=true and to skip any future subscription-status checks that
-// assume an expiresDate. Apple keeps these in `currentEntitlements` until
-// the user requests a refund.
-const LIFETIME_PRODUCT_IDS = new Set<string>([
-  "com.clipulse.pro.lifetime",
-]);
+// PRODUCT_TIER_MAP / LIFETIME_PRODUCT_IDS + the tier/env helpers now live in
+// ./receipt.ts so they can be deno-tested (H-14). expiresDate is undefined for
+// the Non-Consumable Lifetime product, so the
+// `payload.expiresDate && payload.expiresDate < Date.now()` check below
+// short-circuits correctly.
 
 const CORS_ORIGIN = Deno.env.get("CORS_ORIGIN") ?? "https://clipulse.app";
 const CORS_HEADERS = {
@@ -369,6 +361,10 @@ Deno.serve(async (req: Request) => {
     let expiresDate: string | null = null;
     let originalTransactionId: string | null = null;
     let playOrderId: string | null = null;
+    // H-8: true for a signature-valid Apple SANDBOX receipt (App Review /
+    // TestFlight / dev). It unlocks the session but is NOT persisted as a real
+    // server-side entitlement.
+    let isSandbox = false;
 
     if (platform === "apple") {
       // ── Apple StoreKit 2 JWS verification ──
@@ -392,27 +388,14 @@ Deno.serve(async (req: Request) => {
       // verifier. The peek itself is unverified — if an attacker forges the env
       // field the subsequent signature check still catches them, because the
       // verifier's bundleId + appAppleId + root-cert chain are still enforced.
-      const jwsParts = transactionJWS.split(".");
-      if (jwsParts.length !== 3) {
-        return jsonResponse(
-          { verified: false, error: "Malformed JWS" },
-          400,
-        );
+      const envPeek = peekJWSEnvironment(transactionJWS);
+      if (!envPeek.ok) {
+        return jsonResponse({ verified: false, error: envPeek.error }, 400);
       }
-      let environment: Environment;
-      try {
-        const padded = jwsParts[1].replace(/-/g, "+").replace(/_/g, "/");
-        const pad = "=".repeat((4 - (padded.length % 4)) % 4);
-        const peek = JSON.parse(atob(padded + pad));
-        environment = peek.environment === "Sandbox"
-          ? Environment.SANDBOX
-          : Environment.PRODUCTION;
-      } catch (_) {
-        return jsonResponse(
-          { verified: false, error: "Cannot decode JWS payload" },
-          400,
-        );
-      }
+      isSandbox = envPeek.environment === "Sandbox";
+      const environment: Environment = isSandbox
+        ? Environment.SANDBOX
+        : Environment.PRODUCTION;
 
       const verifier = new SignedDataVerifier(
         rootCerts,
@@ -463,7 +446,7 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      tier = PRODUCT_TIER_MAP[payload.productId] ?? "free";
+      tier = tierForProduct(payload.productId);
       transactionId = String(payload.transactionId);
       originalTransactionId = String(payload.originalTransactionId);
       expiresDate = payload.expiresDate
@@ -528,12 +511,24 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      tier = PRODUCT_TIER_MAP[productId] ?? "free";
+      tier = tierForProduct(productId);
       transactionId = result.orderId ?? purchaseToken.slice(0, 64);
       playOrderId = result.orderId ?? null;
       expiresDate = result.expiryTime ?? null;
     } else {
       return jsonResponse({ error: `Unknown platform: ${platform}` }, 400);
+    }
+
+    // ── H-8: sandbox receipts unlock the session but do NOT persist ──
+    // A signature-valid Apple SANDBOX receipt (App Review, TestFlight, dev /
+    // StoreKit-test) returns verified:true + tier so the in-app purchase
+    // unlocks for the reviewer/tester — the client re-validates the sandbox
+    // receipt on every launch, so the unlock survives restarts without us
+    // writing a real `profiles.tier` / `subscriptions` row. Persisting it would
+    // hand any sandbox/TestFlight tester a real production Pro/Team entitlement
+    // (and pollute revenue). Only PRODUCTION receipts are written.
+    if (!shouldPersistEntitlement(isSandbox ? "Sandbox" : "Production")) {
+      return jsonResponse({ verified: true, tier, sandbox: true });
     }
 
     // ── Update profiles.tier ──
@@ -563,7 +558,7 @@ Deno.serve(async (req: Request) => {
     // — no schema change required for v1.14 to ship. (PROJECT_PLAN's
     // optional `is_lifetime` denormalization column can be added in v1.15
     // if a query path needs the boolean directly.)
-    const isLifetime = LIFETIME_PRODUCT_IDS.has(productId);
+    const isLifetime = isLifetimeProduct(productId);
     const subRecord: Record<string, unknown> = {
       user_id: user.id,
       tier,
