@@ -281,7 +281,7 @@ public enum AlertGenerator {
                     "type": "Quota Warning",
                     "severity": severity,
                     "title": "\(provider.provider) \(tier.name) at \(usedPct)%",
-                    "message": "Quota window '\(tier.name)' is \(usedPct)% used (\(100 - usedPct)% remaining)\(resetSuffix).",
+                    "message": "Quota window '\(tier.name)' is \(usedPct)% used (\(max(0, 100 - usedPct))% remaining)\(resetSuffix).",
                     "created_at": now,
                     "related_provider": provider.provider,
                     "source_kind": "quota",
