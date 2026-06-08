@@ -286,6 +286,31 @@ public final class BookmarkManager {
         storeBookmark(for: url)
         return true
     }
+
+    /// Present an NSOpenPanel rooted at the real home directory and store an
+    /// app-scope bookmark for whatever the user picks. A bookmark on the home
+    /// directory transitively grants read access to every CLI-tool log dir
+    /// under it (~/.claude, ~/.codex, ~/.config/claude, ~/.gemini), so a single
+    /// grant unblocks the whole usage scanner. Used by the signed-in Overview
+    /// "can't read local usage" banner for a one-tap fix.
+    public func requestHomeAccessViaPanel() -> Bool {
+        let panel = NSOpenPanel()
+        panel.message = "Grant CLI Pulse read access to your home folder so it can read your local AI usage logs (~/.claude, ~/.codex, ~/.gemini)."
+        panel.prompt = "Grant Access"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: realUserHome())
+
+        let response = panel.runModal()
+        guard response == .OK, let url = panel.url else {
+            return false
+        }
+
+        storeBookmark(for: url)
+        return true
+    }
 }
 
 // MARK: - Real Home Directory Helper

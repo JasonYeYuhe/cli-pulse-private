@@ -721,6 +721,8 @@
 "folder_access.force_rescan" = "強制重掃";
 "folder_access.panel_message" = "選擇你的主目錄，以授予 CLI Pulse 訪問所有 CLI 工具憑據的權限";
 "folder_access.panel_prompt" = "授予訪問";
+"folder_access.banner_title" = "讀取不到本機用量";
+"folder_access.banner_body" = "由於 macOS 阻擋了對 AI 工具日誌的存取,真實的 token 用量與費用無法顯示。請授予資料夾存取權限以查看。";
 
 /* ── 訂閱計費切換 ── */
 "subscription.billing" = "計費";

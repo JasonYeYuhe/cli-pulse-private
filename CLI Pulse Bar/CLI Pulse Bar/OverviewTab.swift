@@ -43,6 +43,17 @@ struct OverviewTab: View {
                         .environmentObject(state)
                 }
 
+                // v1.28: a SIGNED-IN user whose local usage scan is blocked by
+                // the App Store sandbox (no folder-access bookmark) previously
+                // got no prompt at all — they just saw a near-zero cost. Surface
+                // a prominent one-tap "grant folder access" banner so their real
+                // token counts/costs can be read (the LocalModeGuideCard above
+                // only covers the unauthenticated local-mode case).
+                if state.isAuthenticated && state.needsScannerFolderAccess {
+                    ScannerFolderAccessBanner()
+                        .environmentObject(state)
+                }
+
                 // Metric Grid
                 if let dash = state.dashboard {
                     metricsGrid(dash)
