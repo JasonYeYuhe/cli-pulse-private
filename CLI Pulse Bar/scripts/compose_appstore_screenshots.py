@@ -39,10 +39,10 @@ SIDE_MARGIN = 140
 # Per-screenshot marketing copy. Keys match the numeric prefix of each source.
 COPY = {
     "01_overview":          ("Everything at a glance",     "Usage, spend, and forecast across every provider"),
-    "02_providers":         ("Live quotas, real costs",    "Claude, Codex, Gemini, and 20+ more in one place"),
+    "02_providers":         ("Live quotas, real costs",    "Claude, Codex, Gemini, and 48+ more in one place"),
     "03_sessions":          ("Every CLI run tracked",      "Real-time session monitoring from your menu bar"),
-    "04_alerts_empty":      ("Never miss a quota limit",   "Smart alerts before you hit the wall"),
-    "05_alerts_history":    ("Alert history, always handy","Every past warning and how you resolved it"),
+    "04_cost_detail":       ("Know exactly what you spend", "Exact cost, real value, and a month-end forecast"),
+    "05_alerts_history":    ("Stay ahead of every alert",  "Runaway CPU, quota limits, and more — caught early"),
     "06_settings":          ("Tune every detail",          "Per-provider credentials, cadence, and notifications"),
     "07_provider_settings": ("Configure any provider",     "API keys, cookies, OAuth — with one-click test"),
     "08_about":             ("Built for CLI pros",         "Privacy-first — all data stays on your Mac"),
