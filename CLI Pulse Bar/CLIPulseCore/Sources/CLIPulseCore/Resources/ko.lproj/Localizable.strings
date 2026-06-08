@@ -474,3 +474,5 @@
 "usage_pace.run_out_risk" = "≈ 소진 위험 %@%%";
 "usage_pace.summary_with_right" = "페이스: %@ · %@";
 "usage_pace.summary_left_only" = "페이스: %@";
+"folder_access.banner_title" = "로컬 사용량을 읽을 수 없습니다";
+"folder_access.banner_body" = "macOS가 AI 도구 로그 접근을 차단하여 실제 토큰 사용량과 비용이 표시되지 않습니다. 폴더 접근을 허용하여 확인하세요.";

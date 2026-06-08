@@ -721,6 +721,10 @@ public enum L10n {
         public static var forceRescan: String { tr("folder_access.force_rescan") }
         public static var panelMessage: String { tr("folder_access.panel_message") }
         public static var panelPrompt: String { tr("folder_access.panel_prompt") }
+        // v1.28: prominent Overview banner shown to SIGNED-IN users whose local
+        // usage scan is empty because the App Store sandbox lacks a folder grant.
+        public static var bannerTitle: String { tr("folder_access.banner_title") }
+        public static var bannerBody: String { tr("folder_access.banner_body") }
     }
 
     // MARK: - Provider Configuration

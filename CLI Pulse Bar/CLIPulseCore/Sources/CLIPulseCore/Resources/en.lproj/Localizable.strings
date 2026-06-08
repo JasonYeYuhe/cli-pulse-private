@@ -719,6 +719,8 @@
 "folder_access.force_rescan" = "Force Rescan";
 "folder_access.panel_message" = "Select your home folder to grant CLI Pulse access to all CLI tool credentials";
 "folder_access.panel_prompt" = "Grant Access";
+"folder_access.banner_title" = "CLI Pulse can't read your local usage";
+"folder_access.banner_body" = "Your real token counts and costs aren't showing because macOS is blocking access to your AI tool logs. Grant folder access to see them.";
 
 /* ── Subscription billing picker ── */
 "subscription.billing" = "Billing";

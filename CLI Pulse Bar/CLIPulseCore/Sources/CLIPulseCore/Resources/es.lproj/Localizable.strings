@@ -474,3 +474,5 @@
 "usage_pace.run_out_risk" = "≈ %@%% de riesgo de agotarse";
 "usage_pace.summary_with_right" = "Ritmo: %@ · %@";
 "usage_pace.summary_left_only" = "Ritmo: %@";
+"folder_access.banner_title" = "CLI Pulse no puede leer tu uso local";
+"folder_access.banner_body" = "Tu uso real de tokens y costos no aparecen porque macOS bloquea el acceso a los registros de tus herramientas de IA. Concede acceso a la carpeta para verlos.";

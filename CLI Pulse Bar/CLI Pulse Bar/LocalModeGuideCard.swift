@@ -97,3 +97,76 @@ struct LocalModeGuideCard: View {
         }
     }
 }
+
+/// v1.28: prominent Overview banner for SIGNED-IN macOS users whose local usage
+/// scan came back empty because the Mac App Store sandbox has no folder-access
+/// bookmark — so `~/.claude`, `~/.codex`, `~/.gemini` can't be read and the
+/// dashboard shows a near-zero cost (e.g. $9.6) instead of the real figure.
+///
+/// Before this, the only folder-access guidance was `LocalModeGuideCard` above,
+/// gated on `isLocalMode && !isAuthenticated` — so a paired, signed-in heavy
+/// user got NO prompt and no way to discover why their costs read ~0. (CodexBar
+/// reads the same logs fine because it isn't sandboxed.) One-tap "Grant Access"
+/// opens a home-folder picker (a single home grant transitively covers every
+/// CLI-tool log dir) and force-rescans so the real numbers appear immediately.
+///
+/// Defined here (rather than its own file) so it compiles without a new
+/// .xcodeproj source-membership entry.
+struct ScannerFolderAccessBanner: View {
+    @EnvironmentObject var state: AppState
+    @State private var isRescanning = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L10n.folderAccess.bannerTitle)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Text(L10n.folderAccess.bannerBody)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    // NSOpenPanel.runModal() blocks the main thread; once the
+                    // user grants we force a full rescan so the now-readable
+                    // logs populate the dashboard.
+                    let granted = BookmarkManager.shared.requestHomeAccessViaPanel()
+                    guard granted else { return }
+                    Task {
+                        isRescanning = true
+                        await state.forceRescanTokenCache()
+                        isRescanning = false
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        if isRescanning {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "folder.badge.plus")
+                        }
+                        Text(L10n.folderAccess.grant)
+                    }
+                    .font(.system(size: 10, weight: .medium))
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(isRescanning)
+                .padding(.top, 2)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.orange.opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+        )
+    }
+}

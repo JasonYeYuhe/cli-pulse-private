@@ -721,6 +721,8 @@
 "folder_access.force_rescan" = "強制再スキャン";
 "folder_access.panel_message" = "ホームフォルダーを選択して、CLI Pulse にすべての CLI ツール認証情報へのアクセスを許可します";
 "folder_access.panel_prompt" = "アクセスを許可";
+"folder_access.banner_title" = "ローカルの使用量を読み取れません";
+"folder_access.banner_body" = "macOS がAIツールのログへのアクセスをブロックしているため、実際のトークン数とコストが表示されません。フォルダアクセスを許可して表示しましょう。";
 
 /* ── サブスクリプション請求切替 ── */
 "subscription.billing" = "請求";
