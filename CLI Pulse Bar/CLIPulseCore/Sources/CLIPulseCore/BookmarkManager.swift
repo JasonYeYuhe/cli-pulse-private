@@ -176,10 +176,11 @@ public final class BookmarkManager {
 
     /// Resolve a stored bookmark and start accessing the security-scoped resource.
     /// v1.9.4: walks up the directory chain to find a usable ancestor bookmark
-    /// (an `/Users/jason` bookmark covers all its descendants), and on resolve
-    /// failure logs the error WITHOUT auto-removing the bookmark — destructive
-    /// removal masks the underlying problem and bricks the Settings UI by
-    /// flipping rows from Granted to Grant when a transient failure happens.
+    /// (an `/Users/jason` bookmark covers all its descendants). v1.28: a bookmark
+    /// whose DATA can't be parsed (resolve throws — permanent, e.g. signature
+    /// rotation invalidated it) IS pruned so the row honestly flips back to
+    /// "Grant" and the user can re-grant; a transient access refusal
+    /// (`startAccessingSecurityScopedResource()==false`) is still kept.
     @discardableResult
     public func resolveBookmark(for directoryPath: String) -> URL? {
         let bookmarks = loadBookmarks()
@@ -201,9 +202,11 @@ public final class BookmarkManager {
     }
 
     /// Resolve a single bookmark blob. Returns the active URL on success, or
-    /// nil on any failure (stale, corrupt, scope-start refusal). NEVER mutates
-    /// the stored bookmarks dict — caller decides whether to retry, walk up,
-    /// or clean up.
+    /// nil on failure. A `startAccessingSecurityScopedResource()` refusal is
+    /// treated as TRANSIENT and the bookmark is kept; a resolve THROW (the
+    /// bookmark data itself can't be parsed — "couldn't be opened because it
+    /// isn't in the correct format") is PERMANENT and the dead bookmark is
+    /// pruned so the directory reverts to un-granted.
     private func resolveBookmarkData(_ bookmarkData: Data, key: String, sourcePath: String) -> URL? {
         do {
             var isStale = false
@@ -228,8 +231,31 @@ public final class BookmarkManager {
             }
         } catch {
             logger.error("Failed to resolve bookmark for \(key, privacy: .public) (sourced from \(sourcePath, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+            // The bookmark DATA is unresolvable — this is PERMANENT, not
+            // transient. App-scoped security bookmarks are bound to the app's
+            // code signature, so a Distribution-cert rotation / re-sign / a
+            // differently-signed build invalidates every stored bookmark
+            // ("isn't in the correct format"). Keeping the dead bookmark left
+            // the directory reading "Granted" forever while the scan silently
+            // saw zero files — the $9.6-instead-of-$9,940 bug. Prune it so the
+            // row reverts to un-granted and the grant prompt re-surfaces, which
+            // lets the user re-grant and get a fresh, resolvable bookmark.
+            pruneBookmark(key: key)
             return nil
         }
+    }
+
+    /// Remove a single unresolvable bookmark from persistent storage (both the
+    /// canonical and trailing-slash keys) so its directory reverts to
+    /// "not granted" and the grant prompt / scanner-access banner can re-surface.
+    private func pruneBookmark(key: String) {
+        var bookmarks = loadBookmarks()
+        let removed = bookmarks.removeValue(forKey: key) != nil
+        let removedSlash = bookmarks.removeValue(forKey: key + "/") != nil
+        guard removed || removedSlash else { return }
+        saveBookmarks(bookmarks)
+        activeResources.removeValue(forKey: key)
+        logger.warning("Pruned unresolvable bookmark for: \(key, privacy: .public)")
     }
 
     /// Stop accessing all security-scoped resources
