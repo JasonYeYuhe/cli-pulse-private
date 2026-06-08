@@ -34,7 +34,7 @@ SHOT_CORNER_RADIUS = 56
 
 COPY = {
     "01_overview":  ("Everything at a glance",  "Usage, spend, and forecast across every provider"),
-    "02_providers": ("Live quotas, real costs", "Claude, Codex, Gemini, and 20+ more in one place"),
+    "02_providers": ("Live quotas, real costs", "Claude, Codex, Gemini, and 48+ more in one place"),
     "03_sessions":  ("Every CLI run tracked",   "Real-time session monitoring in your pocket"),
     "04_alerts":    ("Never miss a quota limit","Smart alerts before you hit the wall"),
     "05_settings":  ("Tune every detail",       "Per-provider credentials, cadence, and display"),

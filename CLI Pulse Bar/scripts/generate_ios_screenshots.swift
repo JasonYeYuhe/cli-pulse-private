@@ -545,7 +545,7 @@ func drawSettings() -> NSBitmapImageRep {
     let avSize = (av as NSString).size(withAttributes: avatarAttrs)
     (av as NSString).draw(at: NSPoint(x: avatarCenter.x - avSize.width / 2, y: avatarCenter.y - avSize.height / 2), withAttributes: avatarAttrs)
 
-    drawText("jason@cli-pulse.dev", at: NSPoint(x: margin + 40 + avatarR * 2 + 16, y: profileRect.maxY - 40), size: 28, weight: .semibold, color: .white)
+    drawText("demo@cli-pulse.dev", at: NSPoint(x: margin + 40 + avatarR * 2 + 16, y: profileRect.maxY - 40), size: 28, weight: .semibold, color: .white)
     drawText("Pro Plan", at: NSPoint(x: margin + 40 + avatarR * 2 + 16, y: profileRect.maxY - 72), size: 24, weight: .regular, color: accentGreen)
 
     // Pro badge
@@ -645,7 +645,8 @@ func readProjectVersion() -> String {
     let plistPath = projectDir + "/CLI Pulse Bar/Info.plist"
     if let dict = NSDictionary(contentsOfFile: plistPath),
        let ver = dict["CFBundleShortVersionString"] as? String,
-       let build = dict["CFBundleVersion"] as? String {
+       let build = dict["CFBundleVersion"] as? String,
+       !ver.contains("$("), !build.contains("$(") {
         return "\(ver) (\(build))"
     }
     // Fallback: try pbxproj
