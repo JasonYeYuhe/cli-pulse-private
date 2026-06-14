@@ -4,15 +4,19 @@ import CLIPulseCore
 import WatchKit
 #endif
 
+/// Alerts page. Open alerts are severity-sorted cards (severity colour bar
+/// + title + message + relative time); the most-severe Critical card is
+/// tinted and carries a gated pulsing dot. Resolved alerts are dimmed
+/// below. The critical-alert haptic, ack/resolve/snooze actions, and the
+/// all-clear state are preserved.
+///
+/// Presentation-only — reads `state.*`, never mutates the data layer.
+/// Owns one `ScrollView` (review R1).
 struct WatchAlertsView: View {
     @EnvironmentObject var state: WatchAppState
 
     private var openAlerts: [AlertRecord] {
-        state.alerts.filter { !$0.is_resolved }
-    }
-
-    private var unreadCount: Int {
-        openAlerts.filter { !$0.is_read }.count
+        WatchAlertSort.bySeverity(state.alerts.filter { !$0.is_resolved })
     }
 
     private var resolvedAlerts: [AlertRecord] {
@@ -20,63 +24,72 @@ struct WatchAlertsView: View {
     }
 
     var body: some View {
-        List {
-            if openAlerts.isEmpty && resolvedAlerts.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "checkmark.shield.fill")
-                        .font(.title3)
-                        .foregroundStyle(.green)
-                    Text(L10n.alerts.allClear)
-                        .font(.caption.weight(.semibold))
-                    Text(L10n.alerts.noAlerts)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-            }
+        ScrollView {
+            LazyVStack(spacing: 8) {
+                header
 
-            if !openAlerts.isEmpty {
-                Section {
+                if openAlerts.isEmpty && resolvedAlerts.isEmpty {
+                    allClearState
+                } else {
                     ForEach(openAlerts) { alert in
                         NavigationLink {
                             WatchAlertDetailView(alert: alert)
                                 .environmentObject(state)
                         } label: {
-                            WatchAlertRow(alert: alert)
+                            AlertCard(alert: alert)
                         }
+                        .buttonStyle(.plain)
                     }
-                } header: {
-                    HStack {
-                        Text(L10n.alerts.open)
-                        Spacer()
-                        if unreadCount > 0 {
-                            Text(L10n.watch.unreadCount(unreadCount))
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(.red))
-                        }
-                    }
-                }
-            }
 
-            if !resolvedAlerts.isEmpty {
-                Section(L10n.alerts.resolved) {
-                    ForEach(Array(resolvedAlerts.prefix(5))) { alert in
-                        WatchAlertRow(alert: alert)
+                    if !resolvedAlerts.isEmpty {
+                        Text(L10n.alerts.resolved)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 4)
+                        ForEach(Array(resolvedAlerts.prefix(5))) { alert in
+                            AlertCard(alert: alert)
+                        }
                     }
                 }
             }
+            .padding(.horizontal, 2)
         }
-        .navigationTitle(L10n.tab.alerts)
-        .refreshable {
-            await state.refreshAll()
-        }
+        .refreshable { await state.refreshAll() }
         .task {
             triggerHapticForCritical()
         }
+    }
+
+    private var header: some View {
+        HStack {
+            Text(L10n.tab.alerts)
+                .font(.system(size: 13, weight: .semibold))
+            Spacer()
+            if !openAlerts.isEmpty {
+                Text("\(openAlerts.count)")
+                    .font(.caption2.weight(.bold).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(.red))
+            }
+        }
+    }
+
+    private var allClearState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "checkmark.shield.fill")
+                .font(.title3)
+                .foregroundStyle(.green)
+            Text(L10n.alerts.allClear)
+                .font(.caption.weight(.semibold))
+            Text(L10n.alerts.noAlerts)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
     }
 
     private func triggerHapticForCritical() {
@@ -89,64 +102,72 @@ struct WatchAlertsView: View {
     }
 }
 
-// MARK: - Alert Row
+// MARK: - Alert Card
 
-struct WatchAlertRow: View {
+struct AlertCard: View {
     let alert: AlertRecord
 
     private var severityColor: Color {
         PulseTheme.severityColor(alert.severity)
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                // Severity indicator bar
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(severityColor)
-                    .frame(width: 3, height: 28)
+    /// The single most-severe open alert gets the tinted + pulsing
+    /// treatment. We only emphasize unresolved Criticals.
+    private var isCritical: Bool {
+        alert.severity == "Critical" && !alert.is_resolved
+    }
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        if !alert.is_read && !alert.is_resolved {
-                            Circle()
-                                .fill(.blue)
-                                .frame(width: 6, height: 6)
-                        }
-                        Text(alert.title)
-                            .font(.caption.weight(.semibold))
-                            .lineLimit(2)
+    var body: some View {
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(severityColor)
+                .frame(width: 3)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    if isCritical {
+                        LiveDot(size: 6, color: severityColor)
+                    } else if !alert.is_read && !alert.is_resolved {
+                        Circle()
+                            .fill(.blue)
+                            .frame(width: 6, height: 6)
                     }
-                    Text(alert.message)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    Text(alert.title)
+                        .font(.system(size: 12, weight: .semibold))
                         .lineLimit(2)
                 }
-            }
 
-            HStack(spacing: 6) {
-                // Severity badge
-                Text(alert.severity)
-                    .font(.system(size: 8, weight: .bold))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(severityColor.opacity(0.2))
-                    .foregroundStyle(severityColor)
-                    .clipShape(Capsule())
+                Text(alert.message)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
 
-                if alert.is_resolved {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.green)
+                HStack(spacing: 6) {
+                    Text(alert.severity)
+                        .font(.system(size: 8, weight: .bold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(severityColor.opacity(0.2))
+                        .foregroundStyle(severityColor)
+                        .clipShape(Capsule())
+                    if alert.is_resolved {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.green)
+                    }
+                    Spacer(minLength: 0)
+                    Text(RelativeTime.format(alert.created_at))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
-
-                Spacer()
-
-                Text(RelativeTime.format(alert.created_at))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
         }
+        .padding(8)
+        .background(
+            isCritical ? severityColor.opacity(0.12) : WatchTheme.cardFill,
+            in: RoundedRectangle(cornerRadius: WatchTheme.cardRadius)
+        )
+        .opacity(alert.is_resolved ? 0.6 : 1)
     }
 }
 
