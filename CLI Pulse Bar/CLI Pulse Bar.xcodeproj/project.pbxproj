@@ -64,6 +64,7 @@
 		A30008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B30008 /* Assets.xcassets */; };
 		A30009 /* WatchSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30011 /* WatchSessionManager.swift */; };
 		A30020 /* WatchAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30020 /* WatchAppState.swift */; };
+		A30030 /* WatchTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30030 /* WatchTheme.swift */; };
 		A30021 /* PhoneSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30021 /* PhoneSessionManager.swift */; };
 		A30022 /* OnboardingWizardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30022 /* OnboardingWizardView.swift */; };
 		A30023 /* WatchComplicationWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30023 /* WatchComplicationWidget.swift */; };
@@ -243,6 +244,7 @@
 		B30010 /* CLI_Pulse_Watch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CLI_Pulse_Watch.entitlements; sourceTree = "<group>"; };
 		B30011 /* WatchSessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSessionManager.swift; sourceTree = "<group>"; };
 		B30020 /* WatchAppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAppState.swift; sourceTree = "<group>"; };
+		B30030 /* WatchTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchTheme.swift; sourceTree = "<group>"; };
 		B30021 /* PhoneSessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneSessionManager.swift; sourceTree = "<group>"; };
 		B30022 /* OnboardingWizardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingWizardView.swift; sourceTree = "<group>"; };
 		B30023 /* WatchComplicationWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchComplicationWidget.swift; sourceTree = "<group>"; };
@@ -421,6 +423,7 @@
 				B30007 /* WatchAlertsView.swift */,
 				B30011 /* WatchSessionManager.swift */,
 				B30020 /* WatchAppState.swift */,
+				B30030 /* WatchTheme.swift */,
 				B30008 /* Assets.xcassets */,
 				B30009 /* Info.plist */,
 				B30010 /* CLI_Pulse_Watch.entitlements */,
@@ -753,6 +756,7 @@
 				A30007 /* WatchAlertsView.swift in Sources */,
 				A30009 /* WatchSessionManager.swift in Sources */,
 				A30020 /* WatchAppState.swift in Sources */,
+				A30030 /* WatchTheme.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
