@@ -488,3 +488,4 @@
 "watch.active_count" = "%d개 활성";
 "watch.remaining" = "남음";
 "watch.errors" = "오류";
+"watch.live" = "라이브";

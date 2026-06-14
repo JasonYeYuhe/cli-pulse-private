@@ -1,6 +1,13 @@
 import SwiftUI
 import CLIPulseCore
 
+/// Live (sessions) page. Running sessions are featured as cards (provider
+/// colour bar + project + provider·duration + a small activity spark);
+/// non-running sessions are dimmed compact rows below. Drill-down to the
+/// detail view is preserved.
+///
+/// Presentation-only — reads `state.*`, never mutates the data layer.
+/// Owns one `ScrollView` (review R1).
 struct WatchSessionsView: View {
     @EnvironmentObject var state: WatchAppState
 
@@ -13,153 +20,176 @@ struct WatchSessionsView: View {
     }
 
     var body: some View {
-        List {
-            if state.sessions.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "terminal")
-                        .font(.title3)
-                        .foregroundStyle(.tertiary)
-                    Text(L10n.sessions.noSessions)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-            } else {
-                // Running sessions featured
-                if !runningSessions.isEmpty {
-                    Section {
-                        ForEach(runningSessions) { session in
-                            NavigationLink {
-                                WatchSessionDetailView(session: session, showCost: state.showCost)
-                            } label: {
-                                WatchRunningSessionRow(session: session, showCost: state.showCost)
-                            }
-                        }
-                    } header: {
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(.green)
-                                .frame(width: 6, height: 6)
-                            Text("\(runningSessions.count) \(L10n.sessions.running)")
-                        }
-                    }
-                }
+        ScrollView {
+            LazyVStack(spacing: 8) {
+                header
 
-                // Other sessions
-                if !otherSessions.isEmpty {
-                    Section("Other") {
-                        ForEach(otherSessions) { session in
-                            NavigationLink {
-                                WatchSessionDetailView(session: session, showCost: state.showCost)
-                            } label: {
-                                WatchSessionRow(session: session, showCost: state.showCost)
-                            }
+                if state.sessions.isEmpty {
+                    emptyState
+                } else {
+                    ForEach(runningSessions) { session in
+                        NavigationLink {
+                            WatchSessionDetailView(session: session, showCost: state.showCost)
+                        } label: {
+                            SessionCard(session: session, showCost: state.showCost)
                         }
+                        .buttonStyle(.plain)
+                    }
+                    ForEach(otherSessions) { session in
+                        NavigationLink {
+                            WatchSessionDetailView(session: session, showCost: state.showCost)
+                        } label: {
+                            SessionCompactRow(session: session)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
+            .padding(.horizontal, 2)
         }
-        .navigationTitle(L10n.tab.sessions)
-        .refreshable {
-            await state.refreshAll()
+        .refreshable { await state.refreshAll() }
+    }
+
+    private var header: some View {
+        HStack(spacing: 5) {
+            LiveDot(size: 7)
+            Text(L10n.watch.live)
+                .font(.system(size: 13, weight: .semibold))
+            Spacer()
+            if !runningSessions.isEmpty {
+                Text(L10n.sessions.countRunning(runningSessions.count))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
+        .padding(.bottom, 2)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "terminal")
+                .font(.title3)
+                .foregroundStyle(.tertiary)
+            Text(L10n.sessions.noSessions)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
     }
 }
 
-// MARK: - Running Session Row (featured)
+// MARK: - Running session card (featured)
 
-struct WatchRunningSessionRow: View {
+struct SessionCard: View {
     let session: SessionRecord
     let showCost: Bool
 
-    private var providerColor: Color {
-        PulseTheme.providerColor(session.provider)
-    }
+    private var color: Color { PulseTheme.providerColor(session.provider) }
 
     var body: some View {
-        HStack(spacing: 8) {
-            // Provider icon with live indicator
-            ZStack(alignment: .bottomTrailing) {
-                Image(systemName: session.providerKind?.iconName ?? "terminal")
-                    .font(.caption)
-                    .foregroundStyle(providerColor)
-                    .frame(width: 24, height: 24)
-                    .background(providerColor.opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+        HStack(spacing: 9) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(color)
+                .frame(width: 3)
 
-                Circle()
-                    .fill(.green)
-                    .frame(width: 7, height: 7)
-                    .overlay(
-                        Circle().stroke(Color.black, lineWidth: 1.5)
-                    )
-                    .offset(x: 2, y: 2)
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(session.project)
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
 
-                HStack(spacing: 4) {
-                    Text(session.provider)
-                        .font(.system(size: 9))
+                HStack(spacing: 6) {
+                    Text("\(session.provider) · \(RelativeTime.format(session.started_at))")
+                        .font(.system(size: 10))
                         .foregroundStyle(.secondary)
-                    Text(sessionDuration)
-                        .font(.system(size: 9, weight: .medium).monospacedDigit())
-                        .foregroundStyle(providerColor)
+                        .lineLimit(1)
+                    ActivitySpark(seed: Self.stableSeed(session.id), color: color)
                 }
 
                 HStack(spacing: 4) {
                     Text(CostFormatter.formatUsage(session.total_usage))
-                        .font(.caption2.weight(.bold).monospacedDigit())
+                        .font(WatchTheme.monoNumber(size: 11))
                     if showCost && session.estimated_cost > 0 {
                         Text(CostFormatter.format(session.estimated_cost))
                             .font(.system(size: 9).monospacedDigit())
                             .foregroundStyle(.green)
                     }
-                    Spacer()
+                    Spacer(minLength: 0)
                 }
             }
         }
-        .padding(.vertical, 2)
+        .padding(8)
+        .background(WatchTheme.cardFillStrong, in: RoundedRectangle(cornerRadius: WatchTheme.cardRadius))
     }
 
-    private var sessionDuration: String {
-        RelativeTime.format(session.started_at)
+    /// Launch-stable seed from the session id (UTF-8 byte sum) so the
+    /// decorative spark is consistent per session and varies between them.
+    static func stableSeed(_ id: String) -> Int {
+        id.utf8.reduce(0) { $0 &+ Int($1) }
     }
 }
 
-// MARK: - Session Row (compact)
+// MARK: - Non-running session row (dimmed)
 
-struct WatchSessionRow: View {
+struct SessionCompactRow: View {
     let session: SessionRecord
-    let showCost: Bool
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: session.providerKind?.iconName ?? "terminal")
                 .font(.caption2)
                 .foregroundStyle(PulseTheme.providerColor(session.provider))
-                .frame(width: 18)
+                .frame(width: 16)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.project)
-                    .font(.caption.weight(.medium))
-                    .lineLimit(1)
+            Text(session.project)
+                .font(.caption)
+                .lineLimit(1)
 
-                HStack(spacing: 4) {
-                    StatusBadge(
-                        text: session.status,
-                        color: PulseTheme.statusColor(session.status)
-                    )
-                    .scaleEffect(0.8, anchor: .leading)
-                    Text(CostFormatter.formatUsage(session.total_usage))
-                        .font(.caption2.monospacedDigit())
-                }
+            Spacer(minLength: 4)
+
+            StatusBadge(text: session.status, color: PulseTheme.statusColor(session.status))
+                .scaleEffect(0.82)
+
+            Text(CostFormatter.formatUsage(session.total_usage))
+                .font(WatchTheme.monoNumber(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 5)
+        .padding(.horizontal, 8)
+        .background(WatchTheme.cardFill, in: RoundedRectangle(cornerRadius: WatchTheme.cardRadius))
+        .opacity(0.7)
+    }
+}
+
+// MARK: - Activity spark (decorative)
+
+/// A small bar-spark motif beside a running session. Heights are derived
+/// deterministically from `seed` — this is a *decorative* texture, not a
+/// time series (SessionRecord carries no per-session trend), so it is
+/// hidden from VoiceOver.
+struct ActivitySpark: View {
+    let seed: Int
+    let color: Color
+    var bars: Int = 5
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 2) {
+            ForEach(0..<bars, id: \.self) { i in
+                Capsule()
+                    .fill(color)
+                    .frame(width: 3, height: barHeight(i))
             }
         }
+        .frame(height: 13, alignment: .bottom)
+        .accessibilityHidden(true)
+    }
+
+    private func barHeight(_ i: Int) -> CGFloat {
+        // Constant kept under Int32.max — watchOS is arm64_32 (32-bit Int),
+        // where a larger literal would overflow at compile time. `&*`/`&+`
+        // wrap safely; this is decorative so exact values don't matter.
+        let h = abs((seed &* 1_103_515_245 &+ i &* 40_503) % 9) // 0...8
+        return CGFloat(5 + h) // 5...13
     }
 }
 
@@ -216,7 +246,7 @@ struct WatchSessionDetailView: View {
                 )
                 if session.error_count > 0 {
                     WatchMetricRow(
-                        label: "Errors",
+                        label: L10n.watch.errors,
                         value: "\(session.error_count)",
                         icon: "exclamationmark.triangle",
                         valueColor: .red
