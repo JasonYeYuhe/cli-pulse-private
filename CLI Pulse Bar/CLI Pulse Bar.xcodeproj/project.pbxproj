@@ -59,7 +59,7 @@
 		A30003 /* WatchLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30003 /* WatchLoginView.swift */; };
 		A30031 /* WatchComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30031 /* WatchComponents.swift */; };
 		A30032 /* PulseHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30032 /* PulseHomeView.swift */; };
-		A30005 /* WatchProvidersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30005 /* WatchProvidersView.swift */; };
+		A30033 /* QuotaRingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30033 /* QuotaRingsView.swift */; };
 		A30006 /* WatchSessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30006 /* WatchSessionsView.swift */; };
 		A30007 /* WatchAlertsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30007 /* WatchAlertsView.swift */; };
 		A30008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B30008 /* Assets.xcassets */; };
@@ -238,7 +238,7 @@
 		B30003 /* WatchLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchLoginView.swift; sourceTree = "<group>"; };
 		B30031 /* WatchComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchComponents.swift; sourceTree = "<group>"; };
 		B30032 /* PulseHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseHomeView.swift; sourceTree = "<group>"; };
-		B30005 /* WatchProvidersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchProvidersView.swift; sourceTree = "<group>"; };
+		B30033 /* QuotaRingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuotaRingsView.swift; sourceTree = "<group>"; };
 		B30006 /* WatchSessionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSessionsView.swift; sourceTree = "<group>"; };
 		B30007 /* WatchAlertsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAlertsView.swift; sourceTree = "<group>"; };
 		B30008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -421,7 +421,7 @@
 				B30003 /* WatchLoginView.swift */,
 				B30031 /* WatchComponents.swift */,
 				B30032 /* PulseHomeView.swift */,
-				B30005 /* WatchProvidersView.swift */,
+				B30033 /* QuotaRingsView.swift */,
 				B30006 /* WatchSessionsView.swift */,
 				B30007 /* WatchAlertsView.swift */,
 				B30011 /* WatchSessionManager.swift */,
@@ -755,7 +755,7 @@
 				A30003 /* WatchLoginView.swift in Sources */,
 				A30031 /* WatchComponents.swift in Sources */,
 				A30032 /* PulseHomeView.swift in Sources */,
-				A30005 /* WatchProvidersView.swift in Sources */,
+				A30033 /* QuotaRingsView.swift in Sources */,
 				A30006 /* WatchSessionsView.swift in Sources */,
 				A30007 /* WatchAlertsView.swift in Sources */,
 				A30009 /* WatchSessionManager.swift in Sources */,

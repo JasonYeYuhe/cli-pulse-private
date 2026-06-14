@@ -929,6 +929,11 @@ public enum L10n {
         public static func sessionsCount(_ count: Int) -> String { tr("watch.sessions_count", count) }
         public static func devicesCount(_ count: Int) -> String { tr("watch.devices_count", count) }
         public static func alertsCount(_ count: Int) -> String { tr("watch.alerts_count", count) }
+        // Redesign — Quota rings (P2)
+        public static func providerLeft(_ name: String) -> String { tr("watch.provider_left", name) }
+        public static func activeCount(_ count: Int) -> String { tr("watch.active_count", count) }
+        public static var remaining: String { tr("watch.remaining") }
+        public static var errors: String { tr("watch.errors") }
     }
 
     /// v1.10 P3-2: accessibility labels for icon-only controls and

@@ -15,7 +15,7 @@ import CLIPulseCore
 /// Quota/Live/Alerts still wrap their existing views until their phases.
 enum WatchTab: Hashable {
     case pulse   // P1 → PulseHomeView ✓
-    case quota   // P2 → QuotaRingsView (currently Providers)
+    case quota   // P2 → QuotaRingsView ✓
     case live    // P3 → redesigned Sessions
     case alerts  // P4 → redesigned Alerts
 }
@@ -37,7 +37,7 @@ struct WatchMainView: View {
                 .tag(WatchTab.pulse)
 
                 NavigationStack {
-                    WatchProvidersView()
+                    QuotaRingsView()
                         .environmentObject(state)
                 }
                 .tag(WatchTab.quota)

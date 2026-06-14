@@ -484,3 +484,7 @@
 "watch.sessions_count" = "%d sesiones";
 "watch.devices_count" = "%d dispositivos";
 "watch.alerts_count" = "%d alertas";
+"watch.provider_left" = "%@ restante";
+"watch.active_count" = "%d activos";
+"watch.remaining" = "Restante";
+"watch.errors" = "Errores";

@@ -658,6 +658,10 @@
 "watch.sessions_count" = "%d 个会话";
 "watch.devices_count" = "%d 台设备";
 "watch.alerts_count" = "%d 条告警";
+"watch.provider_left" = "%@ 剩余";
+"watch.active_count" = "%d 个活跃";
+"watch.remaining" = "剩余";
+"watch.errors" = "错误";
 "widget.alerts_summary" = "%d 条告警 • CLI Pulse";
 "widget.percent_left" = "%@ 剩余 %d%%";
 "widget.quota_fallback" = "配额";

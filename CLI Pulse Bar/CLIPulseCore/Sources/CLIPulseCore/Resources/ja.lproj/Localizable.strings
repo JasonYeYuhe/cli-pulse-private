@@ -658,6 +658,10 @@
 "watch.sessions_count" = "%d セッション";
 "watch.devices_count" = "%d デバイス";
 "watch.alerts_count" = "%d 件のアラート";
+"watch.provider_left" = "%@ 残り";
+"watch.active_count" = "%d 件アクティブ";
+"watch.remaining" = "残り";
+"watch.errors" = "エラー";
 "widget.alerts_summary" = "アラート %d 件 • CLI Pulse";
 "widget.percent_left" = "%@ 残り %d%%";
 "widget.quota_fallback" = "クォータ";
