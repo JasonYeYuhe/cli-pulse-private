@@ -16,8 +16,8 @@ import Foundation
 /// (`quota - remaining`), NOT `today_usage` — `today_usage` is 0 when
 /// the user hasn't run anything yet today even though the rolling window
 /// may be 28% consumed. This mirrors the established
-/// `WatchProviderCard.displayedUsage` / `WatchProviderGauge.windowUsed`
-/// logic, extracted here so there is one definition instead of three.
+/// `WatchProviderCard.displayedUsage` logic, extracted here so the rings,
+/// the legend, and the detail views share one definition.
 public enum WatchRingMath {
 
     /// Window-consumption "used" count for a provider.

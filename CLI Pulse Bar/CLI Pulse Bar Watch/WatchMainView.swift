@@ -10,12 +10,11 @@ import CLIPulseCore
 /// so the Crown scrolls content and only paginates at the scroll edge
 /// (review R1 — never force a fixed page height).
 ///
-/// **P0 (foundation):** the four pages are wired to the *existing* views
-/// unchanged — only the navigation primitive changes. Later phases swap
-/// each page's content to its redesigned form (Pulse home, Quota rings,
-/// Live, Alerts) without touching this shell or the data layer.
+/// Each phase swaps a page's content to its redesigned form without
+/// touching this shell or the data layer. P1 landed the Pulse home page;
+/// Quota/Live/Alerts still wrap their existing views until their phases.
 enum WatchTab: Hashable {
-    case pulse   // P1 → PulseHomeView (currently Overview)
+    case pulse   // P1 → PulseHomeView ✓
     case quota   // P2 → QuotaRingsView (currently Providers)
     case live    // P3 → redesigned Sessions
     case alerts  // P4 → redesigned Alerts
@@ -32,7 +31,7 @@ struct WatchMainView: View {
         } else {
             TabView(selection: $selectedTab) {
                 NavigationStack {
-                    WatchOverviewView()
+                    PulseHomeView(selectedTab: $selectedTab)
                         .environmentObject(state)
                 }
                 .tag(WatchTab.pulse)

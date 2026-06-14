@@ -652,6 +652,12 @@
 "watch.snooze_15" = "15分";
 "watch.snooze_30" = "30分";
 "watch.snooze_60" = "1時間";
+"watch.pulse_label" = "使用パルス";
+"watch.today_tokens" = "今日 · %@ トークン";
+"watch.toggle_cost_hint" = "コスト表示の切り替え";
+"watch.sessions_count" = "%d セッション";
+"watch.devices_count" = "%d デバイス";
+"watch.alerts_count" = "%d 件のアラート";
 "widget.alerts_summary" = "アラート %d 件 • CLI Pulse";
 "widget.percent_left" = "%@ 残り %d%%";
 "widget.quota_fallback" = "クォータ";

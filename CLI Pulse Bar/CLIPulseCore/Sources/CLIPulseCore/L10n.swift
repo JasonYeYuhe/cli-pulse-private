@@ -922,6 +922,13 @@ public enum L10n {
         public static var snooze15: String { tr("watch.snooze_15") }
         public static var snooze30: String { tr("watch.snooze_30") }
         public static var snooze60: String { tr("watch.snooze_60") }
+        // Redesign — Pulse home (P1)
+        public static var pulseLabel: String { tr("watch.pulse_label") }
+        public static func todayTokens(_ value: String) -> String { tr("watch.today_tokens", value) }
+        public static var toggleCostHint: String { tr("watch.toggle_cost_hint") }
+        public static func sessionsCount(_ count: Int) -> String { tr("watch.sessions_count", count) }
+        public static func devicesCount(_ count: Int) -> String { tr("watch.devices_count", count) }
+        public static func alertsCount(_ count: Int) -> String { tr("watch.alerts_count", count) }
     }
 
     /// v1.10 P3-2: accessibility labels for icon-only controls and
