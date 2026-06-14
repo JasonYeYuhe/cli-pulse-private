@@ -32,60 +32,54 @@ struct PulseWaveform: View {
     }
 
     var body: some View {
-        Group {
+        // GeometryReader computes the ECG path ONCE per layout/amplitude —
+        // not per animation frame. The TimelineView nested below re-runs only
+        // its Canvas closure each tick (changing the dash phase), capturing
+        // the already-built `path`, so there is no per-frame path allocation.
+        GeometryReader { geo in
+            let path = Self.ecgPath(in: geo.size, amplitude: amplitude)
             if shouldAnimate {
                 TimelineView(.animation(minimumInterval: 0.08, paused: false)) { context in
-                    animatedCanvas(date: context.date)
+                    Canvas { ctx, _ in
+                        // Dim baseline trace.
+                        ctx.stroke(
+                            path,
+                            with: .color(PulseTheme.accent.opacity(WatchTheme.waveformBaseOpacity)),
+                            style: StrokeStyle(lineWidth: WatchTheme.waveformBaseWidth, lineCap: .round, lineJoin: .round)
+                        )
+                        // Bright pulse segment flowing along the same path.
+                        let dashOn = geo.size.width * 0.18
+                        let gap = geo.size.width * 1.30
+                        let period = 2.2 / (0.6 + 0.8 * activityLevel.clamped(to: 0...1))
+                        let frac = (context.date.timeIntervalSinceReferenceDate / period).truncatingRemainder(dividingBy: 1)
+                        let phase = CGFloat(frac) * (dashOn + gap)
+                        ctx.stroke(
+                            path,
+                            with: .color(WatchTheme.waveformGlow),
+                            style: StrokeStyle(
+                                lineWidth: WatchTheme.waveformGlowWidth,
+                                lineCap: .round,
+                                lineJoin: .round,
+                                dash: [dashOn, gap],
+                                dashPhase: -phase
+                            )
+                        )
+                    }
                 }
             } else {
-                staticCanvas
+                // Representative still curve — visible but calm (review R3).
+                Canvas { ctx, _ in
+                    ctx.stroke(
+                        path,
+                        with: .color(PulseTheme.accent.opacity(0.45)),
+                        style: StrokeStyle(lineWidth: WatchTheme.waveformBaseWidth, lineCap: .round, lineJoin: .round)
+                    )
+                }
             }
         }
         .frame(height: 38)
         .accessibilityElement()
         .accessibilityLabel(L10n.watch.pulseLabel)
-    }
-
-    private func animatedCanvas(date: Date) -> some View {
-        Canvas { ctx, size in
-            let path = Self.ecgPath(in: size, amplitude: amplitude)
-            // Dim baseline trace.
-            ctx.stroke(
-                path,
-                with: .color(PulseTheme.accent.opacity(WatchTheme.waveformBaseOpacity)),
-                style: StrokeStyle(lineWidth: WatchTheme.waveformBaseWidth, lineCap: .round, lineJoin: .round)
-            )
-            // Bright pulse segment flowing along the same path.
-            let dashOn = size.width * 0.18
-            let gap = size.width * 1.30
-            let total = dashOn + gap
-            let period = 2.2 / (0.6 + 0.8 * activityLevel.clamped(to: 0...1))
-            let frac = (date.timeIntervalSinceReferenceDate / period).truncatingRemainder(dividingBy: 1)
-            let phase = CGFloat(frac) * total
-            ctx.stroke(
-                path,
-                with: .color(WatchTheme.waveformGlow),
-                style: StrokeStyle(
-                    lineWidth: WatchTheme.waveformGlowWidth,
-                    lineCap: .round,
-                    lineJoin: .round,
-                    dash: [dashOn, gap],
-                    dashPhase: -phase
-                )
-            )
-        }
-    }
-
-    private var staticCanvas: some View {
-        Canvas { ctx, size in
-            let path = Self.ecgPath(in: size, amplitude: amplitude)
-            // Representative still curve — visible but calm (review R3).
-            ctx.stroke(
-                path,
-                with: .color(PulseTheme.accent.opacity(0.45)),
-                style: StrokeStyle(lineWidth: WatchTheme.waveformBaseWidth, lineCap: .round, lineJoin: .round)
-            )
-        }
     }
 
     /// One ECG beat scaled into `size`. Vertices are fractions of width;
