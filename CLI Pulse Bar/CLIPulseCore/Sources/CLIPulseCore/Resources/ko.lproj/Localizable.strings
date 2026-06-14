@@ -499,3 +499,6 @@
 "watch.snooze_15" = "15분";
 "watch.snooze_30" = "30분";
 "watch.snooze_60" = "1시간";
+
+/* Quota ring VoiceOver label (P6) — newly surfaced on the redesigned Quota page. */
+"widget.percent_left" = "%@ %d%% 남음";

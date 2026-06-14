@@ -83,6 +83,9 @@ struct WatchComplicationView: View {
                         .font(.system(size: 14, weight: .bold, design: .rounded))
                 }
                 .gaugeStyle(.accessoryCircular)
+                // P6: align the circular gauge tint to the provider's brand
+                // colour so the complication matches the in-app Quota rings.
+                .tint(PulseTheme.providerColor(topProvider?.name ?? ""))
             }
         }
     }

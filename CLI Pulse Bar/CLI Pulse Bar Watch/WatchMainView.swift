@@ -55,7 +55,7 @@ struct WatchMainView: View {
                 .tag(WatchTab.alerts)
             }
             .tabViewStyle(.verticalPage)
-            .containerBackground(.black, for: .tabView)
+            .containerBackground(WatchTheme.canvas, for: .tabView)
             .task {
                 await state.refreshAll()
                 state.startRefreshLoop()

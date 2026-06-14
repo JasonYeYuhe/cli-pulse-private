@@ -46,10 +46,6 @@ enum WatchTheme {
     /// Brighter blue for the moving stroke, a touch lighter than `accent`.
     static let waveformGlow = Color(red: 0.48, green: 0.63, blue: 1.0) // #7BA0FF
 
-    // MARK: - Activity spark
-
-    static let sparkGreen = Color(red: 0.20, green: 0.82, blue: 0.35) // #34D058
-
     // MARK: - Typography
 
     /// Hero metric — large rounded monospaced digits. The view wraps this
