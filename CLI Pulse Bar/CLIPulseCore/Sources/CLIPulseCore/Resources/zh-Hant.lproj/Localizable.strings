@@ -658,6 +658,10 @@
 "watch.sessions_count" = "%d 個會話";
 "watch.devices_count" = "%d 部裝置";
 "watch.alerts_count" = "%d 則告警";
+"watch.provider_left" = "%@ 剩餘";
+"watch.active_count" = "%d 個活躍";
+"watch.remaining" = "剩餘";
+"watch.errors" = "錯誤";
 "widget.alerts_summary" = "%d 條告警 • CLI Pulse";
 "widget.percent_left" = "%@ 剩餘 %d%%";
 "widget.quota_fallback" = "配額";

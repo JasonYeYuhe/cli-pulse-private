@@ -484,3 +484,7 @@
 "watch.sessions_count" = "세션 %d개";
 "watch.devices_count" = "기기 %d개";
 "watch.alerts_count" = "알림 %d개";
+"watch.provider_left" = "%@ 남음";
+"watch.active_count" = "%d개 활성";
+"watch.remaining" = "남음";
+"watch.errors" = "오류";

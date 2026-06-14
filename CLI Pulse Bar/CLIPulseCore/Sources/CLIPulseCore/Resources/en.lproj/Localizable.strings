@@ -656,6 +656,10 @@
 "watch.sessions_count" = "%d sessions";
 "watch.devices_count" = "%d devices";
 "watch.alerts_count" = "%d alerts";
+"watch.provider_left" = "%@ left";
+"watch.active_count" = "%d active";
+"watch.remaining" = "Remaining";
+"watch.errors" = "Errors";
 "widget.alerts_summary" = "%d alerts • CLI Pulse";
 "widget.percent_left" = "%@ %d%% left";
 "widget.quota_fallback" = "Quota";
