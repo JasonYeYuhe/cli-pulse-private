@@ -652,6 +652,12 @@
 "watch.snooze_15" = "15 分鐘";
 "watch.snooze_30" = "30 分鐘";
 "watch.snooze_60" = "1 小時";
+"watch.pulse_label" = "用量脈搏";
+"watch.today_tokens" = "今日 · %@ tokens";
+"watch.toggle_cost_hint" = "切換費用顯示";
+"watch.sessions_count" = "%d 個會話";
+"watch.devices_count" = "%d 部裝置";
+"watch.alerts_count" = "%d 則告警";
 "widget.alerts_summary" = "%d 條告警 • CLI Pulse";
 "widget.percent_left" = "%@ 剩餘 %d%%";
 "widget.quota_fallback" = "配額";

@@ -650,6 +650,12 @@
 "watch.snooze_15" = "15 minutes";
 "watch.snooze_30" = "30 minutes";
 "watch.snooze_60" = "1 hour";
+"watch.pulse_label" = "Usage pulse";
+"watch.today_tokens" = "Today · %@ tokens";
+"watch.toggle_cost_hint" = "Toggle cost display";
+"watch.sessions_count" = "%d sessions";
+"watch.devices_count" = "%d devices";
+"watch.alerts_count" = "%d alerts";
 "widget.alerts_summary" = "%d alerts • CLI Pulse";
 "widget.percent_left" = "%@ %d%% left";
 "widget.quota_fallback" = "Quota";

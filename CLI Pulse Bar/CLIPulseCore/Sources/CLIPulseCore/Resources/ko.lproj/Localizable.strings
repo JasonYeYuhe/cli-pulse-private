@@ -476,3 +476,11 @@
 "usage_pace.summary_left_only" = "페이스: %@";
 "folder_access.banner_title" = "로컬 사용량을 읽을 수 없습니다";
 "folder_access.banner_body" = "macOS가 AI 도구 로그 접근을 차단하여 실제 토큰 사용량과 비용이 표시되지 않습니다. 폴더 접근을 허용하여 확인하세요.";
+
+/* Watch redesign — Pulse home (P1). NOTE: es/ko lack the rest of the watch.* namespace (pre-existing gap); full backfill tracked for P5. */
+"watch.pulse_label" = "사용량 펄스";
+"watch.today_tokens" = "오늘 · %@ 토큰";
+"watch.toggle_cost_hint" = "비용 표시 전환";
+"watch.sessions_count" = "세션 %d개";
+"watch.devices_count" = "기기 %d개";
+"watch.alerts_count" = "알림 %d개";

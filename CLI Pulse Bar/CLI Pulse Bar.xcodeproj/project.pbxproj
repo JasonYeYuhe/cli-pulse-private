@@ -57,7 +57,8 @@
 		A30001 /* CLIPulseApp_Watch.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30001 /* CLIPulseApp_Watch.swift */; };
 		A30002 /* WatchMainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30002 /* WatchMainView.swift */; };
 		A30003 /* WatchLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30003 /* WatchLoginView.swift */; };
-		A30004 /* WatchOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30004 /* WatchOverviewView.swift */; };
+		A30031 /* WatchComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30031 /* WatchComponents.swift */; };
+		A30032 /* PulseHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30032 /* PulseHomeView.swift */; };
 		A30005 /* WatchProvidersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30005 /* WatchProvidersView.swift */; };
 		A30006 /* WatchSessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30006 /* WatchSessionsView.swift */; };
 		A30007 /* WatchAlertsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30007 /* WatchAlertsView.swift */; };
@@ -235,7 +236,8 @@
 		B30001 /* CLIPulseApp_Watch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIPulseApp_Watch.swift; sourceTree = "<group>"; };
 		B30002 /* WatchMainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchMainView.swift; sourceTree = "<group>"; };
 		B30003 /* WatchLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchLoginView.swift; sourceTree = "<group>"; };
-		B30004 /* WatchOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchOverviewView.swift; sourceTree = "<group>"; };
+		B30031 /* WatchComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchComponents.swift; sourceTree = "<group>"; };
+		B30032 /* PulseHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseHomeView.swift; sourceTree = "<group>"; };
 		B30005 /* WatchProvidersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchProvidersView.swift; sourceTree = "<group>"; };
 		B30006 /* WatchSessionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSessionsView.swift; sourceTree = "<group>"; };
 		B30007 /* WatchAlertsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAlertsView.swift; sourceTree = "<group>"; };
@@ -417,7 +419,8 @@
 				B30001 /* CLIPulseApp_Watch.swift */,
 				B30002 /* WatchMainView.swift */,
 				B30003 /* WatchLoginView.swift */,
-				B30004 /* WatchOverviewView.swift */,
+				B30031 /* WatchComponents.swift */,
+				B30032 /* PulseHomeView.swift */,
 				B30005 /* WatchProvidersView.swift */,
 				B30006 /* WatchSessionsView.swift */,
 				B30007 /* WatchAlertsView.swift */,
@@ -750,7 +753,8 @@
 				A30001 /* CLIPulseApp_Watch.swift in Sources */,
 				A30002 /* WatchMainView.swift in Sources */,
 				A30003 /* WatchLoginView.swift in Sources */,
-				A30004 /* WatchOverviewView.swift in Sources */,
+				A30031 /* WatchComponents.swift in Sources */,
+				A30032 /* PulseHomeView.swift in Sources */,
 				A30005 /* WatchProvidersView.swift in Sources */,
 				A30006 /* WatchSessionsView.swift in Sources */,
 				A30007 /* WatchAlertsView.swift in Sources */,
