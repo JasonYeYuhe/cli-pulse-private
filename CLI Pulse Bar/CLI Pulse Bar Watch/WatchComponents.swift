@@ -132,15 +132,15 @@ struct BigMetric: View {
     var body: some View {
         ViewThatFits(in: .horizontal) {
             Text(full)
-                .font(WatchTheme.heroFont(34))
+                .font(WatchTheme.heroFont(size: 34))
                 .foregroundStyle(color)
                 .lineLimit(1)
             Text(abbreviated)
-                .font(WatchTheme.heroFont(34))
+                .font(WatchTheme.heroFont(size: 34))
                 .foregroundStyle(color)
                 .lineLimit(1)
             Text(abbreviated)
-                .font(WatchTheme.heroFont(26))
+                .font(WatchTheme.heroFont(size: 26))
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)

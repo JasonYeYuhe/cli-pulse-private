@@ -50,7 +50,6 @@ struct PulseHomeView: View {
             }
             .padding(.horizontal, 2)
         }
-        .navigationBarTitleDisplayMode(.inline)
         .refreshable { await state.refreshAll() }
     }
 
