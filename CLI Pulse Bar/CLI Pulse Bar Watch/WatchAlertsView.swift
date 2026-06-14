@@ -93,7 +93,7 @@ struct WatchAlertsView: View {
     }
 
     private func triggerHapticForCritical() {
-        let critical = openAlerts.filter { $0.severity == "Critical" }
+        let critical = openAlerts.filter { $0.alertSeverity == .critical }
         if !critical.isEmpty {
             #if os(watchOS)
             WKInterfaceDevice.current().play(.failure)
@@ -114,7 +114,7 @@ struct AlertCard: View {
     /// The single most-severe open alert gets the tinted + pulsing
     /// treatment. We only emphasize unresolved Criticals.
     private var isCritical: Bool {
-        alert.severity == "Critical" && !alert.is_resolved
+        alert.alertSeverity == .critical && !alert.is_resolved
     }
 
     var body: some View {

@@ -94,9 +94,10 @@ public enum WatchRingMath {
     }
 
     /// Index of the most-constrained entry (highest `usagePercent`) in a
-    /// list of consumption fractions, or `nil` for an empty list. Drives
-    /// the ring-cluster centre label ("Claude left"). Ties resolve to the
-    /// lowest index so the centre is stable when two providers are level.
+    /// list of consumption fractions, or `nil` for an empty list. A general
+    /// helper for picking the most-constrained provider from an arbitrary
+    /// (unsorted) list; the ring cluster itself reads `ringProviders`'
+    /// already-sorted `.first`. Ties resolve to the lowest index.
     public static func indexOfMostConstrained(_ usagePercents: [Double]) -> Int? {
         guard !usagePercents.isEmpty else { return nil }
         var best = 0
