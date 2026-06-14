@@ -233,3 +233,29 @@ struct WatchMetricRow: View {
         }
     }
 }
+
+// MARK: - Live Dot
+
+/// A small "live" status dot. When motion is allowed it pulses via the
+/// system `symbolEffect(.pulse)` — which is battery-managed and already
+/// respects Reduce Motion — and we additionally gate `isActive` on
+/// scene-active + not-Always-On so nothing pulses off-screen (review R3).
+struct LiveDot: View {
+    var size: CGFloat = 7
+    var color: Color = .green
+
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+
+    private var active: Bool {
+        scenePhase == .active && !reduceMotion && !isLuminanceReduced
+    }
+
+    var body: some View {
+        Image(systemName: "circle.fill")
+            .font(.system(size: size))
+            .foregroundStyle(color)
+            .symbolEffect(.pulse, isActive: active)
+    }
+}

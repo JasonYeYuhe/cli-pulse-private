@@ -488,3 +488,4 @@
 "watch.active_count" = "%d activos";
 "watch.remaining" = "Restante";
 "watch.errors" = "Errores";
+"watch.live" = "En vivo";

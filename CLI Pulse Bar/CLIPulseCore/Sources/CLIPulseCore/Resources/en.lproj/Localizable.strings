@@ -660,6 +660,7 @@
 "watch.active_count" = "%d active";
 "watch.remaining" = "Remaining";
 "watch.errors" = "Errors";
+"watch.live" = "Live";
 "widget.alerts_summary" = "%d alerts • CLI Pulse";
 "widget.percent_left" = "%@ %d%% left";
 "widget.quota_fallback" = "Quota";

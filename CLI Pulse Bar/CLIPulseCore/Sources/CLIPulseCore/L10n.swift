@@ -934,6 +934,8 @@ public enum L10n {
         public static func activeCount(_ count: Int) -> String { tr("watch.active_count", count) }
         public static var remaining: String { tr("watch.remaining") }
         public static var errors: String { tr("watch.errors") }
+        // Redesign — Live sessions (P3)
+        public static var live: String { tr("watch.live") }
     }
 
     /// v1.10 P3-2: accessibility labels for icon-only controls and
