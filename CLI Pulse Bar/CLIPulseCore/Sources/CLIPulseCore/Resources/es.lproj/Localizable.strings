@@ -489,3 +489,13 @@
 "watch.remaining" = "Restante";
 "watch.errors" = "Errores";
 "watch.live" = "En vivo";
+
+/* Watch base namespace backfill (P5) — es previously fell back to en for these. */
+"watch.couldnt_load_data" = "No se pudieron cargar los datos";
+"watch.couldnt_load_providers" = "No se pudieron cargar los proveedores";
+"watch.retry" = "Reintentar";
+"watch.pull_to_refresh" = "Desliza para actualizar";
+"watch.unread_count" = "%d sin leer";
+"watch.snooze_15" = "15 minutos";
+"watch.snooze_30" = "30 minutos";
+"watch.snooze_60" = "1 hora";

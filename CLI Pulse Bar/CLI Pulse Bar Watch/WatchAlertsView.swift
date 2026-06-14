@@ -168,6 +168,7 @@ struct AlertCard: View {
             in: RoundedRectangle(cornerRadius: WatchTheme.cardRadius)
         )
         .opacity(alert.is_resolved ? 0.6 : 1)
+        .accessibilityElement(children: .combine)
     }
 }
 

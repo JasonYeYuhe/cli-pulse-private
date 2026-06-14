@@ -96,6 +96,9 @@ struct PulseHomeView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // Redact the spend/usage figure under Always-On / lock
+            // (system applies .privacy redaction to privacySensitive views).
+            .privacySensitive()
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)

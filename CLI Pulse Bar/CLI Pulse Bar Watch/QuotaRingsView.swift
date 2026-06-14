@@ -222,6 +222,7 @@ struct QuotaLegendRow: View {
         .padding(.vertical, 5)
         .padding(.horizontal, 8)
         .background(WatchTheme.cardFill, in: RoundedRectangle(cornerRadius: WatchTheme.cardRadius))
+        .accessibilityElement(children: .combine)
     }
 }
 

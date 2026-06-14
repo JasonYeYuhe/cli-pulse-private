@@ -257,5 +257,6 @@ struct LiveDot: View {
             .font(.system(size: size))
             .foregroundStyle(color)
             .symbolEffect(.pulse, isActive: active)
+            .accessibilityHidden(true) // decorative; adjacent text carries the meaning
     }
 }
