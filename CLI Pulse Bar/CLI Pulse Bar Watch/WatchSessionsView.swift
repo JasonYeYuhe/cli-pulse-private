@@ -120,6 +120,7 @@ struct SessionCard: View {
         }
         .padding(8)
         .background(WatchTheme.cardFillStrong, in: RoundedRectangle(cornerRadius: WatchTheme.cardRadius))
+        .accessibilityElement(children: .combine)
     }
 
     /// Launch-stable seed from the session id (UTF-8 byte sum) so the
@@ -158,6 +159,7 @@ struct SessionCompactRow: View {
         .padding(.horizontal, 8)
         .background(WatchTheme.cardFill, in: RoundedRectangle(cornerRadius: WatchTheme.cardRadius))
         .opacity(0.7)
+        .accessibilityElement(children: .combine)
     }
 }
 

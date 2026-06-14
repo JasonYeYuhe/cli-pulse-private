@@ -11,12 +11,14 @@ struct WatchLoginView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
-                Image(systemName: "waveform.path.ecg")
-                    .font(.title2)
-                    .foregroundStyle(PulseTheme.accent)
-
-                Text(L10n.auth.title)
-                    .font(.headline)
+                VStack(spacing: 4) {
+                    Image(systemName: "waveform.path.ecg")
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(PulseTheme.accent)
+                    Text(L10n.auth.title)
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .accessibilityElement(children: .combine)
 
                 // Primary: Sign in from iPhone
                 if !showManualLogin {

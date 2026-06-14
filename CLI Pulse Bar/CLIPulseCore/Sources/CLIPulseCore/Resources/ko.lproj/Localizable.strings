@@ -489,3 +489,13 @@
 "watch.remaining" = "남음";
 "watch.errors" = "오류";
 "watch.live" = "라이브";
+
+/* Watch base namespace backfill (P5) — ko previously fell back to en for these. */
+"watch.couldnt_load_data" = "데이터를 불러올 수 없음";
+"watch.couldnt_load_providers" = "공급자를 불러올 수 없음";
+"watch.retry" = "다시 시도";
+"watch.pull_to_refresh" = "당겨서 새로고침";
+"watch.unread_count" = "%d개 안 읽음";
+"watch.snooze_15" = "15분";
+"watch.snooze_30" = "30분";
+"watch.snooze_60" = "1시간";
