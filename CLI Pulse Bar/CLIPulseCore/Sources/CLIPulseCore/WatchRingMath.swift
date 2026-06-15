@@ -98,30 +98,44 @@ public enum WatchRingMath {
     ///
     /// Only providers with a real quota window can render a meaningful
     /// ring (no quota → `usagePercent == 0` → an empty ring that says
-    /// nothing), so unmetered providers are filtered out here and shown
-    /// in the legend only. The survivors are ordered **most-constrained
-    /// first** (highest `usagePercent`) and capped at `limit` (default 3)
-    /// for legibility at 41/45/49 mm — the rest fall through to the
-    /// legend (review note: cap concentric rings at 3).
+    /// nothing), so unmetered providers are filtered out. The survivors
+    /// are ordered **headline-first — highest spend, then usage** — so the
+    /// user's "main" provider (the one they spend the most on) gets the
+    /// outermost ring and the centre label, and capped at `limit`
+    /// (default 3) for legibility at 41/45/49 mm.
     ///
-    /// The sort is deterministic: ties on `usagePercent` break on
+    /// The sort is deterministic: ties on cost then `today_usage` break on
     /// `provider` name so the ring order is stable across refreshes.
     public static func ringProviders(_ providers: [ProviderUsage], limit: Int = 3) -> [ProviderUsage] {
         let metered = providers.filter { $0.quota != nil }
         let sorted = metered.sorted { a, b in
-            if a.usagePercent != b.usagePercent {
-                return a.usagePercent > b.usagePercent
+            if a.estimated_cost_today != b.estimated_cost_today {
+                return a.estimated_cost_today > b.estimated_cost_today
+            }
+            if a.today_usage != b.today_usage {
+                return a.today_usage > b.today_usage
             }
             return a.provider < b.provider
         }
         return Array(sorted.prefix(max(0, limit)))
     }
 
+    /// The most-constrained metered provider — highest `usagePercent`
+    /// (least headroom), the one closest to its limit. Drives the Pulse
+    /// home "tightest quota" teaser. `nil` when no provider has a quota
+    /// window. Ties resolve on `provider` name for stability.
+    public static func mostConstrained(_ providers: [ProviderUsage]) -> ProviderUsage? {
+        providers
+            .filter { $0.quota != nil }
+            .max { a, b in
+                if a.usagePercent != b.usagePercent { return a.usagePercent < b.usagePercent }
+                return a.provider > b.provider
+            }
+    }
+
     /// Index of the most-constrained entry (highest `usagePercent`) in a
     /// list of consumption fractions, or `nil` for an empty list. A general
-    /// helper for picking the most-constrained provider from an arbitrary
-    /// (unsorted) list; the ring cluster itself reads `ringProviders`'
-    /// already-sorted `.first`. Ties resolve to the lowest index.
+    /// scalar helper; ties resolve to the lowest index.
     public static func indexOfMostConstrained(_ usagePercents: [Double]) -> Int? {
         guard !usagePercents.isEmpty else { return nil }
         var best = 0
