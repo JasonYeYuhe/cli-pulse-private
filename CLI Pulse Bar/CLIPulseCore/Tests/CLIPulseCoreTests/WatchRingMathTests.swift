@@ -118,18 +118,18 @@ final class WatchRingMathTests: XCTestCase {
         XCTAssertEqual(result.map(\.provider), ["Claude"])
     }
 
-    func test_ringProviders_ordersByCostThenUsage() {
-        // Headline-first: the provider you spend the most on leads.
-        let claude = makeProvider("Claude", quota: 100, remaining: 9, cost: 283.96)
-        let codex = makeProvider("Codex", quota: 100, remaining: 20, cost: 0.63)
-        let gemini = makeProvider("Gemini", quota: 100, remaining: 14, cost: 12.0)
+    func test_ringProviders_ordersByUsageThenCost() {
+        // Most-active first: the provider you use the most tokens on leads.
+        let claude = makeProvider("Claude", quota: 100, remaining: 9, cost: 283.96, usage: 5000)
+        let codex = makeProvider("Codex", quota: 100, remaining: 20, cost: 0.63, usage: 1200)
+        let gemini = makeProvider("Gemini", quota: 100, remaining: 14, cost: 12.0, usage: 9000)
         let result = WatchRingMath.ringProviders([claude, codex, gemini])
-        XCTAssertEqual(result.map(\.provider), ["Claude", "Gemini", "Codex"])
+        XCTAssertEqual(result.map(\.provider), ["Gemini", "Claude", "Codex"])
     }
 
-    func test_ringProviders_costTieBreaksOnUsage() {
-        let a = makeProvider("Alpha", quota: 100, remaining: 50, cost: 5, usage: 100)
-        let b = makeProvider("Bravo", quota: 100, remaining: 50, cost: 5, usage: 900)
+    func test_ringProviders_usageTieBreaksOnCost() {
+        let a = makeProvider("Alpha", quota: 100, remaining: 50, cost: 1, usage: 500)
+        let b = makeProvider("Bravo", quota: 100, remaining: 50, cost: 99, usage: 500)
         XCTAssertEqual(WatchRingMath.ringProviders([a, b]).map(\.provider), ["Bravo", "Alpha"])
     }
 

@@ -120,9 +120,9 @@ enum QuotaTierStyle {
 // MARK: - Concentric ring cluster (remaining / countdown)
 
 /// Activity-ring-style concentric rings. `providers` is already
-/// `WatchRingMath.ringProviders` output (≤3, headline-first by spend), so
-/// the outermost ring and the centre label both key off `providers.first`
-/// (the "main" provider). Each ring's arc is the provider's **Weekly**-
+/// `WatchRingMath.ringProviders` output (≤3, most-active first by token
+/// usage), so the outermost ring and the centre label both key off
+/// `providers.first` (the "main" provider, same as the Pulse teaser). Each ring's arc is the provider's **Weekly**-
 /// window remaining headroom and depletes as that budget is used.
 struct ProviderRingCluster: View {
     let providers: [ProviderUsage]
