@@ -18,6 +18,19 @@ struct PulseHomeView: View {
         WatchPulseFormat.activityLevel(activeSessions: state.dashboard?.active_sessions ?? 0)
     }
 
+    private var visibleProviders: [ProviderUsage] {
+        state.providers.filter { state.enabledProviderNames.contains($0.provider) }
+    }
+
+    /// The provider closest to its limit — drives the "tightest quota" teaser.
+    private var tightest: ProviderUsage? {
+        WatchRingMath.mostConstrained(visibleProviders)
+    }
+
+    private var weekCost: Double {
+        WatchPulseFormat.weekToDateCost(visibleProviders)
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 10) {
@@ -26,8 +39,11 @@ struct PulseHomeView: View {
 
                 if let dash = state.dashboard {
                     hero(dash)
+                    sparkline(dash)
                     chips(dash)
+                    tightestQuota()
                     folded(dash)
+                    recentActivity(dash)
                     if let last = state.lastRefresh {
                         HStack(spacing: 4) {
                             Image(systemName: "clock").font(.system(size: 9))
@@ -105,6 +121,82 @@ struct PulseHomeView: View {
         .accessibilityHint(L10n.watch.toggleCostHint)
     }
 
+    // MARK: - Usage trend sparkline
+
+    @ViewBuilder
+    private func sparkline(_ dash: DashboardSummary) -> some View {
+        if dash.trend.count >= 2 {
+            ActivityTimelineChart(trend: dash.trend, style: .watch, showLabels: false)
+                .accessibilityHidden(true) // decorative; the hero states the number
+        }
+    }
+
+    // MARK: - Tightest quota teaser (jumps to Quota)
+
+    @ViewBuilder
+    private func tightestQuota() -> some View {
+        if let p = tightest {
+            let color = WatchTheme.tierColor(
+                WatchRingMath.tier(usagePercent: p.usagePercent),
+                base: PulseTheme.providerColor(p.provider)
+            )
+            Button {
+                selectedTab = .quota
+            } label: {
+                VStack(alignment: .leading, spacing: 6) {
+                    SectionHeader(title: L10n.providers.quota, icon: "gauge.with.needle")
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(PulseTheme.providerColor(p.provider))
+                            .frame(width: 8, height: 8)
+                        Text(p.provider)
+                            .font(.caption.weight(.medium))
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(L10n.watch.percentLeft(WatchRingMath.remainingPercentInt(usagePercent: p.usagePercent)))
+                            .font(WatchTheme.monoNumber(size: 12))
+                            .foregroundStyle(color)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(WatchTheme.cardFill, in: RoundedRectangle(cornerRadius: WatchTheme.cardRadius))
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    // MARK: - Recent activity
+
+    @ViewBuilder
+    private func recentActivity(_ dash: DashboardSummary) -> some View {
+        if !dash.recent_activity.isEmpty {
+            WatchCard {
+                VStack(alignment: .leading, spacing: 6) {
+                    SectionHeader(title: L10n.dashboard.activity, icon: "clock.arrow.circlepath")
+                    ForEach(Array(dash.recent_activity.prefix(3))) { item in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.title)
+                                .font(.caption)
+                                .lineLimit(1)
+                            if !item.subtitle.isEmpty {
+                                Text(item.subtitle)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Stat chips
 
     private func chips(_ dash: DashboardSummary) -> some View {
@@ -139,13 +231,23 @@ struct PulseHomeView: View {
 
     @ViewBuilder
     private func folded(_ dash: DashboardSummary) -> some View {
-        // Requests.
+        // Requests + this-week cost.
         WatchCard {
-            WatchMetricRow(
-                label: L10n.dashboard.requests,
-                value: "\(dash.total_requests_today)",
-                icon: "arrow.up.arrow.down"
-            )
+            VStack(spacing: 6) {
+                WatchMetricRow(
+                    label: L10n.dashboard.requests,
+                    value: "\(dash.total_requests_today)",
+                    icon: "arrow.up.arrow.down"
+                )
+                if state.showCost {
+                    WatchMetricRow(
+                        label: L10n.providers.thisWeek,
+                        value: CostFormatter.format(weekCost),
+                        icon: "calendar",
+                        valueColor: .green
+                    )
+                }
+            }
         }
 
         if !dash.top_projects.isEmpty {

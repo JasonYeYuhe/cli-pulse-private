@@ -41,14 +41,24 @@ public struct ActivityTimelineChart: View {
             minBarHeight: 2, chartHeight: 60,
             labelFont: .caption2
         )
+
+        /// Compact watch sparkline: 1px bars, short chart (used with
+        /// `showLabels: false`).
+        public static let watch = Style(
+            barSpacing: 1, barCornerRadius: 1,
+            minBarHeight: 1, chartHeight: 26,
+            labelFont: .system(size: 7)
+        )
     }
 
     private let trend: [UsagePoint]
     private let style: Style
+    private let showLabels: Bool
 
-    public init(trend: [UsagePoint], style: Style) {
+    public init(trend: [UsagePoint], style: Style, showLabels: Bool = true) {
         self.trend = trend
         self.style = style
+        self.showLabels = showLabels
     }
 
     public var body: some View {
@@ -78,7 +88,7 @@ public struct ActivityTimelineChart: View {
             .frame(height: style.chartHeight)
 
             // Hour labels: first, optionally middle, last.
-            if trend.count >= 2 {
+            if showLabels, trend.count >= 2 {
                 HStack {
                     Text(OverviewFormatters.hourLabel(trend.first?.timestamp ?? ""))
                         .font(style.labelFont)

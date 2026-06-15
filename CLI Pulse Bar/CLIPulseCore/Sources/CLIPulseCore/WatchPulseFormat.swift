@@ -27,4 +27,11 @@ public enum WatchPulseFormat {
         }
         return CostFormatter.format(cost)
     }
+
+    /// Week-to-date estimated cost across providers (the dashboard has no
+    /// weekly total, so we sum each provider's `estimated_cost_week`). Used
+    /// for the Pulse-home "this week" line.
+    public static func weekToDateCost(_ providers: [ProviderUsage]) -> Double {
+        providers.reduce(0) { $0 + $1.estimated_cost_week }
+    }
 }

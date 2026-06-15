@@ -118,12 +118,19 @@ final class WatchRingMathTests: XCTestCase {
         XCTAssertEqual(result.map(\.provider), ["Claude"])
     }
 
-    func test_ringProviders_sortsMostConstrainedFirst() {
-        let claude = makeProvider("Claude", quota: 100, remaining: 38)  // 62%
-        let codex = makeProvider("Codex", quota: 100, remaining: 58)    // 42%
-        let gemini = makeProvider("Gemini", quota: 100, remaining: 5)   // 95%
+    func test_ringProviders_ordersByCostThenUsage() {
+        // Headline-first: the provider you spend the most on leads.
+        let claude = makeProvider("Claude", quota: 100, remaining: 9, cost: 283.96)
+        let codex = makeProvider("Codex", quota: 100, remaining: 20, cost: 0.63)
+        let gemini = makeProvider("Gemini", quota: 100, remaining: 14, cost: 12.0)
         let result = WatchRingMath.ringProviders([claude, codex, gemini])
-        XCTAssertEqual(result.map(\.provider), ["Gemini", "Claude", "Codex"])
+        XCTAssertEqual(result.map(\.provider), ["Claude", "Gemini", "Codex"])
+    }
+
+    func test_ringProviders_costTieBreaksOnUsage() {
+        let a = makeProvider("Alpha", quota: 100, remaining: 50, cost: 5, usage: 100)
+        let b = makeProvider("Bravo", quota: 100, remaining: 50, cost: 5, usage: 900)
+        XCTAssertEqual(WatchRingMath.ringProviders([a, b]).map(\.provider), ["Bravo", "Alpha"])
     }
 
     func test_ringProviders_capsAtLimit() {
@@ -133,14 +140,35 @@ final class WatchRingMathTests: XCTestCase {
     }
 
     func test_ringProviders_tieBreaksOnNameForStability() {
-        let b = makeProvider("Bravo", quota: 100, remaining: 50)   // 50%
-        let a = makeProvider("Alpha", quota: 100, remaining: 50)   // 50%
+        // Equal cost + usage → stable alphabetical order.
+        let b = makeProvider("Bravo", quota: 100, remaining: 50, cost: 5, usage: 10)
+        let a = makeProvider("Alpha", quota: 100, remaining: 50, cost: 5, usage: 10)
         let result = WatchRingMath.ringProviders([b, a])
         XCTAssertEqual(result.map(\.provider), ["Alpha", "Bravo"])
     }
 
     func test_ringProviders_emptyInput() {
         XCTAssertTrue(WatchRingMath.ringProviders([]).isEmpty)
+    }
+
+    // MARK: - mostConstrained
+
+    func test_mostConstrained_picksHighestUsagePercent() {
+        let claude = makeProvider("Claude", quota: 100, remaining: 91)  // 9% used
+        let codex = makeProvider("Codex", quota: 100, remaining: 20)    // 80% used
+        let gemini = makeProvider("Gemini", quota: 100, remaining: 86)  // 14% used
+        XCTAssertEqual(WatchRingMath.mostConstrained([claude, codex, gemini])?.provider, "Codex")
+    }
+
+    func test_mostConstrained_ignoresUnmetered() {
+        let metered = makeProvider("Claude", quota: 100, remaining: 50)
+        let unmetered = makeProvider("Ollama", quota: nil, remaining: nil)
+        XCTAssertEqual(WatchRingMath.mostConstrained([unmetered, metered])?.provider, "Claude")
+    }
+
+    func test_mostConstrained_emptyIsNil() {
+        XCTAssertNil(WatchRingMath.mostConstrained([]))
+        XCTAssertNil(WatchRingMath.mostConstrained([makeProvider("Ollama", quota: nil, remaining: nil)]))
     }
 
     // MARK: - indexOfMostConstrained
@@ -159,12 +187,13 @@ final class WatchRingMathTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func makeProvider(_ name: String, quota: Int?, remaining: Int?) -> ProviderUsage {
+    private func makeProvider(_ name: String, quota: Int?, remaining: Int?,
+                             cost: Double = 0, usage: Int = 0) -> ProviderUsage {
         ProviderUsage(
             provider: name,
-            today_usage: 0,
+            today_usage: usage,
             week_usage: 0,
-            estimated_cost_today: 0,
+            estimated_cost_today: cost,
             estimated_cost_week: 0,
             cost_status_today: "Estimated",
             cost_status_week: "Estimated",

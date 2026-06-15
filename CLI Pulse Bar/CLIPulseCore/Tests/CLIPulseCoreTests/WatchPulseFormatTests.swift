@@ -54,4 +54,27 @@ final class WatchPulseFormatTests: XCTestCase {
         // Exactly $10 abbreviates to whole dollars.
         XCTAssertEqual(WatchPulseFormat.abbreviatedCost(10.0), "$10")
     }
+
+    // MARK: - weekToDateCost
+
+    func test_weekToDateCost_sumsProviders() {
+        let a = makeProvider(costWeek: 12.5)
+        let b = makeProvider(costWeek: 0.63)
+        let c = makeProvider(costWeek: 100.0)
+        XCTAssertEqual(WatchPulseFormat.weekToDateCost([a, b, c]), 113.13, accuracy: 1e-9)
+    }
+
+    func test_weekToDateCost_emptyIsZero() {
+        XCTAssertEqual(WatchPulseFormat.weekToDateCost([]), 0)
+    }
+
+    private func makeProvider(costWeek: Double) -> ProviderUsage {
+        ProviderUsage(
+            provider: "P", today_usage: 0, week_usage: 0,
+            estimated_cost_today: 0, estimated_cost_week: costWeek,
+            cost_status_today: "Estimated", cost_status_week: "Estimated",
+            quota: nil, remaining: nil, status_text: "",
+            trend: [], recent_sessions: [], recent_errors: []
+        )
+    }
 }
