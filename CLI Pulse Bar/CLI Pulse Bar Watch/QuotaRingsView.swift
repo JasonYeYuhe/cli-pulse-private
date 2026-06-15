@@ -220,8 +220,14 @@ struct ProviderTierCard: View {
 
     private var providerColor: Color { PulseTheme.providerColor(provider.provider) }
 
+    /// Overall remaining %, same source of truth as the rings (R4).
+    private var overallColor: Color {
+        WatchTheme.tierColor(WatchRingMath.tier(usagePercent: provider.usagePercent), base: providerColor)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            // Header: dot + name + overall "% left" (provider-level headline).
             HStack(spacing: 6) {
                 Circle()
                     .fill(providerColor)
@@ -230,13 +236,14 @@ struct ProviderTierCard: View {
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                if showCost && provider.estimated_cost_today > 0 {
-                    Text(CostFormatter.format(provider.estimated_cost_today))
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.green)
+                if provider.quota != nil {
+                    Text(L10n.watch.percentLeft(WatchRingMath.remainingPercentInt(usagePercent: provider.usagePercent)))
+                        .font(WatchTheme.monoNumber(size: 12))
+                        .foregroundStyle(overallColor)
                 }
             }
 
+            // Per-window quota bars (5h / Weekly …), or one overall bar.
             if !provider.tiers.isEmpty {
                 ForEach(Array(provider.tiers.prefix(2).enumerated()), id: \.offset) { _, tier in
                     UsageBar(
@@ -250,21 +257,22 @@ struct ProviderTierCard: View {
                 UsageBar(
                     label: L10n.providers.quota,
                     value: WatchRingMath.remainingFraction(usagePercent: provider.usagePercent),
-                    color: WatchTheme.tierColor(WatchRingMath.tier(usagePercent: provider.usagePercent), base: providerColor),
+                    color: overallColor,
                     detail: L10n.watch.percentLeft(WatchRingMath.remainingPercentInt(usagePercent: provider.usagePercent))
                 )
-            } else {
-                // Unmetered provider (no quota window): show today's usage
-                // rather than an empty bar.
-                HStack {
-                    Text(L10n.dashboard.today)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(CostFormatter.formatUsage(provider.today_usage))
-                        .font(.caption2.monospacedDigit())
-                }
             }
+
+            // Footer: cost (when shown) + today's token usage.
+            HStack(spacing: 5) {
+                if showCost && provider.estimated_cost_today > 0 {
+                    Text(CostFormatter.format(provider.estimated_cost_today))
+                        .foregroundStyle(.green)
+                }
+                Text(L10n.watch.tokensUsed(CostFormatter.formatUsage(provider.today_usage)))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            .font(.caption2.monospacedDigit())
         }
         .padding(8)
         .background(WatchTheme.cardFill, in: RoundedRectangle(cornerRadius: WatchTheme.cardRadius))

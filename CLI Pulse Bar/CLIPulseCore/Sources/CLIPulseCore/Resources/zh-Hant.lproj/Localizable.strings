@@ -664,6 +664,7 @@
 "watch.errors" = "錯誤";
 "watch.live" = "即時";
 "watch.percent_left" = "剩餘 %d%%";
+"watch.tokens_used" = "%@ tokens";
 "widget.alerts_summary" = "%d 條告警 • CLI Pulse";
 "widget.percent_left" = "%@ 剩餘 %d%%";
 "widget.quota_fallback" = "配額";
