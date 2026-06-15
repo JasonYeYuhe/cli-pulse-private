@@ -49,6 +49,30 @@ public enum WatchRingMath {
         Int(remainingFraction(usagePercent: usagePercent) * 100)
     }
 
+    // MARK: - Per-tier math (5h / Weekly / model windows)
+
+    // `TierDTO` (5h Window, Weekly, …) carries raw `quota`/`remaining`
+    // counts but no `usagePercent`, so these derive both the bar fill
+    // (remaining, counting down like macOS/iOS) and the colour tier from
+    // those counts — the tier-level analogue of `ProviderUsage.usagePercent`.
+
+    /// Remaining fraction `0...1` for a quota/remaining pair (bar fill).
+    public static func remainingFraction(quota: Int, remaining: Int) -> Double {
+        guard quota > 0 else { return 0 }
+        return (Double(remaining) / Double(quota)).clamped(to: 0...1)
+    }
+
+    /// Consumption fraction `0...1` for a quota/remaining pair (colour tier).
+    public static func usagePercent(quota: Int, remaining: Int) -> Double {
+        guard quota > 0 else { return 0 }
+        return (Double(max(0, quota - remaining)) / Double(quota)).clamped(to: 0...1)
+    }
+
+    /// Remaining percent `0...100` for a quota/remaining pair (bar label).
+    public static func remainingPercentInt(quota: Int, remaining: Int) -> Int {
+        Int(remainingFraction(quota: quota, remaining: remaining) * 100)
+    }
+
     // MARK: - Threshold tiers
 
     /// Colour tier for a consumption fraction. The boundaries match the

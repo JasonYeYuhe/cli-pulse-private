@@ -663,6 +663,7 @@
 "watch.remaining" = "残り";
 "watch.errors" = "エラー";
 "watch.live" = "ライブ";
+"watch.percent_left" = "残り %d%%";
 "widget.alerts_summary" = "アラート %d 件 • CLI Pulse";
 "widget.percent_left" = "%@ 残り %d%%";
 "widget.quota_fallback" = "クォータ";

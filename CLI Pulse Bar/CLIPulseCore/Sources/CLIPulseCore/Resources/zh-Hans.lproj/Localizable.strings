@@ -663,6 +663,7 @@
 "watch.remaining" = "剩余";
 "watch.errors" = "错误";
 "watch.live" = "实时";
+"watch.percent_left" = "剩余 %d%%";
 "widget.alerts_summary" = "%d 条告警 • CLI Pulse";
 "widget.percent_left" = "%@ 剩余 %d%%";
 "widget.quota_fallback" = "配额";
