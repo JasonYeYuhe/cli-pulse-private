@@ -99,21 +99,21 @@ public enum WatchRingMath {
     /// Only providers with a real quota window can render a meaningful
     /// ring (no quota → `usagePercent == 0` → an empty ring that says
     /// nothing), so unmetered providers are filtered out. The survivors
-    /// are ordered **headline-first — highest spend, then usage** — so the
-    /// user's "main" provider (the one they spend the most on) gets the
-    /// outermost ring and the centre label, and capped at `limit`
-    /// (default 3) for legibility at 41/45/49 mm.
+    /// are ordered by **today's token usage** (most-active first) — the
+    /// same "main" provider the Pulse-home teaser features — so it gets the
+    /// outermost ring and the centre label, capped at `limit` (default 3)
+    /// for legibility at 41/45/49 mm.
     ///
-    /// The sort is deterministic: ties on cost then `today_usage` break on
-    /// `provider` name so the ring order is stable across refreshes.
+    /// The sort is deterministic: ties on `today_usage` break on cost, then
+    /// `provider` name, so the ring order is stable across refreshes.
     public static func ringProviders(_ providers: [ProviderUsage], limit: Int = 3) -> [ProviderUsage] {
         let metered = providers.filter { $0.quota != nil }
         let sorted = metered.sorted { a, b in
-            if a.estimated_cost_today != b.estimated_cost_today {
-                return a.estimated_cost_today > b.estimated_cost_today
-            }
             if a.today_usage != b.today_usage {
                 return a.today_usage > b.today_usage
+            }
+            if a.estimated_cost_today != b.estimated_cost_today {
+                return a.estimated_cost_today > b.estimated_cost_today
             }
             return a.provider < b.provider
         }

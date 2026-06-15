@@ -15,6 +15,12 @@ struct CLIPulseWatchApp: App {
             WatchMainView()
                 .environmentObject(appState)
                 .environmentObject(sessionManager)
+                // Dynamic Type: the glance text (mostly `.caption`/`.headline`
+                // styles) scales with the user's watch text-size setting, but
+                // is bounded to the largest *standard* size — the accessibility
+                // sizes would shatter the dense ring/card layouts. Tune further
+                // on-device if needed.
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 .onAppear {
                     sessionManager.activate()
                     appState.applyFallbackData(from: sessionManager)
