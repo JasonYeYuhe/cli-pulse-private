@@ -325,7 +325,7 @@ public struct UserIdentity: Codable, Sendable, Identifiable, Equatable {
 // MARK: - Dashboard
 
 public struct DashboardSummary: Codable, Sendable {
-    public let total_usage_today: Int
+    @SaturatingInt public var total_usage_today: Int
     public let total_estimated_cost_today: Double
     public let cost_status: String
     public let total_requests_today: Int
@@ -365,7 +365,7 @@ public struct DashboardSummary: Codable, Sendable {
 
 public struct ProviderBreakdown: Codable, Identifiable, Sendable {
     public let provider: String
-    public let usage: Int
+    @SaturatingInt public var usage: Int
     public let estimated_cost: Double
     public let cost_status: String
     public let remaining: Int?
@@ -388,7 +388,7 @@ public struct ProviderBreakdown: Codable, Identifiable, Sendable {
 public struct TopProject: Codable, Identifiable, Sendable {
     public let id: String
     public let name: String
-    public let usage: Int
+    @SaturatingInt public var usage: Int
     public let estimated_cost: Double
     public let cost_status: String
 
@@ -403,7 +403,7 @@ public struct TopProject: Codable, Identifiable, Sendable {
 
 public struct UsagePoint: Codable, Identifiable, Sendable {
     public let timestamp: String
-    public let value: Int
+    @SaturatingInt public var value: Int
 
     public var id: String { timestamp }
 
@@ -470,8 +470,8 @@ public struct ProviderMetadata: Codable, Sendable {
 /// constructing this struct. This ensures all providers are comparable in UI.
 public struct ProviderUsage: Codable, Identifiable, Sendable {
     public let provider: String
-    public let today_usage: Int
-    public let week_usage: Int
+    @SaturatingInt public var today_usage: Int
+    @SaturatingInt public var week_usage: Int
     public let estimated_cost_today: Double
     public let estimated_cost_week: Double
     public let estimated_cost_30_day: Double
@@ -542,8 +542,8 @@ public enum TierRole: String, Codable, Sendable {
 
 public struct TierDTO: Codable, Sendable {
     public let name: String
-    public let quota: Int
-    public let remaining: Int
+    @SaturatingInt public var quota: Int
+    @SaturatingInt public var remaining: Int
     public let reset_time: String?
     public let windowMinutes: Int?
     public let role: TierRole?
@@ -571,7 +571,7 @@ public struct SessionRecord: Codable, Identifiable, Sendable, Hashable {
     public let started_at: String
     public let last_active_at: String
     public let status: String
-    public let total_usage: Int
+    @SaturatingInt public var total_usage: Int
     public let estimated_cost: Double
     public let cost_status: String
     public let requests: Int
