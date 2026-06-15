@@ -54,6 +54,37 @@ final class WatchRingMathTests: XCTestCase {
         XCTAssertEqual(WatchRingMath.remainingPercentInt(usagePercent: 1.0), 0)
     }
 
+    // MARK: - per-tier quota/remaining math
+
+    func test_tierRemainingFraction_isRemainingOverQuota() {
+        XCTAssertEqual(WatchRingMath.remainingFraction(quota: 100, remaining: 38), 0.38, accuracy: 1e-9)
+    }
+
+    func test_tierUsagePercent_isUsedOverQuota() {
+        XCTAssertEqual(WatchRingMath.usagePercent(quota: 100, remaining: 38), 0.62, accuracy: 1e-9)
+    }
+
+    func test_tierRemaining_complementsUsage() {
+        let r = WatchRingMath.remainingFraction(quota: 200, remaining: 50)
+        let u = WatchRingMath.usagePercent(quota: 200, remaining: 50)
+        XCTAssertEqual(r + u, 1.0, accuracy: 1e-9)
+    }
+
+    func test_tierMath_zeroQuotaIsSafe() {
+        XCTAssertEqual(WatchRingMath.remainingFraction(quota: 0, remaining: 0), 0)
+        XCTAssertEqual(WatchRingMath.usagePercent(quota: 0, remaining: 5), 0)
+    }
+
+    func test_tierMath_overAndUnderClamp() {
+        XCTAssertEqual(WatchRingMath.remainingFraction(quota: 100, remaining: 140), 1.0, accuracy: 1e-9)
+        XCTAssertEqual(WatchRingMath.usagePercent(quota: 100, remaining: -10), 1.0, accuracy: 1e-9)
+    }
+
+    func test_tierRemainingPercentInt_truncates() {
+        XCTAssertEqual(WatchRingMath.remainingPercentInt(quota: 100, remaining: 38), 38)
+        XCTAssertEqual(WatchRingMath.remainingPercentInt(quota: 3, remaining: 1), 33)
+    }
+
     // MARK: - tier (must match the shipped > 0.9 / > 0.7 boundaries)
 
     func test_tier_normalBelow70() {

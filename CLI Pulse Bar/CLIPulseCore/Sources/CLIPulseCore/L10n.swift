@@ -936,6 +936,8 @@ public enum L10n {
         public static var errors: String { tr("watch.errors") }
         // Redesign — Live sessions (P3)
         public static var live: String { tr("watch.live") }
+        // Quota countdown tier bars (5h / Weekly)
+        public static func percentLeft(_ pct: Int) -> String { tr("watch.percent_left", pct) }
     }
 
     /// v1.10 P3-2: accessibility labels for icon-only controls and

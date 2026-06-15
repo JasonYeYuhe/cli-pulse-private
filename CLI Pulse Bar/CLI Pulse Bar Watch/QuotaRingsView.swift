@@ -1,13 +1,15 @@
 import SwiftUI
 import CLIPulseCore
 
-/// Quota page — Activity-ring-style concentric rings, one per most-
-/// constrained provider, with a legend of every visible provider below.
-/// Replaces the old `WatchProvidersView` card list; the per-provider
-/// detail view lives here too (drill-down from a legend row).
+/// Quota page. Concentric rings show **remaining** headroom (countdown,
+/// matching macOS/iOS and the watch-face complication) for the top-3
+/// most-constrained providers; below, each provider gets per-window
+/// quota bars (5h / Weekly / …) that also count down, reusing the shared
+/// `UsageBar` so the watch reads identically to the phone & Mac.
 ///
-/// Presentation-only — reads `state.*`, never mutates the data layer.
-/// Owns one `ScrollView` so the Crown scrolls content (review R1).
+/// Presentation-only — reads `state.*` (incl. the already-synced
+/// `ProviderUsage.tiers`), never mutates the data layer. One `ScrollView`
+/// (review R1).
 struct QuotaRingsView: View {
     @EnvironmentObject var state: WatchAppState
 
@@ -15,9 +17,18 @@ struct QuotaRingsView: View {
         state.providers.filter { state.enabledProviderNames.contains($0.provider) }
     }
 
+    /// Per-provider cards, most-constrained (least headroom) first so the
+    /// provider closest to running out sits at the top of the list.
+    private var sortedProviders: [ProviderUsage] {
+        visibleProviders.sorted { a, b in
+            if a.usagePercent != b.usagePercent { return a.usagePercent > b.usagePercent }
+            return a.provider < b.provider
+        }
+    }
+
     /// Concentric rings: metered providers, most-constrained first, capped
-    /// at 3 for legibility (review note). Reuses the shared math so the
-    /// rings can't diverge from the legend / complication.
+    /// at 3 for legibility. Shared math so rings can't diverge from the
+    /// bars / complication.
     private var ringProviders: [ProviderUsage] {
         WatchRingMath.ringProviders(visibleProviders, limit: 3)
     }
@@ -28,7 +39,7 @@ struct QuotaRingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 12) {
+            LazyVStack(spacing: 10) {
                 header
 
                 if visibleProviders.isEmpty {
@@ -43,7 +54,14 @@ struct QuotaRingsView: View {
                             .frame(height: 142)
                             .padding(.vertical, 2)
                     }
-                    legend
+                    ForEach(sortedProviders) { provider in
+                        NavigationLink {
+                            WatchProviderDetailView(provider: provider, showCost: state.showCost)
+                        } label: {
+                            ProviderTierCard(provider: provider, showCost: state.showCost)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
             .padding(.horizontal, 2)
@@ -60,19 +78,6 @@ struct QuotaRingsView: View {
                 Text(L10n.watch.activeCount(meteredCount))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var legend: some View {
-        VStack(spacing: 4) {
-            ForEach(visibleProviders) { provider in
-                NavigationLink {
-                    WatchProviderDetailView(provider: provider, showCost: state.showCost)
-                } label: {
-                    QuotaLegendRow(provider: provider, showCost: state.showCost)
-                }
-                .buttonStyle(.plain)
             }
         }
     }
@@ -116,11 +121,27 @@ struct QuotaRingsView: View {
     }
 }
 
-// MARK: - Concentric ring cluster
+// MARK: - Quota math/colour helpers (shared by the cards + detail)
+
+enum QuotaTierStyle {
+    /// Colour for a tier, red/amber when nearly exhausted (keyed on
+    /// consumption like macOS `tierColor`, > 0.9 / > 0.7).
+    static func color(quota: Int, remaining: Int, base: Color) -> Color {
+        WatchTheme.tierColor(WatchRingMath.tier(usagePercent: WatchRingMath.usagePercent(quota: quota, remaining: remaining)), base: base)
+    }
+    /// "38% left" detail string for a tier.
+    static func detail(quota: Int, remaining: Int) -> String {
+        L10n.watch.percentLeft(WatchRingMath.remainingPercentInt(quota: quota, remaining: remaining))
+    }
+}
+
+// MARK: - Concentric ring cluster (remaining / countdown)
 
 /// Activity-ring-style concentric rings. `providers` is already
 /// `WatchRingMath.ringProviders` output (≤3, most-constrained first), so
 /// the outermost ring and the centre label both key off `providers.first`.
+/// Each ring's arc is the provider's **remaining** headroom and depletes
+/// as quota is used (matching macOS/iOS and the complication).
 struct ProviderRingCluster: View {
     let providers: [ProviderUsage]
 
@@ -140,6 +161,7 @@ struct ProviderRingCluster: View {
         let base = PulseTheme.providerColor(provider.provider)
         let tier = WatchRingMath.tier(usagePercent: provider.usagePercent)
         let fill = WatchTheme.tierColor(tier, base: base)
+        let remaining = WatchRingMath.remainingFraction(usagePercent: provider.usagePercent)
         // Inset each successive ring so it nests inside the previous one;
         // the +ringWidth/2 keeps the outermost stroke from clipping the edge.
         let inset = WatchTheme.ringWidth / 2
@@ -148,7 +170,7 @@ struct ProviderRingCluster: View {
             Circle()
                 .stroke(base.opacity(WatchTheme.ringTrackOpacity), lineWidth: WatchTheme.ringWidth)
             Circle()
-                .trim(from: 0, to: provider.usagePercent)
+                .trim(from: 0, to: remaining)
                 .stroke(fill, style: StrokeStyle(lineWidth: WatchTheme.ringWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
         }
@@ -160,7 +182,7 @@ struct ProviderRingCluster: View {
         if let top = providers.first {
             // Constrained to the innermost ring's ~72pt opening so a long or
             // localized provider name shrinks/truncates instead of spilling
-            // over the rings (Codex review).
+            // over the rings.
             VStack(spacing: 0) {
                 Text("\(WatchRingMath.remainingPercentInt(usagePercent: top.usagePercent))%")
                     .font(WatchTheme.monoNumber(size: 22))
@@ -184,43 +206,67 @@ struct ProviderRingCluster: View {
     }
 }
 
-// MARK: - Legend row
+// MARK: - Per-provider tier card (5h / Weekly countdown bars)
 
-struct QuotaLegendRow: View {
+/// One card per provider: name + its per-window quota bars (5h, Weekly, …)
+/// shown as **remaining** (counting down). Caps at the first 2 windows for
+/// the glance (collectors order the primary 5h + Weekly first); the full
+/// set is on the detail view. Falls back to a single overall bar when the
+/// provider reports no tiers, and to a plain "—" when it has no quota
+/// window at all (matching macOS/iOS).
+struct ProviderTierCard: View {
     let provider: ProviderUsage
     let showCost: Bool
 
-    private var remainingColor: Color {
-        WatchTheme.tierColor(WatchRingMath.tier(usagePercent: provider.usagePercent),
-                             base: PulseTheme.providerColor(provider.provider))
-    }
+    private var providerColor: Color { PulseTheme.providerColor(provider.provider) }
 
     var body: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(PulseTheme.providerColor(provider.provider))
-                .frame(width: 8, height: 8)
-            Text(provider.provider)
-                .font(.caption)
-                .lineLimit(1)
-            Spacer(minLength: 4)
-            if showCost && provider.estimated_cost_today > 0 {
-                Text(CostFormatter.format(provider.estimated_cost_today))
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.green)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(providerColor)
+                    .frame(width: 8, height: 8)
+                Text(provider.provider)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if showCost && provider.estimated_cost_today > 0 {
+                    Text(CostFormatter.format(provider.estimated_cost_today))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.green)
+                }
             }
-            if provider.quota != nil {
-                Text("\(WatchRingMath.remainingPercentInt(usagePercent: provider.usagePercent))%")
-                    .font(WatchTheme.monoNumber(size: 13))
-                    .foregroundStyle(remainingColor)
+
+            if !provider.tiers.isEmpty {
+                ForEach(Array(provider.tiers.prefix(2).enumerated()), id: \.offset) { _, tier in
+                    UsageBar(
+                        label: tier.name,
+                        value: WatchRingMath.remainingFraction(quota: tier.quota, remaining: tier.remaining),
+                        color: QuotaTierStyle.color(quota: tier.quota, remaining: tier.remaining, base: providerColor),
+                        detail: QuotaTierStyle.detail(quota: tier.quota, remaining: tier.remaining)
+                    )
+                }
+            } else if provider.quota != nil {
+                UsageBar(
+                    label: L10n.providers.quota,
+                    value: WatchRingMath.remainingFraction(usagePercent: provider.usagePercent),
+                    color: WatchTheme.tierColor(WatchRingMath.tier(usagePercent: provider.usagePercent), base: providerColor),
+                    detail: L10n.watch.percentLeft(WatchRingMath.remainingPercentInt(usagePercent: provider.usagePercent))
+                )
             } else {
-                Text("—")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                // Unmetered provider (no quota window): show today's usage
+                // rather than an empty bar.
+                HStack {
+                    Text(L10n.dashboard.today)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(CostFormatter.formatUsage(provider.today_usage))
+                        .font(.caption2.monospacedDigit())
+                }
             }
         }
-        .padding(.vertical, 5)
-        .padding(.horizontal, 8)
+        .padding(8)
         .background(WatchTheme.cardFill, in: RoundedRectangle(cornerRadius: WatchTheme.cardRadius))
         .accessibilityElement(children: .combine)
     }
@@ -247,8 +293,6 @@ struct WatchProviderDetailView: View {
                         Text(provider.provider)
                             .font(.headline)
                         if provider.quota != nil {
-                            // "38% Remaining" — uses the dedicated remaining
-                            // label, not the ring centre's "{name} left" key.
                             Text("\(WatchRingMath.remainingPercentInt(usagePercent: provider.usagePercent))% \(L10n.watch.remaining)")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
@@ -257,12 +301,26 @@ struct WatchProviderDetailView: View {
                 }
             }
 
-            if provider.quota != nil {
+            // Quota — per-window bars (remaining/countdown) like macOS/iOS,
+            // or the overall gauge when the provider reports no tiers.
+            if !provider.tiers.isEmpty {
                 Section(L10n.providers.quota) {
-                    Gauge(value: provider.usagePercent) {
+                    ForEach(provider.tiers.indices, id: \.self) { i in
+                        let tier = provider.tiers[i]
+                        UsageBar(
+                            label: tier.name,
+                            value: WatchRingMath.remainingFraction(quota: tier.quota, remaining: tier.remaining),
+                            color: QuotaTierStyle.color(quota: tier.quota, remaining: tier.remaining, base: providerColor),
+                            detail: tierDetail(tier)
+                        )
+                    }
+                }
+            } else if provider.quota != nil {
+                Section(L10n.providers.quota) {
+                    Gauge(value: WatchRingMath.remainingFraction(usagePercent: provider.usagePercent)) {
                         Text(provider.provider)
                     } currentValueLabel: {
-                        Text("\(Int(provider.usagePercent * 100))%")
+                        Text("\(WatchRingMath.remainingPercentInt(usagePercent: provider.usagePercent))%")
                             .font(.caption.weight(.bold))
                     } minimumValueLabel: {
                         Text("0")
@@ -350,5 +408,14 @@ struct WatchProviderDetailView: View {
             }
         }
         .navigationTitle(provider.provider)
+    }
+
+    /// "38% left · Resets in 2h" — mirrors the macOS `tierDetail`.
+    private func tierDetail(_ tier: TierDTO) -> String {
+        var s = L10n.watch.percentLeft(WatchRingMath.remainingPercentInt(quota: tier.quota, remaining: tier.remaining))
+        if let reset = tier.reset_time, let resetText = RelativeTime.formatReset(reset) {
+            s += " · \(resetText)"
+        }
+        return s
     }
 }
