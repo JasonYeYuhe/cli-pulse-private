@@ -665,6 +665,7 @@
 "watch.live" = "实时";
 "watch.percent_left" = "剩余 %d%%";
 "watch.tokens_used" = "%@ tokens";
+"watch.unread" = "未读";
 "widget.alerts_summary" = "%d 条告警 • CLI Pulse";
 "widget.percent_left" = "%@ 剩余 %d%%";
 "widget.quota_fallback" = "配额";

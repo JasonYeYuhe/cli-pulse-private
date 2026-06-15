@@ -15,8 +15,18 @@ import WatchKit
 struct WatchAlertsView: View {
     @EnvironmentObject var state: WatchAppState
 
+    /// Critical alert ids we've already buzzed for this session, so the
+    /// haptic fires once per *new* critical alert rather than every time the
+    /// page reappears (re-appearance is now common under the horizontal
+    /// pager — `.task` re-runs on each swipe back).
+    @State private var hapticFiredCriticalIDs: Set<String> = []
+
     private var openAlerts: [AlertRecord] {
         WatchAlertSort.bySeverity(state.alerts.filter { !$0.is_resolved })
+    }
+
+    private var openCriticalIDs: [String] {
+        openAlerts.filter { $0.alertSeverity == .critical }.map(\.id)
     }
 
     private var resolvedAlerts: [AlertRecord] {
@@ -28,9 +38,7 @@ struct WatchAlertsView: View {
             LazyVStack(spacing: 8) {
                 header
 
-                if openAlerts.isEmpty && resolvedAlerts.isEmpty {
-                    allClearState
-                } else {
+                if !openAlerts.isEmpty || !resolvedAlerts.isEmpty {
                     ForEach(openAlerts) { alert in
                         NavigationLink {
                             WatchAlertDetailView(alert: alert)
@@ -51,14 +59,22 @@ struct WatchAlertsView: View {
                             AlertCard(alert: alert)
                         }
                     }
+                } else if state.lastRefresh == nil && state.isLoading {
+                    // Don't flash "All clear" before the first load resolves.
+                    WatchLoadingState()
+                } else if state.lastRefresh == nil, let err = state.lastError {
+                    WatchErrorState(title: L10n.watch.couldntLoadData, message: err) {
+                        Task { await state.refreshAll() }
+                    }
+                } else {
+                    allClearState
                 }
             }
             .padding(.horizontal, 2)
         }
         .refreshable { await state.refreshAll() }
-        .task {
-            triggerHapticForCritical()
-        }
+        .task { fireCriticalHapticIfNeeded() }
+        .onChange(of: openCriticalIDs) { _, _ in fireCriticalHapticIfNeeded() }
     }
 
     private var header: some View {
@@ -92,13 +108,14 @@ struct WatchAlertsView: View {
         .padding(.vertical, 16)
     }
 
-    private func triggerHapticForCritical() {
-        let critical = openAlerts.filter { $0.alertSeverity == .critical }
-        if !critical.isEmpty {
-            #if os(watchOS)
-            WKInterfaceDevice.current().play(.failure)
-            #endif
-        }
+    /// Buzz once for any critical alert we haven't buzzed for yet.
+    private func fireCriticalHapticIfNeeded() {
+        let unseen = openCriticalIDs.filter { !hapticFiredCriticalIDs.contains($0) }
+        guard !unseen.isEmpty else { return }
+        hapticFiredCriticalIDs.formUnion(unseen)
+        #if os(watchOS)
+        WKInterfaceDevice.current().play(.failure)
+        #endif
     }
 }
 
@@ -169,6 +186,9 @@ struct AlertCard: View {
         )
         .opacity(alert.is_resolved ? 0.6 : 1)
         .accessibilityElement(children: .combine)
+        // The unread state is otherwise only a blue dot (decorative under
+        // `.combine`); surface it to VoiceOver.
+        .accessibilityValue(!alert.is_read && !alert.is_resolved ? L10n.watch.unread : "")
     }
 }
 

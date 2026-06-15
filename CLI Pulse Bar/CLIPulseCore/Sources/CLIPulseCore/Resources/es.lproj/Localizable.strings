@@ -491,6 +491,7 @@
 "watch.live" = "En vivo";
 "watch.percent_left" = "%d%% restante";
 "watch.tokens_used" = "%@ tokens";
+"watch.unread" = "Sin leer";
 
 /* Watch base namespace backfill (P5) — es previously fell back to en for these. */
 "watch.couldnt_load_data" = "No se pudieron cargar los datos";

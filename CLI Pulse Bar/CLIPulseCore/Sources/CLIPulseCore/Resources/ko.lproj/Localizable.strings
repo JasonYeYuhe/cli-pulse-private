@@ -491,6 +491,7 @@
 "watch.live" = "라이브";
 "watch.percent_left" = "%d%% 남음";
 "watch.tokens_used" = "%@ 토큰";
+"watch.unread" = "안 읽음";
 
 /* Watch base namespace backfill (P5) — ko previously fell back to en for these. */
 "watch.couldnt_load_data" = "데이터를 불러올 수 없음";
