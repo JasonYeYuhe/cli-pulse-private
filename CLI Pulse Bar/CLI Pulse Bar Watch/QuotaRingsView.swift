@@ -17,11 +17,14 @@ struct QuotaRingsView: View {
         state.providers.filter { state.enabledProviderNames.contains($0.provider) }
     }
 
-    /// Per-provider cards, most-constrained (least headroom) first so the
-    /// provider closest to running out sits at the top of the list.
+    /// Per-provider cards, least Weekly headroom first — matching the
+    /// Weekly-window numbers the rings + card headers display, so the order
+    /// reflects the risk the user actually sees.
     private var sortedProviders: [ProviderUsage] {
         visibleProviders.sorted { a, b in
-            if a.usagePercent != b.usagePercent { return a.usagePercent > b.usagePercent }
+            let wa = WatchRingMath.weeklyUsagePercent(a)
+            let wb = WatchRingMath.weeklyUsagePercent(b)
+            if wa != wb { return wa > wb }
             return a.provider < b.provider
         }
     }
@@ -43,8 +46,12 @@ struct QuotaRingsView: View {
                 header
 
                 if visibleProviders.isEmpty {
-                    if let err = state.lastError {
-                        errorState(err)
+                    if state.isLoading && state.lastRefresh == nil {
+                        WatchLoadingState()
+                    } else if let err = state.lastError {
+                        WatchErrorState(title: L10n.watch.couldntLoadProviders, message: err) {
+                            Task { await state.refreshAll() }
+                        }
                     } else {
                         emptyState
                     }
@@ -80,31 +87,6 @@ struct QuotaRingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
-    }
-
-    private func errorState(_ err: String) -> some View {
-        VStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.title3)
-                .foregroundStyle(.orange)
-            Text(L10n.watch.couldntLoadProviders)
-                .font(.caption.weight(.semibold))
-            Text(err)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .lineLimit(3)
-            Button {
-                Task { await state.refreshAll() }
-            } label: {
-                Label(L10n.watch.retry, systemImage: "arrow.clockwise")
-                    .font(.caption)
-            }
-            .buttonStyle(.bordered)
-            .tint(.orange)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
     }
 
     private var emptyState: some View {

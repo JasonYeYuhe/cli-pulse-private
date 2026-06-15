@@ -24,9 +24,7 @@ struct WatchSessionsView: View {
             LazyVStack(spacing: 8) {
                 header
 
-                if state.sessions.isEmpty {
-                    emptyState
-                } else {
+                if !state.sessions.isEmpty {
                     ForEach(runningSessions) { session in
                         NavigationLink {
                             WatchSessionDetailView(session: session, showCost: state.showCost)
@@ -43,6 +41,15 @@ struct WatchSessionsView: View {
                         }
                         .buttonStyle(.plain)
                     }
+                } else if state.lastRefresh == nil && state.isLoading {
+                    // Don't show "No sessions" before the first load resolves.
+                    WatchLoadingState()
+                } else if state.lastRefresh == nil, let err = state.lastError {
+                    WatchErrorState(title: L10n.watch.couldntLoadData, message: err) {
+                        Task { await state.refreshAll() }
+                    }
+                } else {
+                    emptyState
                 }
             }
             .padding(.horizontal, 2)

@@ -663,6 +663,7 @@
 "watch.live" = "Live";
 "watch.percent_left" = "%d%% left";
 "watch.tokens_used" = "%@ tokens";
+"watch.unread" = "Unread";
 "widget.alerts_summary" = "%d alerts • CLI Pulse";
 "widget.percent_left" = "%@ %d%% left";
 "widget.quota_fallback" = "Quota";

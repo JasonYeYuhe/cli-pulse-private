@@ -34,7 +34,9 @@ struct PulseHomeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 10) {
+            // Lazy: this glance has grown long (waveform + hero + sparkline +
+            // chips + quota teaser + several cards) — defer off-screen rows.
+            LazyVStack(spacing: 10) {
                 header
                 PulseWaveform(activityLevel: activity)
 
@@ -56,11 +58,11 @@ struct PulseHomeView: View {
                         .padding(.top, 2)
                     }
                 } else if state.isLoading {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
+                    WatchLoadingState()
                 } else if let err = state.lastError {
-                    errorState(err)
+                    WatchErrorState(title: L10n.watch.couldntLoadData, message: err) {
+                        Task { await state.refreshAll() }
+                    }
                 } else {
                     emptyState
                 }
@@ -289,31 +291,6 @@ struct PulseHomeView: View {
     }
 
     // MARK: - States
-
-    private func errorState(_ err: String) -> some View {
-        VStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.title3)
-                .foregroundStyle(.orange)
-            Text(L10n.watch.couldntLoadData)
-                .font(.caption.weight(.semibold))
-            Text(err)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .lineLimit(3)
-            Button {
-                Task { await state.refreshAll() }
-            } label: {
-                Label(L10n.watch.retry, systemImage: "arrow.clockwise")
-                    .font(.caption)
-            }
-            .buttonStyle(.bordered)
-            .tint(.orange)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-    }
 
     private var emptyState: some View {
         VStack(spacing: 6) {

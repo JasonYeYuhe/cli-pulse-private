@@ -224,6 +224,7 @@ struct WatchMetricRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(width: 18)
+                .accessibilityHidden(true) // decorative; label+value carry it
             Text(label)
                 .font(.caption)
             Spacer()
@@ -231,6 +232,49 @@ struct WatchMetricRow: View {
                 .font(.caption.weight(.bold).monospacedDigit())
                 .foregroundStyle(valueColor)
         }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Shared load / error states
+
+/// First-load spinner used by every glance page.
+struct WatchLoadingState: View {
+    var body: some View {
+        ProgressView()
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+    }
+}
+
+/// Error + retry block shared by every glance page — surfaces the real
+/// `lastError` (the silent-401 lesson) with a retry button.
+struct WatchErrorState: View {
+    let title: String
+    let message: String
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.title3)
+                .foregroundStyle(.orange)
+            Text(title)
+                .font(.caption.weight(.semibold))
+            Text(message)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+            Button(action: retry) {
+                Label(L10n.watch.retry, systemImage: "arrow.clockwise")
+                    .font(.caption)
+            }
+            .buttonStyle(.bordered)
+            .tint(.orange)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
     }
 }
 
