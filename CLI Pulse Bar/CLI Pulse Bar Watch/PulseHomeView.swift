@@ -22,9 +22,10 @@ struct PulseHomeView: View {
         state.providers.filter { state.enabledProviderNames.contains($0.provider) }
     }
 
-    /// The provider closest to its limit — drives the "tightest quota" teaser.
-    private var tightest: ProviderUsage? {
-        WatchRingMath.mostConstrained(visibleProviders)
+    /// The most-active provider (most tokens used today) — drives the
+    /// home "main provider quota" teaser.
+    private var mainProvider: ProviderUsage? {
+        WatchRingMath.mostActive(visibleProviders)
     }
 
     private var weekCost: Double {
@@ -135,9 +136,9 @@ struct PulseHomeView: View {
 
     @ViewBuilder
     private func tightestQuota() -> some View {
-        if let p = tightest {
+        if let p = mainProvider {
             let color = WatchTheme.tierColor(
-                WatchRingMath.tier(usagePercent: p.usagePercent),
+                WatchRingMath.tier(usagePercent: WatchRingMath.weeklyUsagePercent(p)),
                 base: PulseTheme.providerColor(p.provider)
             )
             Button {
@@ -153,7 +154,7 @@ struct PulseHomeView: View {
                             .font(.caption.weight(.medium))
                             .lineLimit(1)
                         Spacer(minLength: 4)
-                        Text(L10n.watch.percentLeft(WatchRingMath.remainingPercentInt(usagePercent: p.usagePercent)))
+                        Text(L10n.watch.percentLeft(WatchRingMath.weeklyRemainingPercentInt(p)))
                             .font(WatchTheme.monoNumber(size: 12))
                             .foregroundStyle(color)
                         Image(systemName: "chevron.right")

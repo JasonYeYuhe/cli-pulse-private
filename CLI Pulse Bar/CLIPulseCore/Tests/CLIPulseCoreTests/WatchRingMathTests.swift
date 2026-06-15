@@ -151,44 +151,56 @@ final class WatchRingMathTests: XCTestCase {
         XCTAssertTrue(WatchRingMath.ringProviders([]).isEmpty)
     }
 
-    // MARK: - mostConstrained
+    // MARK: - mostActive (most tokens used today, metered)
 
-    func test_mostConstrained_picksHighestUsagePercent() {
-        let claude = makeProvider("Claude", quota: 100, remaining: 91)  // 9% used
-        let codex = makeProvider("Codex", quota: 100, remaining: 20)    // 80% used
-        let gemini = makeProvider("Gemini", quota: 100, remaining: 86)  // 14% used
-        XCTAssertEqual(WatchRingMath.mostConstrained([claude, codex, gemini])?.provider, "Codex")
+    func test_mostActive_picksHighestTodayUsage() {
+        let claude = makeProvider("Claude", quota: 100, remaining: 91, usage: 5000)
+        let codex = makeProvider("Codex", quota: 100, remaining: 20, usage: 1200)
+        let gemini = makeProvider("Gemini", quota: 100, remaining: 86, usage: 9000)
+        XCTAssertEqual(WatchRingMath.mostActive([claude, codex, gemini])?.provider, "Gemini")
     }
 
-    func test_mostConstrained_ignoresUnmetered() {
-        let metered = makeProvider("Claude", quota: 100, remaining: 50)
-        let unmetered = makeProvider("Ollama", quota: nil, remaining: nil)
-        XCTAssertEqual(WatchRingMath.mostConstrained([unmetered, metered])?.provider, "Claude")
+    func test_mostActive_ignoresUnmetered() {
+        let metered = makeProvider("Claude", quota: 100, remaining: 50, usage: 10)
+        let unmetered = makeProvider("Ollama", quota: nil, remaining: nil, usage: 999999)
+        XCTAssertEqual(WatchRingMath.mostActive([unmetered, metered])?.provider, "Claude")
     }
 
-    func test_mostConstrained_emptyIsNil() {
-        XCTAssertNil(WatchRingMath.mostConstrained([]))
-        XCTAssertNil(WatchRingMath.mostConstrained([makeProvider("Ollama", quota: nil, remaining: nil)]))
+    func test_mostActive_emptyIsNil() {
+        XCTAssertNil(WatchRingMath.mostActive([]))
+        XCTAssertNil(WatchRingMath.mostActive([makeProvider("Ollama", quota: nil, remaining: nil)]))
     }
 
-    // MARK: - indexOfMostConstrained
+    // MARK: - weeklyUsagePercent
 
-    func test_indexOfMostConstrained_picksMax() {
-        XCTAssertEqual(WatchRingMath.indexOfMostConstrained([0.2, 0.9, 0.5]), 1)
+    func test_weeklyUsagePercent_usesWeeklyTierByRole() {
+        // Primary (5h) is 9% used; Weekly is 60% used → ring should track 60%.
+        let p = makeProvider("Claude", quota: 100, remaining: 91, tiers: [
+            TierDTO(name: "5h Window", quota: 100, remaining: 91, role: .primary),
+            TierDTO(name: "Weekly", quota: 100, remaining: 40, role: .secondary),
+        ])
+        XCTAssertEqual(WatchRingMath.weeklyUsagePercent(p), 0.60, accuracy: 1e-9)
+        XCTAssertEqual(WatchRingMath.weeklyRemainingPercentInt(p), 40)
     }
 
-    func test_indexOfMostConstrained_tieResolvesToLowestIndex() {
-        XCTAssertEqual(WatchRingMath.indexOfMostConstrained([0.9, 0.9, 0.1]), 0)
+    func test_weeklyUsagePercent_fallsBackToNameWhenNoRole() {
+        let p = makeProvider("Codex", quota: 100, remaining: 80, tiers: [
+            TierDTO(name: "Weekly", quota: 100, remaining: 25, role: nil),
+        ])
+        XCTAssertEqual(WatchRingMath.weeklyUsagePercent(p), 0.75, accuracy: 1e-9)
     }
 
-    func test_indexOfMostConstrained_emptyIsNil() {
-        XCTAssertNil(WatchRingMath.indexOfMostConstrained([]))
+    func test_weeklyUsagePercent_fallsBackToPrimaryWhenNoWeekly() {
+        // No weekly tier → primary usagePercent (62% used).
+        let p = makeProvider("X", quota: 100, remaining: 38)
+        XCTAssertEqual(WatchRingMath.weeklyUsagePercent(p), 0.62, accuracy: 1e-9)
     }
 
     // MARK: - Helpers
 
     private func makeProvider(_ name: String, quota: Int?, remaining: Int?,
-                             cost: Double = 0, usage: Int = 0) -> ProviderUsage {
+                             cost: Double = 0, usage: Int = 0,
+                             tiers: [TierDTO] = []) -> ProviderUsage {
         ProviderUsage(
             provider: name,
             today_usage: usage,
@@ -199,6 +211,7 @@ final class WatchRingMathTests: XCTestCase {
             cost_status_week: "Estimated",
             quota: quota,
             remaining: remaining,
+            tiers: tiers,
             status_text: "",
             trend: [],
             recent_sessions: [],

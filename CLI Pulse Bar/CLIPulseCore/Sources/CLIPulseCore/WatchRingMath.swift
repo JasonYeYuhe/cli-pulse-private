@@ -120,28 +120,43 @@ public enum WatchRingMath {
         return Array(sorted.prefix(max(0, limit)))
     }
 
-    /// The most-constrained metered provider — highest `usagePercent`
-    /// (least headroom), the one closest to its limit. Drives the Pulse
-    /// home "tightest quota" teaser. `nil` when no provider has a quota
-    /// window. Ties resolve on `provider` name for stability.
-    public static func mostConstrained(_ providers: [ProviderUsage]) -> ProviderUsage? {
+    /// The most-active metered provider — the one with the most token usage
+    /// today (the user's real "main" provider). Drives the Pulse-home quota
+    /// teaser. Filtered to providers with a quota window so the teaser can
+    /// show a "% left". `nil` when none is metered. Ties resolve on name.
+    public static func mostActive(_ providers: [ProviderUsage]) -> ProviderUsage? {
         providers
             .filter { $0.quota != nil }
             .max { a, b in
-                if a.usagePercent != b.usagePercent { return a.usagePercent < b.usagePercent }
+                if a.today_usage != b.today_usage { return a.today_usage < b.today_usage }
                 return a.provider > b.provider
             }
     }
 
-    /// Index of the most-constrained entry (highest `usagePercent`) in a
-    /// list of consumption fractions, or `nil` for an empty list. A general
-    /// scalar helper; ties resolve to the lowest index.
-    public static func indexOfMostConstrained(_ usagePercents: [Double]) -> Int? {
-        guard !usagePercents.isEmpty else { return nil }
-        var best = 0
-        for i in usagePercents.indices where usagePercents[i] > usagePercents[best] {
-            best = i
+    // MARK: - Weekly window
+
+    /// The provider's **Weekly** window tier, if it reports one. Prefers an
+    /// explicit `role == .secondary`, else falls back to a tier whose name
+    /// contains "week" (both Claude and Codex name it "Weekly"). `nil` when
+    /// the provider has no weekly window.
+    public static func weeklyTier(_ provider: ProviderUsage) -> TierDTO? {
+        provider.tiers.first { $0.role == .secondary }
+            ?? provider.tiers.first { $0.name.localizedCaseInsensitiveContains("week") }
+    }
+
+    /// Consumption fraction `0...1` for the provider's **Weekly** window,
+    /// falling back to the provider's primary `usagePercent` when there is
+    /// no weekly tier. The Quota rings use this so the arc tracks the slower
+    /// weekly budget rather than the fast 5h/session window.
+    public static func weeklyUsagePercent(_ provider: ProviderUsage) -> Double {
+        if let w = weeklyTier(provider) {
+            return usagePercent(quota: w.quota, remaining: w.remaining)
         }
-        return best
+        return provider.usagePercent
+    }
+
+    /// Remaining percent `0...100` for the provider's Weekly window.
+    public static func weeklyRemainingPercentInt(_ provider: ProviderUsage) -> Int {
+        remainingPercentInt(usagePercent: weeklyUsagePercent(provider))
     }
 }
