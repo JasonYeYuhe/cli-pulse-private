@@ -938,6 +938,7 @@ public enum L10n {
         public static var live: String { tr("watch.live") }
         // Quota countdown tier bars (5h / Weekly)
         public static func percentLeft(_ pct: Int) -> String { tr("watch.percent_left", pct) }
+        public static func tokensUsed(_ value: String) -> String { tr("watch.tokens_used", value) }
     }
 
     /// v1.10 P3-2: accessibility labels for icon-only controls and

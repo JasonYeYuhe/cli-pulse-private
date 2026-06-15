@@ -664,6 +664,7 @@
 "watch.errors" = "エラー";
 "watch.live" = "ライブ";
 "watch.percent_left" = "残り %d%%";
+"watch.tokens_used" = "%@ トークン";
 "widget.alerts_summary" = "アラート %d 件 • CLI Pulse";
 "widget.percent_left" = "%@ 残り %d%%";
 "widget.quota_fallback" = "クォータ";
