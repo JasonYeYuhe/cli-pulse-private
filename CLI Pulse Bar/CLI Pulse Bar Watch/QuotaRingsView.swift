@@ -138,10 +138,10 @@ enum QuotaTierStyle {
 // MARK: - Concentric ring cluster (remaining / countdown)
 
 /// Activity-ring-style concentric rings. `providers` is already
-/// `WatchRingMath.ringProviders` output (≤3, most-constrained first), so
-/// the outermost ring and the centre label both key off `providers.first`.
-/// Each ring's arc is the provider's **remaining** headroom and depletes
-/// as quota is used (matching macOS/iOS and the complication).
+/// `WatchRingMath.ringProviders` output (≤3, headline-first by spend), so
+/// the outermost ring and the centre label both key off `providers.first`
+/// (the "main" provider). Each ring's arc is the provider's **Weekly**-
+/// window remaining headroom and depletes as that budget is used.
 struct ProviderRingCluster: View {
     let providers: [ProviderUsage]
 
@@ -159,9 +159,12 @@ struct ProviderRingCluster: View {
 
     private func ring(for provider: ProviderUsage, index: Int) -> some View {
         let base = PulseTheme.providerColor(provider.provider)
-        let tier = WatchRingMath.tier(usagePercent: provider.usagePercent)
+        // The arc tracks the WEEKLY window (falls back to the primary when a
+        // provider has no weekly tier) — the slower, more meaningful budget.
+        let wpct = WatchRingMath.weeklyUsagePercent(provider)
+        let tier = WatchRingMath.tier(usagePercent: wpct)
         let fill = WatchTheme.tierColor(tier, base: base)
-        let remaining = WatchRingMath.remainingFraction(usagePercent: provider.usagePercent)
+        let remaining = WatchRingMath.remainingFraction(usagePercent: wpct)
         // Inset each successive ring so it nests inside the previous one;
         // the +ringWidth/2 keeps the outermost stroke from clipping the edge.
         let inset = WatchTheme.ringWidth / 2
@@ -184,7 +187,7 @@ struct ProviderRingCluster: View {
             // localized provider name shrinks/truncates instead of spilling
             // over the rings.
             VStack(spacing: 0) {
-                Text("\(WatchRingMath.remainingPercentInt(usagePercent: top.usagePercent))%")
+                Text("\(WatchRingMath.weeklyRemainingPercentInt(top))%")
                     .font(WatchTheme.monoNumber(size: 22))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
@@ -201,7 +204,7 @@ struct ProviderRingCluster: View {
 
     private var accessibilitySummary: String {
         providers
-            .map { L10n.widget.percentLeft($0.provider, WatchRingMath.remainingPercentInt(usagePercent: $0.usagePercent)) }
+            .map { L10n.widget.percentLeft($0.provider, WatchRingMath.weeklyRemainingPercentInt($0)) }
             .joined(separator: ", ")
     }
 }
@@ -220,9 +223,10 @@ struct ProviderTierCard: View {
 
     private var providerColor: Color { PulseTheme.providerColor(provider.provider) }
 
-    /// Overall remaining %, same source of truth as the rings (R4).
+    /// Colour for the header "% left" — keyed on the Weekly window so the
+    /// headline matches the rings.
     private var overallColor: Color {
-        WatchTheme.tierColor(WatchRingMath.tier(usagePercent: provider.usagePercent), base: providerColor)
+        WatchTheme.tierColor(WatchRingMath.tier(usagePercent: WatchRingMath.weeklyUsagePercent(provider)), base: providerColor)
     }
 
     var body: some View {
@@ -237,7 +241,7 @@ struct ProviderTierCard: View {
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 if provider.quota != nil {
-                    Text(L10n.watch.percentLeft(WatchRingMath.remainingPercentInt(usagePercent: provider.usagePercent)))
+                    Text(L10n.watch.percentLeft(WatchRingMath.weeklyRemainingPercentInt(provider)))
                         .font(WatchTheme.monoNumber(size: 12))
                         .foregroundStyle(overallColor)
                 }
@@ -262,11 +266,15 @@ struct ProviderTierCard: View {
                 )
             }
 
-            // Footer: cost (when shown) + today's token usage.
-            HStack(spacing: 5) {
+            // Footer: today's cost (labelled) + today's token usage.
+            HStack(spacing: 4) {
                 if showCost && provider.estimated_cost_today > 0 {
+                    Text(L10n.dashboard.today)
+                        .foregroundStyle(.secondary)
                     Text(CostFormatter.format(provider.estimated_cost_today))
                         .foregroundStyle(.green)
+                    Text("·")
+                        .foregroundStyle(.tertiary)
                 }
                 Text(L10n.watch.tokensUsed(CostFormatter.formatUsage(provider.today_usage)))
                     .foregroundStyle(.secondary)
