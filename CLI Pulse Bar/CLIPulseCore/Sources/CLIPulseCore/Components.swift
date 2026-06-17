@@ -133,10 +133,14 @@ public struct UsageBar: View {
                     // thresholds). Positions are already in this bar's fill
                     // coordinate (oriented by QuotaBarMarkers.place).
                     ForEach(markers) { m in
+                        let w: CGFloat = m.kind == .pace ? 2 : 1
                         Rectangle()
                             .fill(m.kind == .pace ? Color.primary.opacity(0.6) : Color.secondary.opacity(0.4))
-                            .frame(width: m.kind == .pace ? 2 : 1, height: 6)
-                            .offset(x: max(0, geo.size.width * m.position - (m.kind == .pace ? 1 : 0.5)))
+                            .frame(width: w, height: 6)
+                            // Centre on the position, then clamp so an extreme
+                            // (≈0 or ≈1) marker stays fully inside the bar
+                            // instead of being half-clipped at an edge.
+                            .offset(x: min(max(0, geo.size.width * m.position - w / 2), max(0, geo.size.width - w)))
                     }
                 }
             }
