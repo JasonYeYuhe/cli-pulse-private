@@ -204,7 +204,12 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
         // in /Applications. macOS Finder + Gatekeeper handle the
         // "Replace?" confirmation. After the replace + relaunch, the
         // new version's AppUpdater will resolve to `.upToDate`.
-        NSWorkspace.shared.open(dmgURL)
+        //
+        // Run the open off the main thread: the synchronous overload does a
+        // blocking LaunchServices XPC round-trip (same main-thread-hang class
+        // as the helper-install path). Detaching keeps the menu-bar UI
+        // responsive for the ~500ms window before we terminate.
+        Task.detached { NSWorkspace.shared.open(dmgURL) }
         // Give Finder ~500ms to focus the DMG window before we quit
         // ourselves. If we terminate too eagerly the user might miss
         // where the DMG opened.

@@ -75,7 +75,9 @@ struct AppUpdaterSection: View {
                     ForEach(permMigration.revertedPermissions, id: \.self) { perm in
                         Button {
                             if let url = AppPermissionMigrationChecker.systemSettingsURL(for: perm) {
-                                NSWorkspace.shared.open(url)
+                                // Off-main: NSWorkspace.open does a blocking
+                                // LaunchServices XPC round-trip.
+                                Task.detached { NSWorkspace.shared.open(url) }
                             }
                         } label: {
                             Text("Open \(perm)…")
@@ -118,7 +120,9 @@ struct AppUpdaterSection: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Button {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preferences.appstore") {
-                        NSWorkspace.shared.open(url)
+                        // Off-main: NSWorkspace.open does a blocking
+                        // LaunchServices XPC round-trip.
+                        Task.detached { NSWorkspace.shared.open(url) }
                     }
                 } label: {
                     Text("Open App Store settings…")

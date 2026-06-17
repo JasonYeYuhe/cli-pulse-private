@@ -1618,46 +1618,8 @@ extension AppState {
     }
 
     func publishWidgetData() {
-        guard let defaults = UserDefaults(suiteName: "group.yyh.CLI-Pulse") else { return }
-
-        struct WidgetProviderData: Codable {
-            let name: String
-            let usage: Int
-            let quota: Int?
-            let costToday: Double
-            let iconName: String
-            // Correct, clamped usage fraction (0...1). The widget renders this
-            // directly instead of recomputing usage/quota — `quota` is a
-            // percentage cap (~100) for window-capped providers (Claude), not
-            // a token count, so usage/quota mixed units and overflowed (the
-            // "88,475,787%" bug). Key must match WidgetProviderData.percent
-            // in WidgetDataProvider.swift.
-            let percent: Double?
-            // Weekly-window USED fraction for the countdown bars. Key must
-            // match WidgetProviderData.weeklyPercent.
-            let weeklyPercent: Double?
-        }
-
-        struct WidgetData: Codable {
-            let totalUsageToday: Int
-            let totalCostToday: Double
-            let activeSessions: Int
-            let unresolvedAlerts: Int
-            let providers: [WidgetProviderData]
-            let lastUpdated: Date
-            // v1.22 S5 — keys must match the widget-extension's
-            // WidgetData (WidgetDataProvider.swift) so the watch
-            // complication / Glance parity reads them.
-            let swarmAgents: Int?
-            let swarmBlocked: Int?
-            // v1.30 — iOS home/lock-screen widgets are Pro-only. Key must
-            // match WidgetData.isPro in WidgetDataProvider.swift. The watch
-            // complication reads the same blob but ignores this flag.
-            let isPro: Bool
-        }
-
         let widgetProviders = providers.prefix(10).map { provider in
-            WidgetProviderData(
+            PublishedWidgetProviderData(
                 name: provider.provider,
                 usage: provider.today_usage,
                 quota: provider.quota,
@@ -1678,7 +1640,7 @@ extension AppState {
         let swarmAgentsTotal = liveSwarms.reduce(0) { $0 + $1.agents }
         let swarmBlockedTotal = liveSwarms.reduce(0) { $0 + $1.blocked }
 
-        let data = WidgetData(
+        let data = PublishedWidgetData(
             totalUsageToday: dashboard?.total_usage_today ?? 0,
             totalCostToday: dashboard?.total_estimated_cost_today ?? 0,
             activeSessions: dashboard?.active_sessions ?? 0,
@@ -1690,13 +1652,25 @@ extension AppState {
             isPro: subscriptionManager.isProOrAbove
         )
 
-        if let encoded = try? JSONEncoder().encode(data) {
-            defaults.set(encoded, forKey: "widgetData")
+        // Skip redundant publishes: when only `lastUpdated` differs nothing
+        // user-visible changed, so there's no reason to wake cfprefsd or the
+        // widget process. (The published "updated" timestamp then advances
+        // only on real changes — honest for an at-a-glance surface.)
+        if let last = lastPublishedWidgetData, last.hasSameContent(as: data) {
+            return
         }
+        lastPublishedWidgetData = data
 
-        #if canImport(WidgetKit)
-        WidgetCenter.shared.reloadAllTimelines()
-        #endif
+        guard let encoded = try? JSONEncoder().encode(data) else { return }
+
+        // Off the main thread: the synchronous app-group set() + timeline
+        // reload was the APPLE-MACOS-9 main-thread block.
+        Self.widgetWriteQueue.async {
+            UserDefaults(suiteName: "group.yyh.CLI-Pulse")?.set(encoded, forKey: "widgetData")
+            #if canImport(WidgetKit)
+            WidgetCenter.shared.reloadAllTimelines()
+            #endif
+        }
     }
 
     func sendNotification(for alert: AlertRecord) {
@@ -2561,5 +2535,62 @@ extension AppState {
             grouping_key: alert.grouping_key,
             suppression_key: alert.suppression_key
         )
+    }
+}
+
+// MARK: - Widget payload (app-group)
+
+/// Mirror of the widget extension's `WidgetProviderData`. Property names
+/// ARE the Codable keys and must match `WidgetProviderData` in
+/// WidgetDataProvider.swift. Hoisted to file scope (was local to
+/// `publishWidgetData`) so the publish path can dedupe by content.
+struct PublishedWidgetProviderData: Codable, Equatable {
+    let name: String
+    let usage: Int
+    let quota: Int?
+    let costToday: Double
+    let iconName: String
+    /// Correct, clamped usage fraction (0...1). The widget renders this
+    /// directly instead of recomputing usage/quota — `quota` is a
+    /// percentage cap (~100) for window-capped providers (Claude), not a
+    /// token count, so usage/quota mixed units and overflowed (the
+    /// "88,475,787%" bug). Key must match WidgetProviderData.percent.
+    let percent: Double?
+    /// Weekly-window USED fraction for the countdown bars. Key must match
+    /// WidgetProviderData.weeklyPercent.
+    let weeklyPercent: Double?
+}
+
+/// Mirror of the widget extension's `WidgetData`. Property names ARE the
+/// Codable keys and must match `WidgetData` in WidgetDataProvider.swift so
+/// the widget + watch complication read them.
+struct PublishedWidgetData: Codable, Equatable {
+    let totalUsageToday: Int
+    let totalCostToday: Double
+    let activeSessions: Int
+    let unresolvedAlerts: Int
+    let providers: [PublishedWidgetProviderData]
+    let lastUpdated: Date
+    // v1.22 S5 — keys must match the widget-extension's WidgetData so the
+    // watch complication / Glance parity reads them.
+    let swarmAgents: Int?
+    let swarmBlocked: Int?
+    // v1.30 — iOS home/lock-screen widgets are Pro-only. Key must match
+    // WidgetData.isPro. The watch complication reads the same blob but
+    // ignores this flag.
+    let isPro: Bool
+
+    /// Equal in every user-visible field EXCEPT `lastUpdated` — drives the
+    /// publish-path dedupe so an unchanged refresh skips the cfprefsd write
+    /// and timeline reload (the unthrottled macOS helper-sync path).
+    func hasSameContent(as other: PublishedWidgetData) -> Bool {
+        totalUsageToday == other.totalUsageToday
+            && totalCostToday == other.totalCostToday
+            && activeSessions == other.activeSessions
+            && unresolvedAlerts == other.unresolvedAlerts
+            && providers == other.providers
+            && swarmAgents == other.swarmAgents
+            && swarmBlocked == other.swarmBlocked
+            && isPro == other.isPro
     }
 }
