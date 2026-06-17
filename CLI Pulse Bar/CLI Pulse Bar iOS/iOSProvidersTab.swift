@@ -366,11 +366,20 @@ struct iOSEnhancedProviderCard: View {
         return L10n.detail.remainingValue(CostFormatter.formatUsage(remaining))
     }
 
-    /// v1.30 F2 — expected-pace marker for an iOS tier bar (remaining-oriented,
-    /// `value: 1 - usagePercent`), mirroring the macOS wiring.
+    /// v1.30 F2 — expected-pace marker + configured warning-threshold ticks for
+    /// an iOS tier bar (remaining-oriented, `value: 1 - usagePercent`),
+    /// mirroring the macOS wiring.
     private func paceMarkers(for tier: UsageTier) -> [BarMarker] {
-        guard let used = QuotaBarMarkers.expectedPaceFraction(tier: tier) else { return [] }
-        return [BarMarker(position: QuotaBarMarkers.place(used, onRemainingBar: true), kind: .pace)]
+        var markers: [BarMarker] = []
+        if let used = QuotaBarMarkers.expectedPaceFraction(tier: tier) {
+            markers.append(BarMarker(position: QuotaBarMarkers.place(used, onRemainingBar: true), kind: .pace))
+        }
+        let thresholds = QuotaBarMarkers.warningFractions(
+            thresholdsPercent: AlertThresholdsStore.load().asArray)
+        markers += thresholds.map {
+            BarMarker(position: QuotaBarMarkers.place($0, onRemainingBar: true), kind: .threshold)
+        }
+        return markers
     }
 
     private func tierColor(_ tier: UsageTier) -> Color {
