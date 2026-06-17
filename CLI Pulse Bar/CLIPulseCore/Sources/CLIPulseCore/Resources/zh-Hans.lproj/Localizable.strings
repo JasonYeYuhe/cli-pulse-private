@@ -242,6 +242,8 @@
 "widget.no_data" = "暂无数据";
 "widget.no_provider_data" = "无服务商数据";
 "widget.used" = "已使用";
+"widget.pro_locked_title" = "CLI Pulse Pro";
+"widget.pro_locked_subtitle" = "升级解锁此小组件";
 
 /* ── 时间 ── */
 "time.just_now" = "刚刚";

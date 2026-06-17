@@ -250,6 +250,8 @@
 "widget.no_data" = "Sin datos";
 "widget.no_provider_data" = "Sin datos de proveedores";
 "widget.used" = "usado";
+"widget.pro_locked_title" = "CLI Pulse Pro";
+"widget.pro_locked_subtitle" = "Mejora para desbloquear este widget";
 
 /* ── Tiempo ── */
 "time.just_now" = "ahora";

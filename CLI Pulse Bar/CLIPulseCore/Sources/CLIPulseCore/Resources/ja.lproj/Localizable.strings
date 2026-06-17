@@ -242,6 +242,8 @@
 "widget.no_data" = "データなし";
 "widget.no_provider_data" = "プロバイダーデータなし";
 "widget.used" = "使用済み";
+"widget.pro_locked_title" = "CLI Pulse Pro";
+"widget.pro_locked_subtitle" = "このウィジェットを使うにはアップグレード";
 
 /* ── 時間 ── */
 "time.just_now" = "たった今";

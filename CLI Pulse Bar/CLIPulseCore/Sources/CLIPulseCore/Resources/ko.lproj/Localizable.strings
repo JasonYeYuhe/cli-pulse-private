@@ -250,6 +250,8 @@
 "widget.no_data" = "데이터 없음";
 "widget.no_provider_data" = "공급자 데이터 없음";
 "widget.used" = "사용됨";
+"widget.pro_locked_title" = "CLI Pulse Pro";
+"widget.pro_locked_subtitle" = "이 위젯을 사용하려면 업그레이드하세요";
 
 /* ── 시간 ── */
 "time.just_now" = "방금";

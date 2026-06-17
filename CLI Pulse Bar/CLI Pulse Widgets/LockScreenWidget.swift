@@ -28,16 +28,52 @@ struct LockScreenWidgetView: View {
     let entry: CLIPulseEntry
 
     var body: some View {
-        switch family {
-        case .accessoryCircular:
-            circularView
-        case .accessoryRectangular:
-            rectangularView
-        case .accessoryInline:
-            inlineView
-        default:
-            circularView
+        // v1.30 — lock-screen widgets are Pro-only (fail-open on nil).
+        if entry.data.isPro == false {
+            switch family {
+            case .accessoryInline:
+                lockedInline
+            case .accessoryRectangular:
+                lockedRectangular
+            default:
+                lockedCircular
+            }
+        } else {
+            switch family {
+            case .accessoryCircular:
+                circularView
+            case .accessoryRectangular:
+                rectangularView
+            case .accessoryInline:
+                inlineView
+            default:
+                circularView
+            }
         }
+    }
+
+    // MARK: - Locked (free tier)
+
+    private var lockedCircular: some View {
+        ZStack {
+            AccessoryWidgetBackground()
+            Image(systemName: "lock.fill")
+                .font(.system(size: 15, weight: .semibold))
+        }
+    }
+
+    private var lockedRectangular: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 10))
+            Text(L10n.widget.proLockedTitle)
+                .font(.caption2.weight(.bold))
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var lockedInline: some View {
+        Label(L10n.widget.proLockedTitle, systemImage: "lock.fill")
     }
 
     // MARK: - Circular: Usage gauge

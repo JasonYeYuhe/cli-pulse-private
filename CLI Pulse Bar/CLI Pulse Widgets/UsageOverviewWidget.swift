@@ -25,15 +25,21 @@ struct UsageOverviewWidgetView: View {
     let entry: CLIPulseEntry
 
     var body: some View {
-        switch family {
-        case .systemSmall:
-            smallView
-        case .systemMedium:
-            mediumView
-        case .systemLarge:
-            largeView
-        default:
-            smallView
+        // v1.30 — home-screen widgets are Pro-only. Fail-open: only an
+        // explicit `false` locks (nil legacy payload / paid user → content).
+        if entry.data.isPro == false {
+            WidgetProLockedView()
+        } else {
+            switch family {
+            case .systemSmall:
+                smallView
+            case .systemMedium:
+                mediumView
+            case .systemLarge:
+                largeView
+            default:
+                smallView
+            }
         }
     }
 

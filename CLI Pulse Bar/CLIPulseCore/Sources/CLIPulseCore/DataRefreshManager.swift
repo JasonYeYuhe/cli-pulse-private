@@ -1647,6 +1647,10 @@ extension AppState {
             // complication / Glance parity reads them.
             let swarmAgents: Int?
             let swarmBlocked: Int?
+            // v1.30 — iOS home/lock-screen widgets are Pro-only. Key must
+            // match WidgetData.isPro in WidgetDataProvider.swift. The watch
+            // complication reads the same blob but ignores this flag.
+            let isPro: Bool
         }
 
         let widgetProviders = providers.prefix(10).map { provider in
@@ -1678,7 +1682,8 @@ extension AppState {
             providers: Array(widgetProviders),
             lastUpdated: Date(),
             swarmAgents: swarmAgentsTotal,
-            swarmBlocked: swarmBlockedTotal
+            swarmBlocked: swarmBlockedTotal,
+            isPro: subscriptionManager.isProOrAbove
         )
 
         if let encoded = try? JSONEncoder().encode(data) {

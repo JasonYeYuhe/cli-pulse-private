@@ -121,7 +121,7 @@ public final class SubscriptionManager: ObservableObject {
     public var maxProviders: Int { currentTier == .free ? 3 : -1 }
     public var maxDevices: Int {
         switch currentTier {
-        case .free: return 1
+        case .free: return 2
         case .pro: return 5
         case .team: return -1
         }

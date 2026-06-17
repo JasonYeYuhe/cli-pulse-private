@@ -24,6 +24,15 @@ struct ProviderUsageWidgetView: View {
     let entry: SingleProviderEntry
 
     var body: some View {
+        // v1.30 — home-screen widgets are Pro-only (fail-open on nil).
+        if entry.isPro == false {
+            WidgetProLockedView()
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
         VStack(spacing: 8) {
             ZStack {
                 // Background ring

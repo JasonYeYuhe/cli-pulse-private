@@ -17,6 +17,12 @@ struct WidgetData: Codable {
     // read sites coalesce nil → 0.
     let swarmAgents: Int?
     let swarmBlocked: Int?
+    /// v1.30 — iOS home-screen + lock-screen widgets are a Pro perk. The
+    /// host app writes the resolved entitlement here; those widgets render a
+    /// locked placeholder when this is `false`. Optional + fail-open: a
+    /// legacy payload (nil) or a paid user shows content; only an explicit
+    /// `false` locks. The watch complication ignores this (stays free).
+    var isPro: Bool? = nil
 
     static let empty = WidgetData(
         totalUsageToday: 0,
@@ -192,14 +198,14 @@ struct SingleProviderTimelineProvider: TimelineProvider {
         } else {
             let data = WidgetStorage.load()
             let provider = data.providers.first ?? Self.previewProvider
-            completion(SingleProviderEntry(date: Date(), provider: provider))
+            completion(SingleProviderEntry(date: Date(), provider: provider, isPro: data.isPro))
         }
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<SingleProviderEntry>) -> Void) {
         let data = WidgetStorage.load()
         let provider = data.providers.first ?? Self.previewProvider
-        let entry = SingleProviderEntry(date: Date(), provider: provider)
+        let entry = SingleProviderEntry(date: Date(), provider: provider, isPro: data.isPro)
         let nextUpdate = Calendar.current.date(byAdding: .minute, value: 5, to: Date()) ?? Date().addingTimeInterval(300)
         let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
         completion(timeline)
@@ -209,4 +215,6 @@ struct SingleProviderTimelineProvider: TimelineProvider {
 struct SingleProviderEntry: TimelineEntry {
     let date: Date
     let provider: WidgetProviderData
+    /// See WidgetData.isPro. Fail-open: nil/true → content, false → locked.
+    var isPro: Bool? = nil
 }
