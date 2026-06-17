@@ -79,17 +79,34 @@ public enum PulseTheme {
 
 // MARK: - Usage Bar
 
+/// A reference tick drawn on a `UsageBar`, positioned in the SAME fill
+/// coordinate as the bar's `value` (0 = left/empty end, 1 = right/full end).
+/// Callers orient the position via `QuotaBarMarkers.place(_:onRemainingBar:)`
+/// so a "90% used" marker lands at the empty end of a remaining/countdown bar.
+public struct BarMarker: Equatable, Sendable, Identifiable {
+    public enum Kind: Equatable, Sendable { case pace, threshold }
+    public let position: Double   // 0...1, bar fill coordinate
+    public let kind: Kind
+    public var id: String { "\(kind)-\(position)" }
+    public init(position: Double, kind: Kind) {
+        self.position = min(1, max(0, position))
+        self.kind = kind
+    }
+}
+
 public struct UsageBar: View {
     public let label: String
     public let value: Double
     public let color: Color
     public let detail: String?
+    public let markers: [BarMarker]
 
-    public init(label: String, value: Double, color: Color, detail: String? = nil) {
+    public init(label: String, value: Double, color: Color, detail: String? = nil, markers: [BarMarker] = []) {
         self.label = label
         self.value = min(1.0, max(0, value))
         self.color = color
         self.detail = detail
+        self.markers = markers
     }
 
     public var body: some View {
@@ -112,6 +129,15 @@ public struct UsageBar: View {
                     RoundedRectangle(cornerRadius: 3)
                         .fill(color)
                         .frame(width: max(0, geo.size.width * value), height: 6)
+                    // v1.30 F2 — reference ticks (expected pace / warning
+                    // thresholds). Positions are already in this bar's fill
+                    // coordinate (oriented by QuotaBarMarkers.place).
+                    ForEach(markers) { m in
+                        Rectangle()
+                            .fill(m.kind == .pace ? Color.primary.opacity(0.6) : Color.secondary.opacity(0.4))
+                            .frame(width: m.kind == .pace ? 2 : 1, height: 6)
+                            .offset(x: max(0, geo.size.width * m.position - (m.kind == .pace ? 1 : 0.5)))
+                    }
                 }
             }
             .frame(height: 6)

@@ -366,7 +366,8 @@ struct EnhancedProviderCard: View {
                                 label: tier.name,
                                 value: 1.0 - tier.usagePercent,
                                 color: tierColor(tier),
-                                detail: tierDetail(tier)
+                                detail: tierDetail(tier),
+                                markers: paceMarkers(for: tier)
                             )
                         }
                     }
@@ -510,6 +511,14 @@ struct EnhancedProviderCard: View {
         if provider.usagePercent > 0.9 { return .red }
         if provider.usagePercent > 0.7 { return .orange }
         return providerColor
+    }
+
+    /// v1.30 F2 — expected-pace marker for a tier bar. Tier bars render
+    /// `value: 1 - usagePercent` (remaining-oriented), so the as-used pace
+    /// fraction is placed via `onRemainingBar: true`.
+    private func paceMarkers(for tier: UsageTier) -> [BarMarker] {
+        guard let used = QuotaBarMarkers.expectedPaceFraction(tier: tier) else { return [] }
+        return [BarMarker(position: QuotaBarMarkers.place(used, onRemainingBar: true), kind: .pace)]
     }
 
     private func tierColor(_ tier: UsageTier) -> Color {
