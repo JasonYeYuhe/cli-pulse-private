@@ -41,9 +41,11 @@ public struct ProviderUsageHistoryChart: View {
             .chartYAxis {
                 AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
                     AxisGridLine()
-                    if let tokens = value.as(Int.self) {
+                    // Charts numeric axes are Double-backed even for Int data,
+                    // so read Double then abbreviate (K/M) — reading Int can be nil.
+                    if let tokens = value.as(Double.self) {
                         AxisValueLabel {
-                            Text(CostFormatter.formatUsage(tokens))
+                            Text(CostFormatter.formatUsage(Int(tokens)))
                                 .font(.system(size: 9))
                                 .foregroundStyle(.secondary)
                         }
