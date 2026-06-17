@@ -269,7 +269,8 @@ struct iOSEnhancedProviderCard: View {
                                 label: tier.name,
                                 value: 1.0 - tier.usagePercent,
                                 color: tierColor(tier),
-                                detail: tierDetail(tier)
+                                detail: tierDetail(tier),
+                                markers: paceMarkers(for: tier)
                             )
                         }
                     }
@@ -346,6 +347,13 @@ struct iOSEnhancedProviderCard: View {
     private var remainingText: String? {
         guard let remaining = provider.remaining else { return nil }
         return L10n.detail.remainingValue(CostFormatter.formatUsage(remaining))
+    }
+
+    /// v1.30 F2 — expected-pace marker for an iOS tier bar (remaining-oriented,
+    /// `value: 1 - usagePercent`), mirroring the macOS wiring.
+    private func paceMarkers(for tier: UsageTier) -> [BarMarker] {
+        guard let used = QuotaBarMarkers.expectedPaceFraction(tier: tier) else { return [] }
+        return [BarMarker(position: QuotaBarMarkers.place(used, onRemainingBar: true), kind: .pace)]
     }
 
     private func tierColor(_ tier: UsageTier) -> Color {
