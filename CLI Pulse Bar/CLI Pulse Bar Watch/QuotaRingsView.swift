@@ -199,6 +199,13 @@ struct ProviderRingCluster: View {
 /// set is on the detail view. Falls back to a single overall bar when the
 /// provider reports no tiers, and to a plain "—" when it has no quota
 /// window at all (matching macOS/iOS).
+/// v1.30 F2 — expected-pace marker for a watch tier bar (remaining-oriented).
+/// Watch shows the pace marker only; warning thresholds aren't synced here.
+private func watchPaceMarkers(_ tier: TierDTO) -> [BarMarker] {
+    guard let used = QuotaBarMarkers.expectedPaceFraction(tier: tier) else { return [] }
+    return [BarMarker(position: QuotaBarMarkers.place(used, onRemainingBar: true), kind: .pace)]
+}
+
 struct ProviderTierCard: View {
     let provider: ProviderUsage
     let showCost: Bool
@@ -236,7 +243,8 @@ struct ProviderTierCard: View {
                         label: tier.name,
                         value: WatchRingMath.remainingFraction(quota: tier.quota, remaining: tier.remaining),
                         color: QuotaTierStyle.color(quota: tier.quota, remaining: tier.remaining, base: providerColor),
-                        detail: QuotaTierStyle.detail(quota: tier.quota, remaining: tier.remaining)
+                        detail: QuotaTierStyle.detail(quota: tier.quota, remaining: tier.remaining),
+                        markers: watchPaceMarkers(tier)
                     )
                 }
             } else if provider.quota != nil {
@@ -246,6 +254,16 @@ struct ProviderTierCard: View {
                     color: overallColor,
                     detail: L10n.watch.percentLeft(WatchRingMath.remainingPercentInt(usagePercent: provider.usagePercent))
                 )
+            }
+
+            // v1.30 F1 — pace forecast ("X% in reserve · lasts to reset"),
+            // omitted when the provider has no usable reset window.
+            if let pace = provider.paceSummary() {
+                Text(pace)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
 
             // Footer: today's cost (labelled) + today's token usage.
@@ -258,8 +276,14 @@ struct ProviderTierCard: View {
                     Text("·")
                         .foregroundStyle(.tertiary)
                 }
-                Text(L10n.watch.tokensUsed(CostFormatter.formatUsage(provider.today_usage)))
-                    .foregroundStyle(.secondary)
+                // v1.30 F4 — "—" when there's no token figure today (matches
+                // macOS; "0 tokens" wrongly implied zero usage, not no data).
+                if provider.today_usage > 0 {
+                    Text(L10n.watch.tokensUsed(CostFormatter.formatUsage(provider.today_usage)))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("—").foregroundStyle(.tertiary)
+                }
                 Spacer(minLength: 0)
             }
             .font(.caption2.monospacedDigit())
@@ -309,7 +333,8 @@ struct WatchProviderDetailView: View {
                             label: tier.name,
                             value: WatchRingMath.remainingFraction(quota: tier.quota, remaining: tier.remaining),
                             color: QuotaTierStyle.color(quota: tier.quota, remaining: tier.remaining, base: providerColor),
-                            detail: tierDetail(tier)
+                            detail: tierDetail(tier),
+                            markers: watchPaceMarkers(tier)
                         )
                     }
                 }
@@ -335,7 +360,8 @@ struct WatchProviderDetailView: View {
             Section(L10n.dashboard.today) {
                 WatchMetricRow(
                     label: L10n.widget.usageTitle,
-                    value: CostFormatter.formatUsage(provider.today_usage),
+                    // v1.30 F4 — "—" rather than "0" when there's no token data today.
+                    value: provider.today_usage > 0 ? CostFormatter.formatUsage(provider.today_usage) : "—",
                     icon: "chart.bar.fill"
                 )
                 if showCost {
