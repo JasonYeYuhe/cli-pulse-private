@@ -36,6 +36,19 @@ public enum ProviderUsageHistory {
         }
     }
 
+    /// Convenience: series ending at the device's local "today" (the same
+    /// `yyyy-MM-dd`/`Calendar.current` convention `APIClient.localTodayKey`
+    /// uses). UI call sites use this; tests use the explicit-`todayKey` form.
+    public static func series(from daily: [DailyUsage], provider: String, days: Int = 30) -> [DayPoint] {
+        series(from: daily, provider: provider, days: days,
+               todayKey: currentLocalDayKey(), calendar: .current)
+    }
+
+    static func currentLocalDayKey(calendar: Calendar = .current, now: Date = Date()) -> String {
+        let c = calendar.dateComponents([.year, .month, .day], from: now)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+
     /// Build the series for `provider` over the most recent `days` calendar days
     /// ending at `todayKey` (inclusive), oldest → newest. Days with no data are
     /// emitted as all-zero points so the histogram stays contiguous.
