@@ -127,12 +127,11 @@ struct UsageOverviewWidgetView: View {
             Divider()
 
             // Right: provider bars
-            VStack(alignment: .leading, spacing: 8) {
-                // Dual countdown bars need more room than the old single bar,
-                // so the medium column shows the top 2 providers to avoid
-                // clipping (the large widget shows up to 5). Ordered by the
-                // app's most-constrained-first provider sort.
-                ForEach(Array(entry.data.providers.prefix(2))) { provider in
+            VStack(alignment: .leading, spacing: 6) {
+                // Top 3 providers with dual countdown bars. Tightened spacing
+                // + a Dynamic Type cap keep all three inside the ~130pt medium
+                // column without clipping (the large widget shows up to 5).
+                ForEach(Array(entry.data.providers.prefix(3))) { provider in
                     ProviderCountdownBars(provider: provider, compact: true)
                 }
 
@@ -142,8 +141,9 @@ struct UsageOverviewWidgetView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Spacer()
+                Spacer(minLength: 0)
             }
+            .dynamicTypeSize(...DynamicTypeSize.xLarge)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -249,7 +249,7 @@ struct ProviderCountdownBars: View {
     var compact: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 3 : 5) {
+        VStack(alignment: .leading, spacing: compact ? 2 : 5) {
             HStack(spacing: 4) {
                 Image(systemName: provider.iconName)
                     .font(.system(size: compact ? 9 : 11))
