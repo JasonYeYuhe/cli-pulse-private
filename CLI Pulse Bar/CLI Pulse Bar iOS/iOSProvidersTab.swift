@@ -93,7 +93,7 @@ struct iOSProvidersTab: View {
                             GridItem(.flexible(), spacing: 12),
                         ], spacing: 12) {
                             ForEach(filteredDetails) { detail in
-                                iOSEnhancedProviderCard(detail: detail, showCost: state.showCost) { newValue in
+                                iOSEnhancedProviderCard(detail: detail, showCost: state.showCost, dailyUsage: state.dailyUsage) { newValue in
                                     handleToggle(detail.config.kind, newValue: newValue)
                                 }
                             }
@@ -102,7 +102,7 @@ struct iOSProvidersTab: View {
                     } else {
                         // iPhone: single column
                         ForEach(filteredDetails) { detail in
-                            iOSEnhancedProviderCard(detail: detail, showCost: state.showCost) { newValue in
+                            iOSEnhancedProviderCard(detail: detail, showCost: state.showCost, dailyUsage: state.dailyUsage) { newValue in
                                 handleToggle(detail.config.kind, newValue: newValue)
                             }
                         }
@@ -168,6 +168,9 @@ struct iOSProvidersTab: View {
 struct iOSEnhancedProviderCard: View {
     let detail: ProviderDetail
     let showCost: Bool
+    /// v1.30 F3 — cached daily usage (from AppState) for the history chart.
+    /// Passed in (this card has no AppState environment object).
+    var dailyUsage: [DailyUsage] = []
     /// v1.10.7: receives the exact new toggle value instead of an implicit flip.
     /// Mirrors the macOS card contract and removes the last-write-wins race
     /// that made rapid double-taps appear to not re-enable a provider.
@@ -299,6 +302,20 @@ struct iOSEnhancedProviderCard: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
+                }
+
+                // v1.30 F3 — per-provider daily usage history (last 30 days),
+                // shown only when there's history. `dailyUsage` is passed in
+                // from AppState (this card has no environment object).
+                let usageHistory = ProviderUsageHistory.series(from: dailyUsage, provider: provider.provider)
+                if usageHistory.contains(where: { $0.ioTokens > 0 }) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(L10n.widget.usageTitle)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        ProviderUsageHistoryChart(points: usageHistory, accent: providerColor)
+                    }
+                    .padding(.top, 2)
                 }
             }
         }

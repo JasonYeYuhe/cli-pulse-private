@@ -450,6 +450,20 @@ struct EnhancedProviderCard: View {
                             .lineLimit(1)
                     }
                 }
+
+                // v1.30 F3 — per-provider daily usage history (last 30 days),
+                // shown only when there's history. Data is already cached on
+                // AppState.dailyUsage (no extra fetch).
+                let usageHistory = ProviderUsageHistory.series(from: state.dailyUsage, provider: provider.provider)
+                if usageHistory.contains(where: { $0.ioTokens > 0 }) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L10n.widget.usageTitle)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        ProviderUsageHistoryChart(points: usageHistory, accent: providerColor)
+                    }
+                    .padding(.top, 2)
+                }
             }
         }
         .padding(10)
