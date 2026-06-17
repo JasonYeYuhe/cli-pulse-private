@@ -173,11 +173,24 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
             try Self.assertArchitectureMatches(manifest)
             let pkgURL = try await downloadPkg(manifest: manifest)
             state = .installing
-            // NSWorkspace.open hands the .pkg to system Installer.app.
-            // From a sandboxed parent app, this path is permitted by
-            // default — Installer.app runs unsandboxed and lays down
-            // files outside our container.
-            NSWorkspace.shared.open(pkgURL)
+            // Hand the .pkg to system Installer.app. From a sandboxed
+            // parent app this is permitted by default — Installer.app runs
+            // unsandboxed and lays down files outside our container.
+            //
+            // Use the ASYNC open API, not the legacy synchronous
+            // `NSWorkspace.shared.open(_:)`. install() is @MainActor, and the
+            // synchronous overload performs a blocking LaunchServices XPC
+            // round-trip on the main thread — on a cold LS database / first
+            // Installer.app launch / Gatekeeper assessment of the freshly
+            // downloaded pkg that parks the main run loop for seconds,
+            // freezing the menu-bar UI and tripping Sentry's app-hang
+            // watchdog (APPLE-MACOS-C). The async overload suspends the actor
+            // instead of blocking the thread, so the UI stays live while
+            // LaunchServices works. (Mirrors the uninstall path's
+            // `openApplication(at:configuration:)` below.)
+            let cfg = NSWorkspace.OpenConfiguration()
+            cfg.activates = true
+            _ = try? await NSWorkspace.shared.open(pkgURL, configuration: cfg)
             await pollHelperUntilReady(timeout: 120, expectedVersion: manifest.version)
         } catch {
             helperInstallerLog.error("install failed: \(error.localizedDescription, privacy: .public)")

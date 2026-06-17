@@ -69,6 +69,18 @@ public enum SentryLogger {
             options.enableAutoSessionTracking = true
             options.enableCaptureFailedRequests = false
             options.maxBreadcrumbs = 50
+            // macOS menu-bar app: when App-Napped in the background the main
+            // run loop is throttled, which the default 2s app-hang watchdog
+            // misreports as a hang with a benign idle stack (Sentry
+            // APPLE-MACOS-B, the most-frequent macOS "hang"). Raise the
+            // threshold on macOS to cut those false positives while still
+            // catching genuine multi-second main-thread blocks. (App-hang V2
+            // is iOS/tvOS/visionOS-only in sentry-cocoa, so it's a no-op
+            // here; the causal fix is the BackgroundActivityAssertion that
+            // keeps the app out of App Nap.)
+            if platform == .macOS {
+                options.appHangTimeoutInterval = 3.0
+            }
             #if DEBUG
             options.debug = false
             #endif

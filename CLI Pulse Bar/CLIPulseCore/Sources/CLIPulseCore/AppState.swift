@@ -8,6 +8,22 @@ import WidgetKit
 
 @MainActor
 public final class AppState: ObservableObject {
+    // MARK: - Widget publish (app-group) — off-main + dedupe
+
+    /// Serial off-main queue for the app-group widget write + timeline reload
+    /// done by `publishWidgetData()`. `UserDefaults.set` on the file-backed
+    /// app-group suite flushes to cfprefsd over synchronous XPC; doing it on
+    /// the main thread was the macOS App-Hang in Sentry APPLE-MACOS-9. Serial
+    /// so back-to-back refreshes can't reorder writes (last submission wins).
+    static let widgetWriteQueue = DispatchQueue(
+        label: "yyh.CLI-Pulse.widget-write", qos: .utility)
+
+    /// Last payload published (incl. its timestamp), so `publishWidgetData()`
+    /// can skip the cfprefsd write + timeline reload when a refresh changed
+    /// nothing user-visible — the macOS helper-sync path (`observeHelperSync`)
+    /// fires it on every daemon collection with no debounce.
+    var lastPublishedWidgetData: PublishedWidgetData?
+
     // MARK: - Auth State
     //
     // v1.10 P2-3 slice 3: extracted into a child `AuthState` ObservableObject.

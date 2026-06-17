@@ -10,8 +10,14 @@ struct CLIPulseBarApp: App {
     @StateObject private var appState = AppState()
     @Environment(\.openWindow) private var openWindow
 
+    /// Keeps the LSUIElement menu-bar app out of App Nap so the background
+    /// refresh timer keeps firing and the run loop isn't throttled into
+    /// false-positive Sentry app-hang reports. Held for the app's lifetime.
+    private let backgroundActivity = BackgroundActivityAssertion()
+
     init() {
         SentryLogger.start(platform: .macOS)
+        backgroundActivity.begin()
         // Resolve stored security-scoped bookmarks on launch
         BookmarkManager.shared.resolveAllBookmarks()
     }
