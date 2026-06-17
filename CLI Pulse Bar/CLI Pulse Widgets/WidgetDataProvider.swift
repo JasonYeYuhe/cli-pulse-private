@@ -51,12 +51,24 @@ struct WidgetProviderData: Codable, Identifiable {
     let quota: Int?
     let costToday: Double
     let iconName: String
+    /// Correct, already-clamped usage fraction (0...1) computed by the host
+    /// app from `ProviderUsage.usagePercent` = (quota − remaining) / quota.
+    /// Optional so payloads written before this field still decode (→ nil →
+    /// the clamped fallback below). The widget MUST prefer this over
+    /// recomputing `usage / quota`: for window-capped providers (e.g. Claude)
+    /// `quota` is a percentage cap (~100), NOT a token count, so `usage /
+    /// quota` mixes units and explodes — that was the "88,475,787%" bug.
+    var percent: Double? = nil
 
     var id: String { name }
 
     var usagePercent: Double {
+        if let percent { return min(1, max(0, percent)) }
+        // Legacy / missing percent: clamp the local estimate so a
+        // token-count-over-percent-cap mismatch can never render as e.g.
+        // 88,475,787% again.
         guard let quota = quota, quota > 0 else { return 0 }
-        return Double(usage) / Double(quota)
+        return min(1, max(0, Double(usage) / Double(quota)))
     }
 
     var formattedUsage: String {

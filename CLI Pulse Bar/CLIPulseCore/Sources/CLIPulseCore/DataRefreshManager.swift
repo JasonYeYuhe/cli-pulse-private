@@ -1626,6 +1626,13 @@ extension AppState {
             let quota: Int?
             let costToday: Double
             let iconName: String
+            // Correct, clamped usage fraction (0...1). The widget renders this
+            // directly instead of recomputing usage/quota — `quota` is a
+            // percentage cap (~100) for window-capped providers (Claude), not
+            // a token count, so usage/quota mixed units and overflowed (the
+            // "88,475,787%" bug). Key must match WidgetProviderData.percent
+            // in WidgetDataProvider.swift.
+            let percent: Double?
         }
 
         struct WidgetData: Codable {
@@ -1648,7 +1655,8 @@ extension AppState {
                 usage: provider.today_usage,
                 quota: provider.quota,
                 costToday: provider.estimated_cost_today,
-                iconName: provider.providerKind?.iconName ?? "cpu"
+                iconName: provider.providerKind?.iconName ?? "cpu",
+                percent: provider.usagePercent
             )
         }
 
