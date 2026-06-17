@@ -527,12 +527,21 @@ struct EnhancedProviderCard: View {
         return providerColor
     }
 
-    /// v1.30 F2 — expected-pace marker for a tier bar. Tier bars render
-    /// `value: 1 - usagePercent` (remaining-oriented), so the as-used pace
-    /// fraction is placed via `onRemainingBar: true`.
+    /// v1.30 F2 — expected-pace marker + configured warning-threshold ticks for
+    /// a tier bar. Tier bars render `value: 1 - usagePercent`
+    /// (remaining-oriented), so every as-used fraction is placed via
+    /// `onRemainingBar: true`.
     private func paceMarkers(for tier: UsageTier) -> [BarMarker] {
-        guard let used = QuotaBarMarkers.expectedPaceFraction(tier: tier) else { return [] }
-        return [BarMarker(position: QuotaBarMarkers.place(used, onRemainingBar: true), kind: .pace)]
+        var markers: [BarMarker] = []
+        if let used = QuotaBarMarkers.expectedPaceFraction(tier: tier) {
+            markers.append(BarMarker(position: QuotaBarMarkers.place(used, onRemainingBar: true), kind: .pace))
+        }
+        let thresholds = QuotaBarMarkers.warningFractions(
+            thresholdsPercent: AlertThresholdsStore.load().asArray)
+        markers += thresholds.map {
+            BarMarker(position: QuotaBarMarkers.place($0, onRemainingBar: true), kind: .threshold)
+        }
+        return markers
     }
 
     private func tierColor(_ tier: UsageTier) -> Color {
