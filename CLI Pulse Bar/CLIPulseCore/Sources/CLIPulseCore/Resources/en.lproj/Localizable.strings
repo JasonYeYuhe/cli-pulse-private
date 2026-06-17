@@ -244,6 +244,8 @@
 "widget.used" = "used";
 "widget.pro_locked_title" = "CLI Pulse Pro";
 "widget.pro_locked_subtitle" = "Upgrade to unlock this widget";
+"widget.window_5h" = "5h";
+"widget.window_weekly" = "Wk";
 
 /* ── Time ── */
 "time.just_now" = "just now";

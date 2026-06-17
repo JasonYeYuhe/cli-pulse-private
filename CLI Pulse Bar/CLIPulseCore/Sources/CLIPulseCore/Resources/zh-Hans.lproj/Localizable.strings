@@ -244,6 +244,8 @@
 "widget.used" = "已使用";
 "widget.pro_locked_title" = "CLI Pulse Pro";
 "widget.pro_locked_subtitle" = "升级解锁此小组件";
+"widget.window_5h" = "5h";
+"widget.window_weekly" = "周";
 
 /* ── 时间 ── */
 "time.just_now" = "刚刚";

@@ -252,6 +252,8 @@
 "widget.used" = "사용됨";
 "widget.pro_locked_title" = "CLI Pulse Pro";
 "widget.pro_locked_subtitle" = "이 위젯을 사용하려면 업그레이드하세요";
+"widget.window_5h" = "5h";
+"widget.window_weekly" = "주";
 
 /* ── 시간 ── */
 "time.just_now" = "방금";

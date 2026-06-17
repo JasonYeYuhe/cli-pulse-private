@@ -1633,6 +1633,9 @@ extension AppState {
             // "88,475,787%" bug). Key must match WidgetProviderData.percent
             // in WidgetDataProvider.swift.
             let percent: Double?
+            // Weekly-window USED fraction for the countdown bars. Key must
+            // match WidgetProviderData.weeklyPercent.
+            let weeklyPercent: Double?
         }
 
         struct WidgetData: Codable {
@@ -1660,7 +1663,8 @@ extension AppState {
                 quota: provider.quota,
                 costToday: provider.estimated_cost_today,
                 iconName: provider.providerKind?.iconName ?? "cpu",
-                percent: provider.usagePercent
+                percent: provider.usagePercent,
+                weeklyPercent: WatchRingMath.weeklyUsagePercent(provider)
             )
         }
 

@@ -38,6 +38,16 @@ enum WidgetTheme {
             endPoint: .trailing
         )
     }
+
+    /// Countdown-bar colour: amber/red as the window nears exhaustion
+    /// (used > 0.7 / 0.9), matching the watch/macOS tier thresholds. The
+    /// bar itself fills with REMAINING headroom, so a near-empty budget
+    /// shows a short red bar.
+    static func countdownColor(used: Double, base: Color) -> Color {
+        if used > 0.9 { return Color(red: 0.95, green: 0.26, blue: 0.21) }
+        if used > 0.7 { return Color(red: 0.95, green: 0.60, blue: 0.15) }
+        return base
+    }
 }
 
 /// Shown in place of iOS home-screen widget content for free-tier users —

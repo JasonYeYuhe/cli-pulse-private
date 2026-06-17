@@ -395,6 +395,9 @@ public enum L10n {
         public static var quotaFallback: String { tr("widget.quota_fallback") }
         public static var proLockedTitle: String { tr("widget.pro_locked_title") }
         public static var proLockedSubtitle: String { tr("widget.pro_locked_subtitle") }
+        // Countdown per-provider window labels (5h session / weekly)
+        public static var window5h: String { tr("widget.window_5h") }
+        public static var windowWeekly: String { tr("widget.window_weekly") }
     }
 
     // MARK: - Time

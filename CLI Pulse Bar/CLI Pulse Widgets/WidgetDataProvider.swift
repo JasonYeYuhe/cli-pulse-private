@@ -65,6 +65,11 @@ struct WidgetProviderData: Codable, Identifiable {
     /// `quota` is a percentage cap (~100), NOT a token count, so `usage /
     /// quota` mixes units and explodes — that was the "88,475,787%" bug.
     var percent: Double? = nil
+    /// Weekly-window USED fraction (0...1), computed by the app via
+    /// `WatchRingMath.weeklyUsagePercent` (which falls back to the primary
+    /// window when a provider has no weekly tier). Optional for back-compat
+    /// with payloads written before this field existed.
+    var weeklyPercent: Double? = nil
 
     var id: String { name }
 
@@ -76,6 +81,12 @@ struct WidgetProviderData: Codable, Identifiable {
         guard let quota = quota, quota > 0 else { return 0 }
         return min(1, max(0, Double(usage) / Double(quota)))
     }
+
+    /// 5h / session-window USED fraction (the primary quota window).
+    var sessionUsed: Double { usagePercent }
+    /// Weekly-window USED fraction; falls back to the session window when
+    /// the payload carries no weekly value (legacy or no weekly tier).
+    var weeklyUsed: Double { min(1, max(0, weeklyPercent ?? usagePercent)) }
 
     var formattedUsage: String {
         if usage >= 1_000_000 {
