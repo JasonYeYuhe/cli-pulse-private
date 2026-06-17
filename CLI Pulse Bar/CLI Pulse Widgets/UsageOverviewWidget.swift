@@ -25,15 +25,21 @@ struct UsageOverviewWidgetView: View {
     let entry: CLIPulseEntry
 
     var body: some View {
-        switch family {
-        case .systemSmall:
-            smallView
-        case .systemMedium:
-            mediumView
-        case .systemLarge:
-            largeView
-        default:
-            smallView
+        // v1.30 — home-screen widgets are Pro-only. Fail-open: only an
+        // explicit `false` locks (nil legacy payload / paid user → content).
+        if entry.data.isPro == false {
+            WidgetProLockedView()
+        } else {
+            switch family {
+            case .systemSmall:
+                smallView
+            case .systemMedium:
+                mediumView
+            case .systemLarge:
+                largeView
+            default:
+                smallView
+            }
         }
     }
 
@@ -121,9 +127,12 @@ struct UsageOverviewWidgetView: View {
             Divider()
 
             // Right: provider bars
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
+                // Top 3 providers with dual countdown bars. Tightened spacing
+                // + a Dynamic Type cap keep all three inside the ~130pt medium
+                // column without clipping (the large widget shows up to 5).
                 ForEach(Array(entry.data.providers.prefix(3))) { provider in
-                    WidgetProviderBar(provider: provider)
+                    ProviderCountdownBars(provider: provider, compact: true)
                 }
 
                 if entry.data.providers.isEmpty {
@@ -132,8 +141,9 @@ struct UsageOverviewWidgetView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Spacer()
+                Spacer(minLength: 0)
             }
+            .dynamicTypeSize(...DynamicTypeSize.xLarge)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -181,7 +191,7 @@ struct UsageOverviewWidgetView: View {
                 .foregroundStyle(.secondary)
 
             ForEach(Array(entry.data.providers.prefix(5))) { provider in
-                WidgetProviderRow(provider: provider)
+                ProviderCountdownBars(provider: provider, compact: false)
             }
 
             if entry.data.providers.isEmpty {
@@ -229,71 +239,57 @@ struct WidgetMiniStat: View {
     }
 }
 
-struct WidgetProviderBar: View {
+/// Per-provider countdown bars: two depleting bars (5h/session + weekly),
+/// each filled with REMAINING headroom and labelled with the remaining %.
+/// Matches the watch + macOS Quota redesign (count down, red/amber as the
+/// budget nears exhaustion). `compact` = the medium widget's tight column;
+/// non-compact = the roomier large widget (adds today's cost).
+struct ProviderCountdownBars: View {
     let provider: WidgetProviderData
+    var compact: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: compact ? 2 : 5) {
             HStack(spacing: 4) {
                 Image(systemName: provider.iconName)
-                    .font(.system(size: 9))
+                    .font(.system(size: compact ? 9 : 11))
                     .foregroundStyle(WidgetTheme.providerColor(provider.name))
                 Text(provider.name)
-                    .font(.caption2.weight(.medium))
+                    .font(compact ? .caption2.weight(.semibold) : .caption.weight(.semibold))
                     .lineLimit(1)
-                Spacer()
-                Text("\(Int(provider.usagePercent * 100))%")
-                    .font(.caption2.weight(.bold).monospacedDigit())
-                    .foregroundStyle(provider.usagePercent > 0.8 ? .red : .primary)
-            }
-
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.gray.opacity(0.2))
-                    Capsule()
-                        .fill(WidgetTheme.providerGradient(provider.name))
-                        .frame(width: max(2, geo.size.width * min(provider.usagePercent, 1.0)))
+                Spacer(minLength: 0)
+                if !compact {
+                    Text(provider.formattedCost)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.green)
                 }
             }
-            .frame(height: 4)
+            countdownRow(L10n.widget.window5h, used: provider.sessionUsed)
+            countdownRow(L10n.widget.windowWeekly, used: provider.weeklyUsed)
         }
     }
-}
 
-struct WidgetProviderRow: View {
-    let provider: WidgetProviderData
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: provider.iconName)
-                .font(.system(size: 10))
-                .foregroundStyle(WidgetTheme.providerColor(provider.name))
-                .frame(width: 16)
-
-            Text(provider.name)
-                .font(.caption.weight(.medium))
-                .lineLimit(1)
-
-            Spacer()
-
-            Text(provider.formattedUsage)
-                .font(.caption.weight(.bold).monospacedDigit())
-
-            // Mini usage bar
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.gray.opacity(0.2))
-                    .frame(width: 40, height: 4)
-                Capsule()
-                    .fill(WidgetTheme.providerColor(provider.name))
-                    .frame(width: max(2, 40 * min(provider.usagePercent, 1.0)), height: 4)
+    private func countdownRow(_ label: String, used: Double) -> some View {
+        let remaining = max(0, min(1, 1 - used))
+        return HStack(spacing: 4) {
+            Text(label)
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, alignment: .leading)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.gray.opacity(0.2))
+                    Capsule()
+                        .fill(WidgetTheme.countdownColor(
+                            used: used,
+                            base: WidgetTheme.providerColor(provider.name)))
+                        .frame(width: max(2, geo.size.width * remaining))
+                }
             }
-
-            Text(provider.formattedCost)
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.green)
-                .frame(width: 40, alignment: .trailing)
+            .frame(height: compact ? 4 : 5)
+            Text("\(Int((remaining * 100).rounded()))%")
+                .font(.system(size: compact ? 9 : 10, weight: .bold).monospacedDigit())
+                .frame(width: 30, alignment: .trailing)
         }
     }
 }

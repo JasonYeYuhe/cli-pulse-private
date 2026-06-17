@@ -1,4 +1,5 @@
 import SwiftUI
+import CLIPulseCore
 
 enum WidgetTheme {
     static let accent = Color(red: 0.36, green: 0.51, blue: 1.0)
@@ -37,4 +38,43 @@ enum WidgetTheme {
             endPoint: .trailing
         )
     }
+
+    /// Countdown-bar colour: amber/red as the window nears exhaustion
+    /// (used > 0.7 / 0.9), matching the watch/macOS tier thresholds. The
+    /// bar itself fills with REMAINING headroom, so a near-empty budget
+    /// shows a short red bar.
+    static func countdownColor(used: Double, base: Color) -> Color {
+        if used > 0.9 { return Color(red: 0.95, green: 0.26, blue: 0.21) }
+        if used > 0.7 { return Color(red: 0.95, green: 0.60, blue: 0.15) }
+        return base
+    }
 }
+
+/// Shown in place of iOS home-screen widget content for free-tier users —
+/// home-screen + lock-screen widgets are a Pro perk (v1.30). The Apple Watch
+/// complication ignores the tier flag and stays free. Lock-screen accessory
+/// families render their own minimal lock variants inline.
+///
+/// Excluded from the watchOS widget target so no paywall UI / strings are
+/// compiled into the free complication binary (only iOS/macOS widgets use it).
+#if !os(watchOS)
+struct WidgetProLockedView: View {
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(WidgetTheme.accent)
+            Text(L10n.widget.proLockedTitle)
+                .font(.caption.weight(.bold))
+                .multilineTextAlignment(.center)
+            Text(L10n.widget.proLockedSubtitle)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(8)
+    }
+}
+#endif
