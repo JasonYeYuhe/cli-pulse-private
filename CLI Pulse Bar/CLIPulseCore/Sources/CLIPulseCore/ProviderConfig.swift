@@ -126,6 +126,10 @@ public struct UsageTier: Codable, Identifiable, Sendable {
     public let quota: Int?
     public let remaining: Int?
     public let resetTime: String?
+    /// Window length in minutes (5h = 300, weekly = 10080). v1.30: carried so
+    /// the expected-pace bar marker uses the correct per-window duration
+    /// instead of the engine's weekly default. Optional + back-compat.
+    public let windowMinutes: Int?
 
     public var id: String { name }
 
@@ -135,12 +139,13 @@ public struct UsageTier: Codable, Identifiable, Sendable {
         return min(1.0, Double(used) / Double(quota))
     }
 
-    public init(name: String, usage: Int, quota: Int?, remaining: Int?, resetTime: String?) {
+    public init(name: String, usage: Int, quota: Int?, remaining: Int?, resetTime: String?, windowMinutes: Int? = nil) {
         self.name = name
         self.usage = usage
         self.quota = quota
         self.remaining = remaining
         self.resetTime = resetTime
+        self.windowMinutes = windowMinutes
     }
 }
 

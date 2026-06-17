@@ -13,27 +13,42 @@ import Foundation
 /// used-oriented, so orientation is decided per call site and never assumed.
 public enum QuotaBarMarkers {
 
-    /// Expected-pace fraction (0...1, as-used) for one tier, or `nil` when the
-    /// tier has no usable future reset anchor (no quota, no/!future
-    /// `reset_time`) or the pace engine can't derive a position.
+    /// Expected-pace fraction (0...1, as-used) for one window, or `nil` when
+    /// there's no usable future reset anchor (no quota, no/!future
+    /// `resetTime`) or the pace engine can't derive a position.
     ///
-    /// Builds a **per-tier** `RateWindow` from the tier's own `windowMinutes`
-    /// and `reset_time`, so a 5-hour session marker and a weekly marker land on
+    /// Builds a **per-window** `RateWindow` from the supplied `windowMinutes`
+    /// and `resetTime`, so a 5-hour session marker and a weekly marker land on
     /// their respective bars instead of sharing the provider-level/default
-    /// window (the review's C3 fix).
-    public static func expectedPaceFraction(tier: TierDTO, now: Date = .init()) -> Double? {
-        guard tier.quota > 0,
-              let resetRaw = tier.reset_time,
+    /// window (the review's C3 fix). The tier-typed overloads below feed this.
+    public static func expectedPaceFraction(
+        quota: Int?, remaining: Int?, windowMinutes: Int?, resetTime: String?,
+        now: Date = .init()) -> Double?
+    {
+        guard let quota, quota > 0,
+              let resetRaw = resetTime,
               let resetsAt = sharedISO8601Parse(resetRaw),
               resetsAt > now else { return nil }
-        let usedPercent = WatchRingMath.usagePercent(quota: tier.quota, remaining: tier.remaining) * 100
+        let usedPercent = WatchRingMath.usagePercent(quota: quota, remaining: remaining ?? 0) * 100
         let window = RateWindow(
             usedPercent: usedPercent,
-            windowMinutes: tier.windowMinutes,
+            windowMinutes: windowMinutes,
             resetsAt: resetsAt,
             resetDescription: resetRaw)
         guard let pace = UsagePace.weekly(window: window, now: now) else { return nil }
         return (pace.expectedUsedPercent / 100).clamped(to: 0...1)
+    }
+
+    /// Convenience for the API model tier (`ProviderUsage.tiers`).
+    public static func expectedPaceFraction(tier: TierDTO, now: Date = .init()) -> Double? {
+        expectedPaceFraction(quota: tier.quota, remaining: tier.remaining,
+                             windowMinutes: tier.windowMinutes, resetTime: tier.reset_time, now: now)
+    }
+
+    /// Convenience for the UI tier (`ProviderDetail.tiers`).
+    public static func expectedPaceFraction(tier: UsageTier, now: Date = .init()) -> Double? {
+        expectedPaceFraction(quota: tier.quota, remaining: tier.remaining,
+                             windowMinutes: tier.windowMinutes, resetTime: tier.resetTime, now: now)
     }
 
     /// Warning-threshold fractions (0...1, as-used) from configured percents

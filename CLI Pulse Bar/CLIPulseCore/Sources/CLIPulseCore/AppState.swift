@@ -1081,7 +1081,8 @@ public final class AppState: ObservableObject {
                         usage: tier.quota - tier.remaining,
                         quota: tier.quota,
                         remaining: tier.remaining,
-                        resetTime: tier.reset_time
+                        resetTime: tier.reset_time,
+                        windowMinutes: tier.windowMinutes
                     )
                 }
             } else if let quota = usage.quota,

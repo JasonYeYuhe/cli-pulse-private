@@ -85,4 +85,27 @@ final class QuotaBarMarkersTests: XCTestCase {
         XCTAssertEqual(fw!, 0.985, accuracy: 0.01)      // (10080-150)/10080 elapsed
         XCTAssertGreaterThan(fw!, fs! + 0.3)            // genuinely distinct positions
     }
+
+    // MARK: UsageTier (UI type) overload + windowMinutes plumbing
+
+    func test_expectedPace_usageTierOverload_midSession() {
+        let now = Date()
+        let resetIn = iso.string(from: now.addingTimeInterval(150 * 60))
+        let ut = UsageTier(name: "5h", usage: 0, quota: 100, remaining: 100,
+                           resetTime: resetIn, windowMinutes: 300)
+        let f = QuotaBarMarkers.expectedPaceFraction(tier: ut, now: now)
+        XCTAssertNotNil(f)
+        XCTAssertEqual(f!, 0.5, accuracy: 0.01)
+    }
+
+    /// Proves `windowMinutes` reaching the UI tier actually changes the marker:
+    /// same reset, 300min ⇒ 0.5 but nil ⇒ engine weekly default ⇒ ~0.985.
+    func test_expectedPace_usageTier_windowMinutesDrivesResult() {
+        let now = Date()
+        let resetIn = iso.string(from: now.addingTimeInterval(150 * 60))
+        let session = UsageTier(name: "5h", usage: 0, quota: 100, remaining: 100, resetTime: resetIn, windowMinutes: 300)
+        let defaulted = UsageTier(name: "x", usage: 0, quota: 100, remaining: 100, resetTime: resetIn, windowMinutes: nil)
+        XCTAssertEqual(QuotaBarMarkers.expectedPaceFraction(tier: session, now: now)!, 0.5, accuracy: 0.01)
+        XCTAssertEqual(QuotaBarMarkers.expectedPaceFraction(tier: defaulted, now: now)!, 0.985, accuracy: 0.01)
+    }
 }
