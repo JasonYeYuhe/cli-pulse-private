@@ -147,6 +147,24 @@ case "daemon":
         exit(0)
     }
 
+    // Run-user guard + identity log. The helper MUST run as the logged-in user
+    // so it binds the socket in THAT user's group container
+    // (~/Library/Group Containers/group.yyh.CLI-Pulse), where the sandboxed app
+    // probes. If launchd ever starts it as root (uid 0) — e.g. a system
+    // LaunchDaemon instead of a per-user LaunchAgent — `homeDirectoryForCurrent
+    // User` resolves to /var/root and the socket binds where the app can never
+    // reach it: the helper shows "running" in Activity Monitor but is
+    // undetectable. Fail loudly + diagnosably rather than binding a dead path.
+    FileHandle.standardError.write(Data(
+        "cli_pulse_helper daemon starting: uid=\(getuid()) home=\(NSHomeDirectory()) socketContainer=\(AuthToken.containerPath().path)\n".utf8
+    ))
+    if getuid() == 0 {
+        FileHandle.standardError.write(Data(
+            "fatal: cli_pulse_helper must run as the logged-in user, not root (uid 0); a socket bound under /var/root is unreachable by the sandboxed app. Reinstall via the per-user LaunchAgent. Refusing to start.\n".utf8
+        ))
+        exit(78) // EX_CONFIG
+    }
+
     // Token rotation: every helper start invalidates the
     // previous session's token. The macOS app re-reads it on
     // every request via the group container, so the rotation is
@@ -249,6 +267,15 @@ case "daemon":
     )
     do {
         try server.start()
+    } catch LocalSessionServer.ServerError.alreadyRunning(let p) {
+        // Another LIVE helper already owns the socket (update/restart overlap).
+        // Defer to it and exit CLEANLY (exit 0) so we don't throttle-loop and,
+        // critically, so we don't unlink the live instance's socket — that one
+        // keeps serving and the app keeps detecting it.
+        FileHandle.standardError.write(Data(
+            "cli_pulse_helper: another live instance already owns \(p); exiting cleanly.\n".utf8
+        ))
+        exit(0)
     } catch {
         FileHandle.standardError.write(Data(
             "error: server.start failed: \(error)\n".utf8

@@ -202,4 +202,40 @@ final class LocalSessionServerTests: XCTestCase {
         XCTAssertEqual(reply["ok"] as? Bool, false)
         XCTAssertEqual((reply["error"] as? [String: Any])?["code"] as? String, "bad_request")
     }
+
+    /// P1#3 regression: a SECOND server on a live socket must REFUSE to bind
+    /// (not unlink the live one). This is the "helper running in Activity
+    /// Monitor but app reports not detected" race during an update/restart
+    /// overlap — the old code unconditionally unlinked any existing socket.
+    func testStartRefusesToUnlinkALiveSocket() throws {
+        let s1 = try makeServer(token: "T")
+        server = s1   // tearDown stops it
+        let sockPath = sockDir.appendingPathComponent("clipulse-helper.sock")
+
+        let s2 = LocalSessionServer(
+            config: LocalSessionServer.Configuration(socketPath: sockPath),
+            hooks: LocalSessionServer.Hooks(getAuthToken: { "T" })
+        )
+        XCTAssertThrowsError(try s2.start()) { err in
+            guard case LocalSessionServer.ServerError.alreadyRunning = err else {
+                return XCTFail("expected .alreadyRunning, got \(err)")
+            }
+        }
+        // The live server's socket must survive AND still answer.
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sockPath.path))
+        let reply = try clientCall(["id": "1", "method": "hello"])
+        XCTAssertFalse(reply.isEmpty,
+                       "live server should still answer after the 2nd start was refused")
+    }
+
+    /// A stale/dead socket FILE (no listener) must be cleaned + bound, NOT
+    /// treated as a live server — else a leftover from a crash would
+    /// permanently block startup.
+    func testStartCleansStaleDeadSocketFile() throws {
+        let sockPath = sockDir.appendingPathComponent("clipulse-helper.sock")
+        XCTAssertTrue(FileManager.default.createFile(atPath: sockPath.path, contents: Data()))
+        // start() must connect-probe (fails → stale), unlink, and bind cleanly.
+        server = try makeServer(token: "T")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sockPath.path))
+    }
 }
