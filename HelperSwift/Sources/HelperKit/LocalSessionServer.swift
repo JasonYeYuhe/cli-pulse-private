@@ -93,6 +93,12 @@ public final class LocalSessionServer: @unchecked Sendable {
     private let config: Configuration
     private let hooks: Hooks
     private var listenFD: Int32 = -1
+    /// Inode of the socket file this server actually bound (captured right
+    /// after bind). stop() only unlinks the path if it STILL refers to this
+    /// inode — so an exiting instance never deletes a NEWER instance's socket
+    /// (the update/restart overlap race that left a live helper with no socket
+    /// file → app reported "not running").
+    private var boundSocketInode: ino_t?
     private var acceptThread: Thread?
     private let stopFlag = AtomicBool()
     private let connsLock = NSLock()
@@ -106,11 +112,19 @@ public final class LocalSessionServer: @unchecked Sendable {
     // MARK: - lifecycle
 
     public func start() throws {
-        // Stale-socket recovery: if a leftover file from a crashed
-        // previous helper sits at the path, unlink it (matches
-        // `prepare_socket_path` in the Python implementation).
+        // Stale-socket recovery: a leftover file from a crashed previous helper
+        // must be unlinked before bind. But DON'T blindly unlink — an
+        // overlapping LIVE helper (two instances briefly coexisting during an
+        // update/restart) may own this socket. Connect-probe first: if a server
+        // answers, refuse to bind and let the live instance keep serving rather
+        // than yanking its socket out from under it (which left the process
+        // running but the path gone → app reported "not running"). Only a
+        // stale/dead socket is unlinked.
         let path = config.socketPath.path
         if FileManager.default.fileExists(atPath: path) {
+            if Self.isSocketAlive(atPath: path) {
+                throw ServerError.alreadyRunning(path)
+            }
             try? FileManager.default.removeItem(atPath: path)
         }
 
@@ -140,6 +154,16 @@ public final class LocalSessionServer: @unchecked Sendable {
         }
         // Restrict socket to user via mode 0600.
         chmod(pathBytes, 0o600)
+        // Record the bound socket's inode so stop() only removes OUR socket,
+        // never a newer instance's that rebound the same path. Guarded by
+        // connsLock: stop() runs on the SIGTERM/SIGINT DispatchSource's global
+        // queue, so boundSocketInode is touched from two threads.
+        var bound = stat()
+        if stat(pathBytes, &bound) == 0 {
+            connsLock.lock()
+            boundSocketInode = bound.st_ino
+            connsLock.unlock()
+        }
 
         if Darwin.listen(fd, 8) != 0 {
             let msg = errnoMsg()
@@ -172,9 +196,21 @@ public final class LocalSessionServer: @unchecked Sendable {
             Darwin.shutdown(fd, SHUT_RDWR)
             Darwin.close(fd)
         }
-        // Best-effort socket file cleanup so the next start() can
-        // bind cleanly. POSIX leaves the inode behind.
-        try? FileManager.default.removeItem(at: config.socketPath)
+        // Best-effort socket file cleanup so the next start() can bind cleanly.
+        // Only remove the file if it's STILL our socket (inode match): during an
+        // update/restart overlap a newer instance may have already rebound the
+        // path, and we must not delete ITS socket.
+        connsLock.lock()
+        let mine = boundSocketInode
+        boundSocketInode = nil
+        connsLock.unlock()
+        if let mine {
+            var cur = stat()
+            let p = (config.socketPath.path as NSString).fileSystemRepresentation
+            if stat(p, &cur) == 0, cur.st_ino == mine {
+                try? FileManager.default.removeItem(at: config.socketPath)
+            }
+        }
     }
 
     // MARK: - accept loop
@@ -828,11 +864,35 @@ public final class LocalSessionServer: @unchecked Sendable {
         return .err(id: "", code: .internalError, message: "framing error: \(error)")
     }
 
+    /// Connect-probe a UNIX socket path: true if a server is actively
+    /// listening (a live helper), false for a stale/dead socket file. Used by
+    /// start() to avoid unlinking an overlapping live instance's socket.
+    private static func isSocketAlive(atPath path: String) -> Bool {
+        let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        if fd < 0 { return false }
+        defer { Darwin.close(fd) }
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let bytes = (path as NSString).fileSystemRepresentation
+        let len = strlen(bytes)
+        if len >= MemoryLayout.size(ofValue: addr.sun_path) { return false }
+        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+            memcpy(raw.baseAddress!, bytes, len)
+        }
+        let rc = withUnsafePointer(to: &addr) { ptr -> Int32 in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { saPtr in
+                Darwin.connect(fd, saPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        return rc == 0
+    }
+
     public enum ServerError: Error, Equatable {
         case socketCreate(String)
         case pathTooLong(String)
         case bind(String)
         case listen(String)
+        case alreadyRunning(String)
     }
 }
 
