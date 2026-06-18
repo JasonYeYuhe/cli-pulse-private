@@ -528,7 +528,16 @@ def daemon(args: argparse.Namespace) -> None:
                 return False
 
         def _set_local_enabled(value: bool) -> None:
-            set_local_control_enabled(bool(value))
+            # v1.30.2 RC-1: set_local_control_enabled does a load_config()
+            # read-modify-write, which raises ConfigError on an unpaired
+            # helper (the UDS surface is now reachable while unpaired). Surface
+            # a clear "not paired" message — consistent with the manager-
+            # dependent methods above — instead of letting the bare ConfigError
+            # fall through to the server's opaque "internal" error code.
+            try:
+                set_local_control_enabled(bool(value))
+            except ConfigError as exc:
+                raise RuntimeError("helper not paired — pair this Mac to enable local control") from exc
 
         def _start_local(payload: dict[str, Any]) -> dict[str, Any]:
             if remote_agent_manager is None:
