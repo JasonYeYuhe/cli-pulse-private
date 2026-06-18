@@ -95,11 +95,11 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
         self.manifestURL = manifestURL
         self.urlSession = urlSession
         self.helloClient = helloClient
-        let groupURL = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: LocalSessionControlClient.appGroupID
-        )
-        let base = groupURL?.path ?? NSHomeDirectory()
-        self.udsPath = (base as NSString)
+        // Shared resolver: prefers the sandbox container, else the REAL-home
+        // group container the helper binds in (NOT NSHomeDirectory(), which is
+        // the app's private sandbox container — a path the helper never uses,
+        // which made the post-install liveness probe target the wrong socket).
+        self.udsPath = (LocalSessionControlClient.groupContainerBasePath() as NSString)
             .appendingPathComponent(LocalSessionControlClient.socketFilename)
         // v1.16 hotfix: NSHomeDirectory() / `~` expansion both honour
         // the App Sandbox redirect, returning
@@ -151,11 +151,17 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
             // a working state, just no update info.
             state = .running(version: hello.helperVersion.isEmpty ? "older" : hello.helperVersion)
         case (let hello?, let m?):
-            let installed = hello.helperVersion.isEmpty ? "0.0.0" : hello.helperVersion
-            if Self.compareVersions(installed, m.version) < 0 {
-                state = .updateAvailable(installed: installed, latest: m.version)
+            if hello.helperVersion.isEmpty {
+                // Helper answered hello but reported no version (older
+                // protocol that omits helper_version). We can't compare, and
+                // it IS running — don't show a spurious, permanent "update
+                // available" (the old `"0.0.0" < latest` path did exactly
+                // that, so a working helper never showed plain .running).
+                state = .running(version: "installed")
+            } else if Self.compareVersions(hello.helperVersion, m.version) < 0 {
+                state = .updateAvailable(installed: hello.helperVersion, latest: m.version)
             } else {
-                state = .running(version: installed)
+                state = .running(version: hello.helperVersion)
             }
         }
     }

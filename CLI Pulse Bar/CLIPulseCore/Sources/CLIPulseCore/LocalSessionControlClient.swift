@@ -276,6 +276,32 @@ public final class LocalSessionControlClient: SessionControlClient {
     public static let appGroupID = "group.yyh.CLI-Pulse"
     public static let socketFilename = "clipulse-helper.sock"
     public static let authTokenFilename = "helper-auth-token"
+
+    /// Group-container base path shared by the app's UDS client and the
+    /// installer's liveness probe. Prefer the sandbox-provisioned container;
+    /// when that's nil, fall back to the REAL-home `Library/Group Containers`
+    /// path the (unsandboxed) helper binds in — NOT `NSHomeDirectory()`, which
+    /// under the App Sandbox is the app's PRIVATE container
+    /// (`~/Library/Containers/yyh.CLI-Pulse/Data`), a path the helper never
+    /// creates → permanent ENOENT → "helper running but app reports not
+    /// detected". `getpwuid(getuid())->pw_dir` bypasses the sandbox home
+    /// redirect, matching the helper's `AuthToken.containerPath()` and the
+    /// existing `HelperInstaller.helperDir` resolution.
+    public static func groupContainerBasePath() -> String {
+        if let url = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupID
+        ) {
+            return url.path
+        }
+        let realHome: String = {
+            if let pw = getpwuid(getuid()), let cstr = pw.pointee.pw_dir {
+                return String(cString: cstr)
+            }
+            return NSHomeDirectoryForUser(NSUserName()) ?? NSHomeDirectory()
+        }()
+        return (realHome as NSString)
+            .appendingPathComponent("Library/Group Containers/\(appGroupID)")
+    }
     public static let protocolVersion = 1
     public static let maxPayload: UInt32 = 1 << 20    // 1 MiB
 
@@ -295,10 +321,7 @@ public final class LocalSessionControlClient: SessionControlClient {
             self.socketPath = socketPath
             self.tokenPath = tokenPath
         } else {
-            let containerURL = FileManager.default.containerURL(
-                forSecurityApplicationGroupIdentifier: Self.appGroupID
-            )
-            let base = containerURL?.path ?? NSHomeDirectory()
+            let base = Self.groupContainerBasePath()
             self.socketPath = socketPath ?? (base as NSString)
                 .appendingPathComponent(Self.socketFilename)
             self.tokenPath = tokenPath ?? (base as NSString)
