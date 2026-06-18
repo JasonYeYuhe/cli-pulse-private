@@ -123,7 +123,11 @@ public final class BookmarkManager {
         guard let defaults = UserDefaults(suiteName: suiteName),
               let jsonData = try? JSONSerialization.data(withJSONObject: dict) else { return }
         defaults.set(jsonData, forKey: bookmarksKey)
-        defaults.synchronize()
+        // No `defaults.synchronize()`: it's deprecated and forces a synchronous
+        // cfprefsd XPC flush. saveBookmarks() is reachable on the launch/main
+        // path (resolveAllBookmarks → stale re-store / prune), so the sync
+        // flush was a main-thread block; the system coalesces cross-process
+        // writes without it.
     }
 
     // MARK: - Access Management
@@ -277,11 +281,19 @@ public final class BookmarkManager {
         logger.info("Revoked bookmark for: \(directoryPath, privacy: .public)")
     }
 
-    /// Resolve all stored bookmarks (call on app launch)
-    public func resolveAllBookmarks() {
+    /// Resolve all stored bookmarks. Call shortly AFTER launch (from a
+    /// deferred `Task`), NOT synchronously from `App.init()`: each
+    /// `resolveBookmark` does slow sandbox XPC (`URL(resolvingBookmarkData:)`
+    /// + `startAccessingSecurityScopedResource()`), so resolving a batch
+    /// synchronously on the main thread at startup stalled launch. `await
+    /// Task.yield()` between bookmarks keeps the batch chunked into the run
+    /// loop so it can never block the main thread long enough to register as
+    /// an App-Hang.
+    public func resolveAllBookmarks() async {
         let bookmarks = loadBookmarks()
         for path in bookmarks.keys {
             resolveBookmark(for: path)
+            await Task.yield()
         }
         logger.info("Resolved \(self.activeResources.count)/\(bookmarks.count) bookmarks")
     }

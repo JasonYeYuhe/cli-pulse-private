@@ -18,8 +18,13 @@ struct CLIPulseBarApp: App {
     init() {
         SentryLogger.start(platform: .macOS)
         backgroundActivity.begin()
-        // Resolve stored security-scoped bookmarks on launch
-        BookmarkManager.shared.resolveAllBookmarks()
+        // Resolve stored security-scoped bookmarks shortly AFTER launch — off
+        // the synchronous init path. Each resolution does slow sandbox XPC, so
+        // doing the batch synchronously here stalled startup on the main
+        // thread; the deferred, yielding async version keeps launch responsive.
+        Task { @MainActor in
+            await BookmarkManager.shared.resolveAllBookmarks()
+        }
     }
 
     var body: some Scene {
