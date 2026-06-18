@@ -413,12 +413,16 @@ public final class LocalSessionControlClient: SessionControlClient {
         // older helpers; HelperInstaller treats "" as "predates 1.16,
         // could be 1.15 nohup or older".
         let helperVersion = (result["helper_version"] as? String) ?? ""
+        // v1.30.2 (RC-1): optional `paired` flag. Absent on older helpers →
+        // nil (unknown). false ⇒ installed + running but not yet paired.
+        let paired = result["paired"] as? Bool
         return SessionControlHello(
             protocolVersion: version,
             supportedMethods: Set(methods),
             capabilities: caps,
             providerAvailability: providerAvailability,
-            helperVersion: helperVersion
+            helperVersion: helperVersion,
+            paired: paired
         )
     }
 

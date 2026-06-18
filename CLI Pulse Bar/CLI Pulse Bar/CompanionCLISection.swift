@@ -111,7 +111,19 @@ struct CompanionCLISection: View {
                     .foregroundStyle(.secondary)
             }
         case .running:
-            EmptyView()
+            // v1.30.2 (RC-1): the helper now binds its socket + answers hello
+            // even before it's paired, so it correctly shows as installed +
+            // running. Surface a hint so the user knows managed sessions need
+            // pairing. `helperPaired == nil` (older helper that predates the
+            // flag) shows nothing — same as before.
+            if installer.helperPaired == false {
+                Text("Installed and running. Pair this Mac (above) to drive managed sessions.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                EmptyView()
+            }
         case .updateAvailable(_, let latest):
             Text("A new helper version (\(latest)) is available. The update flow is identical to the install flow.")
                 .font(.system(size: 10))

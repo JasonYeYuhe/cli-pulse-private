@@ -36,7 +36,12 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 # stream-json instead of PTY. Mirrors codex_exec carve-out from v1.17.
 # Bump from 1.17.3 → 1.18.0 so the HelperInstaller UI surfaces the
 # update prompt for users who'd benefit from the Gemini transport.
-HELPER_VERSION = "1.18.0"
+# 1.18.0 → 1.18.1 (v1.30.2 RC-1): the local UDS control surface now binds
+# even when the helper is unpaired (was gated behind the paired manager),
+# and an unpaired heartbeat ConfigError no longer crash-loops the daemon —
+# so a freshly-installed-but-unpaired helper is detectable instead of
+# showing "not installed". `hello` now reports a `paired` flag.
+HELPER_VERSION = "1.18.1"
 
 logger = logging.getLogger("cli_pulse.collector")
 

@@ -82,6 +82,12 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
 
     @Published public private(set) var state: State = .checking
     @Published public private(set) var lastChecked: Date?
+    /// v1.30.2 (RC-1): pairing state from the helper's last `hello` reply.
+    /// nil = unknown (older helper or never probed); false = installed +
+    /// running but not paired → the UI prompts the user to pair. Lets the
+    /// `.running` UI add a "pair to activate managed sessions" hint without
+    /// regressing to a misleading "not installed".
+    @Published public private(set) var helperPaired: Bool?
 
     private let manifestURL: URL
     private let udsPath: String
@@ -148,6 +154,9 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
             manifest = nil
         }
         lastChecked = Date()
+        // v1.30.2 (RC-1): record pairing state from this probe. nil when
+        // hello failed (unknown) or the helper predates the `paired` field.
+        helperPaired = helperRunning?.paired
 
         switch (helperRunning, manifest) {
         case (nil, _):
@@ -186,6 +195,44 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
                 state = .running(version: hello.helperVersion)
             }
         }
+    }
+
+    /// Pure decision for the popover-reopen / app-active re-probe hook (RC-2).
+    /// Extracted so it's unit-testable with an injected clock.
+    /// - Mid-flight states ({downloading, installing, checking}) never
+    ///   re-probe — the install/refresh flow already owns the state, and a
+    ///   re-probe mid-install would race it.
+    /// - Every settled state ({notInstalled, unreachable, error, running,
+    ///   updateAvailable}) re-probes when the last check is older than
+    ///   `maxAge` (or never happened). This is what catches a helper that
+    ///   bound its socket AFTER the one-shot launch probe — e.g. the user
+    ///   finished Installer.app, the state settled `.notInstalled`, and on the
+    ///   next popover open (> maxAge later) we re-probe and flip to `.running`.
+    ///   The `maxAge` gate also stops rapid open/close toggling from hammering
+    ///   the manifest endpoint with overlapping refreshes.
+    public static func shouldReprobe(
+        state: State, lastChecked: Date?, now: Date, maxAge: TimeInterval
+    ) -> Bool {
+        switch state {
+        case .downloading, .installing, .checking:
+            return false
+        case .notInstalled, .unreachable, .error, .running, .updateAvailable:
+            guard let lastChecked else { return true }
+            return now.timeIntervalSince(lastChecked) >= maxAge
+        }
+    }
+
+    /// Re-probe the helper when the menu-bar popover becomes active again
+    /// (RC-2). `MenuBarExtra(.window)` reuses the popover's content view across
+    /// open/close, so the one-shot `.task { refresh() }` never re-fires —
+    /// without this hook a helper that bound its socket after install keeps
+    /// showing its stale state until the user manually taps "Re-check".
+    @MainActor
+    public func refreshIfStale(now: Date = Date(), maxAge: TimeInterval = 8) async {
+        guard Self.shouldReprobe(
+            state: state, lastChecked: lastChecked, now: now, maxAge: maxAge
+        ) else { return }
+        await refresh()
     }
 
     /// Trigger the install (or update — the flow is identical: download
@@ -233,15 +280,31 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
     /// will never bring up.
     private func waitForInstallerToTerminate(timeout: TimeInterval) async -> Bool {
         let installerBundleID = "com.apple.installer"
+        func installerIsRunning() -> Bool {
+            !NSRunningApplication.runningApplications(
+                withBundleIdentifier: installerBundleID
+            ).isEmpty
+        }
 
-        // If Installer.app isn't running by the time we get here, treat
-        // as already-terminated (could mean: install completed too fast
-        // to observe, or user canceled before pkg opened).
-        let runningInstallers = NSRunningApplication.runningApplications(
-            withBundleIdentifier: installerBundleID
-        )
-        if runningInstallers.isEmpty {
-            return true
+        // RC-3: `NSWorkspace.open(pkg)` returns once LaunchServices ACCEPTS the
+        // open request — which can be 50–200ms before Installer.app actually
+        // registers in the running-apps list. The old code read "not running
+        // right now" as "already terminated", entered the short post-quit
+        // grace prematurely, and settled on `.notInstalled` before the user
+        // had even seen the installer. Wait briefly for Installer.app to
+        // APPEAR first; only if it never shows do we treat it as
+        // already-terminated (install completed too fast to observe, or the
+        // user cancelled before the pkg opened — the caller's helper probe
+        // then decides the real outcome).
+        if !installerIsRunning() {
+            let appearDeadline = Date().addingTimeInterval(5)
+            while Date() < appearDeadline {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                if installerIsRunning() { break }
+            }
+            if !installerIsRunning() {
+                return true
+            }
         }
 
         return await withCheckedContinuation { continuation in
@@ -448,6 +511,7 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
                         await MainActor.run {
                             let v = hello.helperVersion.isEmpty ? expectedVersion : hello.helperVersion
                             self.state = .running(version: v)
+                            self.helperPaired = hello.paired
                         }
                         return true
                     }
@@ -460,15 +524,20 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
         let installerQuit = await waitForInstallerToTerminate(timeout: timeout)
 
         if installerQuit {
-            // Installer terminated. Give the helper one more shot at
-            // bind (postinstall.sh may still be in its 10s wait), then
-            // decide.
-            for _ in 0..<10 {
+            // Installer terminated. Give the helper time to bind before we
+            // settle the state. RC-3: the old 10×1s (10s) grace was far too
+            // short — the LaunchAgent's first launch (postinstall bootstrap +
+            // the daemon's own startup) can take longer, and settling on
+            // `.notInstalled` after 10s produced the "installed but shows not
+            // installed" report. Probe for up to 45s post-quit; the parallel
+            // pollTask's 120s budget still covers a genuinely slow case.
+            for _ in 0..<45 {
                 if pollTask.isCancelled { break }
                 if await probeHelperLiveness(timeout: 1.0),
                    let hello = try? await helloClient().hello() {
                     let v = hello.helperVersion.isEmpty ? expectedVersion : hello.helperVersion
                     state = .running(version: v)
+                    helperPaired = hello.paired
                     pollTask.cancel()
                     return
                 }

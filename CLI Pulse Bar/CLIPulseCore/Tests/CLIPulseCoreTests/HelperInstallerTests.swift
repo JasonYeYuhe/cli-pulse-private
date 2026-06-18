@@ -57,6 +57,88 @@ final class HelperInstallerTests: XCTestCase {
         let intelPasses = (try? HelperInstaller.assertArchitectureMatches(intelManifest)) != nil
         XCTAssertTrue(armPasses != intelPasses, "Exactly one arch should match this host")
     }
+
+    // MARK: - shouldReprobe (RC-2 popover-reopen re-probe gate)
+
+    private let t0 = Date(timeIntervalSinceReferenceDate: 1_000_000)
+
+    func test_shouldReprobe_midFlightStatesNeverReprobe() {
+        // The install/refresh flow owns these — a popover re-open must not
+        // race it, regardless of how old lastChecked is.
+        for state in [HelperInstaller.State.downloading(progress: 0.5),
+                      .installing,
+                      .checking] {
+            XCTAssertFalse(
+                HelperInstaller.shouldReprobe(
+                    state: state, lastChecked: nil, now: t0, maxAge: 8),
+                "\(state) should never re-probe (nil lastChecked)")
+            XCTAssertFalse(
+                HelperInstaller.shouldReprobe(
+                    state: state,
+                    lastChecked: t0.addingTimeInterval(-3600),
+                    now: t0, maxAge: 8),
+                "\(state) should never re-probe (very stale lastChecked)")
+        }
+    }
+
+    func test_shouldReprobe_settledStatesReprobeWhenStale() {
+        // The post-install case: state settled `.notInstalled` but the helper
+        // bound its socket later; on the next popover open (> maxAge) we must
+        // re-probe so it flips to `.running`.
+        let settled: [HelperInstaller.State] = [
+            .notInstalled, .unreachable("sock"), .error("x"),
+            .running(version: "1.18.0"),
+            .updateAvailable(installed: "1.17.0", latest: "1.18.0"),
+        ]
+        for state in settled {
+            // Older than maxAge → re-probe.
+            XCTAssertTrue(
+                HelperInstaller.shouldReprobe(
+                    state: state,
+                    lastChecked: t0.addingTimeInterval(-10),
+                    now: t0, maxAge: 8),
+                "\(state) older than maxAge should re-probe")
+            // Never checked → re-probe.
+            XCTAssertTrue(
+                HelperInstaller.shouldReprobe(
+                    state: state, lastChecked: nil, now: t0, maxAge: 8),
+                "\(state) with nil lastChecked should re-probe")
+        }
+    }
+
+    func test_shouldReprobe_settledStatesThrottleWhenFresh() {
+        // Rapid open/close toggling within maxAge must not hammer the
+        // manifest endpoint with overlapping refreshes.
+        for state in [HelperInstaller.State.notInstalled,
+                      .running(version: "1.18.0")] {
+            XCTAssertFalse(
+                HelperInstaller.shouldReprobe(
+                    state: state,
+                    lastChecked: t0.addingTimeInterval(-2),
+                    now: t0, maxAge: 8),
+                "\(state) checked 2s ago should NOT re-probe (maxAge 8)")
+        }
+    }
+
+    // MARK: - SessionControlHello.paired plumbing (RC-1 app-side)
+
+    func test_sessionControlHello_pairedDefaultsNilForOlderHelpers() {
+        let hello = SessionControlHello(
+            protocolVersion: 1,
+            supportedMethods: ["hello"],
+            capabilities: SessionControlCapabilities(
+                sendInput: true, subscribeEvents: false, approvals: false))
+        XCTAssertNil(hello.paired, "older helper (no paired field) → nil")
+    }
+
+    func test_sessionControlHello_pairedRoundTrips() {
+        let unpaired = SessionControlHello(
+            protocolVersion: 1, supportedMethods: ["hello"],
+            capabilities: SessionControlCapabilities(
+                sendInput: true, subscribeEvents: false, approvals: false),
+            paired: false)
+        XCTAssertEqual(unpaired.paired, false)
+    }
 }
 
 #endif

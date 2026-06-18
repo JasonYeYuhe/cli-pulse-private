@@ -489,112 +489,150 @@ def daemon(args: argparse.Namespace) -> None:
     except Exception as exc:
         logger.warning("remote agent manager init failed: %s", exc)
 
-    # Phase 3 Iter 1: local UDS control surface. Only stood up when we
-    # have a manager — without it there's nothing for the local server
-    # to dispatch to. Failures here are non-fatal: the daemon still
-    # services Supabase-routed sessions even if the local socket can't
-    # bind (e.g. another helper is already listening, missing app
-    # group container).
-    if remote_agent_manager is not None:
+    # Phase 3 Iter 1 / v1.30.2 RC-1: local UDS control surface. This is now
+    # stood up UNCONDITIONALLY — even when `remote_agent_manager` is None
+    # (helper installed but not yet paired). The macOS app probes this socket
+    # via `hello` to decide whether the companion CLI is installed/running; if
+    # the socket only ever binds for a PAIRED helper, a freshly installed-but-
+    # unpaired helper looks "not installed" forever (and, with launchd
+    # KeepAlive, crash-loops). Manager-dependent methods (start/stop/
+    # send_input) return a clear "not paired" error until pairing completes;
+    # `hello`, `ping`, detected-session listing, and the control-enabled getter
+    # all work without a manager. Failures here remain non-fatal: the daemon
+    # still services Supabase-routed sessions even if the local socket can't
+    # bind (e.g. another helper is already listening, missing app group
+    # container).
+    try:
+        from local_auth_token import rotate_token, token_path
+        from local_session_server import LocalSessionServer, default_socket_path
         try:
-            from local_auth_token import rotate_token, token_path
-            from local_session_server import LocalSessionServer, default_socket_path
             local_auth_token = rotate_token()
+        except Exception as exc:  # noqa: BLE001
+            # Token rotation is best-effort: `hello` is unauthenticated, so a
+            # token failure must NOT stop the socket from binding (that would
+            # regress detection). Authenticated methods fail closed downstream.
+            logger.warning("auth token rotation failed (continuing, hello stays unauth): %s", exc)
+            local_auth_token = None
 
-            def _get_token() -> str:
-                # Re-read from disk on each request so a manual rotation
-                # takes effect without restarting the daemon. The
-                # in-process `local_auth_token` is the fallback.
-                from local_auth_token import load_token
-                return load_token() or local_auth_token or ""
+        def _get_token() -> str:
+            # Re-read from disk on each request so a manual rotation
+            # takes effect without restarting the daemon. The
+            # in-process `local_auth_token` is the fallback.
+            from local_auth_token import load_token
+            return load_token() or local_auth_token or ""
 
-            def _get_local_enabled() -> bool:
-                try:
-                    return bool(load_config().local_control_enabled)
-                except ConfigError:
-                    return False
+        def _get_local_enabled() -> bool:
+            try:
+                return bool(load_config().local_control_enabled)
+            except ConfigError:
+                return False
 
-            def _set_local_enabled(value: bool) -> None:
+        def _set_local_enabled(value: bool) -> None:
+            # v1.30.2 RC-1: set_local_control_enabled does a load_config()
+            # read-modify-write, which raises ConfigError on an unpaired
+            # helper (the UDS surface is now reachable while unpaired). Surface
+            # a clear "not paired" message — consistent with the manager-
+            # dependent methods above — instead of letting the bare ConfigError
+            # fall through to the server's opaque "internal" error code.
+            try:
                 set_local_control_enabled(bool(value))
+            except ConfigError as exc:
+                raise RuntimeError("helper not paired — pair this Mac to enable local control") from exc
 
-            def _start_local(payload: dict[str, Any]) -> dict[str, Any]:
-                return remote_agent_manager.local_start_claude_session(payload)
+        def _start_local(payload: dict[str, Any]) -> dict[str, Any]:
+            if remote_agent_manager is None:
+                raise RuntimeError("helper not paired — managed sessions unavailable until pairing completes")
+            return remote_agent_manager.local_start_claude_session(payload)
 
-            def _list_local() -> list[dict[str, Any]]:
-                return remote_agent_manager.local_list_sessions()
+        def _list_local() -> list[dict[str, Any]]:
+            # Unpaired: no managed sessions exist yet — return an empty list
+            # rather than erroring so the app's session list renders cleanly.
+            if remote_agent_manager is None:
+                return []
+            return remote_agent_manager.local_list_sessions()
 
-            def _stop_local(session_id: str) -> dict[str, Any]:
-                return remote_agent_manager.local_stop_session(session_id)
+        def _stop_local(session_id: str) -> dict[str, Any]:
+            if remote_agent_manager is None:
+                raise RuntimeError("helper not paired — managed sessions unavailable until pairing completes")
+            return remote_agent_manager.local_stop_session(session_id)
 
-            def _send_input_local(session_id: str, payload: str) -> dict[str, Any]:
-                return remote_agent_manager.local_send_input(session_id, payload)
+        def _send_input_local(session_id: str, payload: str) -> dict[str, Any]:
+            if remote_agent_manager is None:
+                raise RuntimeError("helper not paired — managed sessions unavailable until pairing completes")
+            return remote_agent_manager.local_send_input(session_id, payload)
 
-            def _list_detected_local() -> list[dict[str, Any]]:
-                # iter 2A: surface same-Mac Claude processes the
-                # PR #14 collector recognises. Read-only on the UDS
-                # surface — the helper does NOT own these PTYs.
-                # Wrapped lazily so an unrelated `system_collector`
-                # import failure (e.g. missing ps on a stripped
-                # container) doesn't break the whole UDS server.
-                try:
-                    from system_collector import collect_sessions
-                    rows: list[dict[str, Any]] = []
-                    for sess in collect_sessions():
-                        if sess.provider != "Claude":
-                            continue
-                        rows.append({
-                            "session_id": sess.session_id,
-                            "provider": sess.provider,
-                            "client_label": sess.name,
-                            "project": sess.project,
-                            "status": sess.status,
-                            # Process-confirmed → controllable=False on
-                            # the UDS surface; the server adds the flag
-                            # before the reply leaves.
-                            "started_at": sess.started_at,
-                            "last_active_at": sess.last_active_at,
-                            "collection_confidence": sess.collection_confidence,
-                        })
-                    return rows
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("detected-session collector failed: %s", exc)
-                    return []
+        def _list_detected_local() -> list[dict[str, Any]]:
+            # iter 2A: surface same-Mac Claude processes the
+            # PR #14 collector recognises. Read-only on the UDS
+            # surface — the helper does NOT own these PTYs.
+            # Wrapped lazily so an unrelated `system_collector`
+            # import failure (e.g. missing ps on a stripped
+            # container) doesn't break the whole UDS server.
+            try:
+                from system_collector import collect_sessions
+                rows: list[dict[str, Any]] = []
+                for sess in collect_sessions():
+                    if sess.provider != "Claude":
+                        continue
+                    rows.append({
+                        "session_id": sess.session_id,
+                        "provider": sess.provider,
+                        "client_label": sess.name,
+                        "project": sess.project,
+                        "status": sess.status,
+                        # Process-confirmed → controllable=False on
+                        # the UDS surface; the server adds the flag
+                        # before the reply leaves.
+                        "started_at": sess.started_at,
+                        "last_active_at": sess.last_active_at,
+                        "collection_confidence": sess.collection_confidence,
+                    })
+                return rows
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("detected-session collector failed: %s", exc)
+                return []
 
-            local_uds_server = LocalSessionServer(
-                socket_path=default_socket_path(),
-                get_auth_token=_get_token,
-                get_local_control_enabled=_get_local_enabled,
-                set_local_control_enabled=_set_local_enabled,
-                start_session=_start_local,
-                list_sessions=_list_local,
-                stop_session=_stop_local,
-                send_input=_send_input_local,
-                list_detected_sessions=_list_detected_local,
-                # Iter 2B: broker drives subscribe_events; registry
-                # backs approve_action / get_pending_approvals plus
-                # the hook-side hook_create_approval / wait_decision
-                # path.
-                event_broker=local_event_broker,
-                approval_registry=local_approval_registry,
-                # Phase 4 helper-bundling: pass the helper's own
-                # entry-point path so `install_claude_hook` UDS
-                # method can write the right command into
-                # `~/.claude/settings.json`. Returns the absolute
-                # path of either the python source (`.py` dev path)
-                # or the PyInstaller frozen binary (`Contents/Helpers/
-                # cli_pulse_helper` in the bundled .app). `sys.argv[0]`
-                # is the conventional way to get this in Python and
-                # PyInstaller exposes the same value, so a single
-                # callable covers both paths.
-                get_helper_argv0=lambda: os.path.abspath(sys.argv[0]),
-            )
-            local_uds_server.start()
-            logger.info(
-                "local UDS server started; auth token at %s", token_path()
-            )
-        except Exception as exc:
-            logger.warning("local UDS server init failed: %s", exc)
-            local_uds_server = None
+        local_uds_server = LocalSessionServer(
+            socket_path=default_socket_path(),
+            get_auth_token=_get_token,
+            get_local_control_enabled=_get_local_enabled,
+            set_local_control_enabled=_set_local_enabled,
+            start_session=_start_local,
+            list_sessions=_list_local,
+            stop_session=_stop_local,
+            send_input=_send_input_local,
+            list_detected_sessions=_list_detected_local,
+            # Iter 2B: broker drives subscribe_events; registry
+            # backs approve_action / get_pending_approvals plus
+            # the hook-side hook_create_approval / wait_decision
+            # path.
+            event_broker=local_event_broker,
+            approval_registry=local_approval_registry,
+            # Phase 4 helper-bundling: pass the helper's own
+            # entry-point path so `install_claude_hook` UDS
+            # method can write the right command into
+            # `~/.claude/settings.json`. Returns the absolute
+            # path of either the python source (`.py` dev path)
+            # or the PyInstaller frozen binary (`Contents/Helpers/
+            # cli_pulse_helper` in the bundled .app). `sys.argv[0]`
+            # is the conventional way to get this in Python and
+            # PyInstaller exposes the same value, so a single
+            # callable covers both paths.
+            get_helper_argv0=lambda: os.path.abspath(sys.argv[0]),
+            # v1.30.2 RC-1: surface pairing state in `hello`. paired ==
+            # "we built a working manager at startup". An unpaired helper
+            # still binds + answers hello, so the app shows "installed —
+            # pair to activate" rather than the misleading "not installed".
+            get_paired=lambda: remote_agent_manager is not None,
+        )
+        local_uds_server.start()
+        logger.info(
+            "local UDS server started (paired=%s); auth token at %s",
+            remote_agent_manager is not None, token_path(),
+        )
+    except Exception as exc:
+        logger.warning("local UDS server init failed: %s", exc)
+        local_uds_server = None
 
     def _handle_shutdown(signum, _frame):
         nonlocal stopping
@@ -611,6 +649,12 @@ def daemon(args: argparse.Namespace) -> None:
     # margin (RK8). 0.0 ⇒ first eligible tick fires promptly.
     _SWARM_HB_PERIOD_S = 30.0
     _last_swarm_hb = 0.0
+    # v1.30.2 RC-1: `config` may never be assigned on an unpaired cycle (the
+    # heartbeat below raises ConfigError before `config = load_config()`).
+    # Initialise it so the swarm-heartbeat guard below is safe, and track
+    # whether we've already logged the unpaired state to avoid per-cycle spam.
+    config = None
+    _unpaired_logged = False
     try:
         while not stopping:
             try:
@@ -669,8 +713,25 @@ def daemon(args: argparse.Namespace) -> None:
                         if ingest_ok:
                             last_scanned_projects = current_projects
                             last_scan_at = now_ts
-            except ConfigError:
-                raise  # Fatal config errors should stop the daemon
+            except ConfigError as exc:
+                # v1.30.2 RC-1: NOT fatal. This used to `raise`, which — with
+                # the installed LaunchAgent's KeepAlive=true — crash-looped an
+                # unpaired helper so it never kept the local UDS socket bound,
+                # making an installed-but-unpaired helper look "not installed"
+                # in the macOS app. Stay alive and idle instead: the local
+                # control surface (hello / detected-sessions) keeps answering
+                # so the app shows "installed — pair to activate", and the next
+                # cycle re-reads config so pairing takes effect without a
+                # manual restart. (The remote-agent manager is still built only
+                # at startup, so managed sessions need one daemon restart after
+                # first-time pairing — acceptable for a power-user feature.)
+                if not _unpaired_logged:
+                    logger.info(
+                        "helper has no usable config yet (%s) — idling; local "
+                        "control surface stays up, retrying each cycle", exc,
+                    )
+                    _unpaired_logged = True
+                config = None
             except (Exception, SyncError) as exc:
                 # Transient network/API errors — log and retry next cycle
                 logger.error("daemon cycle failed: %s", exc)
@@ -690,7 +751,9 @@ def daemon(args: argparse.Namespace) -> None:
                 # is refreshed once per cycle above so the swarm_enabled
                 # toggle takes effect within one cycle.
                 _now_mono = time.monotonic()
-                if _now_mono - _last_swarm_hb >= _SWARM_HB_PERIOD_S:
+                # v1.30.2 RC-1: skip swarm heartbeat when unpaired (config is
+                # None) — _swarm_heartbeat needs a real config.
+                if config is not None and _now_mono - _last_swarm_hb >= _SWARM_HB_PERIOD_S:
                     _last_swarm_hb = _now_mono
                     _swarm_heartbeat(config)
                 time.sleep(1)

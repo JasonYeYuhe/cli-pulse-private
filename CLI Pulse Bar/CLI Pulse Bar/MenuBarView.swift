@@ -12,6 +12,14 @@ struct MenuBarView: View {
     /// `Text(L10n.*)` inside it) whenever the user picks a new
     /// language from the footer picker.
     @ObservedObject private var localeOverride = LocaleOverrideStore.shared
+    /// v1.30.2 (RC-2): the MenuBarExtra(.window) popover becomes the key
+    /// window when it opens. `controlActiveState` flips to `.key`/`.active`
+    /// on open and `.inactive` on close, so observing it lets us re-probe the
+    /// companion-CLI helper every time the popover reopens — without this the
+    /// popover's one-shot `.task { refresh() }` never re-fires (the content
+    /// view is reused across open/close), so a helper that came up after the
+    /// user finished Installer.app keeps showing a stale "not installed".
+    @Environment(\.controlActiveState) private var controlActiveState
 
     /// Adaptive max height: 85% of the screen where the status item lives, capped at 900pt.
     private static var maxMenuBarHeight: CGFloat {
@@ -78,6 +86,15 @@ struct MenuBarView: View {
             }
         }
         .frame(width: 380, height: effectiveHeight)
+        .onChange(of: controlActiveState) { newValue in
+            // RC-2: re-probe the companion-CLI helper when the popover
+            // (re)gains focus. `refreshIfStale` self-throttles so this is a
+            // no-op for a freshly-checked / mid-install state, and the
+            // network cost is one tiny hello + manifest GET at most once
+            // per `maxAge` window.
+            guard newValue != .inactive else { return }
+            Task { await state.helperInstaller.refreshIfStale() }
+        }
     }
 
     // v1.10 P3-6: persistent, non-dismissable banner shown at the top of the
