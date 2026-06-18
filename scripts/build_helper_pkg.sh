@@ -256,8 +256,15 @@ if [[ $SKIP_SIGN -eq 0 ]]; then
         find "$STAGING" -type f \( -name '*.so' -o -name '*.dylib' \) -print0 \
             | xargs -0 -I{} codesign --force --timestamp --options runtime \
                 --sign "$DEV_ID_APP" {}
-        # Sign the entry executable LAST.
+        # Sign the entry executable LAST — WITH the app-group entitlement.
+        # v1.30.2: without `com.apple.security.application-groups`, a launchd
+        # agent that touches the sandboxed app's group container hangs
+        # in-kernel on macOS 26 (os.open never returns; process unkillable
+        # until reboot). The helper's UDS socket + auth token live in that
+        # container, so the daemon would never bind under launchd. Signing
+        # with the matching group grants the access directly (no FDA needed).
         codesign --force --timestamp --options runtime \
+            --entitlements "$PKG_SCRIPTS_DIR/cli_pulse_helper.entitlements" \
             --sign "$DEV_ID_APP" "$STAGING/cli_pulse_helper"
         # Verify the entry passes a strict check (warning-only is too loose
         # for a release pipeline — fail loudly if any signature is bad).

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  v1.30.2 launchd-hang fix. The companion-CLI helper is a Developer ID
+  LaunchAgent that rendezvouses with the sandboxed MAS app via the app-group
+  container (~/Library/Group Containers/group.yyh.CLI-Pulse/): the UDS socket
+  + auth token live there because it is the ONLY path a sandboxed app and an
+  external helper can both reach.
+
+  On macOS 26, a launchd agent WITHOUT this entitlement that touches another
+  app's group container blocks IN-KERNEL (os.open never returns; the process
+  becomes unkillable until reboot) — observed when a .pkg upgrade replaced the
+  helper binary, invalidating the per-cdhash Full Disk Access grant the old
+  binary had relied on. Signing the helper with the matching application-group
+  grants the access directly, so the daemon binds the socket under launchd
+  without needing FDA. See PROJECT_FIX_2026-06-18_helper-launchd-entitlement.md.
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.yyh.CLI-Pulse</string>
+    </array>
+</dict>
+</plist>
