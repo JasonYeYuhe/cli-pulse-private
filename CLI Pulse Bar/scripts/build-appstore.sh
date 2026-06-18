@@ -51,9 +51,14 @@ BUILD_NUM="$(_read_build_setting CURRENT_PROJECT_VERSION)"
 # `releases finalize`, insufficient for anything destructive. Generate at
 # https://jason-yeyuhe.sentry.io/settings/auth-tokens/ if it's missing.
 #
-# iOS+Watch share Sentry project `apple-ios` (distinguished by platform_family
-# tag at the SDK level). macOS uses `apple-macos`. Android uses `android`
-# (handled by the Sentry Gradle plugin, not this script).
+# iOS+Watch share one Sentry project whose display name is "apple-ios" but
+# whose actual slug is `tokyohelp-ios` (distinguished by platform_family tag at
+# the SDK level). sentry-cli --project takes the SLUG, not the display name —
+# passing `apple-ios` here 400s with "Invalid project ids or slugs". macOS uses
+# `apple-macos` (slug == name there). Android uses `android` (handled by the
+# Sentry Gradle plugin, not this script). To re-verify the slug if uploads ever
+# break again: `sentry-cli projects list --org jason-yeyuhe` (needs a token with
+# project:read — e.g. the one in ~/.sentryclirc, not the upload-only org token).
 SENTRY_ORG="jason-yeyuhe"
 SENTRY_AUTH_TOKEN_FILE="$HOME/Library/Application Support/CLI-Pulse-Secrets/sentry-cli-auth-token-2026-04-29.txt"
 
@@ -367,7 +372,7 @@ EOF
         echo "  ✓ Export: $EXPORT"
     fi
 
-    upload_dsyms_to_sentry "$ARCHIVE" "apple-ios"
+    upload_dsyms_to_sentry "$ARCHIVE" "tokyohelp-ios"
 
     if [[ "$UPLOAD" == true ]]; then
         echo "[3/3] Uploading iOS to App Store Connect..."
@@ -434,9 +439,10 @@ EOF
         echo "  ✓ Export: $EXPORT"
     fi
 
-    # watchOS reuses the apple-ios Sentry project (per CLI Pulse memory:
-    # iOS+Watch share DSN, distinguished by platform_family tag).
-    upload_dsyms_to_sentry "$ARCHIVE" "apple-ios"
+    # watchOS reuses the iOS Sentry project (iOS+Watch share DSN, distinguished
+    # by platform_family tag). Display name is "apple-ios"; the slug sentry-cli
+    # wants is `tokyohelp-ios`.
+    upload_dsyms_to_sentry "$ARCHIVE" "tokyohelp-ios"
 
     if [[ "$UPLOAD" == true ]]; then
         echo "[3/3] Uploading watchOS to App Store Connect..."
