@@ -855,19 +855,21 @@ public final class LocalSessionControlClient: SessionControlClient {
         localSessionLog.debug(
             "uds.connect attempt path=\(self.socketPath, privacy: .public) socketExists=\(socketExists, privacy: .public)"
         )
-        // v1.16 hotfix: fast-fail when the socket file is gone (helper
-        // uninstalled, helper crashed without re-binding, install in
-        // progress). Pre-fix, NWConnection.unix() against a missing
-        // path would sit in `.preparing` state for the full
-        // connectTimeout (3 s), and the .task polling loop firing every
-        // 3 s caused a cascade of overlapping connect attempts that
-        // visibly hung the menu-bar UI. Throwing early lets the gate
-        // hydration short-circuit immediately, the diagnostic surface
-        // shows "helper not running," and the next refresh tick is
-        // free to retry once the user finishes installing.
-        if !socketExists {
-            throw SessionControlError.helperNotRunning
-        }
+        // Do NOT hard-fail on a false `socketExists`. FileManager.fileExists
+        // is an unreliable gate for a UNIX-domain socket the (unsandboxed)
+        // helper created in the shared group container — a running,
+        // connectable helper would otherwise be reported "not running" purely
+        // because the stat returned false (the "helper is visible in Activity
+        // Monitor but the app doesn't detect it" reports). Still attempt the
+        // connection; a genuinely-missing socket fails fast via the bounded
+        // timeout below plus the ENOENT/ECONNREFUSED mapping in the state
+        // handler. We SHORTEN the timeout when the socket looks absent so a
+        // truly-missing path can't stall into overlapping attempts at the
+        // ~3 s poll cadence (the v1.16 anti-hang intent — and the connect runs
+        // on a background queue awaited via continuation, so it never blocks
+        // the main actor), while a present-but-unstatable socket still
+        // connects.
+        let effectiveConnectTimeout = socketExists ? connectTimeout : Swift.min(connectTimeout, 1.5)
         let endpoint = NWEndpoint.unix(path: socketPath)
         let connection = NWConnection(to: endpoint, using: .tcp)
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
@@ -911,7 +913,7 @@ public final class LocalSessionControlClient: SessionControlClient {
             connection.start(queue: queue)
             // Soft connect timeout. The continuation guard means a late
             // .ready after the timeout doesn't double-resume.
-            queue.asyncAfter(deadline: .now() + connectTimeout) {
+            queue.asyncAfter(deadline: .now() + effectiveConnectTimeout) {
                 resumeOnce(.failure(SessionControlError.timeout))
             }
         }

@@ -322,6 +322,13 @@ public final class BookmarkManager {
         }
 
         storeBookmark(for: url)
+        // Activate immediately: storeBookmark only PERSISTS the bookmark, but
+        // the cost scan reads via FileManager and needs an ACTIVE
+        // security-scoped resource. Without resolving here, a same-session
+        // grant doesn't take effect until the next launch's
+        // resolveAllBookmarks — the "authorized + re-scanned but still 0 usage
+        // until I relaunch" user reports.
+        resolveBookmark(for: url.path)
         return true
     }
 
@@ -347,6 +354,13 @@ public final class BookmarkManager {
         }
 
         storeBookmark(for: url)
+        // Activate immediately: storeBookmark only PERSISTS the bookmark, but
+        // the cost scan reads via FileManager and needs an ACTIVE
+        // security-scoped resource. Without resolving here, a same-session
+        // grant doesn't take effect until the next launch's
+        // resolveAllBookmarks — the "authorized + re-scanned but still 0 usage
+        // until I relaunch" user reports.
+        resolveBookmark(for: url.path)
         return true
     }
 }

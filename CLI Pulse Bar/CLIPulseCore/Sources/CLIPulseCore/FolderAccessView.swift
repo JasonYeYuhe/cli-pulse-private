@@ -61,7 +61,12 @@ public struct FolderAccessView: View {
                             let success = BookmarkManager.shared.requestAccessViaPanel(
                                 directory: item.directory
                             )
-                            if success { refreshStatuses() }
+                            if success {
+                                refreshStatuses()
+                                // Auto re-scan so usage appears immediately
+                                // (forceRescanTokenCache re-activates bookmarks).
+                                Task { await state.forceRescanTokenCache() }
+                            }
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
@@ -159,6 +164,11 @@ public struct FolderAccessView: View {
                 BookmarkManager.shared.storeBookmark(for: subURL)
             }
             refreshStatuses()
+            // Auto re-scan so usage appears right after a "grant all" (the
+            // rescan re-activates the just-stored bookmarks via
+            // resolveAllBookmarks), instead of needing a separate manual
+            // "Force re-scan" tap.
+            Task { await state.forceRescanTokenCache() }
         }
     }
 }
