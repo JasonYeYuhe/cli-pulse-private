@@ -1198,6 +1198,15 @@ extension AppState {
     /// runs may have recorded negative deltas that incremental scanning
     /// wouldn't undo.
     public func forceRescanTokenCache() async {
+        // Re-activate stored security-scoped bookmarks BEFORE scanning. The
+        // folder-access grant only persists a bookmark; the cost scan reads via
+        // FileManager and needs an ACTIVE security-scoped resource, else
+        // fileExists(~/.claude/projects) returns false in the sandbox and
+        // scanClaudeRoot silently bails → 0 usage. Resolving here makes a
+        // same-session "grant + force re-scan" work without an app relaunch
+        // (the user report: data present in ~/.claude/projects, authorized,
+        // re-scanned, still nothing — because no resource was active).
+        await BookmarkManager.shared.resolveAllBookmarks()
         let fresh = await CostUsageScanner.forceRescanAsync()
         costUsageScanResult = fresh.entries.isEmpty ? nil : fresh
         // Kick a full refresh so provider cards pick up the new data.
