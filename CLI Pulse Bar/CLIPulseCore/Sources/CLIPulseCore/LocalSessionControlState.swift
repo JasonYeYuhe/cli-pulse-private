@@ -86,6 +86,28 @@ extension AppState {
             self.localProtocolVersion = hello.protocolVersion
             self.localProviderAvailability = hello.providerAvailability
             self.localHelperError = nil
+            // Self-heal the Companion CLI badge: the installer's one-shot
+            // refresh() (CompanionCLISection .task) may have probed while the
+            // socket wasn't bound yet → stuck at .notInstalled / .unreachable /
+            // .error. This live hello() just succeeded, so reconcile the
+            // installer's state. Guarded to those stale states so it runs at
+            // most once until it converges to .running, and never while a
+            // download/install/check transition is in flight.
+            switch helperInstaller.state {
+            case .notInstalled, .unreachable, .error:
+                // Throttle: refresh() touches the network (manifest fetch), so
+                // never re-run it more than once per 30s — otherwise a flapping
+                // probe (live hello succeeds but refresh()'s own hello fails)
+                // would spam it on every ~3s poll. Once refresh() converges to
+                // .running the guard above stops re-running it anyway.
+                let staleEnough = helperInstaller.lastChecked
+                    .map { Date().timeIntervalSince($0) > 30 } ?? true
+                if staleEnough {
+                    await helperInstaller.refresh()
+                }
+            default:
+                break
+            }
         } catch let err as SessionControlError {
             self.localHelperReachable = false
             switch err {

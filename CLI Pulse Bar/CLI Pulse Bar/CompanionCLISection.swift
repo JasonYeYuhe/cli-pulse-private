@@ -47,6 +47,13 @@ struct CompanionCLISection: View {
             }
         case .notInstalled:
             Text("Not installed").font(.system(size: 10)).foregroundStyle(.secondary)
+        case .unreachable:
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+                Text("Not responding").font(.system(size: 10, weight: .medium)).foregroundStyle(.orange)
+            }
         case .downloading(let p):
             Text("Downloading \(Int(p * 100))%").font(.system(size: 10)).foregroundStyle(.secondary)
         case .installing:
@@ -86,6 +93,11 @@ struct CompanionCLISection: View {
             Text("Install the optional Companion CLI helper to drive `claude`, `codex`, and `gemini` sessions from the menubar. The helper is signed by Apple's notary service and installs to your home folder with no admin password.")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        case .unreachable(let diag):
+            Text(diag)
+                .font(.system(size: 10))
+                .foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true)
         case .downloading(let p):
             ProgressView(value: p)
@@ -132,6 +144,18 @@ struct CompanionCLISection: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(PulseTheme.accent)
+        case .unreachable:
+            HStack {
+                Button("Re-check") {
+                    Task { await installer.refresh() }
+                }
+                .controlSize(.small)
+                Spacer()
+                Button("Uninstall…") {
+                    Task { await installer.uninstall() }
+                }
+                .controlSize(.small)
+            }
         case .running:
             HStack {
                 Button("Check for Updates") {
