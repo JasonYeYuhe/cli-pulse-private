@@ -34,6 +34,13 @@ the 1.29.1 delta is widget/tier only; the 1.29.0→main delta is v1.30 pace/char
 - App target (CLIPulseBarApp/AppUpdaterSection wiring) compiles in CI only.
 - Gemini diff review + CI per-job gate before merge.
 
+## Follow-up — model re-review (Gemini 3.1 Pro + Codex) + bookmark launch-path fix (same day)
+Owner asked to re-confirm v1.30.0 is **completely** free of this bug class via Codex + Gemini 3.1 Pro. Gemini 3.1 Pro confirmed all of #183's fixes correct; Codex's rescue wrapper failed to surface a verdict (adjudicated by hand). A full sweep for any remaining main-thread block found one real residual + several false alarms:
+- **REAL — `BookmarkManager` launch path (fixed, branch `fix/macos-bookmark-launch-hang`):** `@MainActor BookmarkManager.resolveAllBookmarks()` was called **synchronously from `CLIPulseBarApp.init()`**, running slow sandbox XPC (`URL(resolvingBookmarkData:)` + `startAccessingSecurityScopedResource()`) for every bookmark on the main thread at launch, plus a deprecated `defaults.synchronize()` (sync cfprefsd flush) on stale re-save. Not yet in Sentry but same bug class. Fix: `resolveAllBookmarks()` → `async` with `await Task.yield()` between bookmarks; invoked from a deferred `Task { @MainActor in … }` (off the synchronous init path); removed `synchronize()` in `BookmarkManager.saveBookmarks` + `HelperIPC.writeCollectorResults/writeStatus`.
+- **NOT on main / safe (verified):** Keychain `SecItemCopyMatching` (KeychainHelper/CredentialBridge) — callers wrap in `Task.detached` / run on bg collectors. `HelperIPC.synchronize` — headless daemon, no UI runloop.
+- **Deferred (documented, lower-risk):** `SandboxFileAccess.swift:25` `DispatchQueue.main.sync` collector fallback — mostly mitigated post-launch (active resources → direct `FileManager.contents` succeeds); a full off-main refactor of the `@MainActor` resolver is higher-risk vs. this sensitive cost-scan code (the "$9.6-instead-of-$9,940" history), so left as an optional follow-up. Collector subprocess `waitUntilExit`/semaphore waits run off-main; cooperative-pool-starvation is latent/architectural, not a main-thread hang.
+
 ## Residual / follow-ups
-- `ClaudePricingOpus47Tests` is non-hermetic (passes CI, fails locally) — flagged separately.
+- `ClaudePricingOpus47Tests` is non-hermetic (passes CI, fails locally — passed on a later run; flaky) — flagged as its own task.
+- `SandboxFileAccess` off-main resolver refactor — optional, low-priority (see above).
 - Shipping (bump 1.29.1/74 → 1.30.0/75 + ASC/DMG) remains **owner-gated**.

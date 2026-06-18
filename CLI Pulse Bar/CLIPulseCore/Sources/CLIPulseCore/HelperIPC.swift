@@ -38,7 +38,9 @@ public enum HelperIPC {
     public static func writeCollectorResults(_ json: Data) {
         guard let defaults = UserDefaults(suiteName: suiteName) else { return }
         defaults.set(json, forKey: collectorResultsKey)
-        defaults.synchronize()
+        // No deprecated `synchronize()` — the system coalesces the
+        // cross-process flush; the explicit sync flush only added a blocking
+        // cfprefsd XPC round-trip.
     }
 
     /// Read collector results written by helper.
@@ -81,7 +83,7 @@ public enum HelperIPC {
         guard let defaults = UserDefaults(suiteName: suiteName),
               let data = try? JSONEncoder().encode(status) else { return }
         defaults.set(data, forKey: statusKey)
-        defaults.synchronize()
+        // No deprecated `synchronize()` — see writeCollectorResults.
     }
 
     /// Post a sync notification via DistributedNotificationCenter.
