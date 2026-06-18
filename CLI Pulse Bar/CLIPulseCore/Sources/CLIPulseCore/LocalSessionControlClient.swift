@@ -937,11 +937,15 @@ public final class LocalSessionControlClient: SessionControlClient {
             // Soft connect timeout. The continuation guard means a late
             // .ready after the timeout doesn't double-resume.
             queue.asyncAfter(deadline: .now() + effectiveConnectTimeout) {
-                // Tear down the still-pending connection on timeout so a
-                // never-ready NWConnection (e.g. absent socket stuck in
-                // .preparing) doesn't leak in the background. The resumeOnce
-                // guard makes the resulting .cancelled callback a no-op, so we
-                // still surface .timeout.
+                // Only act if the connection hasn't already resolved. If it
+                // became .ready, the caller now owns it for a possibly
+                // long-lived stream (subscribe_events) — cancelling here would
+                // kill that active connection mid-stream. `resumed` and the
+                // stateUpdateHandler both run on `queue` (serial), so this
+                // check is race-free. On a genuine connect timeout (never
+                // ready) we cancel to tear down the stuck .preparing
+                // NWConnection instead of leaking it.
+                guard !resumed else { return }
                 connection.cancel()
                 resumeOnce(.failure(SessionControlError.timeout))
             }
