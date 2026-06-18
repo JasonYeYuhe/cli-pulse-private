@@ -48,6 +48,12 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
     public enum State: Equatable, Sendable {
         case checking
         case notInstalled
+        /// Helper binary is installed on disk but the liveness probe failed
+        /// (socket path mismatch, mid-restart, wrong run-user, token issue,
+        /// timeout). Distinct from `.notInstalled` so the UI offers "Re-check"
+        /// / "Uninstall" instead of a misleading "Install". String = a short
+        /// diagnostic (probed socket path + existence).
+        case unreachable(String)
         case downloading(progress: Double)
         case installing
         case running(version: String)
@@ -145,7 +151,23 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
 
         switch (helperRunning, manifest) {
         case (nil, _):
-            state = .notInstalled
+            // hello() failed. Distinguish "installed but not responding" from
+            // "not installed" using the SOCKET FILE in the group container —
+            // NOT the helper binary under ~/Library/CLI-Pulse-Helper, which the
+            // sandboxed app cannot stat (FileManager.fileExists would falsely
+            // return false). The group container IS sandbox-accessible. A
+            // socket present + hello failing = ECONNREFUSED/timeout against a
+            // bound path → the helper is there but not answering
+            // (.unreachable); no socket = ENOENT → nothing bound here
+            // (.notInstalled). Showing .notInstalled for the former offered
+            // only "Install" (wrong) and hid a re-checkable state.
+            if FileManager.default.fileExists(atPath: udsPath) {
+                state = .unreachable(
+                    "Companion CLI socket exists but isn't responding (\(udsPath)). The helper may be restarting or mis-bound — try Re-check, or Uninstall and reinstall."
+                )
+            } else {
+                state = .notInstalled
+            }
         case (let hello?, nil):
             // Helper running but we couldn't reach the manifest — still
             // a working state, just no update info.
