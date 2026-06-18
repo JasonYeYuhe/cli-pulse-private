@@ -151,14 +151,20 @@ case "daemon":
     // previous session's token. The macOS app re-reads it on
     // every request via the group container, so the rotation is
     // transparent.
-    let token: String
+    // Token rotation failure must NOT abort startup. Calling exit(1) here put
+    // the daemon into a launchd throttle-restart loop — the helper flickers in
+    // Activity Monitor but never binds/serves the socket, so the app reports
+    // "not detected" while the process is visibly "running". hello() is
+    // auth-free (liveness only) and gated RPCs fail closed when the token
+    // doesn't match, so it's safe to start the server with an empty token and
+    // loudly surface the rotation error instead of dying.
+    var token: String = ""
     do {
         token = try AuthToken.rotateToken()
     } catch {
         FileHandle.standardError.write(Data(
-            "error: rotateToken failed: \(error)\n".utf8
+            "error: rotateToken failed (continuing with empty token; gated RPCs will be unauthenticated until the next successful rotation): \(error)\n".utf8
         ))
-        exit(1)
     }
     let socketPath = AuthToken.containerPath().appendingPathComponent("clipulse-helper.sock")
     let broker = EventBroker()
