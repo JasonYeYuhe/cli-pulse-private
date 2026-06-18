@@ -120,19 +120,27 @@ public struct SessionControlHello: Sendable, Equatable {
     /// helper that predates v1.16's surface — treat as ".unknown" / "older
     /// than 1.16.0" for migration / update prompt logic.
     public let helperVersion: String
+    /// v1.30.2 (RC-1): whether the helper has a usable pairing config.
+    /// `nil` means an older helper that predates the field (treat as
+    /// "unknown" → don't show a pairing prompt). `false` means the helper is
+    /// installed and answering hello but has no config yet → the UI can show
+    /// "installed — pair to activate" instead of a misleading "not installed".
+    public let paired: Bool?
 
     public init(
         protocolVersion: Int,
         supportedMethods: Set<String>,
         capabilities: SessionControlCapabilities,
         providerAvailability: [String] = [],
-        helperVersion: String = ""
+        helperVersion: String = "",
+        paired: Bool? = nil
     ) {
         self.protocolVersion = protocolVersion
         self.supportedMethods = supportedMethods
         self.capabilities = capabilities
         self.providerAvailability = providerAvailability
         self.helperVersion = helperVersion
+        self.paired = paired
     }
 }
 

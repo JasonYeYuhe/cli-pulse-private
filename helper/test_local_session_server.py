@@ -200,9 +200,14 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
                  manager: FakeManager | None = None,
                  detected: list[dict] | None = None,
                  helper_argv0: str | None = None,
+                 paired: bool | None = None,
                  ) -> tuple[LocalSessionServer, FakeManager, dict]:
     """Spin up a server bound to a tmp socket. Returns (server, manager,
     state-dict-for-toggle-introspection).
+
+    `paired` (v1.30.2 RC-1): when None, `get_paired` is omitted so the server
+    uses its default (True). Pass False to simulate an installed-but-unpaired
+    helper whose `hello` must still answer (so the macOS app can detect it).
     """
     state = {"enabled": enabled}
     mgr = manager or FakeManager()
@@ -223,6 +228,7 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
         send_input=mgr.local_send_input,
         list_detected_sessions=lambda: list(detected_rows),
         get_helper_argv0=(lambda: helper_argv0) if helper_argv0 else None,
+        get_paired=(lambda: paired) if paired is not None else None,
     )
     server.start()
     return server, mgr, state
@@ -269,6 +275,34 @@ def test_hello_returns_caps_without_auth(short_sock_dir):
         parts = result["helper_version"].split(".")
         assert len(parts) >= 2
         assert all(p.isdigit() for p in parts[:2])
+        # v1.30.2 RC-1: `paired` is advertised in hello. Default (no
+        # get_paired wired) is True so legacy callers / a paired helper
+        # are unaffected.
+        assert result.get("paired") is True
+    finally:
+        server.stop()
+
+
+def test_hello_reports_paired_false_for_unpaired_helper(short_sock_dir):
+    """v1.30.2 RC-1 regression: an installed-but-unpaired helper must still
+    bind the socket and answer `hello` (so the macOS app detects it as
+    installed), and report `paired: false` so the UI can prompt to pair
+    instead of showing the misleading "not installed".
+    """
+    server, _mgr, _state = _make_server(short_sock_dir, paired=False)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1",
+            "method": "hello",
+            "params": {"client_protocol_version": PROTOCOL_VERSION},
+        })
+        # The whole point: detection works even when unpaired.
+        assert reply["ok"] is True
+        result = reply["result"]
+        assert result["protocol_version"] == PROTOCOL_VERSION
+        assert result.get("paired") is False
+        # helper_version still present so the installer state machine works.
+        assert isinstance(result.get("helper_version"), str)
     finally:
         server.stop()
 

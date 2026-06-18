@@ -332,9 +332,20 @@ class LocalSessionServer:
         subscribe_idle_timeout_s: float = 30.0,
         max_payload: int = MAX_PAYLOAD,
         get_helper_argv0: Callable[[], str | None] | None = None,
+        get_paired: Callable[[], bool] | None = None,
     ) -> None:
         self._socket_path = Path(socket_path)
         self._get_auth_token = get_auth_token
+        # v1.30.2 (RC-1): whether this helper has a usable pairing config.
+        # Surfaced in the unauthenticated `hello` reply so the macOS app can
+        # tell "installed + running but not paired" apart from "not installed"
+        # — the local UDS surface now binds even when unpaired (so the app can
+        # detect the helper at all), and `paired:false` lets the UI prompt the
+        # user to pair instead of showing a misleading "not installed". Defaults
+        # to True so existing callers / unit tests that omit it keep the old
+        # behaviour (a helper that DID construct a manager is, by definition,
+        # paired).
+        self._get_paired = get_paired or (lambda: True)
         self._get_local_control_enabled = get_local_control_enabled
         self._set_local_control_enabled = set_local_control_enabled
         self._start_session = start_session
@@ -791,11 +802,22 @@ class LocalSessionServer:
                 helper_version = _hv
             except Exception:  # noqa: BLE001
                 helper_version = "0.0.0"
+            # v1.30.2 (RC-1): report pairing state. Failure-soft — a getter
+            # exception must never break the hello handshake (that would
+            # regress the helper back to undetectable), so default to True.
+            try:
+                paired = bool(self._get_paired())
+            except Exception:  # noqa: BLE001
+                paired = True
             return {
                 "protocol_version": PROTOCOL_VERSION,
                 "supported_methods": list(SUPPORTED_METHODS),
                 "helper_pid": os.getpid(),
                 "helper_version": helper_version,
+                # v1.30.2: paired=false ⇒ installed + running but no usable
+                # config yet. The macOS app renders "installed — pair to
+                # activate" instead of "not installed".
+                "paired": paired,
                 # Capability flags the UI uses to decide what to show.
                 # send_input lights up this iteration — managed Claude
                 # sessions accept stdin via the executor → same code
