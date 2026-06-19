@@ -163,6 +163,22 @@ class PosixPtyTransport(SessionTransport):
                 return 0
             raise TransportError(f"write_stdin: {exc}") from exc
 
+    def resize(self, handle: SessionHandle, rows: int, cols: int) -> None:
+        """Live-resize the PTY window (v1.30.x in-app terminal). TIOCSWINSZ
+        on the master fd; the kernel sends SIGWINCH to the child so its TUI
+        re-flows. Clamp to xterm.js bounds (1..32767) and stay failure-soft —
+        a resize must never kill the session."""
+        p = self._payload(handle)
+        if p.closed:
+            return
+        r = max(1, min(int(rows), 32767))
+        c = max(1, min(int(cols), 32767))
+        try:
+            ws = struct.pack("HHHH", r, c, 0, 0)
+            fcntl.ioctl(p.master_fd, termios.TIOCSWINSZ, ws)
+        except OSError as exc:
+            logger.warning("resize TIOCSWINSZ failed (continuing): %s", exc)
+
     def read_stdout(self, handle: SessionHandle, max_bytes: int = 4096) -> bytes:
         p = self._payload(handle)
         if p.closed:

@@ -118,6 +118,11 @@ class MultiplexTransport(SessionTransport):
     def write_stdin(self, handle: SessionHandle, data: bytes) -> int:
         return self._transport_for_handle(handle).write_stdin(handle, data)
 
+    def resize(self, handle: SessionHandle, rows: int, cols: int) -> None:
+        # v1.30.x in-app terminal: delegate to the per-handle transport
+        # (only the PTY one resizes; exec transports inherit the base no-op).
+        self._transport_for_handle(handle).resize(handle, rows, cols)
+
     def read_stdout(self, handle: SessionHandle, max_bytes: int = 4096) -> bytes:
         return self._transport_for_handle(handle).read_stdout(handle, max_bytes)
 

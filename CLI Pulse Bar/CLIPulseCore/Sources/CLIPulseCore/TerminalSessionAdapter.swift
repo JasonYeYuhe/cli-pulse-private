@@ -36,7 +36,14 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
     @Published public private(set) var state: State = .idle
 
     private var subscriptionTask: Task<Void, Never>?
-    private var inFlightStdinTask: Task<Void, Never>?
+    // stdin: a lossless, ordered, coalescing queue. Terminal keystrokes must
+    // NEVER be dropped — the old cancel-and-replace dropped fast typing (the
+    // task for an earlier keystroke got cancelled mid-send by the next one;
+    // codex review 2026-06-19). Appends go into `pendingStdin`; a single drain
+    // loop sends them in FIFO order, coalescing whatever accumulated during the
+    // previous send. All state is @MainActor-isolated, so no lock is needed.
+    private var pendingStdin = Data()
+    private var stdinDraining = false
     private var inFlightResizeTask: Task<Void, Never>?
 
     /// Designated initializer. The client + provider are bound at
@@ -86,8 +93,9 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
         let snapshot = state
         subscriptionTask?.cancel()
         subscriptionTask = nil
-        inFlightStdinTask?.cancel()
-        inFlightStdinTask = nil
+        // Drop any buffered keystrokes; the drain loop exits once state is no
+        // longer .running.
+        pendingStdin.removeAll(keepingCapacity: false)
         inFlightResizeTask?.cancel()
         inFlightResizeTask = nil
         if case let .running(sid) = snapshot {
@@ -145,15 +153,28 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
     }
 
     public func terminalView(_ view: TerminalView, didReceiveStdin data: String) {
-        guard case let .running(sid) = state else { return }
-        let payload = Data(data.utf8)
-        // Latest writer wins — typing is so frequent we don't
-        // serialize each keystroke into a queue, but we DO replace
-        // any pending submission so a stuck network call can't
-        // back-press the next key.
-        inFlightStdinTask?.cancel()
-        inFlightStdinTask = Task { [client] in
-            try? await client.sendInputRaw(sessionId: sid, bytes: payload)
+        guard case .running = state else { return }
+        // Enqueue every keystroke (lossless + ordered). A single drain loop
+        // sends them FIFO; if one is already running, it'll pick these up.
+        pendingStdin.append(Data(data.utf8))
+        guard !stdinDraining else { return }
+        stdinDraining = true
+        Task { [weak self] in await self?.drainStdin() }
+    }
+
+    /// Drain buffered stdin to the helper in order, coalescing whatever
+    /// accumulated during the previous send. @MainActor-isolated, so the
+    /// only suspension point is the RPC await; buffer mutations never race.
+    private func drainStdin() async {
+        defer { stdinDraining = false }
+        while !pendingStdin.isEmpty {
+            guard case let .running(sid) = state else {
+                pendingStdin.removeAll(keepingCapacity: false)
+                return
+            }
+            let chunk = pendingStdin
+            pendingStdin.removeAll(keepingCapacity: true)
+            try? await client.sendInputRaw(sessionId: sid, bytes: chunk)
         }
     }
 

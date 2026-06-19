@@ -512,6 +512,53 @@ class RemoteAgentManager:
         logger.info("write_to_session(%s): wrote %d bytes ok", session_id, written)
         return True
 
+    # ── v1.30.x in-app terminal: raw keystroke + window resize ──────────
+    # These power the xterm.js terminal (DEVID). All dispatched through the
+    # single-writer executor (like every other mutation), so the per-session
+    # state stays serialized with the tick/drain — no extra lock.
+
+    # Cap on a single raw-input frame (paste/keystroke). Generous for paste,
+    # bounded so a buggy/malicious local client can't OOM the helper.
+    _MAX_RAW_INPUT_BYTES = 1024 * 1024  # 1 MB
+
+    def send_input_raw(self, session_id: str, payload_base64: str) -> bool:
+        return self._dispatch(self._send_input_raw_impl, session_id, payload_base64)
+
+    def _send_input_raw_impl(self, session_id: str, payload_base64: str) -> bool:
+        """Write raw bytes to the child's stdin VERBATIM — no CR/LF mangling
+        (unlike write_to_session, which CR-terminates prompts). For the
+        xterm.js terminal, where each keystroke / control byte (0x03 Ctrl-C,
+        arrow ESC sequences, paste) must reach the PTY untouched."""
+        sess = self._sessions.get(session_id)
+        if sess is None:
+            logger.warning("send_input_raw(%s): no live session", session_id)
+            return False
+        import base64
+        try:
+            raw = base64.b64decode(payload_base64, validate=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("send_input_raw(%s): bad base64: %s", session_id, exc)
+            return False
+        if len(raw) > self._MAX_RAW_INPUT_BYTES:
+            logger.warning("send_input_raw(%s): payload %d bytes exceeds cap — rejected",
+                           session_id, len(raw))
+            return False
+        if not raw:
+            return True
+        written = self.transport.write_stdin(sess.handle, raw)
+        return written > 0
+
+    def resize_session(self, session_id: str, rows: int, cols: int) -> bool:
+        return self._dispatch(self._resize_session_impl, session_id, rows, cols)
+
+    def _resize_session_impl(self, session_id: str, rows: int, cols: int) -> bool:
+        """Forward an xterm.js window-size change to the PTY (SIGWINCH)."""
+        sess = self._sessions.get(session_id)
+        if sess is None:
+            return False
+        self.transport.resize(sess.handle, rows, cols)
+        return True
+
     def shutdown(self) -> None:
         return self._dispatch(self._shutdown_impl)
 
