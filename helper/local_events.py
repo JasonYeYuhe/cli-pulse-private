@@ -85,6 +85,14 @@ class _OverflowSentinel(_CloseSentinel):
 _OVERFLOW = _OverflowSentinel()
 
 
+# Event kinds that may be DROPPED under back-pressure (high-volume stdout).
+# v1.30.x adds `output_raw` (the in-app terminal's un-stripped stream) — it
+# MUST be droppable like `output_delta`, else a busy terminal subscriber fills
+# its bounded queue with "protected" events and gets torn down via _OVERFLOW
+# (agy review 2026-06-19). Status / approval / lifecycle events stay protected.
+_DROPPABLE_EVENTS = frozenset({"output_delta", "output_raw"})
+
+
 @dataclass
 class Subscription:
     """Per-subscriber state. The UDS server's per-connection thread
@@ -95,6 +103,11 @@ class Subscription:
     subscription_id: int
     session_filter: str | None       # None = subscribe to all sessions
     _queue: queue.Queue
+    # v1.30.x in-app terminal: when True this subscriber receives the raw
+    # (un-stripped) `output_raw` stream and NOT the redacted+stripped
+    # `output_delta`; when False (default) it's the reverse. Other event
+    # kinds (status/approvals/lifecycle) go to both regardless.
+    raw: bool = False
     _closed: threading.Event = field(default_factory=threading.Event)
     # Stats for tests + debugging. Read without lock — int writes on
     # CPython are atomic for our purposes.
@@ -187,15 +200,18 @@ class EventBroker:
 
     # ── subscriber management ───────────────────────────────
 
-    def subscribe(self, *, session_filter: str | None = None) -> Subscription:
+    def subscribe(self, *, session_filter: str | None = None,
+                  raw: bool = False) -> Subscription:
         """Allocate a new subscription. The caller is responsible for
         eventually calling `close()` (the UDS server does this in its
-        connection-thread `finally` block).
+        connection-thread `finally` block). `raw=True` (the in-app
+        terminal) swaps output_delta for the un-stripped output_raw stream.
         """
         sub = Subscription(
             subscription_id=0,
             session_filter=session_filter,
             _queue=queue.Queue(maxsize=self._queue_max),
+            raw=raw,
         )
         with self._lock:
             if self._closed.is_set():
@@ -250,6 +266,15 @@ class EventBroker:
             if sub.session_filter is not None and target_session is not None:
                 if sub.session_filter != target_session:
                     continue
+            # v1.30.x: route the two output streams by the subscriber's raw
+            # flag. A raw subscriber (the terminal) gets output_raw and not the
+            # redacted/stripped output_delta; everyone else is the reverse.
+            # All other event kinds reach both.
+            event_kind = event.get("event")
+            if event_kind == "output_raw" and not sub.raw:
+                continue
+            if event_kind == "output_delta" and sub.raw:
+                continue
             if self._enqueue(sub, event):
                 delivered += 1
         return delivered
@@ -282,19 +307,19 @@ class EventBroker:
         dropping older output_delta). Returns False if the subscriber
         was overflowed and torn down.
         """
-        is_output_delta = event.get("event") == "output_delta"
+        is_droppable = event.get("event") in _DROPPABLE_EVENTS
         try:
             sub._queue.put_nowait(event)
             sub.enqueued += 1
             return True
         except queue.Full:
             pass
-        # Queue full. If THIS event is droppable (output_delta), drop
-        # the new one rather than displacing a possibly-critical one.
-        if is_output_delta:
+        # Queue full. If THIS event is droppable (output_delta/output_raw),
+        # drop the new one rather than displacing a possibly-critical one.
+        if is_droppable:
             sub.dropped_output += 1
             return False
-        # Non-droppable: try to evict the oldest output_delta to make
+        # Non-droppable: try to evict the oldest droppable event to make
         # room. Worst case we walk the whole queue.
         if self._evict_one_output_delta(sub):
             try:
@@ -325,7 +350,8 @@ class EventBroker:
 
     @staticmethod
     def _evict_one_output_delta(sub: Subscription) -> bool:
-        """Walk the queue removing one (oldest) `output_delta` event.
+        """Walk the queue removing one (oldest) droppable event
+        (output_delta OR output_raw — see _DROPPABLE_EVENTS).
         Items popped that are NOT output_delta are re-inserted in their
         original order (we use a temporary list because Python's
         `queue.Queue` doesn't support peek). Returns True if one was
@@ -341,7 +367,7 @@ class EventBroker:
                 item = sub._queue.get_nowait()
             except queue.Empty:
                 break
-            if not evicted and isinstance(item, dict) and item.get("event") == "output_delta":
+            if not evicted and isinstance(item, dict) and item.get("event") in _DROPPABLE_EVENTS:
                 evicted = True
                 sub.dropped_output += 1
                 continue

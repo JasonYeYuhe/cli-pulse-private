@@ -612,6 +612,7 @@ extension AppState {
                     switch event {
                     case .subscribed: kind = "subscribed"
                     case .outputDelta(_, let p, _): kind = "outputDelta(\(p.count)b)"
+                    case .outputRaw(_, let p, _): kind = "outputRaw(\(p.count)b)"
                     case .sessionStarted: kind = "sessionStarted"
                     case .sessionStatus: kind = "sessionStatus"
                     case .sessionStopped: kind = "sessionStopped"
@@ -705,6 +706,12 @@ extension AppState {
             }
             self.localOutputPreview[sessionId] = current
             Self.localStateLogger.info("[stream-debug] applyOutputDelta sid=\(sessionId, privacy: .public) delta=\(payload.count, privacy: .public)b before=\(beforeLen, privacy: .public)b after=\(current.count, privacy: .public)b storedKeys=\(self.localOutputPreview.keys.count, privacy: .public)")
+        case .outputRaw:
+            // The raw (un-stripped) stream is for the in-app terminal only.
+            // This app-state path drives the redacted SessionsTab preview, which
+            // subscribes WITHOUT raw, so output_raw never arrives here; ignore it
+            // (appending ANSI escapes would garble the preview).
+            break
         case .approvalRequested(let approval):
             var bucket = self.localPendingApprovals[sessionId] ?? []
             if !bucket.contains(where: { $0.approvalId == approval.approvalId }) {

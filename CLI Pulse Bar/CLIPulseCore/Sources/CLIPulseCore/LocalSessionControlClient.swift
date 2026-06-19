@@ -164,6 +164,10 @@ public enum LocalSessionEvent: Sendable, Equatable {
     case subscribed(sessionId: String?, managedSessions: [SessionControlSummary], pendingApprovals: [PendingApproval])
     case sessionStarted(sessionId: String, provider: String, clientLabel: String?)
     case outputDelta(sessionId: String, payload: String, ts: TimeInterval)
+    /// v1.30.x Phase 1b: raw (un-stripped, still redacted) terminal output —
+    /// only delivered to subscribers that opted in with `raw: true` (the in-app
+    /// xterm.js terminal). ANSI escapes preserved so the TUI renders.
+    case outputRaw(sessionId: String, payload: String, ts: TimeInterval)
     case sessionStatus(sessionId: String, status: String)
     case sessionStopped(sessionId: String, exitCode: Int?)
     case approvalRequested(approval: PendingApproval)
@@ -179,6 +183,8 @@ public enum LocalSessionEvent: Sendable, Equatable {
         case (.sessionStarted(let a, let b, let c), .sessionStarted(let d, let e, let f)):
             return a == d && b == e && c == f
         case (.outputDelta(let a, let b, _), .outputDelta(let d, let e, _)):
+            return a == d && b == e
+        case (.outputRaw(let a, let b, _), .outputRaw(let d, let e, _)):
             return a == d && b == e
         case (.sessionStatus(let a, let b), .sessionStatus(let c, let d)):
             return a == c && b == d
@@ -217,6 +223,12 @@ public enum LocalSessionEvent: Sendable, Equatable {
             )
         case "output_delta":
             return .outputDelta(
+                sessionId: sessionId,
+                payload: (raw["payload"] as? String) ?? "",
+                ts: ts
+            )
+        case "output_raw":
+            return .outputRaw(
                 sessionId: sessionId,
                 payload: (raw["payload"] as? String) ?? "",
                 ts: ts
@@ -589,7 +601,11 @@ public final class LocalSessionControlClient: SessionControlClient {
     ///   - SessionControlError.localControlOff if the gate is off
     ///   - SessionControlError.disconnected on a mid-stream
     ///     transport failure
-    public func subscribeEvents(sessionId: String? = nil) -> AsyncThrowingStream<LocalSessionEvent, Error> {
+    /// - Parameter raw: v1.30.x Phase 1b — when true, opt into the raw
+    ///   (un-stripped, still redacted) `output_raw` stream instead of the
+    ///   redacted+stripped `output_delta`. The in-app xterm.js terminal sets
+    ///   this so the TUI renders; the SessionsTab preview leaves it false.
+    public func subscribeEvents(sessionId: String? = nil, raw: Bool = false) -> AsyncThrowingStream<LocalSessionEvent, Error> {
         AsyncThrowingStream { continuation in
             // Box for the connection so the outer onTermination (set
             // BEFORE the inner Task runs) can still reach it. The
@@ -601,6 +617,7 @@ public final class LocalSessionControlClient: SessionControlClient {
                 do {
                     var params: [String: Any] = [:]
                     if let sessionId { params["session_id"] = sessionId }
+                    if raw { params["raw"] = true }
                     guard let token = readToken(), !token.isEmpty else {
                         throw SessionControlError.unauthenticated
                     }
