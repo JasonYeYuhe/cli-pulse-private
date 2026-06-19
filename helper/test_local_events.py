@@ -205,3 +205,46 @@ def test_subscriber_count_reflects_active_subs():
     b.unsubscribe(s2)
     assert b.subscriber_count() == 0
     b.close()
+
+
+# ── v1.30.x Phase 1b: raw output channel (output_raw) ──────────────────
+
+def test_raw_subscriber_gets_output_raw_not_delta():
+    b = EventBroker(heartbeat_interval_s=None)
+    sub = b.subscribe(raw=True)
+    b.publish({"event": "output_delta", "session_id": "S1", "payload": "stripped"})
+    b.publish({"event": "output_raw", "session_id": "S1", "payload": "\x1b[31mraw\x1b[0m"})
+    out = sub.next(timeout=0.5)
+    assert out is not None and out["event"] == "output_raw"
+    assert sub.next(timeout=0.05) is None, "raw sub must NOT receive output_delta"
+
+
+def test_nonraw_subscriber_gets_output_delta_not_raw():
+    b = EventBroker(heartbeat_interval_s=None)
+    sub = b.subscribe()  # raw defaults False
+    b.publish({"event": "output_raw", "session_id": "S1", "payload": "\x1b[31mraw\x1b[0m"})
+    b.publish({"event": "output_delta", "session_id": "S1", "payload": "stripped"})
+    out = sub.next(timeout=0.5)
+    assert out is not None and out["event"] == "output_delta"
+    assert sub.next(timeout=0.05) is None, "non-raw sub must NOT receive output_raw"
+
+
+def test_both_raw_and_nonraw_get_status_events():
+    b = EventBroker(heartbeat_interval_s=None)
+    raw_sub = b.subscribe(raw=True)
+    plain_sub = b.subscribe(raw=False)
+    b.publish({"event": "status_changed", "session_id": "S1", "payload": "running"})
+    assert (raw_sub.next(timeout=0.5) or {}).get("event") == "status_changed"
+    assert (plain_sub.next(timeout=0.5) or {}).get("event") == "status_changed"
+
+
+def test_output_raw_is_droppable_no_overflow():
+    # agy critical catch: output_raw must be droppable like output_delta, else
+    # a busy terminal subscriber overflows + is torn down.
+    b = EventBroker(queue_max=2, heartbeat_interval_s=None)
+    sub = b.subscribe(raw=True)
+    for i in range(10):
+        b.publish({"event": "output_raw", "session_id": "S1", "payload": f"chunk{i}"})
+    assert not sub.overflowed, "output_raw overload must drop, not overflow/teardown"
+    assert sub.dropped_output > 0
+    assert not sub.is_closed()

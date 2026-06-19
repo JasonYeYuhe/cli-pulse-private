@@ -973,7 +973,10 @@ class LocalSessionServer:
                 raise _RequestError(
                     "bad_request", "'session_id' must be a string when present",
                 )
-            sub = self._event_broker.subscribe(session_filter=session_filter)
+            # v1.30.x in-app terminal: opt into the raw (un-stripped) output
+            # stream. Default false → today's redacted+stripped output_delta.
+            raw = bool(params.get("raw", False))
+            sub = self._event_broker.subscribe(session_filter=session_filter, raw=raw)
             # Initial snapshot — gives the macOS app a deterministic
             # starting point for the row's preview state without a
             # second round-trip. We include the most recent

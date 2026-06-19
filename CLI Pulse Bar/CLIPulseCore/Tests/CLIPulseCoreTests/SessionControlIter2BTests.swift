@@ -139,6 +139,23 @@ final class SessionControlIter2BTests: XCTestCase {
         }
     }
 
+    func testLocalSessionEventDecodesOutputRaw() {
+        // v1.30.x Phase 1b: the raw (un-stripped) terminal stream. Payload
+        // carries ANSI escapes verbatim; decode must preserve them.
+        let event = LocalSessionEvent.decode(from: [
+            "event": "output_raw",
+            "session_id": "SID",
+            "payload": "\u{1b}[31mred\u{1b}[0m",
+            "ts": 100.0,
+        ])
+        if case .outputRaw(let sid, let payload, _) = event {
+            XCTAssertEqual(sid, "SID")
+            XCTAssertEqual(payload, "\u{1b}[31mred\u{1b}[0m")
+        } else {
+            XCTFail("expected outputRaw, got \(String(describing: event))")
+        }
+    }
+
     func testLocalSessionEventDecodesSessionStarted() {
         let event = LocalSessionEvent.decode(from: [
             "event": "session_started",

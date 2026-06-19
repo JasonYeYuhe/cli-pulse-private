@@ -4,8 +4,10 @@
 // that talks to ManagedSessionManager over UDS+JSON-RPC):
 //
 //   * Spawns a managed session via `start_session` RPC.
-//   * Subscribes to that session's `output_delta` events; routes
-//     payload bytes to `TerminalView.pushStdout`.
+//   * Subscribes to that session's `output_raw` events (raw:true — ANSI
+//     intact so the TUI renders); routes payload bytes to
+//     `TerminalView.pushStdout`. Falls back to `output_delta` if raw is
+//     unavailable (older helper).
 //   * Forwards `TerminalView` delegate callbacks back over RPC:
 //     stdin → `send_input_raw` (raw bytes preserve Ctrl-C),
 //     resize → `resize` (TIOCSWINSZ).
@@ -108,7 +110,10 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
 
     private func startEventSubscription(sessionId: String) {
         subscriptionTask?.cancel()
-        let stream = client.subscribeEvents(sessionId: sessionId)
+        // Phase 1b: subscribe to the RAW (un-stripped) stream so the ANSI/VT
+        // escapes survive and xterm.js renders the real TUI. The helper still
+        // redacts; raw is local-broker-only (never the cloud).
+        let stream = client.subscribeEvents(sessionId: sessionId, raw: true)
         let view = self.view
         subscriptionTask = Task { @MainActor [weak self] in
             do {
@@ -129,11 +134,13 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
     static func deliver(event: LocalSessionEvent, to view: TerminalView?) {
         guard let view else { return }
         switch event {
+        case .outputRaw(_, let payload, _):
+            // Phase 1b: the terminal subscribes with raw:true, so live output
+            // arrives here with ANSI/VT escapes intact → xterm.js renders the TUI.
+            view.pushStdout(Data(payload.utf8))
         case .outputDelta(_, let payload, _):
-            // Helper publishes UTF-8 strings; convert back to Data
-            // for TerminalView's coalescer. (Future Phase 2c slice 3
-            // Realtime BROADCAST path will deliver raw bytes via a
-            // separate stream.)
+            // Fallback: if a raw subscription ever degrades to the redacted
+            // stream (older helper without output_raw), still show the text.
             view.pushStdout(Data(payload.utf8))
         default:
             // `subscribed`, `keepalive`, `status_changed`, etc. —

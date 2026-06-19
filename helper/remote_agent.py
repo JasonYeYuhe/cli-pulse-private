@@ -1271,4 +1271,21 @@ class RemoteAgentManager:
                 })
             except Exception as exc:  # noqa: BLE001
                 logger.debug("broker output_delta publish failed: %s", exc)
+            # v1.30.x in-app terminal (Phase 1b): ALSO publish the RAW stream
+            # — un-stripped so the ANSI/VT escapes survive and xterm.js renders
+            # the real TUI (the stripped output_delta above is for the SessionsTab
+            # preview + remote/iOS). LOCAL BROKER ONLY — never `_post_event` to
+            # the cloud. Still redacted (defense-in-depth) and capped. The broker
+            # delivers this only to `raw=True` subscribers (the terminal window),
+            # never to the redacted-preview subscribers.
+            try:
+                raw_payload = redact(text)[:_EVENT_PAYLOAD_CAP_CHARS]
+                if raw_payload:
+                    self._event_broker.publish({
+                        "event": "output_raw",
+                        "session_id": session_id,
+                        "payload": raw_payload,
+                    })
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("broker output_raw publish failed: %s", exc)
         return self._post_event(session_id, "stdout", capped)
