@@ -1045,3 +1045,76 @@ def test_per_session_event_seq_counter_starts_at_one():
     ]
     # The only event for this session lifetime is the 'stopped' status.
     assert seqs == [1]
+
+
+# ── v1.30.x Phase 1b: output_raw vs output_delta in _post_stdout_chunk ──
+
+def _make_broker_manager():
+    from local_events import EventBroker
+    rpc_log: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_rpc(name, params):
+        rpc_log.append((name, dict(params)))
+        return {}
+
+    broker = EventBroker(heartbeat_interval_s=None)
+    mgr = RemoteAgentManager(
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        transport=FakeTransport(),
+        event_broker=broker,
+    )
+    return mgr, broker, rpc_log
+
+
+def test_post_stdout_chunk_pure_ansi_reaches_raw_not_delta():
+    """agy review 2026-06-19: a chunk of pure color/cursor escapes
+    (e.g. `\x1b[31m\x1b[0m`, `\x1b[0m`, `\x1b[?25l`) strips to EMPTY for
+    output_delta, but MUST still reach the in-app terminal via output_raw —
+    else the TUI breaks (these are ubiquitous in TUIs). It must NEVER hit the
+    redacted preview or the cloud.
+    """
+    mgr, broker, rpc_log = _make_broker_manager()
+    raw_sub = broker.subscribe(raw=True)
+    plain_sub = broker.subscribe(raw=False)
+
+    # Color-only: _ansi_strip → "" so output_delta is empty, but the raw
+    # stream must still carry the escapes.
+    result = mgr._post_stdout_chunk("S-ansi", "\x1b[31m\x1b[0m")
+    assert result is True, "pure-ANSI chunk must still count as emitted (raw)"
+
+    raw_evt = raw_sub.next(timeout=0.5)
+    assert raw_evt is not None and raw_evt["event"] == "output_raw"
+    assert "\x1b[31m" in raw_evt["payload"], "raw stream must keep the escapes"
+    # The redacted preview (raw=False) must receive NOTHING (no empty delta).
+    assert plain_sub.next(timeout=0.05) is None
+    # NEVER posted to the cloud (no stdout _post_event for pure ANSI).
+    assert not [
+        p for n, p in rpc_log
+        if n == "remote_helper_post_event" and p.get("p_kind") == "stdout"
+    ]
+
+
+def test_post_stdout_chunk_normal_text_routes_both_streams():
+    mgr, broker, rpc_log = _make_broker_manager()
+    raw_sub = broker.subscribe(raw=True)
+    plain_sub = broker.subscribe(raw=False)
+
+    mgr._post_stdout_chunk("S-text", "\x1b[31mhello\x1b[0m")
+
+    raw_evt = raw_sub.next(timeout=0.5)
+    assert raw_evt["event"] == "output_raw"
+    assert "\x1b[31m" in raw_evt["payload"], "raw keeps ANSI"
+
+    plain_evt = plain_sub.next(timeout=0.5)
+    assert plain_evt["event"] == "output_delta"
+    assert "hello" in plain_evt["payload"]
+    assert "\x1b[31m" not in plain_evt["payload"], "preview is stripped"
+
+    # Cloud gets the stripped stdout, never the raw stream.
+    cloud = [
+        p for n, p in rpc_log
+        if n == "remote_helper_post_event" and p.get("p_kind") == "stdout"
+    ]
+    assert cloud and "hello" in cloud[0]["p_payload"]
+    assert all("\x1b[31m" not in p["p_payload"] for p in cloud)

@@ -1251,41 +1251,46 @@ class RemoteAgentManager:
         # layer instead of the only line of defence. Strip BEFORE
         # redact() because some control sequences could otherwise hide
         # token-shape patterns from the secret detector.
-        sanitized = _ansi_strip(text)
-        redacted = redact(sanitized)
-        if not redacted:
+        # output_delta (SessionsTab preview + cloud / remote / iOS): strip ANSI
+        # THEN redact. Strip BEFORE redact() because some control sequences could
+        # otherwise hide token-shape patterns from the secret detector.
+        capped = redact(_ansi_strip(text))[:_EVENT_PAYLOAD_CAP_CHARS]
+        # output_raw (v1.30.x in-app terminal, Phase 1b): un-stripped so the
+        # ANSI/VT escapes survive and xterm.js renders the real TUI; still
+        # redacted (defense-in-depth). Computed INDEPENDENTLY of `capped`: a
+        # chunk that is PURE control sequences (screen clear `\x1b[2J`, cursor
+        # moves, color-only) strips to empty → `capped` empty, but the terminal
+        # MUST still receive those escapes or its TUI breaks. So we must NOT let
+        # an empty output_delta short-circuit output_raw (agy review 2026-06-19).
+        raw_payload = redact(text)[:_EVENT_PAYLOAD_CAP_CHARS]
+        if not capped and not raw_payload:
             return False
-        capped = redacted[:_EVENT_PAYLOAD_CAP_CHARS]
-        # Mirror the chunk to the local broker BEFORE the cloud
-        # post — keeps the same-Mac UI snappy even if the Supabase
-        # upload is briefly throttled / offline. Same redaction
-        # applies (defence in depth: avoid showing secrets in a
-        # screenshot of the macOS row even when the user is on the
-        # same machine that already has them in their terminal).
+        # Mirror to the local broker BEFORE the cloud post — keeps the same-Mac
+        # UI snappy even if Supabase is briefly throttled / offline. The broker
+        # delivers output_delta only to redacted-preview subscribers and
+        # output_raw only to `raw=True` subscribers (the terminal window).
         if self._event_broker is not None:
-            try:
-                self._event_broker.publish({
-                    "event": "output_delta",
-                    "session_id": session_id,
-                    "payload": capped,
-                })
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("broker output_delta publish failed: %s", exc)
-            # v1.30.x in-app terminal (Phase 1b): ALSO publish the RAW stream
-            # — un-stripped so the ANSI/VT escapes survive and xterm.js renders
-            # the real TUI (the stripped output_delta above is for the SessionsTab
-            # preview + remote/iOS). LOCAL BROKER ONLY — never `_post_event` to
-            # the cloud. Still redacted (defense-in-depth) and capped. The broker
-            # delivers this only to `raw=True` subscribers (the terminal window),
-            # never to the redacted-preview subscribers.
-            try:
-                raw_payload = redact(text)[:_EVENT_PAYLOAD_CAP_CHARS]
-                if raw_payload:
+            if capped:
+                try:
+                    self._event_broker.publish({
+                        "event": "output_delta",
+                        "session_id": session_id,
+                        "payload": capped,
+                    })
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("broker output_delta publish failed: %s", exc)
+            # LOCAL BROKER ONLY — output_raw is NEVER `_post_event`-ed to the cloud.
+            if raw_payload:
+                try:
                     self._event_broker.publish({
                         "event": "output_raw",
                         "session_id": session_id,
                         "payload": raw_payload,
                     })
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("broker output_raw publish failed: %s", exc)
-        return self._post_event(session_id, "stdout", capped)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("broker output_raw publish failed: %s", exc)
+        # Cloud post only when there's stripped content — never upload an empty
+        # payload (pure-ANSI chunk), and never upload the raw stream.
+        if capped:
+            return self._post_event(session_id, "stdout", capped)
+        return True
