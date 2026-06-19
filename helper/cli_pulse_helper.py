@@ -561,6 +561,18 @@ def daemon(args: argparse.Namespace) -> None:
                 raise RuntimeError("helper not paired — managed sessions unavailable until pairing completes")
             return remote_agent_manager.local_send_input(session_id, payload)
 
+        def _send_input_raw_local(session_id: str, payload_base64: str) -> bool:
+            # v1.30.x in-app terminal: raw keystrokes (verbatim, no CR mangle).
+            if remote_agent_manager is None:
+                raise RuntimeError("helper not paired — managed sessions unavailable until pairing completes")
+            return remote_agent_manager.send_input_raw(session_id, payload_base64)
+
+        def _resize_local(session_id: str, rows: int, cols: int) -> bool:
+            # v1.30.x in-app terminal: window resize (SIGWINCH to the PTY).
+            if remote_agent_manager is None:
+                raise RuntimeError("helper not paired — managed sessions unavailable until pairing completes")
+            return remote_agent_manager.resize_session(session_id, rows, cols)
+
         def _list_detected_local() -> list[dict[str, Any]]:
             # iter 2A: surface same-Mac Claude processes the
             # PR #14 collector recognises. Read-only on the UDS
@@ -601,6 +613,8 @@ def daemon(args: argparse.Namespace) -> None:
             list_sessions=_list_local,
             stop_session=_stop_local,
             send_input=_send_input_local,
+            send_input_raw=_send_input_raw_local,
+            resize=_resize_local,
             list_detected_sessions=_list_detected_local,
             # Iter 2B: broker drives subscribe_events; registry
             # backs approve_action / get_pending_approvals plus

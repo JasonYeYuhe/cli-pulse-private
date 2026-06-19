@@ -201,6 +201,8 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
                  detected: list[dict] | None = None,
                  helper_argv0: str | None = None,
                  paired: bool | None = None,
+                 send_input_raw: object | None = None,
+                 resize: object | None = None,
                  ) -> tuple[LocalSessionServer, FakeManager, dict]:
     """Spin up a server bound to a tmp socket. Returns (server, manager,
     state-dict-for-toggle-introspection).
@@ -229,6 +231,8 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
         list_detected_sessions=lambda: list(detected_rows),
         get_helper_argv0=(lambda: helper_argv0) if helper_argv0 else None,
         get_paired=(lambda: paired) if paired is not None else None,
+        send_input_raw=send_input_raw,
+        resize=resize,
     )
     server.start()
     return server, mgr, state
@@ -1103,3 +1107,98 @@ def test_install_claude_hook_blocked_when_gate_off(short_sock_dir, tmp_path):
     finally:
         server.stop()
 
+
+
+# ── v1.30.x in-app terminal: send_input_raw + resize ──────────────────
+
+def test_send_input_raw_passes_bytes_verbatim(short_sock_dir):
+    """Raw keystrokes (incl. control bytes) must reach the manager VERBATIM —
+    base64-decoded, no CR/LF mangling (unlike send_input)."""
+    import base64
+    raw_calls: list = []
+    def _raw(sid, b64):
+        raw_calls.append((sid, base64.b64decode(b64)))
+        return True
+    server, _mgr, _state = _make_server(short_sock_dir, send_input_raw=_raw)
+    try:
+        # 0x03 (Ctrl-C) + arrow ESC seq + no trailing CR — must survive intact.
+        payload = b"\x03\x1b[A"
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "send_input_raw", "auth_token": "T",
+            "params": {"session_id": "s1",
+                       "payload_base64": base64.b64encode(payload).decode()},
+        })
+        assert reply["ok"] is True and reply["result"]["written"] is True
+        assert raw_calls == [("s1", b"\x03\x1b[A")], "bytes must be verbatim"
+    finally:
+        server.stop()
+
+
+def test_send_input_raw_session_not_found(short_sock_dir):
+    import base64
+    server, _mgr, _state = _make_server(short_sock_dir, send_input_raw=lambda s, b: False)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "send_input_raw", "auth_token": "T",
+            "params": {"session_id": "nope", "payload_base64": base64.b64encode(b"x").decode()},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "session_not_found"
+    finally:
+        server.stop()
+
+
+def test_send_input_raw_not_implemented_when_unwired(short_sock_dir):
+    import base64
+    server, _mgr, _state = _make_server(short_sock_dir)  # no send_input_raw
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "send_input_raw", "auth_token": "T",
+            "params": {"session_id": "s1", "payload_base64": base64.b64encode(b"x").decode()},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "not_implemented"
+    finally:
+        server.stop()
+
+
+def test_resize_passes_ints(short_sock_dir):
+    calls: list = []
+    server, _mgr, _state = _make_server(
+        short_sock_dir, resize=lambda sid, r, c: (calls.append((sid, r, c)) or True))
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "resize", "auth_token": "T",
+            "params": {"session_id": "s1", "rows": 40, "cols": 120},
+        })
+        assert reply["ok"] is True and reply["result"]["resized"] is True
+        assert calls == [("s1", 40, 120)]
+    finally:
+        server.stop()
+
+
+def test_resize_rejects_non_int(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir, resize=lambda sid, r, c: True)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "resize", "auth_token": "T",
+            "params": {"session_id": "s1", "rows": "40", "cols": 120},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "bad_request"
+    finally:
+        server.stop()
+
+
+def test_send_input_raw_and_resize_advertised_in_hello(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "hello",
+            "params": {"client_protocol_version": PROTOCOL_VERSION},
+        })
+        methods = set(reply["result"]["supported_methods"])
+        assert "send_input_raw" in methods
+        assert "resize" in methods
+    finally:
+        server.stop()

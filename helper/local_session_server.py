@@ -126,6 +126,9 @@ SUPPORTED_METHODS = (
     "list_sessions",
     "stop_session",
     "send_input",
+    # v1.30.x in-app xterm.js terminal: raw keystrokes + window resize.
+    "send_input_raw",
+    "resize",
     # Phase 3 Iter 2B: app-side streaming + structured approvals.
     "subscribe_events",
     "approve_action",
@@ -326,6 +329,8 @@ class LocalSessionServer:
         list_sessions: Callable[[], list[dict]],
         stop_session: Callable[[str], dict],
         send_input: Callable[[str, str], dict],
+        send_input_raw: Callable[[str, str], bool] | None = None,
+        resize: Callable[[str, int, int], bool] | None = None,
         list_detected_sessions: Callable[[], list[dict]] | None = None,
         event_broker: EventBroker | None = None,
         approval_registry: ApprovalRegistry | None = None,
@@ -352,6 +357,10 @@ class LocalSessionServer:
         self._list_sessions = list_sessions
         self._stop_session = stop_session
         self._send_input = send_input
+        # v1.30.x in-app terminal: optional raw-input + resize. None ⇒ the UDS
+        # method replies `not_implemented` (older wiring / unit tests).
+        self._send_input_raw = send_input_raw
+        self._resize = resize
         # Phase 4 helper-bundling: `install_claude_hook` UDS method
         # asks the helper to write its OWN argv[0] into the
         # PermissionRequest hook command. Returning None signals
@@ -1141,6 +1150,40 @@ class LocalSessionServer:
                     f"no managed session with id {session_id!r}",
                 )
             return result
+
+        if method == "send_input_raw":
+            # v1.30.x in-app terminal: raw keystrokes (no CR mangling). The
+            # client sends `payload_base64` (matches LocalSessionControlClient).
+            session_id = params.get("session_id")
+            payload_b64 = params.get("payload_base64")
+            if not isinstance(session_id, str) or not session_id:
+                raise _RequestError("bad_request", "'session_id' must be a non-empty string")
+            if not isinstance(payload_b64, str):
+                raise _RequestError("bad_request", "'payload_base64' must be a string")
+            if self._send_input_raw is None:
+                raise _RequestError("not_implemented", "send_input_raw unavailable on this helper")
+            ok = self._send_input_raw(session_id, payload_b64)
+            if ok is False:
+                raise _RequestError("session_not_found",
+                                    f"no managed session with id {session_id!r}")
+            return {"written": True}
+
+        if method == "resize":
+            # v1.30.x in-app terminal: window resize (SIGWINCH to the PTY).
+            session_id = params.get("session_id")
+            rows = params.get("rows")
+            cols = params.get("cols")
+            if not isinstance(session_id, str) or not session_id:
+                raise _RequestError("bad_request", "'session_id' must be a non-empty string")
+            if not isinstance(rows, int) or not isinstance(cols, int):
+                raise _RequestError("bad_request", "'rows' and 'cols' must be integers")
+            if self._resize is None:
+                raise _RequestError("not_implemented", "resize unavailable on this helper")
+            ok = self._resize(session_id, rows, cols)
+            if ok is False:
+                raise _RequestError("session_not_found",
+                                    f"no managed session with id {session_id!r}")
+            return {"resized": True}
 
         if method == "install_claude_hook":
             # Phase 4 helper-bundling: app asks helper to write the
