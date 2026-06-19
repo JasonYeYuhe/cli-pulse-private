@@ -270,12 +270,32 @@ public enum ClaudeCredentials {
     /// triggering a macOS authorization dialog. To avoid prompting the
     /// user on every launch, we cache the credentials in the app's own
     /// keychain after the first successful read.
-    public static func readKeychainCredentials() -> Creds? {
+    /// - Parameter bypassCooldown: pass `true` for USER-initiated reads
+    ///   (the Settings "Connect Claude Code" button) so a cooldown armed by a
+    ///   background 401 never blocks an explicit reconnect/re-auth. Background
+    ///   refreshers leave it `false`.
+    public static func readKeychainCredentials(bypassCooldown: Bool = false) -> Creds? {
         // 1. Try the app's own keychain cache (never triggers a prompt)
         if let cached = KeychainHelper.load(key: keychainCacheKey),
            let data = cached.data(using: .utf8),
            let creds = parseCredentialsJSON(data) {
             return creds
+        }
+
+        // 1b. Cross-app read cooldown (v1.30.x — keychain prompt-spam fix).
+        // The cross-app read below shows a macOS authorization dialog
+        // ("CLIPulseHelper wants to use Claude Code-credentials"). The cache
+        // above normally means we prompt once and never again — BUT a recurring
+        // OAuth 401 calls clearCachedKeychainCredentials() every refresh, wiping
+        // the cache and forcing a re-read here on every ~3-4 min cycle, so the
+        // user is prompted forever (and "Always Allow" doesn't stick on macOS 26
+        // / when `claude` rewrites the item). When the cache was cleared due to
+        // a bad token we install a cooldown: skip the cross-app read (return nil
+        // → the resolver falls back to cli-pty/JSONL/web, no prompt) until it
+        // expires, capping prompts to ≤1 per cooldown window. See
+        // feedback_claude_oauth_keychain_prompt_spam.
+        if !bypassCooldown, isKeychainReadOnCooldown() {
+            return nil
         }
 
         // 2. Read from Claude Code's keychain (may trigger one-time prompt)
@@ -290,19 +310,64 @@ public enum ClaudeCredentials {
         guard status == errSecSuccess, let data = item as? Data else { return nil }
         guard let creds = parseCredentialsJSON(data) else { return nil }
 
-        // 3. Cache in the app's own keychain so the prompt never recurs
+        // 3. Cache in the app's own keychain so the prompt never recurs, and
+        //    clear any cooldown — a successful read means we're back to normal.
         if let jsonStr = String(data: data, encoding: .utf8) {
             KeychainHelper.save(key: keychainCacheKey, value: jsonStr)
         }
+        clearKeychainReadCooldown()
         return creds
     }
 
-    /// Clear the cached Claude Code credentials.
-    /// Call this when the cached token is known to be invalid (e.g. after
-    /// an OAuth 401) so the next `readKeychainCredentials()` re-reads
-    /// from the real keychain.
+    /// Clear the cached Claude Code credentials (cache-only — does NOT arm the
+    /// cooldown). Used by both the OAuth-401 path and the Settings "Disconnect"
+    /// button; only the 401 path arms the cooldown (it calls
+    /// `installKeychainReadCooldown()` itself), so a user Disconnect followed by
+    /// Connect is never blocked by the cooldown (codex review 2026-06-19).
     public static func clearCachedKeychainCredentials() {
         KeychainHelper.delete(key: keychainCacheKey)
+    }
+
+    // MARK: - Cross-app keychain read cooldown (prompt-spam guard)
+
+    /// How long to suppress cross-app `Claude Code-credentials` reads after a
+    /// bad-token cache clear. 30 min: long enough to stop per-cycle prompts
+    /// (~3-4 min refresh), short enough that a genuine re-auth recovers soon.
+    static var keychainReadCooldownInterval: TimeInterval = 30 * 60
+
+    /// Injectable clock for tests.
+    static var nowProvider: () -> Date = { Date() }
+
+    private static let keychainReadCooldownKey = "claudeCodeKeychainReadCooldownUntil"
+
+    /// Cooldown state lives in the app-group defaults (NOT the per-app
+    /// keychain) so it is SHARED between the main app and the CLIPulseHelper
+    /// LoginItem — both read the cross-app item, so a 401 observed in either
+    /// process must suppress the read in both. Defaults to the app group;
+    /// tests inject a throwaway suite.
+    static var cooldownDefaults: UserDefaults =
+        UserDefaults(suiteName: "group.yyh.CLI-Pulse") ?? .standard
+
+    static func installKeychainReadCooldown() {
+        let until = nowProvider().addingTimeInterval(keychainReadCooldownInterval)
+        cooldownDefaults.set(until.timeIntervalSince1970, forKey: keychainReadCooldownKey)
+    }
+
+    static func clearKeychainReadCooldown() {
+        cooldownDefaults.removeObject(forKey: keychainReadCooldownKey)
+    }
+
+    /// True while a cooldown installed by a bad-token clear is still active.
+    static func isKeychainReadOnCooldown() -> Bool {
+        let epoch = cooldownDefaults.double(forKey: keychainReadCooldownKey)
+        guard epoch > 0 else { return false }
+        if nowProvider().timeIntervalSince1970 >= epoch {
+            // Expired — clean it up so the next read attempts the cross-app
+            // keychain once more.
+            cooldownDefaults.removeObject(forKey: keychainReadCooldownKey)
+            return false
+        }
+        return true
     }
 
     /// Peek at the app's own keychain cache without ever triggering a

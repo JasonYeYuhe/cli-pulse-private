@@ -66,6 +66,11 @@ public struct ClaudeOAuthStrategy: ClaudeSourceStrategy, Sendable {
                 )
             }
             ClaudeCredentials.clearCachedKeychainCredentials()
+            // v1.30.x: arm the cross-app keychain-read cooldown so a token that
+            // keeps 401ing can't re-trigger the macOS keychain dialog on every
+            // ~3-4 min refresh. Only here (auth failure) — NOT on a user
+            // Disconnect; a user-initiated Connect bypasses the cooldown.
+            ClaudeCredentials.installKeychainReadCooldown()
             throw ClaudeStrategyError.httpError(status: status, provider: "Claude")
         } catch ClaudeStrategyError.httpError(let status, _) where status == 429 {
             // Genuine rate-limit response. Record the failure so the

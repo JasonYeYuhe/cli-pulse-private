@@ -479,7 +479,10 @@ struct ProviderConfigEditor: View {
                     // Read the credentials on a detached task and hop back
                     // to the main actor only for the @State mutations.
                     Task.detached {
-                        let creds = ClaudeCredentials.readKeychainCredentials()
+                        // User-initiated Connect — bypass the cross-app read
+                        // cooldown so a reconnect/re-auth is never blocked by a
+                        // cooldown a background 401 may have armed.
+                        let creds = ClaudeCredentials.readKeychainCredentials(bypassCooldown: true)
                         await MainActor.run {
                             isConnecting = false
                             if let creds, !creds.accessToken.isEmpty {
