@@ -578,6 +578,12 @@ def daemon(args: argparse.Namespace) -> None:
                 raise RuntimeError("helper not paired — managed sessions unavailable until pairing completes")
             return remote_agent_manager.resize_session(session_id, rows, cols)
 
+        def _get_tail_snapshot_local(session_id: str, max_bytes: int):
+            # v-next P1-2: reattach repaint — tail of the raw output ring.
+            if remote_agent_manager is None:
+                raise RuntimeError("helper not paired — managed sessions unavailable until pairing completes")
+            return remote_agent_manager.local_get_tail_snapshot(session_id, max_bytes)
+
         def _list_detected_local() -> list[dict[str, Any]]:
             # iter 2A: surface same-Mac Claude processes the
             # PR #14 collector recognises. Read-only on the UDS
@@ -620,6 +626,7 @@ def daemon(args: argparse.Namespace) -> None:
             send_input=_send_input_local,
             send_input_raw=_send_input_raw_local,
             resize=_resize_local,
+            get_tail_snapshot=_get_tail_snapshot_local,
             list_detected_sessions=_list_detected_local,
             # Iter 2B: broker drives subscribe_events; registry
             # backs approve_action / get_pending_approvals plus
@@ -668,6 +675,10 @@ def daemon(args: argparse.Namespace) -> None:
     # margin (RK8). 0.0 ⇒ first eligible tick fires promptly.
     _SWARM_HB_PERIOD_S = 30.0
     _last_swarm_hb = 0.0
+    # v-next P1-5: while ≥1 managed session is running, tick this often so
+    # the in-app terminal's keystroke→output latency is ~200ms instead of
+    # ~1s. Idle cadence stays 1s to keep wakeups cheap.
+    _ACTIVE_TICK_INTERVAL_S = 0.2
     # v1.30.2 RC-1: `config` may never be assigned on an unpaired cycle (the
     # heartbeat below raises ConfigError before `config = load_config()`).
     # Initialise it so the swarm-heartbeat guard below is safe, and track
@@ -755,11 +766,13 @@ def daemon(args: argparse.Namespace) -> None:
                 # Transient network/API errors — log and retry next cycle
                 logger.error("daemon cycle failed: %s", exc)
             # Sleep in small increments so SIGTERM is handled promptly.
-            # Remote agent manager ticks once per second so typed prompts
-            # reach the spawned provider CLI within ~1s of being enqueued.
-            for _ in range(interval):
-                if stopping:
-                    break
+            # v-next P1-5: ADAPTIVE tick cadence. The outer-cycle wall-clock
+            # (heartbeat/sync) is preserved via a monotonic deadline, but
+            # within it we tick ~5×/s while a managed session is running (so
+            # typed prompts / xterm.js keystrokes reach the CLI in ~200ms)
+            # and 1×/s when idle (cheap wakeups).
+            _cycle_deadline = time.monotonic() + interval
+            while not stopping and time.monotonic() < _cycle_deadline:
                 if remote_agent_manager is not None:
                     try:
                         remote_agent_manager.tick()
@@ -775,7 +788,13 @@ def daemon(args: argparse.Namespace) -> None:
                 if config is not None and _now_mono - _last_swarm_hb >= _SWARM_HB_PERIOD_S:
                     _last_swarm_hb = _now_mono
                     _swarm_heartbeat(config)
-                time.sleep(1)
+                if (
+                    remote_agent_manager is not None
+                    and remote_agent_manager.has_active_sessions()
+                ):
+                    time.sleep(_ACTIVE_TICK_INTERVAL_S)
+                else:
+                    time.sleep(1.0)
     except KeyboardInterrupt:
         pass
     finally:

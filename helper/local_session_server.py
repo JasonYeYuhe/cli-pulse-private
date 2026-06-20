@@ -129,6 +129,8 @@ SUPPORTED_METHODS = (
     # v1.30.x in-app xterm.js terminal: raw keystrokes + window resize.
     "send_input_raw",
     "resize",
+    # v-next P1-2: reattach repaint — tail of the per-session raw output ring.
+    "get_tail_snapshot",
     # Phase 3 Iter 2B: app-side streaming + structured approvals.
     "subscribe_events",
     "approve_action",
@@ -331,6 +333,7 @@ class LocalSessionServer:
         send_input: Callable[[str, str], dict],
         send_input_raw: Callable[[str, str], bool] | None = None,
         resize: Callable[[str, int, int], bool] | None = None,
+        get_tail_snapshot: Callable[[str, int], dict | None] | None = None,
         list_detected_sessions: Callable[[], list[dict]] | None = None,
         event_broker: EventBroker | None = None,
         approval_registry: ApprovalRegistry | None = None,
@@ -361,6 +364,9 @@ class LocalSessionServer:
         # method replies `not_implemented` (older wiring / unit tests).
         self._send_input_raw = send_input_raw
         self._resize = resize
+        # v-next P1-2: reattach repaint. None ⇒ the UDS method replies
+        # `not_implemented` (older wiring / unit tests).
+        self._get_tail_snapshot = get_tail_snapshot
         # Phase 4 helper-bundling: `install_claude_hook` UDS method
         # asks the helper to write its OWN argv[0] into the
         # PermissionRequest hook command. Returning None signals
@@ -1187,6 +1193,26 @@ class LocalSessionServer:
                 raise _RequestError("session_not_found",
                                     f"no managed session with id {session_id!r}")
             return {"resized": True}
+
+        if method == "get_tail_snapshot":
+            # v-next P1-2: reattach repaint — return up to `max_bytes` of the
+            # session's recent RAW redacted output as base64. The Swift client
+            # sends {session_id, max_bytes} (default 8192) and expects
+            # {bytes_base64}; the helper caps max_bytes at the ring size.
+            session_id = params.get("session_id")
+            if not isinstance(session_id, str) or not session_id:
+                raise _RequestError("bad_request", "'session_id' must be a non-empty string")
+            max_bytes = params.get("max_bytes", 8192)
+            if not isinstance(max_bytes, int) or isinstance(max_bytes, bool):
+                raise _RequestError("bad_request", "'max_bytes' must be an integer")
+            if self._get_tail_snapshot is None:
+                raise _RequestError("not_implemented",
+                                    "get_tail_snapshot unavailable on this helper")
+            result = self._get_tail_snapshot(session_id, max_bytes)
+            if result is None:
+                raise _RequestError("session_not_found",
+                                    f"no managed session with id {session_id!r}")
+            return result
 
         if method == "install_claude_hook":
             # Phase 4 helper-bundling: app asks helper to write the

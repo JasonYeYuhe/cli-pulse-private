@@ -203,6 +203,7 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
                  paired: bool | None = None,
                  send_input_raw: object | None = None,
                  resize: object | None = None,
+                 get_tail_snapshot: object | None = None,
                  ) -> tuple[LocalSessionServer, FakeManager, dict]:
     """Spin up a server bound to a tmp socket. Returns (server, manager,
     state-dict-for-toggle-introspection).
@@ -233,6 +234,7 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
         get_paired=(lambda: paired) if paired is not None else None,
         send_input_raw=send_input_raw,
         resize=resize,
+        get_tail_snapshot=get_tail_snapshot,
     )
     server.start()
     return server, mgr, state
@@ -1200,5 +1202,138 @@ def test_send_input_raw_and_resize_advertised_in_hello(short_sock_dir):
         methods = set(reply["result"]["supported_methods"])
         assert "send_input_raw" in methods
         assert "resize" in methods
+    finally:
+        server.stop()
+
+
+# ── v-next P1-2: get_tail_snapshot ────────────────────────────────────
+
+def test_get_tail_snapshot_returns_bytes_base64(short_sock_dir):
+    import base64
+    calls: list = []
+
+    def _snap(sid, max_bytes):
+        calls.append((sid, max_bytes))
+        return {"bytes_base64": base64.b64encode(b"\x1b[31mhi").decode()}
+
+    server, _mgr, _state = _make_server(short_sock_dir, get_tail_snapshot=_snap)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "get_tail_snapshot", "auth_token": "T",
+            "params": {"session_id": "s1", "max_bytes": 4096},
+        })
+        assert reply["ok"] is True
+        assert base64.b64decode(reply["result"]["bytes_base64"]) == b"\x1b[31mhi"
+        assert calls == [("s1", 4096)]
+    finally:
+        server.stop()
+
+
+def test_get_tail_snapshot_defaults_max_bytes(short_sock_dir):
+    calls: list = []
+    server, _mgr, _state = _make_server(
+        short_sock_dir,
+        get_tail_snapshot=lambda sid, mb: calls.append((sid, mb)) or {"bytes_base64": ""},
+    )
+    try:
+        _client_call(server._socket_path, {
+            "id": "1", "method": "get_tail_snapshot", "auth_token": "T",
+            "params": {"session_id": "s1"},  # no max_bytes → default 8192
+        })
+        assert calls == [("s1", 8192)]
+    finally:
+        server.stop()
+
+
+def test_get_tail_snapshot_session_not_found(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir, get_tail_snapshot=lambda s, m: None)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "get_tail_snapshot", "auth_token": "T",
+            "params": {"session_id": "nope"},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "session_not_found"
+    finally:
+        server.stop()
+
+
+def test_get_tail_snapshot_not_implemented_when_unwired(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir)  # no get_tail_snapshot
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "get_tail_snapshot", "auth_token": "T",
+            "params": {"session_id": "s1"},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "not_implemented"
+    finally:
+        server.stop()
+
+
+def test_get_tail_snapshot_rejects_non_int_max_bytes(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir, get_tail_snapshot=lambda s, m: {"bytes_base64": ""})
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "get_tail_snapshot", "auth_token": "T",
+            "params": {"session_id": "s1", "max_bytes": "8192"},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "bad_request"
+    finally:
+        server.stop()
+
+
+# ── v-next P1-4: local-UDS wire-contract (anti-drift) ─────────────────
+
+# Every UDS `method` string the Swift LocalSessionControlClient sends. Kept
+# in lockstep with the Swift client so a method that ships in the app but
+# never gets a live helper handler (exactly the gap that let
+# `get_tail_snapshot` ship half-wired) is caught here, not on a device.
+_SWIFT_CLIENT_METHODS = frozenset({
+    "hello", "start_session", "list_sessions", "stop_session",
+    "send_input", "send_input_raw", "resize", "get_tail_snapshot",
+    "subscribe_events", "approve_action", "install_claude_hook",
+    "get_pending_approvals", "get_local_control_status",
+    "set_local_control_enabled",
+})
+
+
+def test_every_swift_client_method_is_in_supported_methods():
+    """Anti-drift: each method the macOS/iOS client sends must be in the
+    helper's SUPPORTED_METHODS gate, else `_dispatch` rejects it as
+    `unknown_method` before any handler runs."""
+    missing = _SWIFT_CLIENT_METHODS - set(SUPPORTED_METHODS)
+    assert not missing, f"Swift sends these methods with no SUPPORTED_METHODS entry: {missing}"
+
+
+def test_every_swift_client_method_has_a_live_handler(short_sock_dir):
+    """Anti-drift: each client method must reach a real handler — never the
+    `unknown_method` fallthrough. We fully wire the server's optional
+    callbacks, then call each method with minimal params; a missing handler
+    surfaces as `unknown_method` (a present one returns ok / bad_request /
+    not-found / not_implemented, all of which prove the branch exists)."""
+    server, _mgr, _state = _make_server(
+        short_sock_dir,
+        send_input_raw=lambda s, b: True,
+        resize=lambda s, r, c: True,
+        get_tail_snapshot=lambda s, m: {"bytes_base64": ""},
+    )
+    try:
+        # hello is unauthenticated; the rest carry the token. We don't care
+        # about the result, only that the method is recognised + dispatched.
+        # install_claude_hook is excluded from the LIVE call (it writes to
+        # ~/.claude/settings.json) — it's still covered by the
+        # SUPPORTED_METHODS contract test above + its own dedicated tests.
+        for method in _SWIFT_CLIENT_METHODS - {"install_claude_hook"}:
+            body = {"id": method, "method": method, "params": {}}
+            if method != "hello":
+                body["auth_token"] = "T"
+            reply = _client_call(server._socket_path, body)
+            code = (reply.get("error") or {}).get("code")
+            assert code != "unknown_method", (
+                f"{method!r} is sent by the Swift client but has no live "
+                f"helper handler (got unknown_method)"
+            )
     finally:
         server.stop()
