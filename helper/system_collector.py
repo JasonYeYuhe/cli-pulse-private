@@ -41,7 +41,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 # and an unpaired heartbeat ConfigError no longer crash-loops the daemon —
 # so a freshly-installed-but-unpaired helper is detectable instead of
 # showing "not installed". `hello` now reports a `paired` flag.
-HELPER_VERSION = "1.19.0"
+HELPER_VERSION = "1.20.0"
 
 logger = logging.getLogger("cli_pulse.collector")
 
