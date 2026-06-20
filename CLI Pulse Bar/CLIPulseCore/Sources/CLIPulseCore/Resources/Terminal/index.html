@@ -156,6 +156,17 @@
         }
       });
 
+      // ── JS → native: OSC title (P2) ───────────────────────────
+      // The CLI sets the terminal title via OSC 0/2 (`ESC ]0;…BEL`); xterm
+      // surfaces it here. The native side puts it in the window title bar.
+      term.onTitleChange(function (t) {
+        try {
+          window.webkit.messageHandlers.terminal.postMessage({
+            kind: 'title', title: String(t || '')
+          });
+        } catch (e) { /* bridge unavailable */ }
+      });
+
       // ── JS → native: window-size on layout changes ────────────
       var lastCols = -1, lastRows = -1;
       function pushSize() {
