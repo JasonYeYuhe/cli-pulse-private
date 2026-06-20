@@ -58,6 +58,18 @@ final class TerminalViewTests: XCTestCase {
             ["kind": "resize", "cols": -5, "rows": 24]))
     }
 
+    func test_parseTitle() {
+        let body: [String: Any] = ["kind": "title", "title": "claude · ~/proj"]
+        XCTAssertEqual(TerminalView.parseBridgeMessage(body), .title("claude · ~/proj"))
+    }
+
+    func test_parseTitleMissing_isEmptyString() {
+        // OSC title-cleared (`ESC ]0;BEL`) arrives with no/empty title; the
+        // adapter treats empty as "cleared" → falls back to the default window
+        // title. Parser yields an empty-string title rather than nil.
+        XCTAssertEqual(TerminalView.parseBridgeMessage(["kind": "title"]), .title(""))
+    }
+
     func test_parseUnknownKind_returnsNil() {
         let body: [String: Any] = ["kind": "wat", "data": "x"]
         XCTAssertNil(TerminalView.parseBridgeMessage(body))

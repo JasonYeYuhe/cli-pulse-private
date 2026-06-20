@@ -89,22 +89,24 @@ public struct TerminalAttachView: View {
     public var body: some View {
         Group {
             switch session.phase {
-            case .unavailable(let title, let message):
-                unavailable(title: title, message: message)
+            case .unavailable(let title, let message, let canReconnect):
+                unavailable(title: title, message: message, canReconnect: canReconnect)
             case .attaching, .live:
                 TerminalHostRepresentable(terminalView: session.terminalView)
             }
         }
         .frame(minWidth: 640, minHeight: 400)
-        .navigationTitle("Terminal — \(provider.capitalized)")
+        // P2: reflect the CLI's OSC title when it sets one, else the default.
+        .navigationTitle(session.windowTitle ?? "Terminal — \(provider.capitalized)")
         .onAppear { session.startIfNeeded() }
     }
 
     /// Shown when the session can't be driven: a dead/ghost session at open
     /// time (preflight miss), or a mid-session disconnect (helper crash / socket
     /// drop surfaced via the adapter's `.failed` state). Better than a
-    /// permanently blank or silently frozen xterm (deep review).
-    private func unavailable(title: String, message: String) -> some View {
+    /// permanently blank or silently frozen xterm (deep review). When the
+    /// session may still be alive (a disconnect, not a death), offer Reconnect.
+    private func unavailable(title: String, message: String, canReconnect: Bool) -> some View {
         VStack(spacing: 12) {
             Image(systemName: "xmark.octagon")
                 .font(.system(size: 32))
@@ -116,8 +118,14 @@ public struct TerminalAttachView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("Close") { dismiss() }
-                .keyboardShortcut(.defaultAction)
+            HStack(spacing: 10) {
+                if canReconnect {
+                    Button("Reconnect") { session.reconnect() }
+                        .keyboardShortcut(.defaultAction)
+                }
+                Button("Close") { dismiss() }
+                    .keyboardShortcut(canReconnect ? .cancelAction : .defaultAction)
+            }
         }
         .padding(40)
     }
@@ -133,12 +141,16 @@ public struct TerminalAttachView: View {
 final class TerminalAttachSession: ObservableObject {
     enum Phase: Equatable {
         case attaching, live
-        /// Can't drive the session — show a card with this title/message + Close.
-        case unavailable(title: String, message: String)
+        /// Can't drive the session — show a card with this title/message + Close,
+        /// plus Reconnect when the session may still be alive (a disconnect, not
+        /// a death).
+        case unavailable(title: String, message: String, canReconnect: Bool)
     }
 
     let terminalView: TerminalView
     @Published private(set) var phase: Phase = .attaching
+    /// P2: the CLI's OSC title, for the window title bar (nil = use the default).
+    @Published private(set) var windowTitle: String?
 
     private let client: LocalSessionControlClient
     private let adapter: TerminalSessionAdapter
@@ -147,6 +159,11 @@ final class TerminalAttachSession: ObservableObject {
     private var didStart = false
     private var attachTask: Task<Void, Never>?
     private var stateCancellable: AnyCancellable?
+    private var titleCancellable: AnyCancellable?
+    /// One automatic reconnect per window on a disconnect; after that the card's
+    /// manual Reconnect button is the path. The flag never auto-resets, so this
+    /// can't loop against a flapping helper.
+    private var didAutoReconnect = false
 
     init(sessionId: String, provider: String) {
         self.terminalView = TerminalView(frame: .zero)
@@ -156,11 +173,11 @@ final class TerminalAttachSession: ObservableObject {
         self.sessionId = sessionId
         self.provider = provider
         // Observe the adapter so an ASYNC failure after a successful attach
-        // (helper crash / socket drop / the subscription stream erroring) turns
-        // the live terminal into a clear "disconnected" card instead of a
-        // silently frozen xterm (deep review high finding). `@Published`'s
-        // projected publisher works without ObservableObject conformance.
-        let prov = provider
+        // (helper crash / socket drop / the subscription stream erroring) is
+        // surfaced — first via ONE automatic reconnect attempt, then a clear
+        // "disconnected" card with a manual Reconnect, instead of a silently
+        // frozen xterm (deep review). `@Published`'s projected publisher works
+        // without ObservableObject conformance.
         stateCancellable = adapter.$state
             .receive(on: RunLoop.main)
             .sink { [weak self] state in
@@ -169,44 +186,84 @@ final class TerminalAttachSession: ObservableObject {
                 case .running:
                     self.phase = .live
                 case .failed:
-                    self.phase = .unavailable(
-                        title: "Session disconnected",
-                        message: "The \(prov.capitalized) session ended or the helper stopped. Start a new one from the menu or the Sessions tab.")
+                    if self.didAutoReconnect {
+                        self.phase = .unavailable(
+                            title: "Session disconnected",
+                            message: "The \(self.provider.capitalized) session lost its connection to the helper. Reconnect, or start a new one from the menu / Sessions tab.",
+                            canReconnect: true)
+                    } else {
+                        // One silent auto-attempt for a transient blip (e.g. the
+                        // helper restarting). The flag never auto-resets, so this
+                        // can't loop.
+                        self.didAutoReconnect = true
+                        self.doAttach(settleFirst: true)
+                    }
                 case .idle, .starting, .stopping, .stopped:
                     // .stopped only happens on our own close (detach) — ignore so
                     // a closing window doesn't flash the card.
                     break
                 }
             }
+        // P2: mirror the adapter's OSC title into the window title bar.
+        titleCancellable = adapter.$terminalTitle
+            .receive(on: RunLoop.main)
+            .sink { [weak self] title in self?.windowTitle = title }
     }
 
     func startIfNeeded() {
         guard !didStart else { return }
         didStart = true
+        doAttach(settleFirst: false)
+    }
+
+    /// Manual reconnect from the disconnected card.
+    func reconnect() {
+        phase = .attaching
+        doAttach(settleFirst: false)
+    }
+
+    /// Liveness preflight + attach. `settleFirst` adds a short delay so an
+    /// auto-reconnect gives a restarting helper a moment to come back before we
+    /// probe `listSessions`.
+    private func doAttach(settleFirst: Bool) {
+        attachTask?.cancel()
         let client = self.client
         let adapter = self.adapter
         let view = self.terminalView
         let sid = self.sessionId
         let prov = self.provider
         attachTask = Task { @MainActor [weak self] in
+            if settleFirst {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                if Task.isCancelled { return }
+            }
             // Preflight liveness so a dead/ghost session shows a clear state
             // instead of a blank terminal (Codex review: subscribe_events does
             // not reject unknown ids and attachExisting swallows the snapshot
             // error). listSessions is the authoritative "is this PTY alive?".
-            let alive: Bool
+            // Distinguish "helper reachable but session gone" (dead — no point
+            // reconnecting) from "helper unreachable" (transient — offer
+            // Reconnect), so a restarting helper doesn't strand the user on a
+            // Close-only card (deep-review fold).
             do {
                 let sessions = try await client.listSessions()
-                alive = sessions.contains { $0.id == sid }
+                if Task.isCancelled { return }
+                guard sessions.contains(where: { $0.id == sid }) else {
+                    self?.phase = .unavailable(
+                        title: "Session no longer available",
+                        message: "This \(prov.capitalized) session has ended or the helper restarted. Start a new one from the menu or the Sessions tab.",
+                        canReconnect: false)
+                    return
+                }
             } catch {
-                alive = false  // helper unreachable — can't attach anyway.
-            }
-            if Task.isCancelled { return }
-            guard alive else {
+                if Task.isCancelled { return }
                 self?.phase = .unavailable(
-                    title: "Session no longer available",
-                    message: "This \(prov.capitalized) session has ended or the helper restarted. Start a new one from the menu or the Sessions tab.")
+                    title: "Can't reach the helper",
+                    message: "CLI Pulse couldn't reach the local helper — it may be restarting. Try Reconnect, or start a new session from the menu / Sessions tab.",
+                    canReconnect: true)
                 return
             }
+            if Task.isCancelled { return }
             // phase → .live is driven by the adapter.$state sink (.running).
             _ = await adapter.attachExisting(to: view, sessionId: sid)
         }
@@ -219,6 +276,7 @@ final class TerminalAttachSession: ObservableObject {
         // and re-attach later. Best-effort fire-and-forget; deinit can't await.
         attachTask?.cancel()
         stateCancellable?.cancel()
+        titleCancellable?.cancel()
         let adapter = self.adapter
         Task { @MainActor in await adapter.detach(stopSession: false) }
     }

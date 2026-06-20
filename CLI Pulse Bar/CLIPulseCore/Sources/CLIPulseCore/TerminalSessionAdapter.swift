@@ -40,6 +40,9 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
     public weak var view: TerminalView?
 
     @Published public private(set) var state: State = .idle
+    /// P2: the latest OSC 0/2 title the CLI set (nil = never set / cleared).
+    /// Owners can surface it in the window title bar.
+    @Published public private(set) var terminalTitle: String?
 
     private var subscriptionTask: Task<Void, Never>?
     // stdin: a lossless, ordered, coalescing queue. Terminal keystrokes must
@@ -131,6 +134,12 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
         //    A failed/empty snapshot still releases the buffer so live flows.
         let snapshot = (try? await client.getTailSnapshot(sessionId: sessionId,
                                                           maxBytes: 65536)) ?? Data()
+        // If a newer attach (e.g. a reconnect) superseded this one while the
+        // snapshot was in flight, bail before painting so two attachExisting
+        // calls don't interleave their buffer flushes on the same adapter
+        // (deep-review concurrency catch). The newer attach already replaced the
+        // subscription + reattach buffer and will paint its own snapshot.
+        if Task.isCancelled { return sessionId }
         paintReattachSnapshot(snapshot)
         // Deep-review merge-blocker fix: if the view's single initial `resize`
         // fired into a not-yet-wired delegate during the work above (page-load
@@ -309,6 +318,12 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
         inFlightResizeTask = Task { [client] in
             try? await client.resize(sessionId: sid, cols: cols, rows: rows)
         }
+    }
+
+    public func terminalView(_ view: TerminalView, didSetTitle title: String) {
+        // P2: surface the CLI's OSC title for the window title bar.
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        terminalTitle = trimmed.isEmpty ? nil : trimmed
     }
 }
 #endif

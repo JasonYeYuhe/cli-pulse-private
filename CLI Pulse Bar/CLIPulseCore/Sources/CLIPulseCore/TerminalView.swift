@@ -41,6 +41,14 @@ public protocol TerminalViewDelegate: AnyObject {
     /// forward to the helper via `resize` so the child gets
     /// SIGWINCH.
     func terminalView(_ view: TerminalView, didResizeTo cols: Int, rows: Int)
+    /// The CLI set the terminal title via OSC 0/2 (P2). Consumers can
+    /// surface it in the window title bar. Empty string means "cleared".
+    func terminalView(_ view: TerminalView, didSetTitle title: String)
+}
+
+public extension TerminalViewDelegate {
+    /// Optional — most consumers ignore OSC titles.
+    func terminalView(_ view: TerminalView, didSetTitle title: String) {}
 }
 
 public final class TerminalView: NSView {
@@ -169,6 +177,7 @@ public final class TerminalView: NSView {
         case ready
         case stdin(String)
         case resize(cols: Int, rows: Int)
+        case title(String)
     }
 
     /// Pure parser for the JS bridge message dictionaries. Returns
@@ -187,6 +196,8 @@ public final class TerminalView: NSView {
             guard let cols = dict["cols"] as? Int, let rows = dict["rows"] as? Int,
                   cols > 0, rows > 0 else { return nil }
             return .resize(cols: cols, rows: rows)
+        case "title":
+            return .title(dict["title"] as? String ?? "")
         default:
             return nil
         }
@@ -207,6 +218,8 @@ public final class TerminalView: NSView {
             delegate?.terminalView(self, didReceiveStdin: data)
         case .resize(let cols, let rows):
             delegate?.terminalView(self, didResizeTo: cols, rows: rows)
+        case .title(let title):
+            delegate?.terminalView(self, didSetTitle: title)
         }
     }
 
