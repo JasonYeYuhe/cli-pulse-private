@@ -906,11 +906,33 @@ class LocalSessionServer:
             client_label = params.get("client_label")
             cwd_basename = params.get("cwd_basename") or ""
             cwd_hmac = params.get("cwd_hmac")
+            # v-next P1-1: real working-directory selection. The app (DEVID,
+            # unsandboxed — the in-app terminal is DEVID-only) sends the
+            # absolute path it picked via NSOpenPanel. Validate it here so the
+            # child actually spawns in the chosen project tree instead of the
+            # launchd daemon's dir. This path travels ONLY over the local UDS
+            # (same-Mac); the cloud registration still uses cwd_basename only.
+            cwd = params.get("cwd")
+            if cwd is not None:
+                if not isinstance(cwd, str) or not cwd:
+                    raise _RequestError("bad_request", "'cwd' must be a non-empty string when present")
+                if not os.path.isabs(cwd):
+                    raise _RequestError("bad_request", "'cwd' must be an absolute path")
+                # Canonicalize (resolve symlinks + normalize '..') and validate
+                # the RESOLVED target, then forward the canonical path so the
+                # spawn runs in exactly what we validated — shrinking the
+                # validate-vs-spawn TOCTOU window (codex review). A residual
+                # race (dir removed before Popen) still yields a clean, path-
+                # sanitized spawn failure, not a daemon crash.
+                cwd = os.path.realpath(cwd)
+                if not os.path.isdir(cwd):
+                    raise _RequestError("bad_request", "'cwd' is not an existing directory")
             payload = {
                 "provider": provider,
                 "client_label": client_label if isinstance(client_label, str) else None,
                 "cwd_basename": cwd_basename if isinstance(cwd_basename, str) else "",
                 "cwd_hmac": cwd_hmac if isinstance(cwd_hmac, str) else None,
+                "cwd": cwd if isinstance(cwd, str) else None,
             }
             return self._start_session(payload)
 

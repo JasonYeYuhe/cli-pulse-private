@@ -85,6 +85,16 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
+def _sanitize_path_in(text: str, path: str | None) -> str:
+    """Replace occurrences of the absolute `path` in `text` with its
+    basename, so a working-directory path can't leak through a spawn-error
+    string into logs or cloud events (v-next P1-1, codex review). No-op when
+    `path` is falsy."""
+    if not path:
+        return text
+    return text.replace(path, os.path.basename(path.rstrip("/")) or "<cwd>")
+
+
 # v-next P1-6: managed-session lifetime caps (monotonic seconds). A
 # forgotten / orphaned session keeps its CLI authenticated and able to
 # spend API quota indefinitely — the tick reaper bounds that. Idle =
@@ -388,9 +398,13 @@ class RemoteAgentManager:
             # event so the app can surface "Failed to spawn: claude not
             # found" without a status-string regression. See
             # `_post_info` for the redaction posture.
+            # v-next P1-1 (codex review): a bad cwd makes Popen raise an
+            # error whose string embeds the ABSOLUTE path — sanitize it to
+            # the basename before it reaches logs OR the cloud `info` event.
+            detail = _sanitize_path_in(str(exc), cwd)
             logger.warning(
                 "spawn_session(%s): transport.start raised: %s",
-                params.session_id, exc,
+                params.session_id, detail,
             )
             # Drop the registry slot so a stale capability token doesn't
             # outlive the failed spawn — there's no PTY to defend now.
@@ -401,7 +415,7 @@ class RemoteAgentManager:
                     pass
             self._post_status(params.session_id, "errored")
             self._post_info(
-                params.session_id, f"spawn failed: {exc}"
+                params.session_id, f"spawn failed: {detail}"
             )
             return False
         finally:
@@ -446,9 +460,12 @@ class RemoteAgentManager:
                 })
             except Exception as exc:  # noqa: BLE001
                 logger.debug("broker session_started publish failed: %s", exc)
+        # v-next P1-1: log only the cwd BASENAME, never the full absolute
+        # path (it can contain a user/project name — keep logs privacy-safe).
+        _cwd_log = os.path.basename(cwd.rstrip("/")) if cwd else "<inherit>"
         logger.info(
             "spawn_session(%s): provider=%s cwd=%s",
-            params.session_id, params.provider, cwd or "<inherit>",
+            params.session_id, params.provider, _cwd_log,
         )
 
         # Server-side: register the session row so the app sees status='running'
@@ -1114,10 +1131,14 @@ class RemoteAgentManager:
         provider = payload.get("provider") or "claude"
         if not isinstance(provider, str) or not provider:
             provider = "claude"
+        # v-next P1-1: real working directory. The UDS server has already
+        # validated it (absolute + existing dir); '' / missing → inherit the
+        # daemon's dir (prior behaviour). Local-only — never sent to the cloud.
+        cwd = payload.get("cwd")
         params = SessionStartParams(
             session_id=session_id,
             provider=provider,
-            cwd="",
+            cwd=cwd if isinstance(cwd, str) and cwd else "",
             cwd_hmac=cwd_hmac if isinstance(cwd_hmac, str) else None,
             client_label=client_label if isinstance(client_label, str) else None,
         )

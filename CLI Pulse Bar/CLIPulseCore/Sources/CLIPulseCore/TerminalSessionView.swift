@@ -3,6 +3,13 @@
 // SwiftUI view consumers can drop into a `Window` scene; it owns
 // the `TerminalSessionAdapter` lifecycle, spawns a managed session
 // on first appear, and tears down on window close.
+//
+// v-next P1-1: on open, the user picks the session's working directory
+// (NSOpenPanel). The chosen absolute path is passed to the adapter →
+// helper → child, so claude/agy run in the project tree instead of the
+// launchd daemon's dir. DEVID-only / unsandboxed (the in-app terminal is
+// gated to non-sandboxed builds), so the helper uses the path directly —
+// no security-scoped bookmark needed.
 
 #if os(macOS)
 import SwiftUI
@@ -20,19 +27,65 @@ public struct TerminalSessionView: View {
         self.provider = provider
     }
 
+    private enum Phase: Equatable {
+        case choosing
+        case ready(cwd: String?)
+    }
+
+    @State private var phase: Phase = .choosing
+    @State private var didStartChoosing = false
+
     public var body: some View {
-        TerminalSessionRepresentable(provider: provider)
-            .frame(minWidth: 640, minHeight: 400)
-            .navigationTitle("Terminal — \(provider.capitalized)")
+        Group {
+            switch phase {
+            case .choosing:
+                // Neutral backdrop while the directory chooser is up.
+                Color.clear
+            case .ready(let cwd):
+                TerminalSessionRepresentable(provider: provider, cwd: cwd)
+            }
+        }
+        .frame(minWidth: 640, minHeight: 400)
+        .navigationTitle("Terminal — \(provider.capitalized)")
+        .onAppear {
+            // Guard so a re-fired onAppear doesn't present the panel twice.
+            guard !didStartChoosing else { return }
+            didStartChoosing = true
+            // Defer the modal off the SwiftUI update tick.
+            DispatchQueue.main.async {
+                phase = .ready(cwd: Self.chooseWorkingDirectory(provider: provider))
+            }
+        }
+    }
+
+    /// Present a modal directory chooser; return the chosen absolute path.
+    /// Cancelling falls back to the user's home directory (never the launchd
+    /// daemon's dir) so a managed session always starts in a sane tree.
+    private static func chooseWorkingDirectory(provider: String) -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open Terminal Here"
+        panel.message = "Choose the working directory for the \(provider.capitalized) session"
+        panel.directoryURL = home
+        // A menu-bar app may not be frontmost; bring the panel forward.
+        NSApp.activate(ignoringOtherApps: true)
+        if panel.runModal() == .OK, let path = panel.url?.path {
+            return path
+        }
+        return home.path
     }
 }
 
 private struct TerminalSessionRepresentable: NSViewRepresentable {
     let provider: String
+    let cwd: String?
 
     func makeNSView(context: Context) -> TerminalView {
         let view = TerminalView(frame: .zero)
-        context.coordinator.bind(view: view, provider: provider)
+        context.coordinator.bind(view: view, provider: provider, cwd: cwd)
         return view
     }
 
@@ -53,8 +106,8 @@ private struct TerminalSessionRepresentable: NSViewRepresentable {
     final class Coordinator {
         private var adapter: TerminalSessionAdapter?
 
-        func bind(view: TerminalView, provider: String) {
-            let adapter = TerminalSessionAdapter(provider: provider)
+        func bind(view: TerminalView, provider: String, cwd: String?) {
+            let adapter = TerminalSessionAdapter(provider: provider, cwd: cwd)
             self.adapter = adapter
             Task { @MainActor in
                 _ = try? await adapter.attach(to: view)

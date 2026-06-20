@@ -33,6 +33,10 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
 
     public let client: LocalSessionControlClient
     public let provider: String
+    /// v-next P1-1: the user-chosen absolute working directory (NSOpenPanel).
+    /// nil ⇒ the helper inherits the daemon's dir (prior behaviour). Sent
+    /// only over the local UDS (same-Mac); the cloud row gets the basename.
+    public let cwd: String?
     public weak var view: TerminalView?
 
     @Published public private(set) var state: State = .idle
@@ -53,9 +57,11 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
     /// after this object is alive so the delegate hookup happens
     /// on the actor.
     public init(client: LocalSessionControlClient = LocalSessionControlClient(),
-                provider: String = "claude") {
+                provider: String = "claude",
+                cwd: String? = nil) {
         self.client = client
         self.provider = provider
+        self.cwd = cwd
     }
 
     /// Attach to a `TerminalView`, start the helper-side session,
@@ -74,11 +80,15 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
         view.delegate = self
         state = .starting
         do {
+            // v-next P1-1: pass the chosen absolute cwd (local UDS only). The
+            // cloud-visible cwdBasename is derived from it so remote viewers
+            // still see the project name without the full path.
             let result = try await client.startManagedSession(
                 provider: provider,
                 clientLabel: "in-app-terminal",
-                cwdBasename: nil,
-                cwdHmac: nil)
+                cwdBasename: cwd.map { ($0 as NSString).lastPathComponent },
+                cwdHmac: nil,
+                cwd: cwd)
             let sid = result.sessionId
             state = .running(sessionId: sid)
             startEventSubscription(sessionId: sid)

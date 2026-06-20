@@ -195,7 +195,9 @@ class CodexExecTransport(SessionTransport):
         state.output_queue.append(banner.encode("utf-8"))
         state.banner_emitted = True
 
-        logger.info("codex_exec.start session=%s cwd=%s", session_id, cwd or "<inherit>")
+        # v-next P1-1: log only the basename, never the full absolute cwd path.
+        _cwd_log = os.path.basename(cwd.rstrip("/")) if cwd else "<inherit>"
+        logger.info("codex_exec.start session=%s cwd=%s", session_id, _cwd_log)
         return SessionHandle(session_id=session_id, payload=state)
 
     @staticmethod
@@ -271,12 +273,18 @@ class CodexExecTransport(SessionTransport):
                 bufsize=0,
             )
         except (FileNotFoundError, PermissionError, OSError) as exc:
-            err = f"{_ERROR_PREFIX}codex spawn failed: {exc}\n".encode("utf-8")
+            # v-next P1-1 (codex review): a bad cwd makes Popen embed the
+            # ABSOLUTE path in the error — sanitize to basename before it
+            # reaches the streamed output queue OR the logs.
+            detail = str(exc)
+            if s.cwd:
+                detail = detail.replace(s.cwd, os.path.basename(s.cwd.rstrip("/")) or "<cwd>")
+            err = f"{_ERROR_PREFIX}codex spawn failed: {detail}\n".encode("utf-8")
             s.output_queue.append(err)
             s.current_proc = None
             logger.warning(
                 "codex_exec spawn failed session=%s: %s",
-                s.session_id, exc,
+                s.session_id, detail,
             )
             return
         # Fresh stderr buffer + flags for this turn.

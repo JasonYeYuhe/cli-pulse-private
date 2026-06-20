@@ -704,6 +704,55 @@ def test_get_tail_snapshot_via_drain_path():
     assert b"hello world from the terminal" in data
 
 
+# ── v-next P1-1: working-directory selection ────────────────────────
+
+
+def test_local_start_threads_cwd_to_transport(tmp_path):
+    mgr, transport, _log = _make_manager()
+    result = mgr.local_start_claude_session({"provider": "claude", "cwd": str(tmp_path)})
+    assert result["ok"]
+    start = [c for c in transport.calls if c[0] == "start"][0][1]
+    assert start["cwd"] == str(tmp_path)
+
+
+def test_local_start_without_cwd_inherits():
+    mgr, transport, _log = _make_manager()
+    mgr.local_start_claude_session({"provider": "claude"})
+    start = [c for c in transport.calls if c[0] == "start"][0][1]
+    assert start["cwd"] is None  # POSIX transport treats None as inherit
+
+
+def test_spawn_failure_sanitizes_cwd_path_from_info_event():
+    """A bad cwd makes the transport raise an error embedding the ABSOLUTE
+    path; it must NOT leak into the cloud `info` event — only the basename
+    survives (codex review)."""
+    from remote_agent import SessionStartParams
+
+    class _RaisingTransport(FakeTransport):
+        def start(self, session_id, argv, env=None, cwd=None, *, pass_fds=()):
+            raise TransportError(
+                f"failed to spawn {argv[0]}: [Errno 2] No such file or directory: '{cwd}'"
+            )
+
+    rpc_log: list = []
+
+    def fake_rpc(name, params):
+        rpc_log.append((name, dict(params)))
+        return [] if name == "remote_helper_pull_commands" else {}
+
+    mgr = RemoteAgentManager(
+        helper_config=_StubHelperConfig(), rpc_caller=fake_rpc, transport=_RaisingTransport(),
+    )
+    secret = "/Users/jason/private-client-project"
+    mgr.spawn_session(SessionStartParams(
+        session_id=str(uuid.uuid4()), provider="claude", cwd=secret))
+    posted = " ".join(
+        str(p.get("p_payload", "")) for (n, p) in rpc_log if n == "remote_helper_post_event"
+    )
+    assert secret not in posted                 # full path NOT leaked to cloud
+    assert "private-client-project" in posted   # basename kept for context
+
+
 def test_raw_ring_fails_closed_on_ansi_split_secret():
     """A secret split by a VT escape (which hides the token shape from the
     naive redactor) must NOT survive in the retained/replayable ring —
