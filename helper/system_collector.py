@@ -41,7 +41,13 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 # and an unpaired heartbeat ConfigError no longer crash-loops the daemon —
 # so a freshly-installed-but-unpaired helper is detectable instead of
 # showing "not installed". `hello` now reports a `paired` flag.
-HELPER_VERSION = "1.20.0"
+# 1.20.0 → 1.20.1 (v1.32.1 P0): PTY live-resize now actually re-flows the
+# child TUI. The managed child has no controlling terminal (spawned with
+# start_new_session and no TIOCSCTTY), so TIOCSWINSZ alone never delivered
+# SIGWINCH — claude/agy kept rendering at the old column count on every
+# in-app-terminal window resize. `PosixPtyTransport.resize` now signals the
+# child's process group with SIGWINCH after updating the winsize.
+HELPER_VERSION = "1.20.1"
 
 logger = logging.getLogger("cli_pulse.collector")
 

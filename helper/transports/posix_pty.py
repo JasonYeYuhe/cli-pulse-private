@@ -173,9 +173,21 @@ class PosixPtyTransport(SessionTransport):
 
     def resize(self, handle: SessionHandle, rows: int, cols: int) -> None:
         """Live-resize the PTY window (v1.30.x in-app terminal). TIOCSWINSZ
-        on the master fd; the kernel sends SIGWINCH to the child so its TUI
-        re-flows. Clamp to xterm.js bounds (1..32767) and stay failure-soft —
-        a resize must never kill the session."""
+        on the master fd updates the kernel winsize, then we deliver SIGWINCH
+        to the child's process group so its TUI re-flows. Clamp to xterm.js
+        bounds (1..32767) and stay failure-soft — a resize must never kill the
+        session.
+
+        v1.32.1 P0 fix: TIOCSWINSZ alone does NOT re-flow the child. The child
+        is spawned with `start_new_session=True` and never acquires the slave
+        as a controlling terminal (no TIOCSCTTY), so it has no controlling tty
+        / foreground process group — which means the kernel does NOT auto-send
+        SIGWINCH on the winsize change. Verified on a real DEVID build: the PTY
+        winsize updated to the new column count (confirmed via `stty`), yet
+        claude/agy kept rendering at the OLD width until a SIGWINCH actually
+        arrived (a manual `kill -WINCH <pid>` made them re-flow instantly). So
+        deliver SIGWINCH explicitly. The child's session is isolated, so
+        signalling its process group never reaches the helper daemon."""
         p = self._payload(handle)
         if p.closed:
             return
@@ -186,6 +198,10 @@ class PosixPtyTransport(SessionTransport):
             fcntl.ioctl(p.master_fd, termios.TIOCSWINSZ, ws)
         except OSError as exc:
             logger.warning("resize TIOCSWINSZ failed (continuing): %s", exc)
+            return
+        # Nudge the child to re-read the new winsize. `_signal_pgid` is a no-op
+        # if the child already exited and swallows ProcessLookup/Permission.
+        self._signal_pgid(handle, signal.SIGWINCH)
 
     def read_stdout(self, handle: SessionHandle, max_bytes: int = 4096) -> bytes:
         p = self._payload(handle)
@@ -221,8 +237,16 @@ class PosixPtyTransport(SessionTransport):
         if p.closed or p.proc.poll() is not None:
             return
         try:
-            pgid = os.getpgid(p.proc.pid)
-            os.killpg(pgid, sig)
+            # The child is spawned with `start_new_session=True`, so it is its
+            # own session + process-group leader and its PGID equals its PID.
+            # Signal the group by PID directly rather than via
+            # `os.getpgid(pid)`: if the PID were ever reused after the child
+            # exited, `getpgid(reused_pid)` could resolve an UNRELATED group
+            # (e.g. the helper's own) and broadcast there, whereas
+            # `killpg(child.pid, …)` targets the group led by child.pid — a
+            # reused non-leader PID has no such group, so it safely raises
+            # ProcessLookupError (swallowed below). Gemini 3.1 Pro review.
+            os.killpg(p.proc.pid, sig)
         except (ProcessLookupError, PermissionError):
             return
         except OSError as exc:
@@ -273,8 +297,10 @@ class PosixPtyTransport(SessionTransport):
                         handle.session_id, grace,
                     )
                     try:
-                        pgid = os.getpgid(p.proc.pid)
-                        os.killpg(pgid, signal.SIGKILL)
+                        # PGID == PID for our start_new_session child; signal
+                        # by PID directly to avoid a reused-PID getpgid()
+                        # resolving an unrelated group (see _signal_pgid).
+                        os.killpg(p.proc.pid, signal.SIGKILL)
                     except (ProcessLookupError, PermissionError, OSError):
                         pass
                     # Non-blocking reap so the zombie is collected immediately
