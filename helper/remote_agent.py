@@ -670,6 +670,11 @@ class RemoteAgentManager:
         n = max(1, min(n, _RAW_RING_CAP_BYTES))
         import base64
         tail = bytes(sess.raw_ring[-n:])
+        # review M3: redact() runs per-chunk at write time, so a secret
+        # straddling a chunk boundary could survive in the concatenated ring.
+        # Re-redact the ASSEMBLED tail before returning — cheap (snapshots are
+        # infrequent) and closes the cross-chunk reassembly leak.
+        tail = redact(tail.decode("utf-8", "replace")).encode("utf-8", "replace")
         return {"bytes_base64": base64.b64encode(tail).decode("ascii")}
 
     def shutdown(self) -> None:
@@ -704,26 +709,34 @@ class RemoteAgentManager:
         """
         processed = self._poll_and_dispatch_commands(max_commands=max_commands)
         local = self._tick_local_impl()
+        # v-next review (H1): the reaper terminates LIVE children, and
+        # transport.close() can block up to ~4 s (SIGTERM→grace→SIGKILL) on
+        # the single-writer executor. Run it ONLY on the 1 Hz full tick (where
+        # network I/O is already expected), NOT on the 5 Hz `tick_local`, so a
+        # reap can't stall concurrent keystrokes / start / stop for seconds.
+        reaped = self._reap_overlong_sessions()
         local["commands_processed"] = processed
+        local["sessions_reaped"] = reaped
         return local
 
     def tick_local(self) -> dict[str, int]:
         return self._dispatch(self._tick_local_impl)
 
     def _tick_local_impl(self) -> dict[str, int]:
-        """v-next P1-5: the FAST half of a tick — local PTY drain, child-exit
-        observation, and idle reaping, WITHOUT the Supabase command poll. The
-        daemon calls this on the sub-second active-session cadence and the full
-        `tick()` (which adds the remote poll) at ~1 Hz, so the fast local
-        cadence doesn't multiply remote RPC traffic (codex review)."""
+        """v-next P1-5: the FAST half of a tick — local PTY drain + child-exit
+        observation only, WITHOUT the Supabase command poll OR the (blocking)
+        idle reaper. The daemon calls this on the sub-second active-session
+        cadence and the full `tick()` (which adds the remote poll + reaper) at
+        ~1 Hz. Both operations here are non-blocking: the drain is a
+        non-blocking read, and `_observe_exits` only closes ALREADY-dead
+        children (close() short-circuits when `proc.poll()` is not None)."""
         drained = self._drain_running_sessions_stdout()
         exited = self._observe_exits()
-        reaped = self._reap_overlong_sessions()
         return {
             "commands_processed": 0,
             "sessions_exited": exited,
             "bytes_drained": drained,
-            "sessions_reaped": reaped,
+            "sessions_reaped": 0,
         }
 
     def has_active_sessions(self) -> bool:
@@ -747,8 +760,11 @@ class RemoteAgentManager:
         logger.info("stopping all %d managed session(s) (%s)", n, reason)
         for sid in list(self._sessions.keys()):
             try:
-                self._post_info(sid, f"session stopped ({reason})")
+                # review L3: post the "stopped" info AFTER the stop succeeds —
+                # otherwise a stop-failure leaves a premature "stopped" event
+                # in the cloud log while the session keeps running.
                 self._stop_session_impl(sid)
+                self._post_info(sid, f"session stopped ({reason})")
             except Exception as exc:  # noqa: BLE001 — best-effort teardown
                 logger.warning("stop_all_sessions(%s) failed: %s", sid, exc)
         return n
@@ -772,8 +788,9 @@ class RemoteAgentManager:
         for sid, reason in reap:
             logger.info("reaping managed session %s (%s cap)", sid, reason)
             try:
-                self._post_info(sid, f"session auto-stopped ({reason} limit reached)")
+                # review L3: info AFTER a successful stop (see _stop_all_sessions_impl).
                 self._stop_session_impl(sid)
+                self._post_info(sid, f"session auto-stopped ({reason} limit reached)")
             except Exception as exc:  # noqa: BLE001 — reap is best-effort
                 logger.warning("reap(%s) failed: %s", sid, exc)
         return len(reap)
