@@ -74,6 +74,8 @@ class PosixPtyTransport(SessionTransport):
         argv: list[str],
         env: dict[str, str] | None = None,
         cwd: str | None = None,
+        *,
+        pass_fds: tuple[int, ...] = (),
     ) -> SessionHandle:
         if not argv:
             raise TransportError("argv must not be empty")
@@ -114,6 +116,12 @@ class PosixPtyTransport(SessionTransport):
                 cwd=cwd,
                 start_new_session=True,         # SIGINT to pgid won't kill us
                 close_fds=True,
+                # v-next P0-A: keep the caller's auth fd(s) open across the
+                # exec. close_fds=True would otherwise close everything but
+                # 0/1/2; pass_fds whitelists the inherited token fd. The
+                # caller marked them inheritable and closes its own copy
+                # after we return.
+                pass_fds=tuple(pass_fds),
                 bufsize=0,
             )
         except (FileNotFoundError, PermissionError, OSError) as exc:

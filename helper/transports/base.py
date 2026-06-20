@@ -62,6 +62,8 @@ class SessionTransport(ABC):
         argv: list[str],
         env: dict[str, str] | None = None,
         cwd: str | None = None,
+        *,
+        pass_fds: tuple[int, ...] = (),
     ) -> SessionHandle:
         """Spawn the provider CLI under a PTY. Raises TransportError on
         spawn failure.
@@ -69,6 +71,14 @@ class SessionTransport(ABC):
         argv[0] should be the absolute path to the executable; PATH is
         not searched (POSIX) by default. env defaults to the current
         process environment merged with required PTY vars.
+
+        `pass_fds` (v-next P0-A): extra file descriptors to keep open
+        across the child's exec (e.g. an inherited read-end carrying the
+        claude OAuth token for CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR).
+        Only the PTY transport honors this; the exec-mode transports
+        (codex/gemini) inherit the default and ignore it — they are never
+        spawned with auth fds. The CALLER owns the fd lifecycle (closes
+        its own copy after start returns).
         """
 
     @abstractmethod

@@ -12,6 +12,7 @@ No network. No real Supabase. No real `claude` binary.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import uuid
@@ -127,9 +128,10 @@ class FakeTransport(SessionTransport):
         self.stdin_log: dict[str, list[bytes]] = {}
         self.canned_stdout: dict[str, bytes] = {}
 
-    def start(self, session_id, argv, env=None, cwd=None):
+    def start(self, session_id, argv, env=None, cwd=None, *, pass_fds=()):
         self.calls.append(("start", {"session_id": session_id, "argv": argv,
-                                     "env": dict(env or {}), "cwd": cwd}))
+                                     "env": dict(env or {}), "cwd": cwd,
+                                     "pass_fds": tuple(pass_fds)}))
         self.alive[session_id] = True
         self.stdin_log[session_id] = []
         return SessionHandle(session_id=session_id, payload=FakeHandle())
@@ -164,7 +166,8 @@ class FakeTransport(SessionTransport):
         self.alive[handle.session_id] = False
 
 
-def _make_manager(rpc_responses: dict[str, Any] | None = None):
+def _make_manager(rpc_responses: dict[str, Any] | None = None,
+                  *, claude_token_resolver=None):
     rpc_log: list[tuple[str, dict[str, Any]]] = []
     rpc_responses = dict(rpc_responses or {})
 
@@ -184,6 +187,7 @@ def _make_manager(rpc_responses: dict[str, Any] | None = None):
         helper_config=_StubHelperConfig(),
         rpc_caller=fake_rpc,
         transport=transport,
+        claude_token_resolver=claude_token_resolver,
     )
     return mgr, transport, rpc_log
 
@@ -444,8 +448,9 @@ def test_dispatch_start_accepts_codex_provider():
 
 
 def test_dispatch_start_accepts_gemini_provider_default():
-    """v1.15: gemini accepted; default argv is ['gemini'] (no --yolo).
-    The opt-in YOLO flag is exercised separately.
+    """gemini accepted; default argv is bare ['agy'] (v-next P0-B: the
+    gemini provider spawns the Antigravity CLI `agy`, no skip-permissions
+    flag). The opt-in flag is exercised separately.
     """
     cmd_id = str(uuid.uuid4())
     sid = str(uuid.uuid4())
@@ -465,11 +470,117 @@ def test_dispatch_start_accepts_gemini_provider_default():
 
     starts = [c for c in transport.calls if c[0] == "start"]
     assert len(starts) == 1
-    # Default: NO --yolo. The iOS picker has to opt the user in
-    # explicitly via extra_env / params.extra_env.
-    assert starts[0][1]["argv"] == ["gemini"], (
-        f"default gemini argv must omit --yolo, got {starts[0][1]['argv']}"
+    # Default: bare agy, NO --dangerously-skip-permissions. The picker
+    # opts the user in explicitly via extra_env.
+    assert starts[0][1]["argv"] == ["agy"], (
+        f"default gemini argv must be bare agy, got {starts[0][1]['argv']}"
     )
+
+
+# ── v-next P0-A: claude OAuth token injection ───────────────────────
+
+_INJECTED_TOKEN = "sk-ant-oat01-INJECTEDtoken"
+
+
+def _spawn_claude_and_get_start(mgr, transport, provider="claude"):
+    """Spawn one session directly and return the recorded transport.start
+    kwargs dict (`{"argv","env","cwd","pass_fds",...}`)."""
+    from remote_agent import SessionStartParams
+    transport.calls.clear()
+    mgr.spawn_session(SessionStartParams(session_id=str(uuid.uuid4()), provider=provider))
+    starts = [c for c in transport.calls if c[0] == "start"]
+    assert len(starts) == 1
+    return starts[0][1]
+
+
+def test_claude_auth_injected_via_inherited_fd_not_env():
+    """claude spawn injects the resolved token over an inherited fd
+    (CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR) + pass_fds — the raw token
+    NEVER appears in the child env (no `ps eww` / tool-subprocess leak)."""
+    mgr, transport, _log = _make_manager(
+        claude_token_resolver=lambda: _INJECTED_TOKEN,
+    )
+    start = _spawn_claude_and_get_start(mgr, transport)
+    env = start["env"]
+    assert "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR" in env
+    fd_str = env["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"]
+    assert fd_str.isdigit()
+    assert start["pass_fds"] == (int(fd_str),)
+    # Leak guard: raw token in NO env value, and the plain env var is unset.
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    assert all(_INJECTED_TOKEN not in v for v in env.values())
+
+
+def test_claude_auth_falls_back_to_env_when_fd_plumbing_fails(monkeypatch):
+    """If os.pipe fails, fall back to the CLAUDE_CODE_OAUTH_TOKEN env var
+    (degraded but functional) and pass no fds."""
+    import remote_agent
+    monkeypatch.setattr(remote_agent.os, "pipe",
+                        lambda: (_ for _ in ()).throw(OSError("no fds")))
+    mgr, transport, _log = _make_manager(
+        claude_token_resolver=lambda: _INJECTED_TOKEN,
+    )
+    start = _spawn_claude_and_get_start(mgr, transport)
+    env = start["env"]
+    assert env.get("CLAUDE_CODE_OAUTH_TOKEN") == _INJECTED_TOKEN
+    assert "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR" not in env
+    assert start["pass_fds"] == ()
+
+
+def test_no_auth_injection_when_resolver_absent():
+    """Default manager (no resolver) → no token vars, no pass_fds. Keeps
+    existing callers + tests hermetic (never reads real creds)."""
+    mgr, transport, _log = _make_manager()  # resolver defaults to None
+    start = _spawn_claude_and_get_start(mgr, transport)
+    env = start["env"]
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    assert "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR" not in env
+    assert start["pass_fds"] == ()
+
+
+def test_no_auth_injection_for_non_claude_provider():
+    """The claude resolver is provider-scoped — a gemini spawn never gets
+    claude's token."""
+    mgr, transport, _log = _make_manager(
+        claude_token_resolver=lambda: _INJECTED_TOKEN,
+    )
+    start = _spawn_claude_and_get_start(mgr, transport, provider="gemini")
+    env = start["env"]
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    assert "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR" not in env
+    assert all(_INJECTED_TOKEN not in v for v in env.values())
+
+
+def test_no_auth_injection_when_resolver_returns_none():
+    """Resolver present but yields no token (no creds) → spawn proceeds
+    with no injection (pre-existing 401 behaviour, not a crash)."""
+    mgr, transport, _log = _make_manager(claude_token_resolver=lambda: None)
+    start = _spawn_claude_and_get_start(mgr, transport)
+    env = start["env"]
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    assert "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR" not in env
+    assert start["pass_fds"] == ()
+
+
+def test_resolver_exception_does_not_break_spawn():
+    """A throwing resolver must not abort the spawn — degrade to no
+    injection."""
+    def _boom():
+        raise RuntimeError("resolver exploded")
+    mgr, transport, _log = _make_manager(claude_token_resolver=_boom)
+    start = _spawn_claude_and_get_start(mgr, transport)
+    assert "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR" not in start["env"]
+    assert start["pass_fds"] == ()
+
+
+def test_spawn_env_has_augmented_path():
+    """v-next P0-C: the child's PATH includes the common CLI dirs launchd
+    omits (so claude/agy actually exec)."""
+    mgr, transport, _log = _make_manager()
+    start = _spawn_claude_and_get_start(mgr, transport)
+    path = start["env"].get("PATH", "")
+    assert "/opt/homebrew/bin" in path
+    assert os.path.expanduser("~/.local/bin") in path
 
 
 def test_shutdown_terminates_running_sessions():

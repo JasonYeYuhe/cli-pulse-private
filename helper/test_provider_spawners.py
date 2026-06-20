@@ -104,31 +104,33 @@ def test_codex_env_overrides_enables_rust_backtrace():
     assert env.get("RUST_BACKTRACE") == "1"
 
 
-def test_gemini_argv_default_omits_yolo():
-    assert GeminiSpawner().argv(_EMPTY) == ["gemini"]
+def test_gemini_argv_default_is_bare_agy():
+    # v-next P0-B: gemini provider spawns the Antigravity CLI `agy`
+    # (legacy gemini CLI hard-fails individual-tier accounts).
+    assert GeminiSpawner().argv(_EMPTY) == ["agy"]
 
 
-def test_gemini_argv_adds_yolo_when_opted_in():
-    """The iOS spawn UI sets `CLI_PULSE_GEMINI_YOLO=1` in
-    `params.extra_env` when the user explicitly opts in. Spawner
-    forwards the flag as a standard `--yolo` argv.
+def test_gemini_argv_adds_skip_permissions_when_opted_in():
+    """The spawn UI sets `CLI_PULSE_GEMINI_YOLO=1` in `params.extra_env`
+    when the user explicitly opts in. Spawner forwards it as agy's
+    `--dangerously-skip-permissions` (the legacy gemini CLI used `--yolo`).
     """
     params = SimpleNamespace(extra_env={"CLI_PULSE_GEMINI_YOLO": "1"})
-    assert GeminiSpawner().argv(params) == ["gemini", "--yolo"]
+    assert GeminiSpawner().argv(params) == ["agy", "--dangerously-skip-permissions"]
 
 
 def test_gemini_argv_yolo_accepts_truthy_aliases():
     for value in ("1", "true", "yes"):
         params = SimpleNamespace(extra_env={"CLI_PULSE_GEMINI_YOLO": value})
         argv = GeminiSpawner().argv(params)
-        assert argv == ["gemini", "--yolo"], f"value={value!r} → {argv}"
+        assert argv == ["agy", "--dangerously-skip-permissions"], f"value={value!r} → {argv}"
 
 
 def test_gemini_argv_yolo_falsy_keeps_default():
     for value in ("", "0", "false", "no"):
         params = SimpleNamespace(extra_env={"CLI_PULSE_GEMINI_YOLO": value})
         argv = GeminiSpawner().argv(params)
-        assert argv == ["gemini"], f"value={value!r} → {argv}"
+        assert argv == ["agy"], f"value={value!r} → {argv}"
 
 
 # ── H-F1 new providers (Aider / OpenCode / Cursor) ──────────
@@ -185,13 +187,13 @@ def test_argv0_env_override(monkeypatch, env_var, spawner_cls, expected):
 
 
 def test_gemini_yolo_compounds_with_argv0_override(monkeypatch):
-    """Override + YOLO together: tokenized argv0 first, then `--yolo`
-    appended.
+    """Override + opt-in together: tokenized argv0 first, then
+    `--dangerously-skip-permissions` appended.
     """
-    monkeypatch.setenv("CLI_PULSE_GEMINI_ARGV0", "/opt/gemini/bin/gemini")
+    monkeypatch.setenv("CLI_PULSE_GEMINI_ARGV0", "/opt/agy/bin/agy")
     params = SimpleNamespace(extra_env={"CLI_PULSE_GEMINI_YOLO": "1"})
     argv = GeminiSpawner().argv(params)
-    assert argv == ["/opt/gemini/bin/gemini", "--yolo"]
+    assert argv == ["/opt/agy/bin/agy", "--dangerously-skip-permissions"]
 
 
 # ── env_overrides ───────────────────────────────────────────
@@ -246,9 +248,14 @@ def test_is_available_returns_false_when_binary_missing(monkeypatch):
     """Both the override AND PATH must miss → False. Use a path
     deliberately not on PATH to defeat the fallback shutil.which().
     """
+    import provider_spawners.base as _base
     monkeypatch.setenv("CLI_PULSE_CLAUDE_ARGV0", "/no/such/path/that/exists")
     # Also ensure plain `claude` resolves to nothing for this scope.
     monkeypatch.setenv("PATH", "/var/empty")
+    # v-next P0-C: is_available() now searches augmented_path(), which
+    # appends ~/.local/bin (where `claude` is actually installed on a dev
+    # box). Neutralize the extra dirs so "binary missing" stays testable.
+    monkeypatch.setattr(_base, "_EXTRA_PATH_DIRS", ())
     assert ClaudeSpawner().is_available() is False
 
 

@@ -3,17 +3,20 @@
 Routing table (by `argv[0]` basename):
 
   * `codex`  → `CodexExecTransport`  (subprocess-per-turn `codex exec --json`)
-  * `gemini` → `GeminiExecTransport` (subprocess-per-turn `gemini -p … -o stream-json`, v1.19+)
-  * everything else (incl. `claude`) → `PosixPtyTransport` (PTY).
+  * everything else (incl. `claude` and `agy`) → `PosixPtyTransport` (PTY).
 
-Why each carve-out exists:
+Why the Codex carve-out exists:
 
   * Codex's ratatui TUI renders elaborate chrome at any non-zero PTY
     and panics at 0×0; the post-PTY ANSI-sanitizer fallback couldn't
     reliably reassemble chat messages. See `codex_exec.py` docstring.
-  * Gemini ships a similar TUI; `-o stream-json` gives us structured
-    events without the TUI-reconstruction problem. See
-    `gemini_exec.py` docstring.
+
+v-next P0-B: the legacy `gemini` CLI (→ `GeminiExecTransport`,
+`-o stream-json`) is RETIRED. Individual-tier accounts now hard-fail it
+(`IneligibleTierError`); the gemini provider spawns the Antigravity CLI
+`agy`, whose basename routes to the PTY path. `GeminiExecTransport` is no
+longer constructed in production (`_gemini` defaults to None) and `gemini`
+is no longer in the routing set, so nothing can mis-route to it.
 
 `RemoteAgentManager` only knows about ONE `SessionTransport`, so this
 strategy-pattern dispatcher:
@@ -40,9 +43,11 @@ logger = logging.getLogger("cli_pulse.transports.multiplex")
 # argv[0] basenames that should be routed through CodexExecTransport.
 _CODEX_EXEC_BINARIES = {"codex"}
 
-# argv[0] basenames that should be routed through GeminiExecTransport
-# (v1.19+). Kept minimal — when in doubt, use the PTY path.
-_GEMINI_EXEC_BINARIES = {"gemini"}
+# v-next P0-B: GeminiExecTransport is retired (gemini → agy → PTY). The
+# set is empty so no basename routes to it even when a legacy fixture
+# still passes a `gemini_exec_transport`. Kept (vs deleted) only so the
+# `_transport_for_argv` shape below reads symmetrically with the codex case.
+_GEMINI_EXEC_BINARIES: set[str] = set()
 
 
 class MultiplexTransport(SessionTransport):
@@ -101,6 +106,8 @@ class MultiplexTransport(SessionTransport):
         argv: list[str],
         env: Optional[dict[str, str]] = None,
         cwd: Optional[str] = None,
+        *,
+        pass_fds: tuple[int, ...] = (),
     ) -> SessionHandle:
         inner = self._transport_for_argv(argv)
         if inner is self._codex:
@@ -113,6 +120,12 @@ class MultiplexTransport(SessionTransport):
                 "multiplex.start session=%s routing→gemini_exec (argv0=%s)",
                 session_id, argv[0] if argv else "<empty>",
             )
+        # v-next P0-A: only the PTY transport honors auth `pass_fds` (the
+        # exec transports are never spawned with auth fds — claude is the
+        # only FD-injected provider and it always routes to PTY). Forward
+        # only when present + PTY so codex_exec.start keeps its signature.
+        if pass_fds and inner is self._pty:
+            return inner.start(session_id, argv, env, cwd, pass_fds=pass_fds)
         return inner.start(session_id, argv, env, cwd)
 
     def write_stdin(self, handle: SessionHandle, data: bytes) -> int:

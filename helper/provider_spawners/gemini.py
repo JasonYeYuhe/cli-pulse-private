@@ -1,36 +1,33 @@
 """
-Gemini CLI (Google) spawner — v1.15.
+Gemini (Antigravity CLI = `agy`) spawner.
 
-Gemini CLI 0.38.x defaults to interactive PTY mode. `--prompt` /
-`--prompt-interactive` exist for headless / seeded modes (not used by
-managed sessions today; the manager will inject the seeded prompt via
-PTY stdin write after spawn).
+v-next P0-B: the legacy `gemini` CLI now hard-fails individual-tier
+accounts with `IneligibleTierError` and points to the **Antigravity CLI
+`agy`** (`/opt/homebrew/bin/agy`). The registry KEY stays `"gemini"`
+(the app's managed-session provider namespace is independent of the
+usage-tracking `ProviderKind` enum), but the spawned binary is now `agy`.
+
+`agy` defaults to an interactive PTY TUI on a bare launch (proven
+on-device 2026-06-20 under the helper's PosixPtyTransport: it stays
+interactive and accepts typed stdin). Managed sessions carry NO seed
+prompt at spawn — input flows via `send_input_raw` (in-app xterm.js
+keystrokes) / `write_to_session` (remote submit) AFTER spawn — so the
+argv is the bare `["agy"]`, mirroring `["claude"]`. basename `"agy"`
+auto-routes to `PosixPtyTransport` (NOT the retired GeminiExecTransport).
 
 Approval surface:
-    Gemini has an `--approval-mode` flag with values
-    `default | auto_edit | yolo | plan` plus a `--yolo` shorthand.
-    There is no first-class hook protocol the helper can subscribe to.
+    `agy` exposes `--dangerously-skip-permissions` (auto-approve all tool
+    permission requests). There is no first-class hook protocol the
+    helper can subscribe to.
 
-    `params.extra_env` is the wire that will carry an optional
-    `CLI_PULSE_GEMINI_YOLO=1` flag when an opt-in YOLO toggle ships in
-    the picker. The translation logic — env var ⇒ `--yolo` argv flag —
-    is implemented here so the spawner is ready when the UI lands.
+    `params.extra_env` carries an optional `CLI_PULSE_GEMINI_YOLO=1` flag
+    when an opt-in YOLO toggle ships in the picker. The translation —
+    env var ⇒ `--dangerously-skip-permissions` argv flag — is here so the
+    spawner is ready when the UI lands. Until then the env var is never
+    set and `agy` prompts inline in its TUI.
 
-    Future picker work (NOT in v1.15): an explicit, per-spawn
-    "Auto-approve all tools (yolo)" toggle so the user picks between
-    failure modes:
-      * default — every tool prompts in the TUI; user must walk to
-                  the Mac to approve. Safe but blocks managed-session
-                  UX.
-      * yolo    — Gemini auto-approves everything. Risky but unblocks
-                  remote use. Must require explicit per-spawn opt-in
-                  (no remembered preference) when this UI exists.
-
-    Until that UI ships, the env var is never set by any caller and
-    Gemini runs in `default` mode.
-
-Override the binary path via `CLI_PULSE_GEMINI_ARGV0` if needed (same
-shape as Claude/Codex overrides).
+Override the binary path via `CLI_PULSE_GEMINI_ARGV0` if `agy` lives
+somewhere unusual (same shape as Claude/Codex overrides).
 """
 
 from __future__ import annotations
@@ -42,7 +39,7 @@ from .base import BaseSpawner
 
 class GeminiSpawner(BaseSpawner):
     name = "gemini"
-    binary = "gemini"
+    binary = "agy"
     argv0_env = "CLI_PULSE_GEMINI_ARGV0"
 
     # env_overrides ({}) / is_available / supports_remote_approval
@@ -51,14 +48,15 @@ class GeminiSpawner(BaseSpawner):
 
     def argv(self, params: Any) -> list[str]:
         # Base handles argv0-override tokenization (and the compound
-        # override + flag case the v1.15 tests pin).
+        # override + flag case the tests pin). Default → bare ["agy"].
         argv = super().argv(params)
 
-        # Forward --yolo only if the iOS spawn request explicitly opted
-        # in via env. Default OFF; the iOS picker is responsible for
-        # the consent UX.
+        # Forward the yolo opt-in only if the spawn request explicitly
+        # set it via env. Default OFF; the picker owns the consent UX.
+        # agy's flag is --dangerously-skip-permissions (the legacy gemini
+        # CLI used --yolo).
         extra_env = getattr(params, "extra_env", None) or {}
         if extra_env.get("CLI_PULSE_GEMINI_YOLO") in ("1", "true", "yes"):
-            argv = argv + ["--yolo"]
+            argv = argv + ["--dangerously-skip-permissions"]
 
         return argv

@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import time
 import uuid
@@ -54,6 +55,7 @@ from local_approvals import ApprovalRegistry
 from local_events import EventBroker
 from local_executor import LocalExecutor
 from ansi_sanitizer import strip as _ansi_strip
+from provider_spawners import augmented_path
 from redaction import redact
 from transports import SessionHandle, SessionTransport, TransportError
 
@@ -212,6 +214,7 @@ class RemoteAgentManager:
         event_broker: EventBroker | None = None,
         approval_registry: ApprovalRegistry | None = None,
         local_helper_socket_path: str | None = None,
+        claude_token_resolver: Callable[[], str | None] | None = None,
     ) -> None:
         self.helper_config = helper_config
         self.rpc_caller = rpc_caller
@@ -236,6 +239,15 @@ class RemoteAgentManager:
         self._event_broker = event_broker
         self._approval_registry = approval_registry
         self._local_helper_socket_path = local_helper_socket_path
+        # v-next P0-A: resolves a FRESH claude OAuth access token at spawn
+        # time (read file-first creds → refresh if expired → persist). When
+        # None (default — existing tests, unpaired callers), claude auth
+        # injection is DISABLED and the spawn behaves exactly as before; the
+        # production daemon wires this to
+        # `claude_oauth.resolve_fresh_claude_access_token`. Injected (not
+        # imported) so tests stay hermetic — a test never touches real creds
+        # or the network unless it opts in with its own resolver.
+        self._claude_token_resolver = claude_token_resolver
 
     @staticmethod
     def _default_transport() -> SessionTransport:
@@ -249,16 +261,16 @@ class RemoteAgentManager:
         # v1.17: wrap PosixPty + CodexExec in a multiplex so Codex
         # sessions bypass the ratatui TUI entirely (see
         # transports/codex_exec.py docstring for the full story).
-        # v1.19: GeminiExec added — gemini CLI has the same TUI-vs-
-        # stream-json choice. See transports/gemini_exec.py.
+        # v-next P0-B: GeminiExecTransport retired — the gemini provider
+        # spawns `agy`, which routes to the PTY path. No longer constructed
+        # (gemini_exec_transport defaults to None → gemini basenames fall
+        # through to PTY).
         from transports.posix_pty import PosixPtyTransport
         from transports.codex_exec import CodexExecTransport
-        from transports.gemini_exec import GeminiExecTransport
         from transports.multiplex import MultiplexTransport
         return MultiplexTransport(
             pty_transport=PosixPtyTransport(),
             codex_exec_transport=CodexExecTransport(),
-            gemini_exec_transport=GeminiExecTransport(),
         )
 
     # ── executor routing ─────────────────────────────────────
@@ -326,10 +338,19 @@ class RemoteAgentManager:
         env = self._build_env(params, capability_token=capability_token)
         cwd = params.cwd or None  # POSIX transport interprets None as inherit
 
+        # v-next P0-A: resolve + inject a fresh provider auth token. For
+        # claude this hands the child a current OAuth token over an
+        # inherited fd (leak-safe). `auth_fd` is closed in the `finally`
+        # below once the child owns its own inherited copy.
+        auth_fd, env = self._inject_provider_auth(params, env)
+        start_kwargs: dict[str, Any] = dict(
+            session_id=params.session_id, argv=argv, env=env, cwd=cwd,
+        )
+        if auth_fd is not None:
+            start_kwargs["pass_fds"] = (auth_fd,)
+
         try:
-            handle = self.transport.start(
-                session_id=params.session_id, argv=argv, env=env, cwd=cwd,
-            )
+            handle = self.transport.start(**start_kwargs)
         except TransportError as exc:
             # Status payload MUST be exactly `'errored'` for the SQL
             # gate to transition `remote_sessions.status`. Spawn-failure
@@ -354,6 +375,15 @@ class RemoteAgentManager:
                 params.session_id, f"spawn failed: {exc}"
             )
             return False
+        finally:
+            # The child (if it launched) inherited its own copy of the
+            # auth read-end; close ours so the fd doesn't leak in the
+            # daemon. Runs on both the success and spawn-failure paths.
+            if auth_fd is not None:
+                try:
+                    os.close(auth_fd)
+                except OSError:
+                    pass
 
         self._sessions[params.session_id] = _ManagedSession(
             params=params, handle=handle, spawned_at=time.monotonic(),
@@ -1077,6 +1107,12 @@ class RemoteAgentManager:
         """
         env: dict[str, str] = {}
         env.update(params.extra_env or {})
+        # v-next P0-C: launchd's minimal PATH omits /opt/homebrew/bin (agy)
+        # and ~/.local/bin (claude), so the child can't exec the provider
+        # binary. Append the common install dirs (same set the availability
+        # probe searches). The POSIX transport merges this onto os.environ,
+        # so setting PATH here overrides the daemon's bare PATH.
+        env["PATH"] = augmented_path()
         # Critical binding: `remote_hook.py` prefers this over Claude's
         # raw hook session_id when creating permission requests, so an
         # inline approve from the Sessions UI lands on the row matching
@@ -1094,6 +1130,62 @@ class RemoteAgentManager:
             env["CLI_PULSE_LOCAL_HOOK_TOKEN"] = capability_token
             env["CLI_PULSE_LOCAL_HELPER_SOCK"] = self._local_helper_socket_path
         return env
+
+    def _inject_provider_auth(
+        self, params: SessionStartParams, env: dict[str, str]
+    ) -> tuple[int | None, dict[str, str]]:
+        """Resolve + inject a fresh provider auth token for the child.
+
+        Returns ``(auth_fd, env)``. For claude — when a token resolver is
+        configured and yields a token — prefers passing the token over an
+        INHERITED read-only pipe fd (`CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`)
+        so the raw token never lands in the child's env (and thus not in
+        `ps eww` nor any tool subprocess claude itself spawns). `auth_fd`
+        is the read-end the CALLER must close after `transport.start`
+        returns — the child keeps its own inherited copy. Falls back to the
+        `CLAUDE_CODE_OAUTH_TOKEN` env var if the fd plumbing fails, and to
+        no injection ``(None, env)`` for non-claude providers or when no
+        token resolves. NEVER raises — auth resolution must not break a
+        spawn (a missing token just yields the pre-existing 401 behaviour).
+        The token is NEVER logged.
+        """
+        if (params.provider or "").lower() != "claude":
+            return None, env
+        resolver = self._claude_token_resolver
+        if resolver is None:
+            return None, env
+        try:
+            token = resolver()
+        except Exception as exc:  # noqa: BLE001 — resolution is best-effort
+            logger.warning(
+                "claude token resolve failed (spawning without injection): %s", exc
+            )
+            return None, env
+        if not token:
+            logger.info(
+                "no claude OAuth token resolved; spawning without auth injection (may 401)"
+            )
+            return None, env
+        env = dict(env)
+        # Prefer the leak-safe FD path: write the token into a pipe, hand
+        # the read-end to the child (inheritable + pass_fds), and tell
+        # claude which fd to read. The token is in the pipe buffer (108
+        # bytes ≪ pipe capacity) so the write never blocks.
+        try:
+            r, w = os.pipe()
+            try:
+                os.write(w, token.encode("utf-8"))
+            finally:
+                os.close(w)
+            os.set_inheritable(r, True)
+            env["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"] = str(r)
+            return r, env
+        except OSError as exc:
+            logger.warning(
+                "claude token FD plumbing failed; falling back to env var: %s", exc
+            )
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+            return None, env
 
     @staticmethod
     def _extract_pid(handle: SessionHandle) -> int | None:
