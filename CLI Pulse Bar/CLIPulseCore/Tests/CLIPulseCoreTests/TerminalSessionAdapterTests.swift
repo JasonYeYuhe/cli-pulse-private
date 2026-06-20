@@ -80,6 +80,20 @@ final class TerminalSessionAdapterTests: XCTestCase {
         XCTAssertEqual(adapter.provider, "codex")
     }
 
+    // MARK: - v-next P1-1: working-directory wiring
+
+    @MainActor
+    func test_adapterDefaultsCwdToNil() async {
+        // No cwd ⇒ helper inherits its own dir (prior behaviour).
+        XCTAssertNil(TerminalSessionAdapter().cwd)
+    }
+
+    @MainActor
+    func test_adapterStoresChosenCwd() async {
+        let adapter = TerminalSessionAdapter(provider: "claude", cwd: "/tmp/project")
+        XCTAssertEqual(adapter.cwd, "/tmp/project")
+    }
+
     // MARK: - TerminalSessionAdapter.deliver with nil view
 
     /// `deliver(event:to:nil)` is the safety net for the

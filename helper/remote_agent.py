@@ -446,9 +446,12 @@ class RemoteAgentManager:
                 })
             except Exception as exc:  # noqa: BLE001
                 logger.debug("broker session_started publish failed: %s", exc)
+        # v-next P1-1: log only the cwd BASENAME, never the full absolute
+        # path (it can contain a user/project name — keep logs privacy-safe).
+        _cwd_log = os.path.basename(cwd.rstrip("/")) if cwd else "<inherit>"
         logger.info(
             "spawn_session(%s): provider=%s cwd=%s",
-            params.session_id, params.provider, cwd or "<inherit>",
+            params.session_id, params.provider, _cwd_log,
         )
 
         # Server-side: register the session row so the app sees status='running'
@@ -1114,10 +1117,14 @@ class RemoteAgentManager:
         provider = payload.get("provider") or "claude"
         if not isinstance(provider, str) or not provider:
             provider = "claude"
+        # v-next P1-1: real working directory. The UDS server has already
+        # validated it (absolute + existing dir); '' / missing → inherit the
+        # daemon's dir (prior behaviour). Local-only — never sent to the cloud.
+        cwd = payload.get("cwd")
         params = SessionStartParams(
             session_id=session_id,
             provider=provider,
-            cwd="",
+            cwd=cwd if isinstance(cwd, str) and cwd else "",
             cwd_hmac=cwd_hmac if isinstance(cwd_hmac, str) else None,
             client_label=client_label if isinstance(client_label, str) else None,
         )

@@ -1389,3 +1389,56 @@ def test_every_swift_client_method_has_a_live_handler(short_sock_dir):
             )
     finally:
         server.stop()
+
+
+# ── v-next P1-1: working-directory selection ──────────────────────────
+
+def test_start_session_rejects_relative_cwd(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "start_session", "auth_token": "T",
+            "params": {"provider": "claude", "cwd": "relative/dir"},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "bad_request"
+    finally:
+        server.stop()
+
+
+def test_start_session_rejects_nonexistent_cwd(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "start_session", "auth_token": "T",
+            "params": {"provider": "claude", "cwd": "/no/such/dir/zzz_definitely_missing"},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "bad_request"
+    finally:
+        server.stop()
+
+
+def test_start_session_passes_valid_cwd_to_manager(short_sock_dir):
+    server, mgr, _state = _make_server(short_sock_dir)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "start_session", "auth_token": "T",
+            "params": {"provider": "claude", "cwd": "/tmp"},
+        })
+        assert reply["ok"] is True
+        assert mgr.start_calls[0]["cwd"] == "/tmp"
+    finally:
+        server.stop()
+
+
+def test_start_session_without_cwd_passes_none(short_sock_dir):
+    server, mgr, _state = _make_server(short_sock_dir)
+    try:
+        _client_call(server._socket_path, {
+            "id": "1", "method": "start_session", "auth_token": "T",
+            "params": {"provider": "claude"},
+        })
+        assert mgr.start_calls[0]["cwd"] is None
+    finally:
+        server.stop()

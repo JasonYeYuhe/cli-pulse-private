@@ -438,16 +438,36 @@ public final class LocalSessionControlClient: SessionControlClient {
         )
     }
 
+    /// `SessionControlClient` protocol conformance (4-param). Forwards to the
+    /// v-next P1-1 cwd-aware overload with `cwd: nil` (inherit). Kept as a
+    /// distinct method (rather than a defaulted param) so the 4-param protocol
+    /// requirement is satisfied exactly and existing callers stay unchanged.
     public func startManagedSession(
         provider: String,
         clientLabel: String?,
         cwdBasename: String?,
         cwdHmac: String?
     ) async throws -> SessionControlStartResult {
+        try await startManagedSession(
+            provider: provider, clientLabel: clientLabel,
+            cwdBasename: cwdBasename, cwdHmac: cwdHmac, cwd: nil)
+    }
+
+    public func startManagedSession(
+        provider: String,
+        clientLabel: String?,
+        cwdBasename: String?,
+        cwdHmac: String?,
+        cwd: String?
+    ) async throws -> SessionControlStartResult {
         var params: [String: Any] = ["provider": provider]
         if let clientLabel { params["client_label"] = clientLabel }
         if let cwdBasename { params["cwd_basename"] = cwdBasename }
         if let cwdHmac { params["cwd_hmac"] = cwdHmac }
+        // v-next P1-1: the real absolute working directory the helper spawns
+        // the child in. Local UDS only (same-Mac); the helper validates it
+        // (absolute + existing dir). Omitted ⇒ helper inherits its own dir.
+        if let cwd { params["cwd"] = cwd }
         let result = try await send(method: "start_session", params: params)
         guard let sid = result["session_id"] as? String, !sid.isEmpty else {
             throw SessionControlError.invalidResponse("start_session: missing session_id")

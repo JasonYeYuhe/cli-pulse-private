@@ -704,6 +704,24 @@ def test_get_tail_snapshot_via_drain_path():
     assert b"hello world from the terminal" in data
 
 
+# ── v-next P1-1: working-directory selection ────────────────────────
+
+
+def test_local_start_threads_cwd_to_transport(tmp_path):
+    mgr, transport, _log = _make_manager()
+    result = mgr.local_start_claude_session({"provider": "claude", "cwd": str(tmp_path)})
+    assert result["ok"]
+    start = [c for c in transport.calls if c[0] == "start"][0][1]
+    assert start["cwd"] == str(tmp_path)
+
+
+def test_local_start_without_cwd_inherits():
+    mgr, transport, _log = _make_manager()
+    mgr.local_start_claude_session({"provider": "claude"})
+    start = [c for c in transport.calls if c[0] == "start"][0][1]
+    assert start["cwd"] is None  # POSIX transport treats None as inherit
+
+
 def test_raw_ring_fails_closed_on_ansi_split_secret():
     """A secret split by a VT escape (which hides the token shape from the
     naive redactor) must NOT survive in the retained/replayable ring —
