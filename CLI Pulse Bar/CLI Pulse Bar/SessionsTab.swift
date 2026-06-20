@@ -3,6 +3,9 @@ import CLIPulseCore
 
 struct SessionsTab: View {
     @EnvironmentObject var state: AppState
+    /// P1: open the real per-session terminal window (value-keyed WindowGroup
+    /// in CLIPulseBarApp). DEVID-only; the CTA is gated on the same probe.
+    @Environment(\.openWindow) private var openWindow
     @State private var selectedManagedSessionId: String?
     @State private var promptText: String = ""
     /// User-explicit "Show output" toggle. Default OFF — output upload
@@ -811,6 +814,24 @@ struct SessionsTab: View {
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                 Spacer()
+                // P1: the real 1:1 terminal is the primary control surface for
+                // a locally-routed managed session. DEVID-only (the in-app
+                // terminal can't host inside the MAS sandbox) and only once the
+                // session is running (there's a PTY to attach to). Opening is a
+                // value-keyed window → per-session singleton; closing detaches
+                // (the session keeps running).
+                if MASSandboxGate.canHostInAppTerminal, routesLocally, isRunning {
+                    Button {
+                        openWindow(value: TerminalSessionKey(sessionId: session.id,
+                                                             provider: session.provider))
+                    } label: {
+                        Label("Open Terminal", systemImage: "terminal")
+                            .font(.system(size: 10))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.mini)
+                    .help("Open the real terminal for this session — the exact CLI TUI rendered 1:1. Closing the window detaches; the session keeps running and is re-openable here.")
+                }
                 Button {
                     if showOutput {
                         // Collapsing — drop both caches so the next

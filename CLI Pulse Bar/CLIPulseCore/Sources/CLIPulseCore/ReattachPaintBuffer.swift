@@ -23,6 +23,13 @@
 // DROPPING bytes, not perfectly dedup them. (A precise dedup would require
 // the helper to hand back a stream offset; out of scope for this train.)
 //
+// Caveat (deep review): the duplicate is NOT byte-identical — the snapshot is
+// re-redacted as one block while the live copy was redacted per-chunk, so the
+// two can diverge. This never EXPOSES a secret (the snapshot is the
+// more-redacted copy). And for output that SCROLLS (not a cursor-home repaint)
+// the duplicate lines stay visible in scrollback. Both are cosmetic; the
+// stream-offset dedup above is the clean follow-up fix if it ever matters.
+//
 // Pure value type, no I/O — fully unit-testable without a WKWebView or a live
 // helper. The owning `TerminalSessionAdapter` is `@MainActor`, so all access
 // is single-threaded; no locking needed.

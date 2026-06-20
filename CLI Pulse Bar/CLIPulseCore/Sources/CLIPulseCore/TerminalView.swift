@@ -116,7 +116,12 @@ public final class TerminalView: NSView {
         // Tear down the message handler so WKWebView doesn't
         // retain a dangling reference after dealloc.
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "terminal")
-        coalescer.flushNow()
+        // Deliberately do NOT flush here: emitting a final batch into a
+        // deallocating WKWebView via evaluateJavaScript has no value and is the
+        // only `evaluateJavaScript` path that could run off-main in a narrow
+        // dealloc-timing window (deep review). The coalescer's pending bytes are
+        // freed with `self`; its onFlush captures `[weak self]`, so any already-
+        // scheduled flush no-ops once we're gone.
     }
 
     /// Push a chunk of raw stdout to the terminal. Bytes are

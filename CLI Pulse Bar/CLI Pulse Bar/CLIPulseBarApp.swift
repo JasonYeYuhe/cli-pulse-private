@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import ServiceManagement
 import CLIPulseCore
 import os.log
@@ -70,9 +71,16 @@ struct CLIPulseBarApp: App {
             if MASSandboxGate.canHostInAppTerminal {
                 CommandMenu("Terminal") {
                     Button("New Terminal — Claude") {
-                        openWindow(id: "terminal-claude")
+                        newTerminal(provider: "claude")
                     }
                     .keyboardShortcut("t", modifiers: [.command, .shift])
+                    Button("New Terminal — Gemini (agy)") {
+                        newTerminal(provider: "gemini")
+                    }
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+                    Button("New Terminal — Codex") {
+                        newTerminal(provider: "codex")
+                    }
                 }
             }
         }
@@ -104,17 +112,77 @@ struct CLIPulseBarApp: App {
         .windowResizability(.contentSize)
         .defaultPosition(.center)
 
-        // v1.24 Phase 3 — in-app terminal window scene. Registered
-        // unconditionally (SwiftUI requires the scene to exist for
-        // `openWindow(id:)` to be a no-op on MAS where the menu
-        // button is hidden anyway). The TerminalSessionView body
-        // spawns a managed Claude session via the helper RPC and
-        // streams stdout into the xterm.js viewport.
-        Window("Terminal — Claude", id: "terminal-claude") {
-            TerminalSessionView(provider: "claude")
+        // v1.32.1 P1 — in-app terminal as the PRIMARY surface. A value-based
+        // WindowGroup keyed by `TerminalSessionKey` gives a per-session
+        // SINGLETON: `openWindow(value:)` with a key whose window is already
+        // open brings it forward instead of spawning a second WKWebView on the
+        // same session. The window ATTACHES to an already-running session (the
+        // id is resolved before opening — spawned headlessly for "New", or the
+        // existing id from the Sessions row). Closing detaches (P1-3); the
+        // helper session keeps running. Registered unconditionally so
+        // `openWindow(value:)` is a harmless no-op on MAS (menu hidden there).
+        WindowGroup(for: TerminalSessionKey.self) { $key in
+            if let key {
+                TerminalAttachView(sessionId: key.sessionId, provider: key.provider)
+            }
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
+    }
+
+    /// "New Terminal — <provider>": pick a working directory, spawn the managed
+    /// session headlessly, then open a window keyed by the helper-assigned id so
+    /// the value-based WindowGroup singleton owns it. DEVID-only (the menu is
+    /// gated by `MASSandboxGate.canHostInAppTerminal`). Spawn-first means the
+    /// window always uses the attach-to-existing path (no spawn-on-appear),
+    /// unifying "New" and "Open existing" on one code path.
+    @MainActor
+    private func newTerminal(provider: String) {
+        // Capture the action before the modal panel runs its nested runloop —
+        // grabbing `self.openWindow` from inside the escaping completion can
+        // otherwise pick up a stale environment reference (Gemini 3.1 Pro review).
+        let windowAction = openWindow
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open Terminal Here"
+        panel.message = "Choose the working directory for the \(provider.capitalized) session"
+        panel.directoryURL = home
+        panel.begin { response in
+            // Cancel cancels — don't headlessly spawn a CLI in HOME when the
+            // user backed out (Codex review): spawn now happens before any
+            // window appears, so a fallback-to-HOME would be an invisible
+            // surprise session.
+            guard response == .OK, let cwd = panel.url?.path else { return }
+            Task { @MainActor in
+                do {
+                    let result = try await LocalSessionControlClient().startManagedSession(
+                        provider: provider,
+                        clientLabel: "in-app-terminal",
+                        cwdBasename: (cwd as NSString).lastPathComponent,
+                        cwdHmac: nil,
+                        cwd: cwd)
+                    windowAction(value: TerminalSessionKey(sessionId: result.sessionId,
+                                                           provider: provider))
+                } catch {
+                    // A menu command that silently does nothing reads as "the
+                    // app is broken" (helper down / control off / missing
+                    // binary / bad cwd). Tell the user why (both reviewers).
+                    logger.error("newTerminal(\(provider)) spawn failed: \(error.localizedDescription)")
+                    // LSUIElement apps aren't frontmost after the async gap, so
+                    // a bare runModal() can open behind other apps and look like
+                    // a hung menu — activate first (deep review).
+                    NSApp.activate(ignoringOtherApps: true)
+                    let alert = NSAlert()
+                    alert.messageText = "Couldn't start \(provider.capitalized) session"
+                    alert.informativeText = error.localizedDescription
+                    alert.alertStyle = .warning
+                    alert.runModal()
+                }
+            }
+        }
     }
 }
 
