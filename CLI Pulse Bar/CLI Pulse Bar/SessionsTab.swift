@@ -959,8 +959,58 @@ struct SessionsTab: View {
 
     // MARK: - Output panel
 
+    /// P3: demote the lossy stripped preview for sessions that now have the
+    /// real 1:1 terminal. The owner's gripe was the garbled live `output_delta`
+    /// summary (spinner churn like `Photosynthesizing…`); for any locally-routed
+    /// session on a DEVID build the in-app terminal renders that output 1:1, so
+    /// we DROP the live animation here and point to "Open Terminal" instead of
+    /// regex-fighting the TUI (a scope trap both reviewers flagged). Remote /
+    /// non-DEVID sessions — which have no terminal — keep the live preview as
+    /// their only window into the session.
     @ViewBuilder
     private func outputPanel(for session: RemoteSession) -> some View {
+        if MASSandboxGate.canHostInAppTerminal, state.shouldRouteSessionLocally(session) {
+            demotedOutputPeek(for: session)
+        } else {
+            liveOutputPreview(for: session)
+        }
+    }
+
+    /// Static, no-animation peek shown in place of the live transcript once the
+    /// real terminal exists for this session.
+    private func demotedOutputPeek(for session: RemoteSession) -> some View {
+        let statusText: String = {
+            switch session.status.lowercased() {
+            case "running": return "Running"
+            case "pending": return "Starting…"
+            case "errored": return "Errored"
+            case "stopped", "ended": return "Stopped"
+            default: return session.status.capitalized
+            }
+        }()
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "terminal").font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                Text("Live output is in the terminal").font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(statusText).font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.tertiary)
+            }
+            Text("Click \u{201C}Open Terminal\u{201D} above for the real CLI — colors, spinners, box-drawing, cursor, all 1:1. This summary view is a lossy ANSI-stripped digest.")
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.black.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+
+    @ViewBuilder
+    private func liveOutputPreview(for session: RemoteSession) -> some View {
         let routesLocally = state.shouldRouteSessionLocally(session)
         // Iter 2B: local-routed rows take their preview from the
         // live UDS stream (subscribeToLocalEvents). Remote-routed
