@@ -129,8 +129,8 @@ class SessionTransport(ABC):
         """
 
     # Concrete default (NOT abstract): v1.30.x in-app terminal window resize.
-    # Only the PTY transport has a live TTY to resize; codex_exec / gemini_exec
-    # / conpty have no resizable window, so they inherit this no-op. Overrides
+    # Only the PTY transport has a live TTY to resize; codex_exec / conpty
+    # have no resizable window, so they inherit this no-op. Overrides
     # MUST be failure-soft — a resize must never kill the session.
     def resize(self, handle: SessionHandle, rows: int, cols: int) -> None:
         """Update the child's terminal window size. Default: no-op."""

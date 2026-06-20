@@ -32,6 +32,7 @@ import logging
 import os
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.request
 from typing import Any, Callable
@@ -57,13 +58,41 @@ _KEYCHAIN_SERVICE = "Claude Code-credentials"
 # Refresh if the access token expires within this many seconds (or is
 # already past). Keeps a margin so a token doesn't expire mid-spawn.
 _EXPIRY_SKEW_SECS = 300
-# Per-endpoint network timeout. The refresh runs on the spawn path, so
-# keep it tight — a token that's still valid never reaches the network.
-_REFRESH_TIMEOUT_SECS = 10
+# Per-endpoint network timeout. The refresh runs on the spawn path (the
+# single-writer executor), so keep it tight — a stuck endpoint must not
+# freeze other sessions for long. With the in-memory cache below, the
+# network is only reached on a cold cache + expired token, so this is a
+# rare cold path. Worst case = this × len(_REFRESH_ENDPOINTS).
+_REFRESH_TIMEOUT_SECS = 6
 
 
 def _now() -> float:
     return time.time()
+
+
+# In-memory cache of the last resolved access token + its expiry (epoch
+# seconds). Lets repeated spawns within the token's validity window skip
+# BOTH the file read and the network refresh on the single-writer
+# executor thread — so a managed-session spawn never blocks other live
+# sessions in the steady state. Reset between tests via the helper below.
+_cache: dict[str, Any] = {"access_token": None, "expires_at": 0.0}
+# Serializes concurrent helper-thread refreshes. The refresh token is
+# single-use (the endpoint rotates it), so two threads refreshing the
+# same token would have one fail; the lock + a double-checked cache make
+# the loser return the freshly-cached token instead of attempting the
+# doomed refresh.
+_refresh_lock = threading.Lock()
+
+
+def _cache_token(token: str | None, expires_at_secs: float | None) -> None:
+    if token and expires_at_secs:
+        _cache["access_token"] = token
+        _cache["expires_at"] = float(expires_at_secs)
+
+
+def _reset_cache_for_testing() -> None:
+    _cache["access_token"] = None
+    _cache["expires_at"] = 0.0
 
 
 # ── credential reading ───────────────────────────────────────────────
@@ -177,6 +206,10 @@ def refresh_claude_token(
                 data = json.loads(resp.read())
             at = data.get("access_token")
             if isinstance(at, str) and at.startswith("sk-ant-oat"):
+                if not data.get("refresh_token"):
+                    # Endpoint normally rotates; a missing one means we keep
+                    # the prior refresh token (correct iff it wasn't rotated).
+                    logger.debug("claude refresh returned no rotated refresh_token")
                 logger.debug("claude token refresh succeeded via %s", endpoint)
                 return data
             logger.debug("claude refresh via %s returned no usable token", endpoint)
@@ -231,13 +264,32 @@ def _persist_refreshed_to_file(token_response: dict) -> bool:
         return False
 
 
+def _cache_hit() -> str | None:
+    cached = _cache["access_token"]
+    if cached and _now() + _EXPIRY_SKEW_SECS < _cache["expires_at"]:
+        return cached
+    return None
+
+
 def resolve_fresh_claude_access_token(*, urlopen: Callable | None = None) -> str | None:
     """Return a currently-valid claude access token, refreshing +
-    persisting when the stored one is expired. None if no credential is
-    found. On a refresh failure, returns the (stale) access token if one
-    exists so the caller can still try — claude will 401 if it's truly
-    dead, which is no worse than injecting nothing.
+    persisting when the stored one is expired.
+
+    Returns None when there is no credential OR the token is **provably
+    expired and cannot be refreshed** — in that case we deliberately do
+    NOT inject a known-dead token (it would 401 anyway and falsely look
+    "authenticated"); the caller spawns without injection and the 401
+    surfaces in the session output so the user knows to re-login. Returns
+    the stored token when it is still valid or its expiry is unknown
+    (best-effort / offline capability).
+
+    The fast path is a process-local cache so repeated spawns within the
+    token's validity window never touch the file or network on the
+    single-writer executor thread.
     """
+    hit = _cache_hit()
+    if hit:
+        return hit
     oauth, _source = read_claude_oauth()
     if oauth is None:
         logger.debug("no claude credential found for managed-session injection")
@@ -247,13 +299,40 @@ def resolve_fresh_claude_access_token(*, urlopen: Callable | None = None) -> str
     # Provably valid (with skew)? Use as-is — preserves offline capability
     # and avoids needless token rotation.
     if access and expiry is not None and _now() + _EXPIRY_SKEW_SECS < expiry:
+        _cache_token(access, expiry)
         return access
+    provably_expired = expiry is not None and _now() >= expiry
     refresh = _refresh_of(oauth)
     if not refresh:
-        logger.debug("claude token not provably valid and no refresh token available")
-        return access
-    resp = refresh_claude_token(refresh, urlopen=urlopen)
-    if not resp:
-        return access  # refresh failed; fall back to stale (may 401)
-    _persist_refreshed_to_file(resp)
-    return resp.get("access_token") or access
+        if provably_expired:
+            logger.warning(
+                "claude token expired and no refresh token available — "
+                "managed claude will not be auth-injected (run `claude /login`)"
+            )
+            return None
+        return access  # unknown expiry → best-effort
+    # A refresh is needed. Serialize concurrent helper-thread refreshes
+    # (the refresh token is single-use) and re-check the cache under the
+    # lock — another thread may have just refreshed it.
+    with _refresh_lock:
+        hit = _cache_hit()
+        if hit:
+            return hit
+        resp = refresh_claude_token(refresh, urlopen=urlopen)
+        if not resp:
+            if provably_expired:
+                logger.warning(
+                    "claude token expired and refresh failed — managed claude "
+                    "will not be auth-injected (network down or token revoked)"
+                )
+                return None
+            return access  # unknown expiry → best-effort
+        if not _persist_refreshed_to_file(resp):
+            # Non-fatal: the in-memory token still drives this spawn, but
+            # the next spawn will refresh again (rotated token not saved).
+            logger.warning("claude token refreshed but credential writeback failed")
+        new_token = resp.get("access_token") or access
+        expires_in = resp.get("expires_in")
+        if isinstance(expires_in, (int, float)) and expires_in > 0:
+            _cache_token(new_token, _now() + expires_in)
+        return new_token

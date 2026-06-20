@@ -72,6 +72,15 @@ def _write_creds(path: Path, oauth: dict, *, extra_top: dict | None = None) -> N
     os.chmod(path, 0o600)
 
 
+@pytest.fixture(autouse=True)
+def _reset_cache():
+    # The resolver keeps a process-local token cache; reset it around
+    # every test so one test's cached token can't short-circuit another.
+    co._reset_cache_for_testing()
+    yield
+    co._reset_cache_for_testing()
+
+
 @pytest.fixture
 def creds_file(tmp_path, monkeypatch):
     p = tmp_path / ".credentials.json"
@@ -209,7 +218,10 @@ def test_resolve_refreshes_and_persists_when_expired(creds_file, clock):
     assert stat.S_IMODE(os.stat(creds_file).st_mode) == 0o600
 
 
-def test_resolve_returns_stale_token_when_refresh_fails(creds_file, clock):
+def test_resolve_returns_none_when_expired_and_refresh_fails(creds_file, clock):
+    """A PROVABLY-expired token whose refresh fails must NOT be injected —
+    we return None (spawn without injection) rather than a known-dead token
+    that would 401 while looking authenticated (codex review)."""
     _write_creds(creds_file, {
         "accessToken": "sk-ant-oat01-STALE", "refreshToken": "sk-ant-ort01-R",
         "expiresAt": int((clock["now"] - 10) * 1000),
@@ -217,14 +229,66 @@ def test_resolve_returns_stale_token_when_refresh_fails(creds_file, clock):
     token = co.resolve_fresh_claude_access_token(
         urlopen=_urlopen_fail(OSError("network down")),
     )
-    # Falls back to the stale token (no worse than injecting nothing); the
-    # file is NOT rewritten.
-    assert token == "sk-ant-oat01-STALE"
+    assert token is None
+    # File is NOT rewritten (no successful refresh).
     assert json.loads(creds_file.read_text())["claudeAiOauth"]["accessToken"] == "sk-ant-oat01-STALE"
+
+
+def test_resolve_returns_stale_token_when_expiry_unknown(creds_file, clock):
+    """If expiry is unknown (not provably expired), best-effort: return the
+    stored token rather than failing — preserves offline capability."""
+    _write_creds(creds_file, {
+        "accessToken": "sk-ant-oat01-NOEXP", "refreshToken": "sk-ant-ort01-R",
+        # no expiresAt
+    })
+    token = co.resolve_fresh_claude_access_token(
+        urlopen=_urlopen_fail(OSError("network down")),
+    )
+    assert token == "sk-ant-oat01-NOEXP"
 
 
 def test_resolve_returns_none_without_credentials(creds_file):
     assert co.resolve_fresh_claude_access_token(urlopen=_urlopen_ok({})) is None
+
+
+def test_resolve_caches_token_to_avoid_repeat_network(creds_file, clock):
+    """Executor-stall guard: after one refresh, a subsequent resolve within
+    the validity window returns the cached token WITHOUT any network call."""
+    _write_creds(creds_file, {
+        "accessToken": "sk-ant-oat01-OLD", "refreshToken": "sk-ant-ort01-OLD",
+        "expiresAt": int((clock["now"] - 10) * 1000),
+    })
+    calls: list = []
+
+    def _open(req, timeout=10):
+        calls.append(1)
+        return _Resp({"access_token": _FRESH_AT, "refresh_token": _ROTATED_RT,
+                      "expires_in": 28800})
+
+    t1 = co.resolve_fresh_claude_access_token(urlopen=_open)
+
+    def _boom(req, timeout=10):
+        raise AssertionError("second resolve must hit the cache, not the network")
+
+    t2 = co.resolve_fresh_claude_access_token(urlopen=_boom)
+    assert t1 == t2 == _FRESH_AT
+    assert len(calls) == 1
+
+
+def test_refresh_keeps_old_refresh_when_response_lacks_rotation(creds_file, clock):
+    """If the endpoint returns an access token but no rotated refresh token,
+    persist the new access while KEEPING the prior refresh token."""
+    _write_creds(creds_file, {
+        "accessToken": "sk-ant-oat01-OLD", "refreshToken": "sk-ant-ort01-KEEP",
+        "expiresAt": int((clock["now"] - 10) * 1000),
+    })
+    token = co.resolve_fresh_claude_access_token(
+        urlopen=_urlopen_ok({"access_token": _FRESH_AT, "expires_in": 28800}),  # no refresh_token
+    )
+    assert token == _FRESH_AT
+    o = json.loads(creds_file.read_text())["claudeAiOauth"]
+    assert o["accessToken"] == _FRESH_AT
+    assert o["refreshToken"] == "sk-ant-ort01-KEEP"  # preserved
 
 
 def test_resolve_does_not_leak_token_via_logs(creds_file, clock, caplog):

@@ -13,7 +13,8 @@ interactive and accepts typed stdin). Managed sessions carry NO seed
 prompt at spawn — input flows via `send_input_raw` (in-app xterm.js
 keystrokes) / `write_to_session` (remote submit) AFTER spawn — so the
 argv is the bare `["agy"]`, mirroring `["claude"]`. basename `"agy"`
-auto-routes to `PosixPtyTransport` (NOT the retired GeminiExecTransport).
+auto-routes to `PosixPtyTransport` (the gemini-specific exec transport
+was deleted with this swap).
 
 Approval surface:
     `agy` exposes `--dangerously-skip-permissions` (auto-approve all tool

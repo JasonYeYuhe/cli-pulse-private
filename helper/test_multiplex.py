@@ -109,18 +109,6 @@ def mux():
     return MultiplexTransport(pty, codex), pty, codex
 
 
-@pytest.fixture
-def mux_with_gemini():
-    """v1.19+: mux fixture with the optional gemini_exec transport
-    wired. Existing tests use the 2-arg fixture above to verify the
-    backward-compat constructor signature (gemini=None) still routes
-    gemini→PTY as a fallback."""
-    pty = _FakeTransport("pty")
-    codex = _FakeTransport("codex")
-    gemini = _FakeTransport("gemini")
-    return MultiplexTransport(pty, codex, gemini), pty, codex, gemini
-
-
 # ── start() routing by argv ────────────────────────────────────
 
 
@@ -353,69 +341,51 @@ class TestHandleOwnershipErrors:
 
 
 class TestGeminiRouting:
-    """v-next P0-B: GeminiExecTransport is RETIRED — the gemini provider
-    now spawns `agy`, which routes to the PTY path. These tests pin the
-    retirement: a `gemini` basename routes to PTY even when a legacy
-    `gemini_exec_transport` is still wired into the constructor, and the
+    """v-next P0-B: the GeminiExecTransport is DELETED — the gemini
+    provider spawns `agy`, which routes to the PTY path like claude.
+    These tests pin that a `gemini`/`agy` basename routes to PTY and the
     codex/claude routing invariants are unaffected.
     """
 
-    def test_argv0_gemini_now_routes_to_pty_even_with_transport_wired(self, mux_with_gemini):
-        """Retired: `gemini` basename → PTY (NOT the wired gemini transport)."""
-        m, pty, codex, gemini = mux_with_gemini
+    def test_argv0_gemini_routes_to_pty(self, mux):
+        """Retired binary name still routes to PTY (no gemini transport)."""
+        m, pty, codex = mux
         env = {"GEMINI_API_KEY": "fake"}
         cwd = "/tmp/work"
         h = m.start("g1", ["gemini"], env=env, cwd=cwd)
         assert pty.calls == [("start", ("g1", ("gemini",), env, cwd))]
-        assert gemini.calls == []
         assert codex.calls == []
         assert h.payload.kind == "pty"
 
-    def test_argv0_agy_routes_to_pty(self, mux_with_gemini):
+    def test_argv0_agy_routes_to_pty(self, mux):
         """The live gemini-provider binary is `agy` → PTY."""
-        m, pty, _codex, gemini = mux_with_gemini
+        m, pty, _codex = mux
         h = m.start("g2", ["/opt/homebrew/bin/agy"], env=None, cwd=None)
         assert pty.calls == [("start", ("g2", ("/opt/homebrew/bin/agy",), None, None))]
-        assert gemini.calls == []
         assert h.payload.kind == "pty"
 
-    def test_argv0_gemini_without_transport_routes_to_pty(self, mux):
-        """2-arg constructor (no gemini_exec) → gemini argv routes to PTY."""
+    def test_argv0_claude_routes_to_pty(self, mux):
         m, pty, codex = mux
-        h = m.start("g3", ["gemini"], env=None, cwd=None)
-        assert pty.calls == [("start", ("g3", ("gemini",), None, None))]
-        assert codex.calls == []
-        assert h.payload.kind == "pty"
-
-    def test_argv0_claude_still_routes_to_pty_with_gemini_present(self, mux_with_gemini):
-        """Claude must still route to PTY even when the gemini transport
-        is wired."""
-        m, pty, codex, gemini = mux_with_gemini
         h = m.start("c1", ["claude"], env=None, cwd=None)
         assert pty.calls == [("start", ("c1", ("claude",), None, None))]
         assert codex.calls == []
-        assert gemini.calls == []
         assert h.payload.kind == "pty"
 
-    def test_argv0_codex_still_routes_to_codex_with_gemini_present(self, mux_with_gemini):
-        """Codex routing must be preserved when gemini is wired."""
-        m, pty, codex, gemini = mux_with_gemini
+    def test_argv0_codex_still_routes_to_codex(self, mux):
+        m, pty, codex = mux
         h = m.start("c2", ["codex"], env=None, cwd=None)
         assert codex.calls == [("start", ("c2", ("codex",), None, None))]
         assert pty.calls == []
-        assert gemini.calls == []
         assert h.payload.kind == "codex"
 
-    def test_handle_dispatch_for_gemini_goes_to_pty(self, mux_with_gemini):
-        """Subsequent operations on a (retired) gemini-started handle —
-        now a PTY handle — dispatch to PTY, never the wired gemini transport."""
-        m, pty, codex, gemini = mux_with_gemini
-        h = m.start("g4", ["gemini"], env=None, cwd=None)
+    def test_handle_dispatch_for_agy_goes_to_pty(self, mux):
+        """Subsequent operations on an agy handle dispatch to PTY."""
+        m, pty, codex = mux
+        h = m.start("g4", ["agy"], env=None, cwd=None)
         m.write_stdin(h, b"hello\n")
         m.read_stdout(h, 4096)
         m.interrupt(h)
         m.close(h)
         op_kinds = [c[0] for c in pty.calls]
         assert op_kinds == ["start", "write_stdin", "read_stdout", "interrupt", "close"]
-        assert gemini.calls == []
         assert codex.calls == []

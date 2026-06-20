@@ -11,12 +11,12 @@ Why the Codex carve-out exists:
     and panics at 0×0; the post-PTY ANSI-sanitizer fallback couldn't
     reliably reassemble chat messages. See `codex_exec.py` docstring.
 
-v-next P0-B: the legacy `gemini` CLI (→ `GeminiExecTransport`,
-`-o stream-json`) is RETIRED. Individual-tier accounts now hard-fail it
-(`IneligibleTierError`); the gemini provider spawns the Antigravity CLI
-`agy`, whose basename routes to the PTY path. `GeminiExecTransport` is no
-longer constructed in production (`_gemini` defaults to None) and `gemini`
-is no longer in the routing set, so nothing can mis-route to it.
+v-next P0-B: the legacy `gemini` CLI (→ the former `GeminiExecTransport`,
+`-o stream-json`) is RETIRED and its transport DELETED. Individual-tier
+accounts now hard-fail it (`IneligibleTierError`); the gemini provider
+spawns the Antigravity CLI `agy`, whose basename routes to the PTY path
+like claude. There is no longer any gemini-specific transport to
+mis-route to.
 
 `RemoteAgentManager` only knows about ONE `SessionTransport`, so this
 strategy-pattern dispatcher:
@@ -43,27 +43,15 @@ logger = logging.getLogger("cli_pulse.transports.multiplex")
 # argv[0] basenames that should be routed through CodexExecTransport.
 _CODEX_EXEC_BINARIES = {"codex"}
 
-# v-next P0-B: GeminiExecTransport is retired (gemini → agy → PTY). The
-# set is empty so no basename routes to it even when a legacy fixture
-# still passes a `gemini_exec_transport`. Kept (vs deleted) only so the
-# `_transport_for_argv` shape below reads symmetrically with the codex case.
-_GEMINI_EXEC_BINARIES: set[str] = set()
-
 
 class MultiplexTransport(SessionTransport):
     def __init__(
         self,
         pty_transport: SessionTransport,
         codex_exec_transport: SessionTransport,
-        gemini_exec_transport: Optional[SessionTransport] = None,
     ) -> None:
         self._pty = pty_transport
         self._codex = codex_exec_transport
-        # v1.19: GeminiExecTransport added. Optional in the
-        # constructor so existing test fixtures that pre-date the
-        # transport (only pass pty + codex) keep working — they get
-        # PTY routing for "gemini" basenames as the historical default.
-        self._gemini = gemini_exec_transport
 
     # ── routing helpers ──────────────────────────────────────
 
@@ -72,8 +60,6 @@ class MultiplexTransport(SessionTransport):
             base = os.path.basename(argv[0])
             if base in _CODEX_EXEC_BINARIES:
                 return self._codex
-            if base in _GEMINI_EXEC_BINARIES and self._gemini is not None:
-                return self._gemini
         return self._pty
 
     def _transport_for_handle(self, handle: SessionHandle) -> SessionTransport:
@@ -85,12 +71,6 @@ class MultiplexTransport(SessionTransport):
             return self._codex
         except (TransportError, AttributeError):
             pass
-        if self._gemini is not None:
-            try:
-                self._gemini._payload(handle)  # type: ignore[attr-defined]
-                return self._gemini
-            except (TransportError, AttributeError):
-                pass
         try:
             self._pty._payload(handle)  # type: ignore[attr-defined]
             return self._pty
@@ -115,11 +95,6 @@ class MultiplexTransport(SessionTransport):
                 "multiplex.start session=%s routing→codex_exec (argv0=%s)",
                 session_id, argv[0] if argv else "<empty>",
             )
-        elif inner is self._gemini:
-            logger.info(
-                "multiplex.start session=%s routing→gemini_exec (argv0=%s)",
-                session_id, argv[0] if argv else "<empty>",
-            )
         # v-next P0-A: only the PTY transport honors auth `pass_fds` (the
         # exec transports are never spawned with auth fds — claude is the
         # only FD-injected provider and it always routes to PTY). Forward
@@ -133,7 +108,7 @@ class MultiplexTransport(SessionTransport):
 
     def resize(self, handle: SessionHandle, rows: int, cols: int) -> None:
         # v1.30.x in-app terminal: delegate to the per-handle transport
-        # (only the PTY one resizes; exec transports inherit the base no-op).
+        # (only the PTY one resizes; the exec transport inherits the base no-op).
         self._transport_for_handle(handle).resize(handle, rows, cols)
 
     def read_stdout(self, handle: SessionHandle, max_bytes: int = 4096) -> bytes:

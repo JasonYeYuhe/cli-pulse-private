@@ -261,10 +261,9 @@ class RemoteAgentManager:
         # v1.17: wrap PosixPty + CodexExec in a multiplex so Codex
         # sessions bypass the ratatui TUI entirely (see
         # transports/codex_exec.py docstring for the full story).
-        # v-next P0-B: GeminiExecTransport retired — the gemini provider
-        # spawns `agy`, which routes to the PTY path. No longer constructed
-        # (gemini_exec_transport defaults to None → gemini basenames fall
-        # through to PTY).
+        # v-next P0-B: the former GeminiExecTransport is deleted — the
+        # gemini provider spawns `agy`, which routes to the PTY path like
+        # claude. Only PosixPty + CodexExec remain.
         from transports.posix_pty import PosixPtyTransport
         from transports.codex_exec import CodexExecTransport
         from transports.multiplex import MultiplexTransport
@@ -343,13 +342,12 @@ class RemoteAgentManager:
         # inherited fd (leak-safe). `auth_fd` is closed in the `finally`
         # below once the child owns its own inherited copy.
         auth_fd, env = self._inject_provider_auth(params, env)
-        start_kwargs: dict[str, Any] = dict(
-            session_id=params.session_id, argv=argv, env=env, cwd=cwd,
-        )
-        if auth_fd is not None:
-            start_kwargs["pass_fds"] = (auth_fd,)
-
         try:
+            start_kwargs: dict[str, Any] = dict(
+                session_id=params.session_id, argv=argv, env=env, cwd=cwd,
+            )
+            if auth_fd is not None:
+                start_kwargs["pass_fds"] = (auth_fd,)
             handle = self.transport.start(**start_kwargs)
         except TransportError as exc:
             # Status payload MUST be exactly `'errored'` for the SQL
@@ -947,7 +945,26 @@ class RemoteAgentManager:
         offline, the session still works locally; the row simply
         doesn't propagate.
         """
+        # v-next P0-A: warm the claude OAuth token cache HERE, on the UDS
+        # connection thread, BEFORE dispatching onto the single-writer
+        # executor. The (possibly network-bound) refresh then runs off the
+        # executor, so the executor-side `_inject_provider_auth` is a cache
+        # hit and a slow refresh never freezes other live sessions.
+        self._prewarm_claude_auth(payload.get("provider") if isinstance(payload, dict) else None)
         return self._dispatch(self._local_start_claude_session_impl, payload)
+
+    def _prewarm_claude_auth(self, provider: Any) -> None:
+        """Resolve (and cache) the claude OAuth token off the executor.
+        Best-effort + never raises — the executor-side resolve repeats the
+        call (cache hit) and the real injection happens there."""
+        if not isinstance(provider, str) or provider.lower() != "claude":
+            return
+        if self._claude_token_resolver is None:
+            return
+        try:
+            self._claude_token_resolver()
+        except Exception as exc:  # noqa: BLE001 — prewarm is best-effort
+            logger.debug("claude auth prewarm failed (non-fatal): %s", exc)
 
     def _local_start_claude_session_impl(
         self, payload: dict[str, Any]
@@ -1110,9 +1127,10 @@ class RemoteAgentManager:
         # v-next P0-C: launchd's minimal PATH omits /opt/homebrew/bin (agy)
         # and ~/.local/bin (claude), so the child can't exec the provider
         # binary. Append the common install dirs (same set the availability
-        # probe searches). The POSIX transport merges this onto os.environ,
-        # so setting PATH here overrides the daemon's bare PATH.
-        env["PATH"] = augmented_path()
+        # probe searches). Base on a caller-supplied extra_env PATH when
+        # present (so an explicit override is respected), else the daemon's
+        # PATH. The POSIX transport merges this onto os.environ.
+        env["PATH"] = augmented_path(env.get("PATH") or None)
         # Critical binding: `remote_hook.py` prefers this over Claude's
         # raw hook session_id when creating permission requests, so an
         # inline approve from the Sessions UI lands on the row matching
@@ -1171,6 +1189,7 @@ class RemoteAgentManager:
         # the read-end to the child (inheritable + pass_fds), and tell
         # claude which fd to read. The token is in the pipe buffer (108
         # bytes ≪ pipe capacity) so the write never blocks.
+        r: int | None = None
         try:
             r, w = os.pipe()
             try:
@@ -1181,6 +1200,13 @@ class RemoteAgentManager:
             env["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"] = str(r)
             return r, env
         except OSError as exc:
+            # If the pipe opened but a later step failed, close the read
+            # end too — otherwise it leaks into the long-lived daemon.
+            if r is not None:
+                try:
+                    os.close(r)
+                except OSError:
+                    pass
             logger.warning(
                 "claude token FD plumbing failed; falling back to env var: %s", exc
             )

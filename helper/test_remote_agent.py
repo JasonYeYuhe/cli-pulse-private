@@ -583,6 +583,59 @@ def test_spawn_env_has_augmented_path():
     assert os.path.expanduser("~/.local/bin") in path
 
 
+def test_build_env_augments_caller_path_instead_of_overwriting():
+    """A caller-supplied extra_env PATH is preserved + augmented (not
+    clobbered) — codex review."""
+    from remote_agent import SessionStartParams
+    mgr, transport, _log = _make_manager()
+    transport.calls.clear()
+    mgr.spawn_session(SessionStartParams(
+        session_id=str(uuid.uuid4()), provider="claude",
+        extra_env={"PATH": "/custom/bin"},
+    ))
+    env = [c for c in transport.calls if c[0] == "start"][0][1]["env"]
+    assert "/custom/bin" in env["PATH"]        # caller PATH kept
+    assert "/opt/homebrew/bin" in env["PATH"]  # + augmented
+
+
+def test_claude_auth_fd_partial_failure_closes_read_fd_and_falls_back(monkeypatch):
+    """If a step AFTER os.pipe() fails (here os.set_inheritable), the read
+    fd must be closed (no daemon fd leak) and we degrade to the env var —
+    codex/Gemini review."""
+    import remote_agent
+    real_pipe = os.pipe
+    opened: dict[str, int] = {}
+    closed: list[int] = []
+    real_close = os.close
+
+    def tracking_pipe():
+        r, w = real_pipe()
+        opened["r"], opened["w"] = r, w
+        return r, w
+
+    def tracking_close(fd):
+        closed.append(fd)
+        return real_close(fd)
+
+    def boom_set_inheritable(*_a, **_k):
+        raise OSError("set_inheritable failed")
+
+    monkeypatch.setattr(remote_agent.os, "pipe", tracking_pipe)
+    monkeypatch.setattr(remote_agent.os, "close", tracking_close)
+    monkeypatch.setattr(remote_agent.os, "set_inheritable", boom_set_inheritable)
+
+    mgr, transport, _log = _make_manager(claude_token_resolver=lambda: _INJECTED_TOKEN)
+    start = _spawn_claude_and_get_start(mgr, transport)
+    env = start["env"]
+    assert env.get("CLAUDE_CODE_OAUTH_TOKEN") == _INJECTED_TOKEN  # env fallback
+    assert "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR" not in env
+    assert start["pass_fds"] == ()
+    # Both pipe ends were closed — the read end in the except, the write
+    # end in the inner finally. No leak into the daemon.
+    assert opened["r"] in closed
+    assert opened["w"] in closed
+
+
 def test_shutdown_terminates_running_sessions():
     session_id = str(uuid.uuid4())
     start_cmd_id = str(uuid.uuid4())
