@@ -58,6 +58,12 @@ _KEYCHAIN_SERVICE = "Claude Code-credentials"
 # Refresh if the access token expires within this many seconds (or is
 # already past). Keeps a margin so a token doesn't expire mid-spawn.
 _EXPIRY_SKEW_SECS = 300
+# Conservative cache/expiry lifetime used when a refresh response omits
+# `expires_in` (defensive — the endpoint always sends it today). Without
+# this, a missing expires_in would leave the OLD expired expiresAt in
+# place + skip the cache, forcing the next spawn to re-refresh and burn the
+# just-rotated single-use token (review M1).
+_FALLBACK_EXPIRY_SECS = 3600
 # Per-endpoint network timeout. The refresh runs on the spawn path (the
 # single-writer executor), so keep it tight — a stuck endpoint must not
 # freeze other sessions for long. With the in-memory cache below, the
@@ -75,7 +81,10 @@ def _now() -> float:
 # BOTH the file read and the network refresh on the single-writer
 # executor thread — so a managed-session spawn never blocks other live
 # sessions in the steady state. Reset between tests via the helper below.
-_cache: dict[str, Any] = {"access_token": None, "expires_at": 0.0}
+# Stored as a SINGLE key holding a `(token, expires_at_secs)` tuple so a
+# lock-free reader always sees a consistent pair (a single dict-key read is
+# atomic under the GIL — two separate keys could be read torn).
+_cache: dict[str, Any] = {"entry": None}
 # Serializes concurrent helper-thread refreshes. The refresh token is
 # single-use (the endpoint rotates it), so two threads refreshing the
 # same token would have one fail; the lock + a double-checked cache make
@@ -86,13 +95,11 @@ _refresh_lock = threading.Lock()
 
 def _cache_token(token: str | None, expires_at_secs: float | None) -> None:
     if token and expires_at_secs:
-        _cache["access_token"] = token
-        _cache["expires_at"] = float(expires_at_secs)
+        _cache["entry"] = (token, float(expires_at_secs))
 
 
 def _reset_cache_for_testing() -> None:
-    _cache["access_token"] = None
-    _cache["expires_at"] = 0.0
+    _cache["entry"] = None
 
 
 # ── credential reading ───────────────────────────────────────────────
@@ -232,9 +239,17 @@ def _persist_refreshed_to_file(token_response: dict) -> bool:
         # File missing/corrupt — don't fabricate one (we'd lose mcpOAuth
         # and could clobber a concurrent interactive-claude writeback).
         return False
-    o = _oauth_of(doc)
-    if o is None:
+    # review M2: preserve the ORIGINAL top-level key (camelCase vs snake_case)
+    # so a snake_case file doesn't gain a divergent second key that then
+    # shadows future interactive-claude logins.
+    if isinstance(doc.get("claudeAiOauth"), dict):
+        oauth_key = "claudeAiOauth"
+    elif isinstance(doc.get("claude_ai_oauth"), dict):
+        oauth_key = "claude_ai_oauth"
+    else:
         return False
+    o = doc[oauth_key]
+    refresh_before = _refresh_of(o)   # what was on disk when we read it (L1)
     o["accessToken"] = new_at
     new_rt = token_response.get("refresh_token")
     if new_rt:
@@ -242,8 +257,22 @@ def _persist_refreshed_to_file(token_response: dict) -> bool:
     expires_in = token_response.get("expires_in")
     if isinstance(expires_in, (int, float)) and expires_in > 0:
         o["expiresAt"] = int((_now() + expires_in) * 1000)
-    doc["claudeAiOauth"] = o
+    else:
+        # review M1: never KEEP the old (expired) expiresAt — that forces a
+        # re-refresh loop that burns the just-rotated single-use token.
+        o["expiresAt"] = int((_now() + _FALLBACK_EXPIRY_SECS) * 1000)
+    doc[oauth_key] = o
     try:
+        # review L1: re-read just before the atomic replace; if a concurrent
+        # interactive `claude` rotated the refresh token in the gap, DON'T
+        # clobber its fresher creds with our pre-rotation view. Best-effort
+        # cross-process guard (in-process is covered by `_refresh_lock`).
+        latest = _oauth_of(_read_file_doc())
+        if latest is not None:
+            disk_now = _refresh_of(latest)
+            if disk_now and disk_now != refresh_before and disk_now != new_rt:
+                logger.debug("claude creds changed under us — skipping writeback")
+                return True
         d = os.path.dirname(_CREDENTIALS_FILE) or "."
         fd, tmp = tempfile.mkstemp(dir=d, prefix=".cred", suffix=".tmp")
         try:
@@ -259,15 +288,17 @@ def _persist_refreshed_to_file(token_response: dict) -> bool:
                 pass
             raise
         return True
-    except OSError as exc:
+    except Exception as exc:  # review L2: contract is "always returns bool"
         logger.warning("claude credential writeback failed: %s", exc)
         return False
 
 
 def _cache_hit() -> str | None:
-    cached = _cache["access_token"]
-    if cached and _now() + _EXPIRY_SKEW_SECS < _cache["expires_at"]:
-        return cached
+    entry = _cache["entry"]  # single atomic read → consistent (token, expiry)
+    if entry is not None:
+        token, expires_at = entry
+        if token and _now() + _EXPIRY_SKEW_SECS < expires_at:
+            return token
     return None
 
 
@@ -328,11 +359,21 @@ def resolve_fresh_claude_access_token(*, urlopen: Callable | None = None) -> str
                 return None
             return access  # unknown expiry → best-effort
         if not _persist_refreshed_to_file(resp):
-            # Non-fatal: the in-memory token still drives this spawn, but
-            # the next spawn will refresh again (rotated token not saved).
-            logger.warning("claude token refreshed but credential writeback failed")
+            logger.warning(
+                "claude token refreshed but credential writeback failed — the "
+                "rotated refresh token was NOT saved to disk; re-run "
+                "`claude /login` if the managed session later fails to auth"
+            )
         new_token = resp.get("access_token") or access
         expires_in = resp.get("expires_in")
-        if isinstance(expires_in, (int, float)) and expires_in > 0:
-            _cache_token(new_token, _now() + expires_in)
+        expiry = (
+            _now() + expires_in
+            if isinstance(expires_in, (int, float)) and expires_in > 0
+            else _now() + _FALLBACK_EXPIRY_SECS
+        )
+        # review M1: ALWAYS cache after a successful refresh — even if persist
+        # failed or the response lacked expires_in — so the next spawn uses
+        # this token instead of re-refreshing and burning the just-rotated
+        # single-use refresh token.
+        _cache_token(new_token, expiry)
         return new_token

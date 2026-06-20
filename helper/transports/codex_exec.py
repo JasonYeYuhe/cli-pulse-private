@@ -531,8 +531,18 @@ class CodexExecTransport(SessionTransport):
             try:
                 rc = proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
-                proc.kill()
-                rc = proc.wait()
+                # review L4: guard the kill — the child may have died in the
+                # gap (ProcessLookupError), and an exception raised inside this
+                # `finally` would propagate and kill the reader thread, skipping
+                # all remaining cleanup.
+                try:
+                    proc.kill()
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+                try:
+                    rc = proc.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    rc = -1
             # Drainer should have exited on stderr EOF when the proc
             # died. join(1.0) is a bounded safety belt — if it ever
             # times out, the daemon thread is still safe to leave alive

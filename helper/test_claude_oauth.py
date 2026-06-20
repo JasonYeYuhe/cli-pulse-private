@@ -234,6 +234,62 @@ def test_resolve_returns_none_when_expired_and_refresh_fails(creds_file, clock):
     assert json.loads(creds_file.read_text())["claudeAiOauth"]["accessToken"] == "sk-ant-oat01-STALE"
 
 
+def test_resolve_caches_token_even_when_persist_fails(creds_file, clock, monkeypatch):
+    """review M1: a successful refresh whose WRITEBACK fails must still
+    populate the in-memory cache, so the next spawn uses it instead of
+    re-refreshing and burning the just-rotated single-use refresh token."""
+    _write_creds(creds_file, {
+        "accessToken": "sk-ant-oat01-OLD", "refreshToken": "sk-ant-ort01-OLD",
+        "expiresAt": int((clock["now"] - 10) * 1000),
+    })
+    monkeypatch.setattr(co.os, "replace",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    t1 = co.resolve_fresh_claude_access_token(
+        urlopen=_urlopen_ok({"access_token": _FRESH_AT, "refresh_token": _ROTATED_RT,
+                             "expires_in": 28800}))
+    assert t1 == _FRESH_AT
+
+    def _boom(req, timeout=10):
+        raise AssertionError("must NOT re-refresh — token should be cached after refresh")
+
+    assert co.resolve_fresh_claude_access_token(urlopen=_boom) == _FRESH_AT
+
+
+def test_resolve_caches_token_when_response_lacks_expires_in(creds_file, clock):
+    """review M1: a refresh response without `expires_in` must still cache
+    (with a conservative fallback expiry), not skip the cache and re-refresh."""
+    _write_creds(creds_file, {
+        "accessToken": "sk-ant-oat01-OLD", "refreshToken": "sk-ant-ort01-OLD",
+        "expiresAt": int((clock["now"] - 10) * 1000),
+    })
+    t1 = co.resolve_fresh_claude_access_token(
+        urlopen=_urlopen_ok({"access_token": _FRESH_AT, "refresh_token": _ROTATED_RT}))  # no expires_in
+    assert t1 == _FRESH_AT
+
+    def _boom(req, timeout=10):
+        raise AssertionError("must NOT re-refresh — token should be cached with fallback expiry")
+
+    assert co.resolve_fresh_claude_access_token(urlopen=_boom) == _FRESH_AT
+
+
+def test_persist_preserves_snake_case_top_level_key(creds_file, clock):
+    """review M2: a `claude_ai_oauth` file must NOT gain a divergent
+    `claudeAiOauth` key on writeback (which would shadow future logins)."""
+    doc = {"claude_ai_oauth": {
+        "accessToken": "sk-ant-oat01-OLD", "refreshToken": "sk-ant-ort01-OLD",
+        "expiresAt": int((clock["now"] - 10) * 1000),
+    }}
+    creds_file.write_text(json.dumps(doc))
+    os.chmod(creds_file, 0o600)
+    co.resolve_fresh_claude_access_token(
+        urlopen=_urlopen_ok({"access_token": _FRESH_AT, "refresh_token": _ROTATED_RT,
+                             "expires_in": 28800}))
+    persisted = json.loads(creds_file.read_text())
+    assert "claudeAiOauth" not in persisted  # no divergent camelCase key added
+    assert persisted["claude_ai_oauth"]["accessToken"] == _FRESH_AT
+    assert persisted["claude_ai_oauth"]["refreshToken"] == _ROTATED_RT
+
+
 def test_resolve_returns_stale_token_when_expiry_unknown(creds_file, clock):
     """If expiry is unknown (not provably expired), best-effort: return the
     stored token rather than failing — preserves offline capability."""

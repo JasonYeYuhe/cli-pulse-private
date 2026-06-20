@@ -51,17 +51,26 @@ public struct TerminalSessionView: View {
             // Guard so a re-fired onAppear doesn't present the panel twice.
             guard !didStartChoosing else { return }
             didStartChoosing = true
-            // Defer the modal off the SwiftUI update tick.
-            DispatchQueue.main.async {
-                phase = .ready(cwd: Self.chooseWorkingDirectory(provider: provider))
-            }
+            presentDirectoryChooser()
+        }
+        .onDisappear {
+            // review M5: reset so re-opening the (persistent) Window scene
+            // prompts for a fresh working directory instead of silently
+            // reusing the previous one. Returning phase to .choosing also tears
+            // down the representable → dismantleNSView → adapter.detach().
+            didStartChoosing = false
+            phase = .choosing
         }
     }
 
-    /// Present a modal directory chooser; return the chosen absolute path.
-    /// Cancelling falls back to the user's home directory (never the launchd
-    /// daemon's dir) so a managed session always starts in a sane tree.
-    private static func chooseWorkingDirectory(provider: String) -> String? {
+    /// review M4: present the directory chooser NON-MODALLY via
+    /// `panel.begin(completionHandler:)` and drive the phase from the async
+    /// callback. The old `runModal()` blocked the main thread, and on a
+    /// menu-bar (LSUIElement) app on macOS 26 the deprecated
+    /// `NSApp.activate(ignoringOtherApps:)` is often a no-op, so the panel
+    /// could open *behind* the frontmost app while the main thread hung.
+    /// Cancelling falls back to HOME (never the launchd daemon's dir).
+    private func presentDirectoryChooser() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -70,12 +79,10 @@ public struct TerminalSessionView: View {
         panel.prompt = "Open Terminal Here"
         panel.message = "Choose the working directory for the \(provider.capitalized) session"
         panel.directoryURL = home
-        // A menu-bar app may not be frontmost; bring the panel forward.
-        NSApp.activate(ignoringOtherApps: true)
-        if panel.runModal() == .OK, let path = panel.url?.path {
-            return path
+        panel.begin { response in
+            let path = (response == .OK ? panel.url?.path : nil) ?? home.path
+            phase = .ready(cwd: path)
         }
-        return home.path
     }
 }
 

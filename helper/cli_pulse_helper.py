@@ -793,8 +793,11 @@ def daemon(args: argparse.Namespace) -> None:
                     _now_tick = time.monotonic()
                     try:
                         if _now_tick - _last_full_tick >= 1.0:
-                            _last_full_tick = _now_tick
                             remote_agent_manager.tick()
+                            # review L5: advance only AFTER a successful full
+                            # tick, so a raised tick() doesn't suppress the
+                            # remote command poll for the rest of the second.
+                            _last_full_tick = _now_tick
                         else:
                             remote_agent_manager.tick_local()
                     except Exception as exc:

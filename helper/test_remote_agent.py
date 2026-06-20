@@ -722,6 +722,22 @@ def test_local_start_without_cwd_inherits():
     assert start["cwd"] is None  # POSIX transport treats None as inherit
 
 
+def test_remote_start_inherits_cwd_none():
+    """review L7: the remote (Supabase) start path keeps cwd='' → None
+    (inherit) — working-dir selection is a local-only feature."""
+    cmd_id = str(uuid.uuid4())
+    sid = str(uuid.uuid4())
+
+    def pull(_p):
+        return [{"id": cmd_id, "session_id": sid, "kind": "start",
+                 "payload": _start_payload()}]
+
+    mgr, transport, _log = _make_manager({"remote_helper_pull_commands": pull})
+    mgr.tick()
+    start = [c for c in transport.calls if c[0] == "start"][0][1]
+    assert start["cwd"] is None
+
+
 def test_spawn_failure_sanitizes_cwd_path_from_info_event():
     """A bad cwd makes the transport raise an error embedding the ABSOLUTE
     path; it must NOT leak into the cloud `info` event — only the basename
@@ -843,6 +859,24 @@ def test_reaper_stops_max_age_session():
     sess.spawned_at = time.monotonic() - remote_agent._SESSION_MAX_AGE_S - 1
     sess.last_activity_at = time.monotonic()  # recent → only max-age triggers
     result = mgr.tick()
+    assert sid not in mgr._sessions
+    assert result["sessions_reaped"] == 1
+
+
+def test_tick_local_does_not_reap_idle_session():
+    """review H1: reaping terminates LIVE children (blocking up to ~4s), so it
+    must run ONLY on the 1 Hz full tick, never on the fast tick_local — else a
+    reap stalls concurrent keystrokes/start/stop on the single-writer executor."""
+    import remote_agent
+    mgr, _transport, _log = _make_manager()
+    sid = _spawn(mgr)
+    mgr._sessions[sid].last_activity_at = (
+        time.monotonic() - remote_agent._SESSION_IDLE_TIMEOUT_S - 1
+    )
+    result = mgr.tick_local()           # fast tick → must NOT reap
+    assert sid in mgr._sessions
+    assert result["sessions_reaped"] == 0
+    result = mgr.tick()                 # full tick → reaps
     assert sid not in mgr._sessions
     assert result["sessions_reaped"] == 1
 
