@@ -132,7 +132,38 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
         let snapshot = (try? await client.getTailSnapshot(sessionId: sessionId,
                                                           maxBytes: 65536)) ?? Data()
         paintReattachSnapshot(snapshot)
+        // Deep-review merge-blocker fix: if the view's single initial `resize`
+        // fired into a not-yet-wired delegate during the work above (page-load
+        // vs attach race, widened by the liveness preflight on this path), the
+        // PTY would be stranded at the spawn default while xterm renders at its
+        // fitted width. Proactively deliver the current geometry now. If the
+        // view isn't ready yet, `terminalViewDidBecomeReady` will do it.
+        if view.isReady { pushCurrentGeometry() }
         return sessionId
+    }
+
+    /// Proactively deliver the terminal's CURRENT fitted geometry to the helper
+    /// PTY. The JS side emits its initial `resize` exactly once after
+    /// `fitAddon.fit()`; if that one message fires before the delegate is wired
+    /// it lands in a nil delegate and is lost (and index.html then early-returns
+    /// on every later ResizeObserver tick because the size is unchanged), so the
+    /// PTY stays at the spawn default (120x40) while xterm renders at its fitted
+    /// width → a misaligned TUI until a manual resize. So once attached + ready,
+    /// read the fitted cols/rows from xterm and send the resize ourselves —
+    /// idempotent with any resize the JS path already delivered.
+    func pushCurrentGeometry() {
+        guard case let .running(sid) = state, let view else { return }
+        let js = "(function(){var t=window.__CLIPulseTerminal&&window.__CLIPulseTerminal.term;"
+               + "return (t&&t.cols>0&&t.rows>0)?[t.cols,t.rows]:null;})()"
+        view.webView.evaluateJavaScript(js) { [weak self] result, _ in
+            guard let nums = result as? [NSNumber], nums.count == 2 else { return }
+            let cols = nums[0].intValue, rows = nums[1].intValue
+            guard cols > 0, rows > 0 else { return }
+            Task { @MainActor [weak self] in
+                guard let self, case .running = self.state else { return }
+                try? await self.client.resize(sessionId: sid, cols: cols, rows: rows)
+            }
+        }
     }
 
     /// Write the tail snapshot then release the reattach buffer's held live
@@ -192,6 +223,12 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
                     self?.deliverLive(event)
                 }
             } catch {
+                // Cancellation (detach / window close) is intentional, NOT a
+                // failure — don't flip to .failed or a closing window would
+                // flash a spurious "disconnected" state. Only a real mid-stream
+                // transport error surfaces as .failed (a live terminal observing
+                // .state can then show a disconnected banner — deep review).
+                if Task.isCancelled || error is CancellationError { return }
                 guard let self else { return }
                 self.state = .failed(reason: "subscribe_events: \(error)")
             }
@@ -231,10 +268,13 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
     // MARK: - TerminalViewDelegate
 
     public func terminalViewDidBecomeReady(_ view: TerminalView) {
-        // No-op for MVP — the view is ready, the subscription is
-        // already pumping. Future polish: fetch tail snapshot here
-        // when re-attaching to an existing session that pre-dated
-        // the window.
+        // Deliver the initial geometry to the PTY (deep-review merge-blocker):
+        // `ready` fires after the JS-side `fitAddon.fit()`, so xterm's cols/rows
+        // are now known. This is the delegate-driven path for when `ready`
+        // arrives AFTER the delegate is wired; `attachExisting` covers the case
+        // where `ready` fired earlier (during the liveness preflight) by calling
+        // `pushCurrentGeometry()` itself once `isReady` is true.
+        pushCurrentGeometry()
     }
 
     public func terminalView(_ view: TerminalView, didReceiveStdin data: String) {
