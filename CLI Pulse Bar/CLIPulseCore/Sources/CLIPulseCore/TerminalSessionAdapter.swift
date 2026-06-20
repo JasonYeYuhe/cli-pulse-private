@@ -229,7 +229,23 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
             do {
                 for try await event in stream {
                     if Task.isCancelled { return }
+                    // A terminal `.error` event from the helper means the session
+                    // can't continue — surface it as .failed (the live terminal
+                    // observing .state then shows the disconnected/reconnect card)
+                    // rather than swallowing it and freezing. Deep-review follow-up.
+                    if case let .error(code, message) = event {
+                        self?.state = .failed(reason: "session error [\(code)]: \(message)")
+                        return
+                    }
                     self?.deliverLive(event)
+                }
+                // The stream ended WITHOUT throwing — the helper closed it (the
+                // session stopped/ended, the helper restarted, or it dropped the
+                // subscription). If we still think we're running, that's an
+                // unexpected disconnect; surface it so the card/reconnect fires
+                // instead of a permanently frozen terminal. Deep-review follow-up.
+                if !Task.isCancelled, let self, case .running = self.state {
+                    self.state = .failed(reason: "subscribe_events: stream ended")
                 }
             } catch {
                 // Cancellation (detach / window close) is intentional, NOT a

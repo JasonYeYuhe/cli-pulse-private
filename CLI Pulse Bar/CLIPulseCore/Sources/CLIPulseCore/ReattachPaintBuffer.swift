@@ -43,8 +43,16 @@ public struct ReattachPaintBuffer {
     public private(set) var isBuffering: Bool = true
 
     private var held: [Data] = []
+    private var heldBytes = 0
+    private let maxHeldBytes: Int
 
-    public init() {}
+    /// - Parameter maxHeldBytes: cap on buffered-while-attaching bytes (default
+    ///   64 KB, matching the get_tail_snapshot ring). A firehose session during a
+    ///   slow snapshot fetch would otherwise hold megabytes and replay them in
+    ///   one burst on flush (deep-review follow-up).
+    public init(maxHeldBytes: Int = 64 * 1024) {
+        self.maxHeldBytes = max(1, maxHeldBytes)
+    }
 
     /// A live output chunk arrived. Returns the chunk to write to the terminal
     /// NOW, or `nil` if it was buffered (still waiting for the snapshot). Empty
@@ -53,6 +61,13 @@ public struct ReattachPaintBuffer {
         if chunk.isEmpty { return nil }
         if isBuffering {
             held.append(chunk)
+            heldBytes += chunk.count
+            // Bound the buffer: drop the OLDEST chunks on overflow — they're
+            // older than (and redundant with) the snapshot that repaints the
+            // screen on flush. Keep at least the newest chunk.
+            while heldBytes > maxHeldBytes, held.count > 1 {
+                heldBytes -= held.removeFirst().count
+            }
             return nil
         }
         return chunk
@@ -69,6 +84,7 @@ public struct ReattachPaintBuffer {
         if !snapshot.isEmpty { writes.append(snapshot) }
         writes.append(contentsOf: held)
         held.removeAll(keepingCapacity: false)
+        heldBytes = 0
         return writes
     }
 }

@@ -72,6 +72,24 @@ final class ReattachPaintBufferTests: XCTestCase {
         XCTAssertNil(buf.intake(Data()))
     }
 
+    func test_buffer_capsHeldBytes_droppingOldest() {
+        // Oldest buffered bytes are redundant with the snapshot, so on overflow
+        // they're dropped and the newest are kept (deep-review follow-up).
+        var buf = ReattachPaintBuffer(maxHeldBytes: 10)
+        _ = buf.intake(d("AAAA"))   // 4
+        _ = buf.intake(d("BBBB"))   // 8
+        _ = buf.intake(d("CCCC"))   // 12 > 10 → drop oldest (AAAA)
+        let writes = buf.flush(afterSnapshot: Data())
+        XCTAssertEqual(writes.map { String(decoding: $0, as: UTF8.self) }, ["BBBB", "CCCC"])
+    }
+
+    func test_buffer_keepsNewestChunkEvenIfOversized() {
+        var buf = ReattachPaintBuffer(maxHeldBytes: 4)
+        _ = buf.intake(d("HUGECHUNK"))  // 9 > 4, but it's the newest/only → kept
+        let writes = buf.flush(afterSnapshot: Data())
+        XCTAssertEqual(writes.map { String(decoding: $0, as: UTF8.self) }, ["HUGECHUNK"])
+    }
+
     func test_orderingPreservedAcrossManyChunks() {
         var buf = ReattachPaintBuffer()
         let chunks = (0..<50).map { d("c\($0)") }
