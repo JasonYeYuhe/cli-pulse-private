@@ -918,6 +918,13 @@ class LocalSessionServer:
                     raise _RequestError("bad_request", "'cwd' must be a non-empty string when present")
                 if not os.path.isabs(cwd):
                     raise _RequestError("bad_request", "'cwd' must be an absolute path")
+                # Canonicalize (resolve symlinks + normalize '..') and validate
+                # the RESOLVED target, then forward the canonical path so the
+                # spawn runs in exactly what we validated — shrinking the
+                # validate-vs-spawn TOCTOU window (codex review). A residual
+                # race (dir removed before Popen) still yields a clean, path-
+                # sanitized spawn failure, not a daemon crash.
+                cwd = os.path.realpath(cwd)
                 if not os.path.isdir(cwd):
                     raise _RequestError("bad_request", "'cwd' is not an existing directory")
             payload = {

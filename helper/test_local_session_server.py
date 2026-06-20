@@ -25,6 +25,7 @@ bind() doesn't blow up on a perfectly good test rig.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import socket
@@ -1427,7 +1428,8 @@ def test_start_session_passes_valid_cwd_to_manager(short_sock_dir):
             "params": {"provider": "claude", "cwd": "/tmp"},
         })
         assert reply["ok"] is True
-        assert mgr.start_calls[0]["cwd"] == "/tmp"
+        # Canonicalized: /tmp is a symlink to /private/tmp on macOS.
+        assert mgr.start_calls[0]["cwd"] == os.path.realpath("/tmp")
     finally:
         server.stop()
 

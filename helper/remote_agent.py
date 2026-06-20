@@ -85,6 +85,16 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
+def _sanitize_path_in(text: str, path: str | None) -> str:
+    """Replace occurrences of the absolute `path` in `text` with its
+    basename, so a working-directory path can't leak through a spawn-error
+    string into logs or cloud events (v-next P1-1, codex review). No-op when
+    `path` is falsy."""
+    if not path:
+        return text
+    return text.replace(path, os.path.basename(path.rstrip("/")) or "<cwd>")
+
+
 # v-next P1-6: managed-session lifetime caps (monotonic seconds). A
 # forgotten / orphaned session keeps its CLI authenticated and able to
 # spend API quota indefinitely — the tick reaper bounds that. Idle =
@@ -388,9 +398,13 @@ class RemoteAgentManager:
             # event so the app can surface "Failed to spawn: claude not
             # found" without a status-string regression. See
             # `_post_info` for the redaction posture.
+            # v-next P1-1 (codex review): a bad cwd makes Popen raise an
+            # error whose string embeds the ABSOLUTE path — sanitize it to
+            # the basename before it reaches logs OR the cloud `info` event.
+            detail = _sanitize_path_in(str(exc), cwd)
             logger.warning(
                 "spawn_session(%s): transport.start raised: %s",
-                params.session_id, exc,
+                params.session_id, detail,
             )
             # Drop the registry slot so a stale capability token doesn't
             # outlive the failed spawn — there's no PTY to defend now.
@@ -401,7 +415,7 @@ class RemoteAgentManager:
                     pass
             self._post_status(params.session_id, "errored")
             self._post_info(
-                params.session_id, f"spawn failed: {exc}"
+                params.session_id, f"spawn failed: {detail}"
             )
             return False
         finally:
