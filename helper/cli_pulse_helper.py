@@ -465,6 +465,7 @@ def daemon(args: argparse.Namespace) -> None:
         local_approval_registry = ApprovalRegistry(
             on_event=local_event_broker.publish,
         )
+        import claude_oauth  # v-next P0-A: fresh-OAuth-token resolver for managed claude
         remote_agent_manager = RemoteAgentManager(
             helper_config=config_for_manager,
             rpc_caller=supabase_rpc,
@@ -472,6 +473,10 @@ def daemon(args: argparse.Namespace) -> None:
             event_broker=local_event_broker,
             approval_registry=local_approval_registry,
             local_helper_socket_path=str(default_socket_path()),
+            # Inject a fresh claude OAuth access token at spawn time so the
+            # launchd-spawned claude doesn't 401 on a stale keychain token
+            # (it can't self-refresh in the non-GUI security context).
+            claude_token_resolver=claude_oauth.resolve_fresh_claude_access_token,
         )
         logger.info(
             "remote agent manager initialised (executor=on, broker=on, approvals=on)",

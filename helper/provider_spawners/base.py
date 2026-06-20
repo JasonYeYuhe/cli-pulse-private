@@ -27,6 +27,31 @@ import os
 import shutil
 from typing import Any
 
+# Common CLI install dirs that launchd's minimal PATH omits. `agy` lives
+# in /opt/homebrew/bin (Apple-silicon Homebrew); `claude` in ~/.local/bin.
+# Without these on PATH the helper's availability probe greys the provider
+# out AND the spawned child can't exec the binary — both bugs trace here.
+_EXTRA_PATH_DIRS = (
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    os.path.expanduser("~/.local/bin"),
+)
+
+
+def augmented_path(base: str | None = None) -> str:
+    """`base` PATH (default: the helper process's PATH) with the common
+    CLI install dirs APPENDED (not prepended, so a user's explicit PATH
+    ordering still wins). Shared by `BaseSpawner.is_available()` and
+    `RemoteAgentManager._build_env` so the availability probe and the
+    spawn env search the same dirs.
+    """
+    base = os.environ.get("PATH", "") if base is None else base
+    parts = [p for p in base.split(os.pathsep) if p]
+    for d in _EXTRA_PATH_DIRS:
+        if d and d not in parts:
+            parts.append(d)
+    return os.pathsep.join(parts)
+
 
 class BaseSpawner:
     """Default `ProviderSpawner` implementation (see the Protocol in
@@ -78,14 +103,20 @@ class BaseSpawner:
         Honors the env override so a user with a non-PATH install still
         sees the provider light up in the app's spawn picker, exactly
         as the pre-refactor per-provider copies did.
+
+        Searches `augmented_path()` — launchd's minimal PATH omits
+        /opt/homebrew/bin (agy) and ~/.local/bin (claude), so a bare
+        `shutil.which` would mark them unavailable even though the child
+        spawn (same augmented PATH) could exec them.
         """
+        search = augmented_path()
         tokens = self._argv0_tokens()
         if tokens and (
-            shutil.which(tokens[0]) is not None
+            shutil.which(tokens[0], path=search) is not None
             or (os.path.isabs(tokens[0]) and os.access(tokens[0], os.X_OK))
         ):
             return True
-        return bool(self.binary) and shutil.which(self.binary) is not None
+        return bool(self.binary) and shutil.which(self.binary, path=search) is not None
 
     def supports_remote_approval(self) -> bool:
         # Only providers with a first-class hook protocol the helper can

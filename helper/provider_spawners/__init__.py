@@ -35,7 +35,7 @@ from typing import Protocol, runtime_checkable
 # both at runtime (helper invoked from inside `helper/`) and in CI
 # (`pytest -q` from `helper/`).
 from .aider import AiderSpawner
-from .base import BaseSpawner
+from .base import BaseSpawner, augmented_path
 from .claude import ClaudeSpawner
 from .codex import CodexSpawner
 from .cursor import CursorSpawner
@@ -120,6 +120,7 @@ def all_provider_names() -> list[str]:
 __all__ = [
     "ProviderSpawner",
     "BaseSpawner",
+    "augmented_path",
     "ClaudeSpawner",
     "CodexSpawner",
     "GeminiSpawner",
