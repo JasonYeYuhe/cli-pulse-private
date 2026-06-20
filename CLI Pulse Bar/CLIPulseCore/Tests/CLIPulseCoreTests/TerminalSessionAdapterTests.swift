@@ -94,20 +94,20 @@ final class TerminalSessionAdapterTests: XCTestCase {
         XCTAssertEqual(adapter.cwd, "/tmp/project")
     }
 
-    // MARK: - TerminalSessionAdapter.deliver with nil view
+    // MARK: - TerminalSessionAdapter.deliverLive with nil view
 
-    /// `deliver(event:to:nil)` is the safety net for the
-    /// "subscription fired after view was torn down" race.
-    /// Pure check — no WKWebView instantiation (XCTest hosts on
-    /// macOS abort on WKWebView creation outside an AppKit
+    /// `deliverLive` is the safety net for the "subscription fired after the
+    /// view was torn down" race. With a nil view it must no-op for every event
+    /// kind (output and non-output). Pure check — no WKWebView instantiation
+    /// (XCTest hosts on macOS abort on WKWebView creation outside an AppKit
     /// event loop).
     @MainActor
-    func test_deliverWithNilView_isNoOp() {
-        let event = LocalSessionEvent.outputDelta(
-            sessionId: "S",
-            payload: "x",
-            ts: 0)
-        TerminalSessionAdapter.deliver(event: event, to: nil)
+    func test_deliverLiveWithNilView_isNoOp() {
+        let adapter = TerminalSessionAdapter()  // view is nil, no reattach buffer
+        adapter.deliverLive(.outputRaw(sessionId: "S", payload: "\u{1b}[31mhi", ts: 0))
+        adapter.deliverLive(.outputDelta(sessionId: "S", payload: "x", ts: 0))
+        adapter.deliverLive(.heartbeat(ts: 0))
+        adapter.deliverLive(.sessionStatus(sessionId: "S", status: "running"))
         // Should not crash.
     }
 }

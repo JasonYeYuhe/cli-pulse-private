@@ -51,6 +51,11 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
     private var pendingStdin = Data()
     private var stdinDraining = false
     private var inFlightResizeTask: Task<Void, Never>?
+    /// P1-4: set while re-attaching to an already-running session so live
+    /// output is held until the tail snapshot has been painted (see
+    /// `ReattachPaintBuffer`). `nil` for freshly-spawned sessions (no snapshot
+    /// to wait on) → live output passes straight through.
+    private var reattachBuffer: ReattachPaintBuffer?
 
     /// Designated initializer. The client + provider are bound at
     /// construction; the caller wires the view via `attach(to:)`
@@ -99,9 +104,57 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
         }
     }
 
-    /// Tear down: cancel the subscription, attempt `stop_session`,
-    /// drop the view reference. Safe to call from any state.
-    public func detach() async {
+    /// Attach to an ALREADY-running managed session WITHOUT spawning a new one
+    /// (P1-4). Used when the user opens a terminal window for a session that's
+    /// already in the Sessions list. Race-safe reattach paint: subscribe to the
+    /// live raw stream FIRST (buffering live bytes), THEN fetch the tail
+    /// snapshot and paint it, THEN release the buffered bytes in order — so no
+    /// output emitted during attach is dropped. See `ReattachPaintBuffer`.
+    ///
+    /// Idempotent when already attached to the same `sessionId`. Never spawns;
+    /// the session's lifetime is owned by the helper, not this window.
+    @discardableResult
+    public func attachExisting(to view: TerminalView, sessionId: String) async -> String {
+        if case let .running(sid) = state, sid == sessionId {
+            self.view = view
+            view.delegate = self
+            return sid
+        }
+        self.view = view
+        view.delegate = self
+        // The session is already running on the helper — adopt its id directly.
+        state = .running(sessionId: sessionId)
+        reattachBuffer = ReattachPaintBuffer()
+        // 1. Subscribe FIRST so the buffer captures anything emitted from now on.
+        startEventSubscription(sessionId: sessionId)
+        // 2. Fetch the tail snapshot, then 3. flush (snapshot + buffered live).
+        //    A failed/empty snapshot still releases the buffer so live flows.
+        let snapshot = (try? await client.getTailSnapshot(sessionId: sessionId,
+                                                          maxBytes: 65536)) ?? Data()
+        paintReattachSnapshot(snapshot)
+        return sessionId
+    }
+
+    /// Write the tail snapshot then release the reattach buffer's held live
+    /// bytes, in order. No-op if not currently re-attaching.
+    private func paintReattachSnapshot(_ snapshot: Data) {
+        guard reattachBuffer != nil else { return }
+        let writes = reattachBuffer!.flush(afterSnapshot: snapshot)
+        if let view {
+            for chunk in writes { view.pushStdout(chunk) }
+        }
+        // Buffer stays non-nil but in passthrough (isBuffering == false) so
+        // `deliverLive` keeps routing through it cheaply; cleared on detach.
+    }
+
+    /// Tear down: cancel the subscription, drop buffered I/O, drop the view.
+    ///
+    /// - Parameter stopSession: when `true` (default — preserves every existing
+    ///   caller), also `stop_session`s the helper-side PTY. When `false`,
+    ///   DETACH-only (P1-3): the managed session keeps running on the helper
+    ///   and stays re-attachable; only this view/subscription is torn down.
+    ///   Killing the CLI is then a separate explicit action.
+    public func detach(stopSession: Bool = true) async {
         let snapshot = state
         subscriptionTask?.cancel()
         subscriptionTask = nil
@@ -110,12 +163,20 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
         pendingStdin.removeAll(keepingCapacity: false)
         inFlightResizeTask?.cancel()
         inFlightResizeTask = nil
-        if case let .running(sid) = snapshot {
+        reattachBuffer = nil
+        view = nil
+        if stopSession, case let .running(sid) = snapshot {
             state = .stopping
             try? await client.stopSession(sessionId: sid)
         }
+        // Always land in `.stopped`: this adapter is no longer attached to a
+        // live view/subscription. For stopSession == false the HELPER session
+        // keeps running (detach-not-kill) and stays re-attachable, but the
+        // adapter's OWN state must reflect its disconnected reality — otherwise
+        // a reused adapter's `attachExisting` early-return (state == .running)
+        // would skip re-subscribing and the re-attached view would receive no
+        // live output. Gemini 3.1 Pro review ("zombie adapter trap").
         state = .stopped
-        view = nil
     }
 
     private func startEventSubscription(sessionId: String) {
@@ -124,12 +185,11 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
         // escapes survive and xterm.js renders the real TUI. The helper still
         // redacts; raw is local-broker-only (never the cloud).
         let stream = client.subscribeEvents(sessionId: sessionId, raw: true)
-        let view = self.view
         subscriptionTask = Task { @MainActor [weak self] in
             do {
                 for try await event in stream {
                     if Task.isCancelled { return }
-                    Self.deliver(event: event, to: view)
+                    self?.deliverLive(event)
                 }
             } catch {
                 guard let self else { return }
@@ -138,25 +198,33 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
         }
     }
 
-    /// Route a single helper event to the view. Exposed (static,
-    /// view-optional) so tests can verify routing without a live
+    /// Route a single helper event's output bytes to the view, honouring the
+    /// reattach buffer if one is active (P1-4). Non-output events are ignored
+    /// (the in-app terminal MVP doesn't surface lifecycle events). Internal so
+    /// tests can verify routing + buffering + nil-view safety without a live
     /// subscription Task.
-    static func deliver(event: LocalSessionEvent, to view: TerminalView?) {
-        guard let view else { return }
+    func deliverLive(_ event: LocalSessionEvent) {
+        let payload: String
         switch event {
-        case .outputRaw(_, let payload, _):
-            // Phase 1b: the terminal subscribes with raw:true, so live output
-            // arrives here with ANSI/VT escapes intact → xterm.js renders the TUI.
-            view.pushStdout(Data(payload.utf8))
-        case .outputDelta(_, let payload, _):
-            // Fallback: if a raw subscription ever degrades to the redacted
-            // stream (older helper without output_raw), still show the text.
-            view.pushStdout(Data(payload.utf8))
+        case .outputRaw(_, let p, _):
+            // raw:true stream — ANSI/VT intact → xterm.js renders the TUI.
+            payload = p
+        case .outputDelta(_, let p, _):
+            // Fallback: a raw subscription that degrades to the redacted stream
+            // (older helper without output_raw) still shows the text.
+            payload = p
         default:
-            // `subscribed`, `keepalive`, `status_changed`, etc. —
-            // the in-app terminal MVP ignores these; future polish
-            // could surface lifecycle events as the window title.
+            // `subscribed`, `heartbeat`, `sessionStatus`, etc. — ignored.
             return
+        }
+        let bytes = Data(payload.utf8)
+        if reattachBuffer != nil {
+            // Re-attaching: hold (or pass, post-flush) per the buffer.
+            if let now = reattachBuffer!.intake(bytes) {
+                view?.pushStdout(now)
+            }
+        } else {
+            view?.pushStdout(bytes)
         }
     }
 
