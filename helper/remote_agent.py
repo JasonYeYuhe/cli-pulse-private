@@ -70,6 +70,30 @@ logger = logging.getLogger("cli_pulse.remote_agent")
 # we never let a single session balloon manager memory.
 _STDOUT_BUFFER_CAP_BYTES = 64 * 1024
 
+# v-next P1-2: per-session bounded ring of recent RAW (un-stripped,
+# redacted) output, returned by `get_tail_snapshot` so a terminal opened
+# (or re-opened) mid-session repaints current screen state. 64 KB is
+# enough for a full screenful of TUI chrome + scrollback the renderer
+# replays into xterm.js.
+_RAW_RING_CAP_BYTES = 64 * 1024
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name) or default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+# v-next P1-6: managed-session lifetime caps (monotonic seconds). A
+# forgotten / orphaned session keeps its CLI authenticated and able to
+# spend API quota indefinitely — the tick reaper bounds that. Idle =
+# no stdin/stdout activity; max-age is a hard backstop (also ≈ the
+# injected OAuth token's lifetime, after which the session can't re-auth
+# anyway). Both overridable via env for ops.
+_SESSION_IDLE_TIMEOUT_S = _env_float("HELPER_SESSION_IDLE_TIMEOUT_S", 30 * 60)
+_SESSION_MAX_AGE_S = _env_float("HELPER_SESSION_MAX_AGE_S", 8 * 60 * 60)
+
 # Server-side row CHECK is `length(payload) <= 4096`. Keep the helper's
 # per-event cap a hair under so a UTF-8 boundary fix (see
 # `_safe_truncate_utf8`) can't push a payload over.
@@ -142,6 +166,13 @@ class _ManagedSession:
     # _session(session_id, seq)` is sized for.
     event_seq: int = 0
     last_status_posted: str = "running"   # 'running' | 'stopped' | 'errored'
+    # v-next P1-2: bounded ring of recent RAW redacted output for
+    # `get_tail_snapshot` (reattach repaint). Appended on the executor
+    # thread in `_post_stdout_chunk` → no lock needed.
+    raw_ring: bytearray = field(default_factory=bytearray)
+    # v-next P1-6: monotonic timestamp of the last stdout/stdin activity,
+    # for the idle-session reaper. Initialized to spawn time.
+    last_activity_at: float = 0.0
 
 
 class EventBatcher:
@@ -383,8 +414,10 @@ class RemoteAgentManager:
                 except OSError:
                     pass
 
+        _spawn_mono = time.monotonic()
         self._sessions[params.session_id] = _ManagedSession(
-            params=params, handle=handle, spawned_at=time.monotonic(),
+            params=params, handle=handle, spawned_at=_spawn_mono,
+            last_activity_at=_spawn_mono,
         )
         # Update the registry's recorded Claude PID so descent
         # verification on hook ingress can compare against it.
@@ -491,6 +524,7 @@ class RemoteAgentManager:
         if sess is None:
             return
         self.transport.interrupt(sess.handle)
+        sess.last_activity_at = time.monotonic()  # P1-6: user activity
 
     def write_to_session(self, session_id: str, payload: str) -> bool:
         return self._dispatch(self._write_to_session_impl, session_id, payload)
@@ -538,6 +572,7 @@ class RemoteAgentManager:
             )
             return False
         logger.info("write_to_session(%s): wrote %d bytes ok", session_id, written)
+        sess.last_activity_at = time.monotonic()  # P1-6 idle reaper
         return True
 
     # ── v1.30.x in-app terminal: raw keystroke + window resize ──────────
@@ -574,6 +609,8 @@ class RemoteAgentManager:
         if not raw:
             return True
         written = self.transport.write_stdin(sess.handle, raw)
+        if written > 0:
+            sess.last_activity_at = time.monotonic()  # P1-6 idle reaper
         return written > 0
 
     def resize_session(self, session_id: str, rows: int, cols: int) -> bool:
@@ -585,7 +622,38 @@ class RemoteAgentManager:
         if sess is None:
             return False
         self.transport.resize(sess.handle, rows, cols)
+        sess.last_activity_at = time.monotonic()  # P1-6: user presence
         return True
+
+    def local_get_tail_snapshot(
+        self, session_id: str, max_bytes: int = 8192
+    ) -> dict[str, Any] | None:
+        return self._dispatch(self._local_get_tail_snapshot_impl, session_id, max_bytes)
+
+    def _local_get_tail_snapshot_impl(
+        self, session_id: str, max_bytes: int
+    ) -> dict[str, Any] | None:
+        """v-next P1-2: return the tail of the per-session RAW redacted
+        output ring (base64) so a terminal opened/re-opened mid-session
+        repaints current screen state. Returns None for an unknown session
+        so the UDS layer can map it to `session_not_found`. The tail may
+        begin mid-escape-sequence; xterm.js drops an incomplete leading
+        sequence, and the app can request the full 64 KB for a clean
+        repaint."""
+        sess = self._sessions.get(session_id)
+        if sess is None:
+            return None
+        # A (re)attach is user presence — keep an attached-but-output-quiet
+        # session alive past the idle reaper (P1-6, codex review).
+        sess.last_activity_at = time.monotonic()
+        try:
+            n = int(max_bytes)
+        except (TypeError, ValueError):
+            n = 8192
+        n = max(1, min(n, _RAW_RING_CAP_BYTES))
+        import base64
+        tail = bytes(sess.raw_ring[-n:])
+        return {"bytes_base64": base64.b64encode(tail).decode("ascii")}
 
     def shutdown(self) -> None:
         return self._dispatch(self._shutdown_impl)
@@ -618,13 +686,80 @@ class RemoteAgentManager:
           * bytes_drained
         """
         processed = self._poll_and_dispatch_commands(max_commands=max_commands)
+        local = self._tick_local_impl()
+        local["commands_processed"] = processed
+        return local
+
+    def tick_local(self) -> dict[str, int]:
+        return self._dispatch(self._tick_local_impl)
+
+    def _tick_local_impl(self) -> dict[str, int]:
+        """v-next P1-5: the FAST half of a tick — local PTY drain, child-exit
+        observation, and idle reaping, WITHOUT the Supabase command poll. The
+        daemon calls this on the sub-second active-session cadence and the full
+        `tick()` (which adds the remote poll) at ~1 Hz, so the fast local
+        cadence doesn't multiply remote RPC traffic (codex review)."""
         drained = self._drain_running_sessions_stdout()
         exited = self._observe_exits()
+        reaped = self._reap_overlong_sessions()
         return {
-            "commands_processed": processed,
+            "commands_processed": 0,
             "sessions_exited": exited,
             "bytes_drained": drained,
+            "sessions_reaped": reaped,
         }
+
+    def has_active_sessions(self) -> bool:
+        """True when ≥1 managed session is live. Read WITHOUT the executor —
+        the daemon loop calls this every cycle only to pick its sleep
+        cadence (P1-5), so a benign stale read just shifts the cadence by
+        one tick. CPython dict truthiness is a single atomic read."""
+        return bool(self._sessions)
+
+    def stop_all_sessions(self, reason: str = "control_disabled") -> int:
+        return self._dispatch(self._stop_all_sessions_impl, reason)
+
+    def _stop_all_sessions_impl(self, reason: str) -> int:
+        """v-next P1-6: stop EVERY managed session immediately (e.g. local
+        control toggled OFF) so API spend / orphan PTYs are bounded right
+        away instead of waiting for the idle/max-age reaper. Returns the
+        count stopped. Unlike `shutdown`, the manager stays usable."""
+        if not self._sessions:
+            return 0
+        n = len(self._sessions)
+        logger.info("stopping all %d managed session(s) (%s)", n, reason)
+        for sid in list(self._sessions.keys()):
+            try:
+                self._post_info(sid, f"session stopped ({reason})")
+                self._stop_session_impl(sid)
+            except Exception as exc:  # noqa: BLE001 — best-effort teardown
+                logger.warning("stop_all_sessions(%s) failed: %s", sid, exc)
+        return n
+
+    def _reap_overlong_sessions(self) -> int:
+        """v-next P1-6: stop sessions past the idle timeout or max age so a
+        forgotten / orphaned managed session can't keep a CLI authenticated
+        and spending API quota indefinitely. Returns the count reaped.
+        Runs on the executor thread (via `_tick_impl`) so it shares the
+        single-writer lock with spawn/stop/drain."""
+        if not self._sessions:
+            return 0
+        now = time.monotonic()
+        # Snapshot the reap list BEFORE mutating `_sessions` in the stop call.
+        reap: list[tuple[str, str]] = []
+        for sid, sess in self._sessions.items():
+            if now - sess.spawned_at > _SESSION_MAX_AGE_S:
+                reap.append((sid, "max_age"))
+            elif now - sess.last_activity_at > _SESSION_IDLE_TIMEOUT_S:
+                reap.append((sid, "idle"))
+        for sid, reason in reap:
+            logger.info("reaping managed session %s (%s cap)", sid, reason)
+            try:
+                self._post_info(sid, f"session auto-stopped ({reason} limit reached)")
+                self._stop_session_impl(sid)
+            except Exception as exc:  # noqa: BLE001 — reap is best-effort
+                logger.warning("reap(%s) failed: %s", sid, exc)
+        return len(reap)
 
     def _poll_and_dispatch_commands(self, max_commands: int = 10) -> int:
         try:
@@ -1372,7 +1507,8 @@ class RemoteAgentManager:
         # output_delta (SessionsTab preview + cloud / remote / iOS): strip ANSI
         # THEN redact. Strip BEFORE redact() because some control sequences could
         # otherwise hide token-shape patterns from the secret detector.
-        capped = redact(_ansi_strip(text))[:_EVENT_PAYLOAD_CAP_CHARS]
+        stripped_redacted = redact(_ansi_strip(text))
+        capped = stripped_redacted[:_EVENT_PAYLOAD_CAP_CHARS]
         # output_raw (v1.30.x in-app terminal, Phase 1b): un-stripped so the
         # ANSI/VT escapes survive and xterm.js renders the real TUI; still
         # redacted (defense-in-depth). Computed INDEPENDENTLY of `capped`: a
@@ -1380,9 +1516,39 @@ class RemoteAgentManager:
         # moves, color-only) strips to empty → `capped` empty, but the terminal
         # MUST still receive those escapes or its TUI breaks. So we must NOT let
         # an empty output_delta short-circuit output_raw (agy review 2026-06-19).
-        raw_payload = redact(text)[:_EVENT_PAYLOAD_CAP_CHARS]
+        #
+        # FAIL CLOSED on ANSI-interleaved secrets (codex review): a token split
+        # by VT escapes (`sk-ant-…\x1b[31m…token`) survives a naive
+        # `redact(text)` because the escape hides the token shape from the
+        # matcher — and the raw stream is RETAINED + replayable via
+        # get_tail_snapshot. So if stripping ANSI reveals a secret the raw
+        # pass missed, store the stripped+redacted form instead: sacrifice
+        # color fidelity for that one chunk to guarantee the secret can't leak
+        # (into either the live output_raw event or the ring). Normal chunks
+        # (and non-split secrets) keep their ANSI.
+        raw_redacted = redact(text)
+        if _ansi_strip(raw_redacted) != stripped_redacted:
+            raw_full = stripped_redacted   # fail closed
+        else:
+            raw_full = raw_redacted
+        raw_payload = raw_full[:_EVENT_PAYLOAD_CAP_CHARS]
         if not capped and not raw_payload:
             return False
+        # v-next P1-2: append the RAW redacted bytes to the per-session ring
+        # (bounded, lock-free — this runs on the single-writer executor) so
+        # `get_tail_snapshot` can repaint a terminal opened mid-session. Also
+        # mark activity for the idle reaper (P1-6). Use the full un-capped
+        # fail-closed payload so a long chunk isn't truncated to the per-event
+        # cap before it reaches the ring.
+        sess = self._sessions.get(session_id)
+        if sess is not None:
+            ring_bytes = raw_full.encode("utf-8", "replace")
+            if ring_bytes:
+                sess.raw_ring.extend(ring_bytes)
+                overflow = len(sess.raw_ring) - _RAW_RING_CAP_BYTES
+                if overflow > 0:
+                    del sess.raw_ring[:overflow]
+            sess.last_activity_at = time.monotonic()
         # Mirror to the local broker BEFORE the cloud post — keeps the same-Mac
         # UI snappy even if Supabase is briefly throttled / offline. The broker
         # delivers output_delta only to redacted-preview subscribers and

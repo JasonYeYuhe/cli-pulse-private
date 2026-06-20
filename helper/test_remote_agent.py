@@ -11,6 +11,7 @@ No network. No real Supabase. No real `claude` binary.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -634,6 +635,183 @@ def test_claude_auth_fd_partial_failure_closes_read_fd_and_falls_back(monkeypatc
     # end in the inner finally. No leak into the daemon.
     assert opened["r"] in closed
     assert opened["w"] in closed
+
+
+# ── v-next P1-2: get_tail_snapshot + per-session raw ring ────────────
+
+
+def _spawn(mgr, provider="claude"):
+    from remote_agent import SessionStartParams
+    sid = str(uuid.uuid4())
+    mgr.spawn_session(SessionStartParams(session_id=sid, provider=provider))
+    return sid
+
+
+def test_post_stdout_chunk_fills_raw_ring_with_ansi_preserved():
+    mgr, _transport, _log = _make_manager()
+    sid = _spawn(mgr)
+    mgr._post_stdout_chunk(sid, "\x1b[31mhello\x1b[0m world")
+    snap = mgr.local_get_tail_snapshot(sid)
+    data = base64.b64decode(snap["bytes_base64"])
+    # Raw (un-stripped) ANSI is preserved in the ring for xterm.js.
+    assert data == "\x1b[31mhello\x1b[0m world".encode()
+
+
+def test_get_tail_snapshot_unknown_session_returns_none():
+    mgr, _transport, _log = _make_manager()
+    assert mgr.local_get_tail_snapshot("no-such-session") is None
+
+
+def test_raw_ring_is_bounded_to_cap():
+    import remote_agent
+    mgr, _transport, _log = _make_manager()
+    sid = _spawn(mgr)
+    # Push well past the 64 KB cap. Use normal prose (NOT a long run of one
+    # char — the redactor scrubs secret-shaped blobs) so redaction is a no-op
+    # and the only size change is the ring's own eviction.
+    chunk = "normal terminal output line here\n" * 250  # ~8 KB, redaction-safe
+    for _ in range(12):  # ~99 KB total
+        mgr._post_stdout_chunk(sid, chunk)
+    sess = mgr._sessions[sid]
+    assert len(sess.raw_ring) == remote_agent._RAW_RING_CAP_BYTES
+    snap = mgr.local_get_tail_snapshot(sid, max_bytes=remote_agent._RAW_RING_CAP_BYTES)
+    data = base64.b64decode(snap["bytes_base64"])
+    assert len(data) == remote_agent._RAW_RING_CAP_BYTES
+    # Tail content is the (redaction-untouched) prose.
+    assert b"terminal output line" in data
+
+
+def test_get_tail_snapshot_honors_max_bytes():
+    mgr, _transport, _log = _make_manager()
+    sid = _spawn(mgr)
+    mgr._post_stdout_chunk(sid, "0123456789")
+    snap = mgr.local_get_tail_snapshot(sid, max_bytes=4)
+    data = base64.b64decode(snap["bytes_base64"])
+    assert data == b"6789"  # last 4 bytes
+
+
+def test_get_tail_snapshot_via_drain_path():
+    """Integration: bytes flowing through the real drain (tick) land in the
+    ring and come back via the snapshot."""
+    mgr, transport, _log = _make_manager()
+    sid = _spawn(mgr)
+    # >flush_bytes so the batcher flushes on this tick (→ _post_stdout_chunk).
+    # Redaction-safe prose so the bytes survive to the ring unchanged.
+    transport.canned_stdout[sid] = b"hello world from the terminal\n" * 150
+    mgr.tick()
+    snap = mgr.local_get_tail_snapshot(sid)
+    data = base64.b64decode(snap["bytes_base64"])
+    assert b"hello world from the terminal" in data
+
+
+def test_raw_ring_fails_closed_on_ansi_split_secret():
+    """A secret split by a VT escape (which hides the token shape from the
+    naive redactor) must NOT survive in the retained/replayable ring —
+    the fail-closed path stores the stripped+redacted form (codex review)."""
+    mgr, _transport, _log = _make_manager()
+    sid = _spawn(mgr)
+    # `sk-ant-oat01-real` + color escape + `tokenABCDEFGHIJKLMNOP`.
+    mgr._post_stdout_chunk(sid, "sk-ant-oat01-real\x1b[31mtokenABCDEFGHIJKLMNOP")
+    data = base64.b64decode(mgr.local_get_tail_snapshot(sid)["bytes_base64"])
+    # The post-escape token fragment must be gone (a naive redact would leak it).
+    assert b"tokenABCDEFGHIJKLMNOP" not in data
+    assert b"sk-ant-oat" not in data
+
+
+def test_control_plane_activity_bumps_last_activity():
+    """resize / reattach-snapshot / interrupt are user presence — they must
+    refresh the idle timer so an attached-but-quiet session isn't reaped
+    (codex review)."""
+    mgr, _transport, _log = _make_manager()
+    sid = _spawn(mgr)
+    for action in (
+        lambda: mgr.resize_session(sid, 40, 120),
+        lambda: mgr.local_get_tail_snapshot(sid),
+        lambda: mgr.interrupt_session(sid),
+    ):
+        mgr._sessions[sid].last_activity_at = time.monotonic() - 10_000
+        action()
+        assert time.monotonic() - mgr._sessions[sid].last_activity_at < 5
+
+
+def test_stop_all_sessions_stops_everything():
+    mgr, transport, _log = _make_manager()
+    _spawn(mgr)
+    _spawn(mgr)
+    n = mgr.stop_all_sessions("test_reason")
+    assert n == 2
+    assert mgr._sessions == {}
+    teardown = [c for c in transport.calls if c[0] in ("close", "terminate")]
+    assert len(teardown) >= 2
+
+
+def test_tick_local_skips_command_poll_but_drains():
+    """P1-5: tick_local() (the fast active-cadence tick) does the local
+    drain/exit/reap but NOT the Supabase command poll — so faster local ticks
+    don't multiply remote RPC. The full tick() still polls."""
+    polls: list = []
+
+    def fake_rpc(name, params):
+        if name == "remote_helper_pull_commands":
+            polls.append(1)
+            return []
+        return {}
+
+    transport = FakeTransport()
+    mgr = RemoteAgentManager(
+        helper_config=_StubHelperConfig(), rpc_caller=fake_rpc, transport=transport,
+    )
+    sid = _spawn(mgr)
+    transport.canned_stdout[sid] = b"hello from the cli\n" * 200  # >flush_bytes
+    result = mgr.tick_local()
+    assert len(polls) == 0                     # fast tick does NOT poll
+    assert result["bytes_drained"] > 0         # but DOES drain local PTY
+    mgr.tick()                                 # full tick polls
+    assert len(polls) == 1
+
+
+# ── v-next P1-6: orphan / idle reaping ──────────────────────────────
+
+
+def test_reaper_stops_idle_session():
+    import remote_agent
+    mgr, transport, _log = _make_manager()
+    sid = _spawn(mgr)
+    mgr._sessions[sid].last_activity_at = (
+        time.monotonic() - remote_agent._SESSION_IDLE_TIMEOUT_S - 1
+    )
+    result = mgr.tick()
+    assert sid not in mgr._sessions
+    assert result["sessions_reaped"] == 1
+    assert any(c[0] in ("close", "terminate") for c in transport.calls)
+
+
+def test_reaper_stops_max_age_session():
+    import remote_agent
+    mgr, _transport, _log = _make_manager()
+    sid = _spawn(mgr)
+    sess = mgr._sessions[sid]
+    sess.spawned_at = time.monotonic() - remote_agent._SESSION_MAX_AGE_S - 1
+    sess.last_activity_at = time.monotonic()  # recent → only max-age triggers
+    result = mgr.tick()
+    assert sid not in mgr._sessions
+    assert result["sessions_reaped"] == 1
+
+
+def test_reaper_keeps_active_session():
+    mgr, _transport, _log = _make_manager()
+    sid = _spawn(mgr)
+    mgr._sessions[sid].last_activity_at = time.monotonic()
+    result = mgr.tick()
+    assert sid in mgr._sessions
+    assert result["sessions_reaped"] == 0
+
+
+def test_has_active_sessions_reflects_session_count():
+    mgr, _transport, _log = _make_manager()
+    assert mgr.has_active_sessions() is False
+    _spawn(mgr)
+    assert mgr.has_active_sessions() is True
 
 
 def test_shutdown_terminates_running_sessions():
