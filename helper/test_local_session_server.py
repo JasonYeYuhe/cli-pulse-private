@@ -25,6 +25,7 @@ bind() doesn't blow up on a perfectly good test rig.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import socket
 import struct
@@ -1284,6 +1285,21 @@ def test_get_tail_snapshot_rejects_non_int_max_bytes(short_sock_dir):
         server.stop()
 
 
+def test_get_tail_snapshot_rejects_nonpositive_max_bytes(short_sock_dir):
+    """max_bytes <= 0 → bad_request, not a 1-byte snapshot (codex review)."""
+    server, _mgr, _state = _make_server(short_sock_dir, get_tail_snapshot=lambda s, m: {"bytes_base64": ""})
+    try:
+        for bad in (0, -1):
+            reply = _client_call(server._socket_path, {
+                "id": "1", "method": "get_tail_snapshot", "auth_token": "T",
+                "params": {"session_id": "s1", "max_bytes": bad},
+            })
+            assert reply["ok"] is False, f"max_bytes={bad}"
+            assert reply["error"]["code"] == "bad_request"
+    finally:
+        server.stop()
+
+
 # ── v-next P1-4: local-UDS wire-contract (anti-drift) ─────────────────
 
 # Every UDS `method` string the Swift LocalSessionControlClient sends. Kept
@@ -1297,6 +1313,42 @@ _SWIFT_CLIENT_METHODS = frozenset({
     "get_pending_approvals", "get_local_control_status",
     "set_local_control_enabled",
 })
+
+
+def _parse_swift_client_methods() -> set[str] | None:
+    """Extract every UDS method literal the Swift LocalSessionControlClient
+    sends, by parsing the source. Returns None when the Swift sources aren't
+    present (helper-only checkout / CI image without the app target). Matches
+    both `send(method: "x")` and the streaming `"method": "x"` envelope."""
+    swift = (
+        HELPER_DIR.parent / "CLI Pulse Bar" / "CLIPulseCore"
+        / "Sources" / "CLIPulseCore" / "LocalSessionControlClient.swift"
+    )
+    if not swift.exists():
+        return None
+    text = swift.read_text(encoding="utf-8")
+    # `method: "x"` (send calls) and `"method": "x"` (subscribe_events). The
+    # quoted lowercase value avoids matching the generic `"method": method`
+    # envelope line (variable, not a literal).
+    return set(re.findall(r'"?method"?:\s*"([a-z_]+)"', text))
+
+
+def test_hardcoded_swift_method_set_matches_parsed_source():
+    """Anti-drift for the hardcoded contract itself (Gemini review): the
+    method set parsed from the live Swift client must equal
+    `_SWIFT_CLIENT_METHODS`. If a UDS method is added/removed on the Swift
+    side, this fails first — forcing an update here, which then flows into
+    the SUPPORTED_METHODS + live-handler contract tests below. Keeps the
+    hardcoded list from silently going stale."""
+    parsed = _parse_swift_client_methods()
+    if parsed is None:
+        pytest.skip("Swift client source not present in this checkout")
+    assert parsed == _SWIFT_CLIENT_METHODS, (
+        "Swift client UDS method set drifted from the hardcoded contract. "
+        f"Only in Swift source: {parsed - _SWIFT_CLIENT_METHODS}; "
+        f"only in contract: {_SWIFT_CLIENT_METHODS - parsed}. "
+        "Update _SWIFT_CLIENT_METHODS to match."
+    )
 
 
 def test_every_swift_client_method_is_in_supported_methods():

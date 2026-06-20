@@ -704,6 +704,72 @@ def test_get_tail_snapshot_via_drain_path():
     assert b"hello world from the terminal" in data
 
 
+def test_raw_ring_fails_closed_on_ansi_split_secret():
+    """A secret split by a VT escape (which hides the token shape from the
+    naive redactor) must NOT survive in the retained/replayable ring —
+    the fail-closed path stores the stripped+redacted form (codex review)."""
+    mgr, _transport, _log = _make_manager()
+    sid = _spawn(mgr)
+    # `sk-ant-oat01-real` + color escape + `tokenABCDEFGHIJKLMNOP`.
+    mgr._post_stdout_chunk(sid, "sk-ant-oat01-real\x1b[31mtokenABCDEFGHIJKLMNOP")
+    data = base64.b64decode(mgr.local_get_tail_snapshot(sid)["bytes_base64"])
+    # The post-escape token fragment must be gone (a naive redact would leak it).
+    assert b"tokenABCDEFGHIJKLMNOP" not in data
+    assert b"sk-ant-oat" not in data
+
+
+def test_control_plane_activity_bumps_last_activity():
+    """resize / reattach-snapshot / interrupt are user presence — they must
+    refresh the idle timer so an attached-but-quiet session isn't reaped
+    (codex review)."""
+    mgr, _transport, _log = _make_manager()
+    sid = _spawn(mgr)
+    for action in (
+        lambda: mgr.resize_session(sid, 40, 120),
+        lambda: mgr.local_get_tail_snapshot(sid),
+        lambda: mgr.interrupt_session(sid),
+    ):
+        mgr._sessions[sid].last_activity_at = time.monotonic() - 10_000
+        action()
+        assert time.monotonic() - mgr._sessions[sid].last_activity_at < 5
+
+
+def test_stop_all_sessions_stops_everything():
+    mgr, transport, _log = _make_manager()
+    _spawn(mgr)
+    _spawn(mgr)
+    n = mgr.stop_all_sessions("test_reason")
+    assert n == 2
+    assert mgr._sessions == {}
+    teardown = [c for c in transport.calls if c[0] in ("close", "terminate")]
+    assert len(teardown) >= 2
+
+
+def test_tick_local_skips_command_poll_but_drains():
+    """P1-5: tick_local() (the fast active-cadence tick) does the local
+    drain/exit/reap but NOT the Supabase command poll — so faster local ticks
+    don't multiply remote RPC. The full tick() still polls."""
+    polls: list = []
+
+    def fake_rpc(name, params):
+        if name == "remote_helper_pull_commands":
+            polls.append(1)
+            return []
+        return {}
+
+    transport = FakeTransport()
+    mgr = RemoteAgentManager(
+        helper_config=_StubHelperConfig(), rpc_caller=fake_rpc, transport=transport,
+    )
+    sid = _spawn(mgr)
+    transport.canned_stdout[sid] = b"hello from the cli\n" * 200  # >flush_bytes
+    result = mgr.tick_local()
+    assert len(polls) == 0                     # fast tick does NOT poll
+    assert result["bytes_drained"] > 0         # but DOES drain local PTY
+    mgr.tick()                                 # full tick polls
+    assert len(polls) == 1
+
+
 # ── v-next P1-6: orphan / idle reaping ──────────────────────────────
 
 

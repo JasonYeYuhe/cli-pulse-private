@@ -1203,8 +1203,8 @@ class LocalSessionServer:
             if not isinstance(session_id, str) or not session_id:
                 raise _RequestError("bad_request", "'session_id' must be a non-empty string")
             max_bytes = params.get("max_bytes", 8192)
-            if not isinstance(max_bytes, int) or isinstance(max_bytes, bool):
-                raise _RequestError("bad_request", "'max_bytes' must be an integer")
+            if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 1:
+                raise _RequestError("bad_request", "'max_bytes' must be a positive integer")
             if self._get_tail_snapshot is None:
                 raise _RequestError("not_implemented",
                                     "get_tail_snapshot unavailable on this helper")

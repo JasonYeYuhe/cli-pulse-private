@@ -524,6 +524,7 @@ class RemoteAgentManager:
         if sess is None:
             return
         self.transport.interrupt(sess.handle)
+        sess.last_activity_at = time.monotonic()  # P1-6: user activity
 
     def write_to_session(self, session_id: str, payload: str) -> bool:
         return self._dispatch(self._write_to_session_impl, session_id, payload)
@@ -621,6 +622,7 @@ class RemoteAgentManager:
         if sess is None:
             return False
         self.transport.resize(sess.handle, rows, cols)
+        sess.last_activity_at = time.monotonic()  # P1-6: user presence
         return True
 
     def local_get_tail_snapshot(
@@ -641,6 +643,9 @@ class RemoteAgentManager:
         sess = self._sessions.get(session_id)
         if sess is None:
             return None
+        # A (re)attach is user presence — keep an attached-but-output-quiet
+        # session alive past the idle reaper (P1-6, codex review).
+        sess.last_activity_at = time.monotonic()
         try:
             n = int(max_bytes)
         except (TypeError, ValueError):
@@ -681,11 +686,24 @@ class RemoteAgentManager:
           * bytes_drained
         """
         processed = self._poll_and_dispatch_commands(max_commands=max_commands)
+        local = self._tick_local_impl()
+        local["commands_processed"] = processed
+        return local
+
+    def tick_local(self) -> dict[str, int]:
+        return self._dispatch(self._tick_local_impl)
+
+    def _tick_local_impl(self) -> dict[str, int]:
+        """v-next P1-5: the FAST half of a tick — local PTY drain, child-exit
+        observation, and idle reaping, WITHOUT the Supabase command poll. The
+        daemon calls this on the sub-second active-session cadence and the full
+        `tick()` (which adds the remote poll) at ~1 Hz, so the fast local
+        cadence doesn't multiply remote RPC traffic (codex review)."""
         drained = self._drain_running_sessions_stdout()
         exited = self._observe_exits()
         reaped = self._reap_overlong_sessions()
         return {
-            "commands_processed": processed,
+            "commands_processed": 0,
             "sessions_exited": exited,
             "bytes_drained": drained,
             "sessions_reaped": reaped,
@@ -697,6 +715,26 @@ class RemoteAgentManager:
         cadence (P1-5), so a benign stale read just shifts the cadence by
         one tick. CPython dict truthiness is a single atomic read."""
         return bool(self._sessions)
+
+    def stop_all_sessions(self, reason: str = "control_disabled") -> int:
+        return self._dispatch(self._stop_all_sessions_impl, reason)
+
+    def _stop_all_sessions_impl(self, reason: str) -> int:
+        """v-next P1-6: stop EVERY managed session immediately (e.g. local
+        control toggled OFF) so API spend / orphan PTYs are bounded right
+        away instead of waiting for the idle/max-age reaper. Returns the
+        count stopped. Unlike `shutdown`, the manager stays usable."""
+        if not self._sessions:
+            return 0
+        n = len(self._sessions)
+        logger.info("stopping all %d managed session(s) (%s)", n, reason)
+        for sid in list(self._sessions.keys()):
+            try:
+                self._post_info(sid, f"session stopped ({reason})")
+                self._stop_session_impl(sid)
+            except Exception as exc:  # noqa: BLE001 — best-effort teardown
+                logger.warning("stop_all_sessions(%s) failed: %s", sid, exc)
+        return n
 
     def _reap_overlong_sessions(self) -> int:
         """v-next P1-6: stop sessions past the idle timeout or max age so a
@@ -1469,7 +1507,8 @@ class RemoteAgentManager:
         # output_delta (SessionsTab preview + cloud / remote / iOS): strip ANSI
         # THEN redact. Strip BEFORE redact() because some control sequences could
         # otherwise hide token-shape patterns from the secret detector.
-        capped = redact(_ansi_strip(text))[:_EVENT_PAYLOAD_CAP_CHARS]
+        stripped_redacted = redact(_ansi_strip(text))
+        capped = stripped_redacted[:_EVENT_PAYLOAD_CAP_CHARS]
         # output_raw (v1.30.x in-app terminal, Phase 1b): un-stripped so the
         # ANSI/VT escapes survive and xterm.js renders the real TUI; still
         # redacted (defense-in-depth). Computed INDEPENDENTLY of `capped`: a
@@ -1477,18 +1516,33 @@ class RemoteAgentManager:
         # moves, color-only) strips to empty → `capped` empty, but the terminal
         # MUST still receive those escapes or its TUI breaks. So we must NOT let
         # an empty output_delta short-circuit output_raw (agy review 2026-06-19).
-        raw_payload = redact(text)[:_EVENT_PAYLOAD_CAP_CHARS]
+        #
+        # FAIL CLOSED on ANSI-interleaved secrets (codex review): a token split
+        # by VT escapes (`sk-ant-…\x1b[31m…token`) survives a naive
+        # `redact(text)` because the escape hides the token shape from the
+        # matcher — and the raw stream is RETAINED + replayable via
+        # get_tail_snapshot. So if stripping ANSI reveals a secret the raw
+        # pass missed, store the stripped+redacted form instead: sacrifice
+        # color fidelity for that one chunk to guarantee the secret can't leak
+        # (into either the live output_raw event or the ring). Normal chunks
+        # (and non-split secrets) keep their ANSI.
+        raw_redacted = redact(text)
+        if _ansi_strip(raw_redacted) != stripped_redacted:
+            raw_full = stripped_redacted   # fail closed
+        else:
+            raw_full = raw_redacted
+        raw_payload = raw_full[:_EVENT_PAYLOAD_CAP_CHARS]
         if not capped and not raw_payload:
             return False
         # v-next P1-2: append the RAW redacted bytes to the per-session ring
         # (bounded, lock-free — this runs on the single-writer executor) so
         # `get_tail_snapshot` can repaint a terminal opened mid-session. Also
         # mark activity for the idle reaper (P1-6). Use the full un-capped
-        # `redact(text)` for the ring so a long chunk isn't truncated to the
-        # per-event cap before it reaches the ring.
+        # fail-closed payload so a long chunk isn't truncated to the per-event
+        # cap before it reaches the ring.
         sess = self._sessions.get(session_id)
         if sess is not None:
-            ring_bytes = redact(text).encode("utf-8", "replace")
+            ring_bytes = raw_full.encode("utf-8", "replace")
             if ring_bytes:
                 sess.raw_ring.extend(ring_bytes)
                 overflow = len(sess.raw_ring) - _RAW_RING_CAP_BYTES

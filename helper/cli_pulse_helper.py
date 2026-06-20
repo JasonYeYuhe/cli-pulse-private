@@ -543,6 +543,16 @@ def daemon(args: argparse.Namespace) -> None:
                 set_local_control_enabled(bool(value))
             except ConfigError as exc:
                 raise RuntimeError("helper not paired — pair this Mac to enable local control") from exc
+            # v-next P1-6: reap-on-control-OFF. Disabling local control must
+            # immediately stop any running managed sessions so spend / orphan
+            # PTYs are bounded right away — not left running until the idle /
+            # max-age reaper catches them. Best-effort (a stop failure must not
+            # fail the toggle, which already persisted above).
+            if not value and remote_agent_manager is not None:
+                try:
+                    remote_agent_manager.stop_all_sessions("local_control_disabled")
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("reap-on-control-off failed: %s", exc)
 
         def _start_local(payload: dict[str, Any]) -> dict[str, Any]:
             if remote_agent_manager is None:
@@ -677,8 +687,10 @@ def daemon(args: argparse.Namespace) -> None:
     _last_swarm_hb = 0.0
     # v-next P1-5: while ≥1 managed session is running, tick this often so
     # the in-app terminal's keystroke→output latency is ~200ms instead of
-    # ~1s. Idle cadence stays 1s to keep wakeups cheap.
+    # ~1s. Idle cadence stays 1s to keep wakeups cheap. The full tick() (with
+    # the Supabase command poll) still runs only ~1×/s via `_last_full_tick`.
     _ACTIVE_TICK_INTERVAL_S = 0.2
+    _last_full_tick = 0.0
     # v1.30.2 RC-1: `config` may never be assigned on an unpaired cycle (the
     # heartbeat below raises ConfigError before `config = load_config()`).
     # Initialise it so the swarm-heartbeat guard below is safe, and track
@@ -774,8 +786,17 @@ def daemon(args: argparse.Namespace) -> None:
             _cycle_deadline = time.monotonic() + interval
             while not stopping and time.monotonic() < _cycle_deadline:
                 if remote_agent_manager is not None:
+                    # Full tick() (incl. the Supabase command poll) at ~1 Hz;
+                    # the FAST tick_local() (local drain/exit/reap only) on the
+                    # sub-second active cadence, so faster local ticks don't
+                    # multiply remote RPC traffic (codex review).
+                    _now_tick = time.monotonic()
                     try:
-                        remote_agent_manager.tick()
+                        if _now_tick - _last_full_tick >= 1.0:
+                            _last_full_tick = _now_tick
+                            remote_agent_manager.tick()
+                        else:
+                            remote_agent_manager.tick_local()
                     except Exception as exc:
                         logger.warning("remote agent tick failed: %s", exc)
                 # S1b swarm heartbeat — monotonic ~30s cadence, fully
