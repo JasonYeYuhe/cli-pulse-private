@@ -105,6 +105,47 @@ final class GeminiAntigravityCredsTests: XCTestCase {
 
     // MARK: - Quota bucket parsing (the 3.1 Pro models agy reports)
 
+    // MARK: - buildResult mapping (family grouping + lowest-fraction + display math)
+
+    func test_buildResult_groupsFamiliesKeepsLowestAndMapsPlan() {
+        let collector = GeminiCollector()
+        let r = "2026-06-22T15:00:00Z"
+        let buckets = [
+            GeminiCollector.QuotaBucket(modelId: "gemini-3.1-pro-preview",  remainingFraction: 0.30, resetTime: r),
+            GeminiCollector.QuotaBucket(modelId: "gemini-3-pro-preview",    remainingFraction: 0.55, resetTime: r),  // same family, higher
+            GeminiCollector.QuotaBucket(modelId: "gemini-3-flash-preview",  remainingFraction: 0.80, resetTime: r),
+            GeminiCollector.QuotaBucket(modelId: "gemini-3.1-flash-lite",   remainingFraction: 0.95, resetTime: r),
+        ]
+        let tier = GeminiCollector.TierInfo(tierId: "standard-tier", projectId: "p")
+        let u = collector.buildResult(buckets: buckets, tierInfo: tier).usage
+
+        XCTAssertEqual(u.plan_type, "Paid")  // standard-tier → Paid
+        // Pro family keeps the LOWEST of its two buckets (0.30 → 30%).
+        XCTAssertEqual(u.tiers.first { $0.name == "Pro" }?.remaining, 30)
+        XCTAssertEqual(u.tiers.first { $0.name == "Flash" }?.remaining, 80)
+        XCTAssertEqual(u.tiers.first { $0.name == "Flash Lite" }?.remaining, 95)
+        // Tier order: Pro, Flash, Flash Lite (the preferred order).
+        XCTAssertEqual(u.tiers.map(\.name), ["Pro", "Flash", "Flash Lite"])
+        // Overall = the primary (Pro) family.
+        XCTAssertEqual(u.remaining, 30)
+        XCTAssertEqual(u.status_text, "70% used")
+    }
+
+    func test_buildResult_freeTierAndEmptyBuckets() {
+        let collector = GeminiCollector()
+        let free = collector.buildResult(
+            buckets: [GeminiCollector.QuotaBucket(modelId: "gemini-2.5-flash", remainingFraction: 1.0, resetTime: nil)],
+            tierInfo: GeminiCollector.TierInfo(tierId: "free-tier", projectId: "p")).usage
+        XCTAssertEqual(free.plan_type, "Free")
+        XCTAssertEqual(free.tiers.first { $0.name == "Flash" }?.remaining, 100)
+
+        // No buckets → no tiers, defaults to 100% remaining (not a crash).
+        let empty = collector.buildResult(buckets: [], tierInfo: nil).usage
+        XCTAssertTrue(empty.tiers.isEmpty)
+        XCTAssertEqual(empty.remaining, 100)
+        XCTAssertEqual(empty.plan_type, "Unknown")
+    }
+
     func test_parseQuota_handlesGemini31PreviewModels() throws {
         let json = """
         {"buckets":[
