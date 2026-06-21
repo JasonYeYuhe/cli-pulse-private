@@ -77,7 +77,10 @@ public enum SandboxFileAccess {
                 atPath: parentDir,
                 withIntermediateDirectories: true
             )
-            try data.write(to: URL(fileURLWithPath: path))
+            // Atomic (temp-file + rename) so a concurrent reader — e.g. `agy`
+            // or gemini-cli re-reading its own token file — never observes the
+            // truncate-before-write window and unmarshals empty/partial JSON.
+            try data.write(to: URL(fileURLWithPath: path), options: .atomic)
             return true
         } catch {
             logger.error("Failed to write to \(path, privacy: .public): \(error.localizedDescription, privacy: .public)")

@@ -64,7 +64,11 @@ public final class BookmarkManager {
 
     public static let knownDirectories: [KnownDirectory] = [
         KnownDirectory(id: "codex", path: "~/.codex/", displayName: "Codex CLI", detectionFile: "auth.json"),
-        KnownDirectory(id: "gemini", path: "~/.gemini/", displayName: "Gemini CLI", detectionFile: "oauth_creds.json"),
+        // alwaysShow: an Antigravity (`agy`)-only user has no oauth_creds.json,
+        // and under the sandbox `fileExists` reports the dir missing until a
+        // bookmark is granted — so without this the Gemini row (and its Grant
+        // button) is filtered out, and the agy quota path can never get access.
+        KnownDirectory(id: "gemini", path: "~/.gemini/", displayName: "Gemini CLI / Antigravity", detectionFile: "oauth_creds.json", alwaysShow: true),
         KnownDirectory(id: "claude", path: "~/.claude/", displayName: "Claude CLI", detectionFile: ".credentials.json"),
         KnownDirectory(id: "clipulse-config", path: "~/.config/clipulse/", displayName: "CLI Pulse Config", detectionFile: nil),
         KnownDirectory(id: "clipulse-data", path: "~/.clipulse/", displayName: "CLI Pulse Data", detectionFile: nil),
