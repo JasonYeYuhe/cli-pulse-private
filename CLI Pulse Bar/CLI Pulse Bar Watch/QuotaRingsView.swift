@@ -60,6 +60,10 @@ struct QuotaRingsView: View {
                         ProviderRingCluster(providers: ringProviders)
                             .frame(height: 142)
                             .padding(.vertical, 2)
+                        // Legend mapping each ring's colour → its provider
+                        // (outer ring first), so the concentric rings are
+                        // readable at a glance.
+                        RingLegend(providers: ringProviders)
                     }
                     ForEach(sortedProviders) { provider in
                         NavigationLink {
@@ -140,12 +144,15 @@ struct ProviderRingCluster: View {
     }
 
     private func ring(for provider: ProviderUsage, index: Int) -> some View {
+        // Each ring is drawn in the provider's OWN brand colour (stable, never
+        // recoloured by usage) so a provider is identifiable by its ring colour
+        // and the legend below can map colour → provider. Urgency is conveyed by
+        // the arc length (how empty the ring is) and by the per-provider cards,
+        // which keep the red/amber tier tinting.
         let base = PulseTheme.providerColor(provider.provider)
         // The arc tracks the WEEKLY window (falls back to the primary when a
         // provider has no weekly tier) — the slower, more meaningful budget.
         let wpct = WatchRingMath.weeklyUsagePercent(provider)
-        let tier = WatchRingMath.tier(usagePercent: wpct)
-        let fill = WatchTheme.tierColor(tier, base: base)
         let remaining = WatchRingMath.remainingFraction(usagePercent: wpct)
         // Inset each successive ring so it nests inside the previous one;
         // the +ringWidth/2 keeps the outermost stroke from clipping the edge.
@@ -156,7 +163,7 @@ struct ProviderRingCluster: View {
                 .stroke(base.opacity(WatchTheme.ringTrackOpacity), lineWidth: WatchTheme.ringWidth)
             Circle()
                 .trim(from: 0, to: remaining)
-                .stroke(fill, style: StrokeStyle(lineWidth: WatchTheme.ringWidth, lineCap: .round))
+                .stroke(base, style: StrokeStyle(lineWidth: WatchTheme.ringWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
         }
         .padding(inset)
@@ -185,6 +192,48 @@ struct ProviderRingCluster: View {
     }
 
     private var accessibilitySummary: String {
+        providers
+            .map { L10n.widget.percentLeft($0.provider, WatchRingMath.weeklyRemainingPercentInt($0)) }
+            .joined(separator: ", ")
+    }
+}
+
+// MARK: - Ring legend (colour → provider)
+
+/// Maps each concentric ring's colour to its provider so the cluster is
+/// readable at a glance. `providers` is the same `ringProviders` array the
+/// rings use (index 0 = outermost), so the rows are listed outer → inner and
+/// each colour dot matches exactly the colour of that provider's ring.
+struct RingLegend: View {
+    let providers: [ProviderUsage]
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ForEach(Array(providers.enumerated()), id: \.element.id) { _, provider in
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(PulseTheme.providerColor(provider.provider))
+                        .frame(width: 8, height: 8)
+                    Text(provider.provider)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Spacer(minLength: 4)
+                    Text(L10n.watch.percentLeft(WatchRingMath.weeklyRemainingPercentInt(provider)))
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .background(WatchTheme.cardFill, in: RoundedRectangle(cornerRadius: WatchTheme.cardRadius))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(legendAccessibility)
+    }
+
+    private var legendAccessibility: String {
         providers
             .map { L10n.widget.percentLeft($0.provider, WatchRingMath.weeklyRemainingPercentInt($0)) }
             .joined(separator: ", ")

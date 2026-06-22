@@ -49,7 +49,13 @@ struct iOSSwarmTab: View {
     /// no request_id, so we act on the oldest real pending request,
     /// which in practice IS the oldest-blocked agent).
     private var oldestPending: RemotePermissionRequest? {
-        state.remotePendingApprovals.min { $0.created_at < $1.created_at }
+        // Exclude high-risk requests: like the Approvals screen and the Mac,
+        // those cannot be approved remotely and must be approved locally. The
+        // one-tap shortcut must never silently approve a high-risk request, so
+        // it only ever targets the oldest approvable (non-high) one.
+        state.remotePendingApprovals
+            .filter { RemotePermissionRisk(rawValue: $0.risk) != .high }
+            .min { $0.created_at < $1.created_at }
     }
 
     private let columns = [GridItem(.flexible(), spacing: 10),
@@ -99,8 +105,16 @@ struct iOSSwarmTab: View {
                        subtitle: L10n.swarm.emptyHint)
         } else {
             summaryBar
-            if totalBlocked > 0, let p = oldestPending {
-                approveOldestButton(p)
+            if totalBlocked > 0 {
+                if let p = oldestPending {
+                    approveOldestButton(p)
+                } else if !state.remotePendingApprovals.isEmpty {
+                    // Request-level approvals exist but they're all high-risk —
+                    // surface why there's no one-tap approve instead of a
+                    // silently missing button. (When the blocked count is
+                    // rollup-only with no request_ids, we show nothing, as before.)
+                    highRiskBlockedHint
+                }
             }
             LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
                 ForEach(entries) { e in swarmCard(e) }
@@ -141,6 +155,24 @@ struct iOSSwarmTab: View {
         }
         .buttonStyle(.plain)
         .disabled(approving)
+    }
+
+    /// Shown when blocked requests exist but they're all high-risk (no one-tap
+    /// approve allowed remotely — they must be approved on the Mac).
+    private var highRiskBlockedHint: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.shield.fill")
+            Text(L10n.remoteApprovals.highRiskWarning)
+                .font(.footnote)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .font(.subheadline.weight(.semibold))
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.12))
+        .foregroundStyle(.secondary)
+        .clipShape(RoundedRectangle(cornerRadius: 9))
     }
 
     // MARK: - Card (decomposed; same anti-type-check-wall discipline as macOS)

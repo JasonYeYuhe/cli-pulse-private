@@ -464,10 +464,9 @@ struct iOSLoginView: View {
 
 private class WebAuthContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding {
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let window = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first else {
-            return ASPresentationAnchor()
-        }
-        return window
+        // Shared robust resolver (see WebAuthAnchor in iOSSettingsTab) — prefers
+        // the foreground-active scene's key window and avoids the detached
+        // empty-window fallback that silently kills the OAuth sheet.
+        WebAuthAnchor.current()
     }
 }
