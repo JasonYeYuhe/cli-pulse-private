@@ -182,15 +182,8 @@ struct iOSSettingsTab: View {
 
                         Toggle(L10n.settings.showCostEstimates, isOn: $state.showCost)
                         Toggle(L10n.settings.compactMode, isOn: $state.compactMode)
-
-                        Picker(L10n.settings.menuBarMode, selection: Binding(
-                            get: { state.menuBarDisplayMode },
-                            set: { state.menuBarDisplayMode = $0 }
-                        )) {
-                            ForEach(MenuBarDisplayMode.allCases, id: \.self) { mode in
-                                Text(mode.localizedName).tag(mode)
-                            }
-                        }
+                        // Menu-bar display mode is a macOS-only setting (iOS has
+                        // no menu bar) — intentionally not surfaced here.
                     }
 
                     // Provider Management - inline grid
@@ -921,10 +914,23 @@ struct LinkedAccountsSection: View {
 
 private final class LinkedAccountsWebAuthContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding {
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let window = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first else {
-            return ASPresentationAnchor()
+        WebAuthAnchor.current()
+    }
+}
+
+/// Resolves a real, attached window for `ASWebAuthenticationSession`. Prefers
+/// the foreground-active scene's key window; falls back through any key window
+/// then any attached window. A detached empty `ASPresentationAnchor()` would
+/// make the OAuth sheet silently fail to present (e.g. if the app was briefly
+/// backgrounded mid-flow), so it's only the absolute last resort.
+enum WebAuthAnchor {
+    static func current() -> ASPresentationAnchor {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        if let window = scenes.first(where: { $0.activationState == .foregroundActive })?.keyWindow
+            ?? scenes.compactMap({ $0.keyWindow }).first
+            ?? scenes.flatMap({ $0.windows }).first {
+            return window
         }
-        return window
+        return ASPresentationAnchor()
     }
 }
