@@ -42,11 +42,20 @@ The infrastructure below is now **LIVE in prod** (`gkjwsxotmwrgqsvfijzs`), all *
 - **`mint-realtime-token` edge fn DEPLOYED** (verify_jwt=ON). Verified: bogus→403, malformed→400,
   GET→405, and a **real mint produced a correctly-signed token** (`kid:r0-20260624, sub:<owner>,
   role/aud:authenticated, exp=iat+3600`).
-- **✅ TPA token-trust FULLY VERIFIED end-to-end** (with a throwaway test user, since deleted):
+- **✅ TPA token-trust FULLY VERIFIED end-to-end** (throwaway test users, since deleted):
   a minted token is **trusted by PostgREST** (`auth.uid()` resolved → RLS returned the owner's
-  own row) AND by **Realtime** (broadcast to `pterm:<session>` → HTTP 202). The complete auth
-  chain works. (The owner-vs-non-owner write-RLS *delivery* filtering — Gemini MEDIUM — is proven
-  at the SQL level by the pgTAP suite and is the cutover's final failure-injection step §8.3.)
+  own row) AND by **Realtime**.
+- **✅ LIVE WebSocket RLS proof PASSED** (2026-06-24, two throwaway users, deleted): on the real
+  Realtime path — owner **joins** its own `pterm:<S>` private + **receives** the broadcast;
+  a non-owner is **DENIED the join** (`"Unauthorized: You do not have permissions to read from
+  this Channel topic"` → eavesdrop closed); a non-owner **inject is NOT delivered** to the owner
+  (write-RLS → inject closed). The full R0 model is proven, not just argued.
+- 🔴 **CRITICAL BUG FOUND + FIXED by that proof:** the broadcast HTTP message **MUST include
+  `"private": true`**. Without it the message goes to the PUBLIC channel of the same topic name
+  and the private subscriber receives **nothing** (silent blackhole — 202 returned, zero
+  delivery). The B2 Python sink omitted it → fixed (PR). At cutover this would have made R0 appear
+  completely broken (helper streams, iPhone sees nothing). B3's client config (`private:true`
+  join, `self:false`) is correct as-is.
 
 **STILL OWNER-GATED (do NOT do until B3 is in a shipped App Store build):** the forced cutover
 + disabling Public Channels (see §8). Flipping the flag now would blackhole every currently

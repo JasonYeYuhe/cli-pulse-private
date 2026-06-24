@@ -221,6 +221,16 @@ class RealtimeBroadcastSink:
                 "messages": [
                     {
                         "topic": topic,
+                        # 🔴 MUST be true. The broadcast HTTP API routes a message
+                        # to PRIVATE (RLS-governed) subscribers ONLY when
+                        # `private:true`; without it the message goes to the
+                        # PUBLIC channel of the same topic name and the private
+                        # subscriber (the iPhone joining pterm: with private:true)
+                        # receives NOTHING — a silent blackhole (verified live on
+                        # prod 2026-06-24: 202 returned, zero delivery, until this
+                        # flag was added). The endpoint still evaluates write-RLS
+                        # by the Bearer token, so injection stays closed.
+                        "private": True,
                         "event": event,
                         "payload": {
                             "session_id": session_id,
