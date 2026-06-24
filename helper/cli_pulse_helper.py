@@ -66,6 +66,16 @@ class HelperConfig:
     # dropping it. Authoritative reader is Swift's
     # HelperConfigStore.remoteRealtimeEnabled.
     remote_realtime_enabled: bool = True
+    # R0 (B2): gate for the PYTHON helper's terminal-broadcast producer
+    # (realtime_broadcast.TerminalBroadcastPublisher). DISTINCT from
+    # `remote_realtime_enabled` above on purpose — that one defaults True and
+    # is already written into shipped configs (Swift round-trip), so it cannot
+    # be the dark-gate. This one defaults FALSE and is absent from existing
+    # configs → loads False → R0 stays DARK until the owner cutover. When False:
+    # zero broadcasts, zero edge-fn calls, byte-identical to today. Even when
+    # True, only PRIVATE sessions broadcast (the mint-realtime-token edge fn
+    # authorizes private-only); public sessions stay on the DB-event path.
+    remote_realtime_broadcast_enabled: bool = False
 
 
 def now_iso() -> str:
@@ -466,6 +476,31 @@ def daemon(args: argparse.Namespace) -> None:
             on_event=local_event_broker.publish,
         )
         import claude_oauth  # v-next P0-A: fresh-OAuth-token resolver for managed claude
+        # R0 (B2): construct the terminal-broadcast producer ONLY when the owner
+        # has flipped `remote_realtime_broadcast_enabled` (default OFF → None →
+        # zero broadcasts, zero edge-fn calls, byte-identical to today). Even
+        # on, only PRIVATE sessions broadcast (the mint edge fn denies public).
+        broadcast_publisher = None
+        if getattr(config_for_manager, "remote_realtime_broadcast_enabled", False):
+            try:
+                from realtime_broadcast import (  # type: ignore
+                    RealtimeBroadcastSink,
+                    RealtimeTokenClient,
+                    TerminalBroadcastPublisher,
+                )
+                broadcast_publisher = TerminalBroadcastPublisher(
+                    RealtimeTokenClient(
+                        SUPABASE_URL, SUPABASE_ANON_KEY,
+                        config_for_manager.device_id,
+                        config_for_manager.helper_secret,
+                    ),
+                    RealtimeBroadcastSink(SUPABASE_URL, SUPABASE_ANON_KEY),
+                )
+                broadcast_publisher.start()
+                logger.info("R0 terminal-broadcast producer ENABLED")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("R0 broadcast producer init failed: %s", exc)
+                broadcast_publisher = None
         remote_agent_manager = RemoteAgentManager(
             helper_config=config_for_manager,
             rpc_caller=supabase_rpc,
@@ -477,6 +512,7 @@ def daemon(args: argparse.Namespace) -> None:
             # launchd-spawned claude doesn't 401 on a stale keychain token
             # (it can't self-refresh in the non-GUI security context).
             claude_token_resolver=claude_oauth.resolve_fresh_claude_access_token,
+            broadcast_publisher=broadcast_publisher,
         )
         logger.info(
             "remote agent manager initialised (executor=on, broker=on, approvals=on)",

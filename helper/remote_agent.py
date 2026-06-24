@@ -256,9 +256,18 @@ class RemoteAgentManager:
         approval_registry: ApprovalRegistry | None = None,
         local_helper_socket_path: str | None = None,
         claude_token_resolver: Callable[[], str | None] | None = None,
+        broadcast_publisher: Any = None,
     ) -> None:
         self.helper_config = helper_config
         self.rpc_caller = rpc_caller
+        # R0 (B2): optional terminal-broadcast producer
+        # (realtime_broadcast.TerminalBroadcastPublisher). When None (the
+        # default, and the shipped state — the
+        # `remote_realtime_broadcast_enabled` gate is off), the helper behaves
+        # exactly as today: stdout goes to the DB-event path only, NOTHING is
+        # broadcast. When wired, redacted raw bytes are ALSO submitted to the
+        # publisher, which streams private sessions to `pterm:<id>`.
+        self._broadcast_publisher = broadcast_publisher
         if transport is None:
             transport = self._default_transport()
         self.transport = transport
@@ -530,6 +539,19 @@ class RemoteAgentManager:
                 })
             except Exception as exc:  # noqa: BLE001
                 logger.debug("broker session_stopped publish failed: %s", exc)
+        # R0 (B2): flush any coalesced chunks for this session so the final
+        # output (e.g. the last line before the prompt returns) isn't lost to
+        # the coalescing window on teardown. No-op when the producer is absent.
+        if self._broadcast_publisher is not None:
+            try:
+                self._broadcast_publisher.flush(session_id)
+                # Purge per-session token/denial/retry state AFTER the final
+                # flush so the long-lived daemon's dicts stay bounded.
+                forget = getattr(self._broadcast_publisher, "forget", None)
+                if callable(forget):
+                    forget(session_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("broadcast flush(%s) failed: %s", session_id, exc)
         self._sessions.pop(session_id, None)
 
     def interrupt_session(self, session_id: str) -> None:
@@ -1586,6 +1608,21 @@ class RemoteAgentManager:
                 overflow = len(sess.raw_ring) - _RAW_RING_CAP_BYTES
                 if overflow > 0:
                     del sess.raw_ring[:overflow]
+                # R0 (B2): ALSO stream these already-redacted raw bytes to the
+                # private broadcast topic. No-op when the producer is absent
+                # (gate off — the shipped state) or the session isn't private
+                # (the token mint denies public sessions → publisher skips).
+                # Reuses the SAME redact-at-write path as the ring/in-app
+                # terminal — the broadcast never sees un-redacted bytes.
+                if self._broadcast_publisher is not None:
+                    # Guard like the sibling broker publishes: a producer fault
+                    # must never break the redacted DB-event path below.
+                    try:
+                        self._broadcast_publisher.submit(
+                            session_id, "stdout", bytes(ring_bytes)
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("broadcast submit failed: %s", exc)
             sess.last_activity_at = time.monotonic()
         # Mirror to the local broker BEFORE the cloud post — keeps the same-Mac
         # UI snappy even if Supabase is briefly throttled / offline. The broker
