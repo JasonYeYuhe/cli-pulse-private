@@ -105,6 +105,75 @@ final class RemoteSessionEventStreamTests: XCTestCase {
         XCTAssertEqual(cfg["private"] as? Bool, false)
     }
 
+    // MARK: - R0 (B3) private join + token
+
+    func test_topic_picks_pterm_for_private_and_term_for_public() {
+        XCTAssertEqual(
+            RemoteSessionEventStream.topic(for: "sid-1", isPrivate: true),
+            "pterm:sid-1")
+        XCTAssertEqual(
+            RemoteSessionEventStream.topic(for: "sid-1", isPrivate: false),
+            "term:sid-1")
+    }
+
+    func test_encodePhxJoinFrame_private_uses_pterm_and_attaches_token() throws {
+        let data = try RemoteSessionEventStream.encodePhxJoinFrame(
+            joinRef: "j", ref: "r", sessionId: "sid-9",
+            isPrivate: true, accessToken: "user-jwt-abc"
+        )
+        let arr = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [Any])
+        // Distinct PRIVATE prefix — the RLS-governed topic.
+        XCTAssertEqual(arr[2] as? String, "realtime:pterm:sid-9")
+        let payload = try XCTUnwrap(arr[4] as? [String: Any])
+        let cfg = try XCTUnwrap(payload["config"] as? [String: Any])
+        XCTAssertEqual(cfg["private"] as? Bool, true)
+        // access_token sits at the payload top level (sibling of config) so
+        // Realtime evaluates realtime.messages read-RLS as the owner.
+        XCTAssertEqual(payload["access_token"] as? String, "user-jwt-abc")
+    }
+
+    func test_encodePhxJoinFrame_public_omits_token_even_when_passed() throws {
+        // Zero-regression invariant: the PUBLIC frame must stay byte-identical
+        // to pre-R0 — no access_token leaks onto the public `term:` channel
+        // even if a token is supplied.
+        let data = try RemoteSessionEventStream.encodePhxJoinFrame(
+            joinRef: "j", ref: "r", sessionId: "sid-9",
+            isPrivate: false, accessToken: "user-jwt-abc"
+        )
+        let arr = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [Any])
+        XCTAssertEqual(arr[2] as? String, "realtime:term:sid-9")
+        let payload = try XCTUnwrap(arr[4] as? [String: Any])
+        XCTAssertNil(payload["access_token"], "public join must NOT carry a token")
+        let cfg = try XCTUnwrap(payload["config"] as? [String: Any])
+        XCTAssertEqual(cfg["private"] as? Bool, false)
+    }
+
+    func test_encodePhxJoinFrame_private_without_token_omits_key() throws {
+        // A private join with no token yet (e.g. not signed in) must not emit
+        // an empty/garbage access_token — better to fail closed at the server.
+        let data = try RemoteSessionEventStream.encodePhxJoinFrame(
+            joinRef: "j", ref: "r", sessionId: "s", isPrivate: true, accessToken: nil)
+        let arr = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [Any])
+        let payload = try XCTUnwrap(arr[4] as? [String: Any])
+        XCTAssertNil(payload["access_token"])
+        let cfg = try XCTUnwrap(payload["config"] as? [String: Any])
+        XCTAssertEqual(cfg["private"] as? Bool, true)
+    }
+
+    func test_encodeAccessTokenFrame_shape() throws {
+        let data = try RemoteSessionEventStream.encodeAccessTokenFrame(
+            joinRef: "j", ref: "5", sessionId: "sid-9", accessToken: "fresh-jwt")
+        let arr = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [Any])
+        XCTAssertEqual(arr.count, 5)
+        XCTAssertEqual(arr[0] as? String, "j")
+        XCTAssertEqual(arr[1] as? String, "5")
+        // Refresh always targets the PRIVATE topic (only private joins carry a token).
+        XCTAssertEqual(arr[2] as? String, "realtime:pterm:sid-9")
+        XCTAssertEqual(arr[3] as? String, "access_token")
+        let payload = try XCTUnwrap(arr[4] as? [String: Any])
+        XCTAssertEqual(payload["access_token"] as? String, "fresh-jwt")
+    }
+
     // MARK: - heartbeat encoder
 
     func test_encodeHeartbeatFrame_shape() throws {

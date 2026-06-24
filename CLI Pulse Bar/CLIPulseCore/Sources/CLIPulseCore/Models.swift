@@ -1067,19 +1067,33 @@ public struct RemoteSession: Codable, Sendable, Identifiable, Hashable {
     public let client_label: String?
     public let created_at: String
     public let last_event_at: String?
+    /// R0 (migrate_v0.56): whether this session streams its terminal over the
+    /// PRIVATE `pterm:<id>` Realtime topic (RLS-governed) vs the legacy public
+    /// `term:<id>` topic. Optional + nil-defaults-false so the model still
+    /// decodes pre-R0 server responses during rollout (the field is absent
+    /// until the backend migration is applied). Decided atomically at
+    /// session-create from `user_settings.realtime_private_enabled`.
+    public let realtime_private: Bool?
 
     public init(
         id: String, device_id: String, device_name: String? = nil,
         provider: String, cwd_basename: String,
         cwd_hmac: String? = nil, status: String, client_label: String? = nil,
-        created_at: String, last_event_at: String? = nil
+        created_at: String, last_event_at: String? = nil,
+        realtime_private: Bool? = nil
     ) {
         self.id = id; self.device_id = device_id; self.device_name = device_name
         self.provider = provider
         self.cwd_basename = cwd_basename; self.cwd_hmac = cwd_hmac
         self.status = status; self.client_label = client_label
         self.created_at = created_at; self.last_event_at = last_event_at
+        self.realtime_private = realtime_private
     }
+
+    /// Resolved private-mode flag (nil → false). The client picks the
+    /// `pterm:`-private vs `term:`-public Realtime join from this; a mismatch
+    /// with the helper is a silent blackhole, so it must be exact.
+    public var isRealtimePrivate: Bool { realtime_private ?? false }
 
     /// Convenience: pending or running. Used by Sessions UI to filter
     /// out terminal-state rows that the server still returns until the

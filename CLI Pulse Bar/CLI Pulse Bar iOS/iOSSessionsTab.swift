@@ -862,6 +862,16 @@ struct ManagedSessionDetailView: View {
                 if !hasRefreshedAtLeastOnce {
                     hasRefreshedAtLeastOnce = true
                 }
+                // R0 (B3): keep the cached config's user token fresh for a
+                // PRIVATE join (the token rotates ~hourly; a long-lived private
+                // join needs the new one re-sent). Cheap actor read, dedup'd so
+                // it only re-renders when the token actually changed; the
+                // Representable then pushes it via `updateAccessToken`. No-op
+                // for the public `term:` path (flag-off ship).
+                if currentSession.isRealtimePrivate {
+                    let fresh = await state.api.realtimeConfiguration()
+                    if fresh != realtimeConfig { realtimeConfig = fresh }
+                }
                 if !state.remoteControlEnabled {
                     try? await Task.sleep(nanoseconds: 10_000_000_000)
                 } else {
@@ -938,6 +948,7 @@ struct ManagedSessionDetailView: View {
         VStack(alignment: .leading, spacing: 4) {
             RemoteTerminalViewRepresentable(
                 sessionId: currentSession.id,
+                isRealtimePrivate: currentSession.isRealtimePrivate,
                 streamConfig: streamConfig,
                 scenePhase: scenePhase,
                 onStdin: { [sessionId = currentSession.id] bytes in
