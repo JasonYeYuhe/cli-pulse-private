@@ -141,6 +141,7 @@ def test_sink_posts_pterm_topic_and_bearer_token():
     assert headers["Authorization"] == "Bearer tok-xyz"  # R0 token, not anon
     msg = body["messages"][0]
     assert msg["topic"] == "pterm:sess-9"          # PRIVATE prefix
+    assert msg["private"] is True                  # routes to PRIVATE subscribers (else blackhole)
     assert msg["event"] == "stdout"
     assert msg["payload"]["session_id"] == "sess-9"
     assert base64.b64decode(msg["payload"]["data_b64"]) == b"hello\x1b[0m"
