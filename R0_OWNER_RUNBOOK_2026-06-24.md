@@ -17,6 +17,43 @@ Artifacts in this PR:
 
 ---
 
+## ✅ ACTIVATION RECORD — executed 2026-06-24 (owner-authorized, Gemini-3.1-Pro GO-WITH-CHANGES)
+
+The infrastructure below is now **LIVE in prod** (`gkjwsxotmwrgqsvfijzs`), all **gated-OFF**
+(every `user_settings.realtime_private_enabled` is false → no session is private → public
+`term:` path unchanged → **zero behavior change for current users**):
+
+- **migrate_v0.56 APPLIED** (tracked migration `v0_56_realtime_terminal_authz`). Verified:
+  both columns, both `realtime.messages` policies (SELECT+INSERT), `authorize_broadcast`
+  RPC, both re-emitted RPCs. Drift-reconfirmed against live bodies before apply.
+- **Dedicated R0 ES256 keypair generated** → `~/Library/Application Support/CLI-Pulse-Secrets/r0-20260624/`
+  (`r0_private_pkcs8.pem` SECRET + `r0_public_jwks.json`). **kid = `r0-20260624`**.
+- **Third-Party Auth issuer registered via `jwks_url`** — TPA id
+  `b87b4dc9-8c28-40e3-aab6-313ad62447e3`, `jwks_url = …/functions/v1/r0-jwks`. Supabase matches
+  by **`kid`** (not `iss`), so this is additive and cannot affect existing GoTrue auth.
+  ⚠️ **GOTCHA:** inline `custom_jwks` was tried first (TPA `bde24b8d…`) but this project's
+  resolver **never resolved it** (`resolved_at` stayed null for 25+ min → tokens rejected
+  `PGRST301`/401). Switching to a **hosted `jwks_url`** resolved **instantly** (`resolved_jwks:
+  true`). On this project, use `jwks_url`, NOT `custom_jwks`.
+- **`r0-jwks` edge fn DEPLOYED** (verify_jwt=OFF, `Cache-Control: public, max-age=3600`) — serves
+  the public JWKS for the issuer. (Public verification key only; no secret.)
+- **Edge-fn secrets set** (`R0_JWT_PRIVATE_KEY`/`R0_JWT_ISSUER=https://clipulse.app/r0`/
+  `R0_JWT_KID=r0-20260624`/`R0_JWT_TTL_SECONDS=3600`).
+- **`mint-realtime-token` edge fn DEPLOYED** (verify_jwt=ON). Verified: bogus→403, malformed→400,
+  GET→405, and a **real mint produced a correctly-signed token** (`kid:r0-20260624, sub:<owner>,
+  role/aud:authenticated, exp=iat+3600`).
+- **✅ TPA token-trust FULLY VERIFIED end-to-end** (with a throwaway test user, since deleted):
+  a minted token is **trusted by PostgREST** (`auth.uid()` resolved → RLS returned the owner's
+  own row) AND by **Realtime** (broadcast to `pterm:<session>` → HTTP 202). The complete auth
+  chain works. (The owner-vs-non-owner write-RLS *delivery* filtering — Gemini MEDIUM — is proven
+  at the SQL level by the pgTAP suite and is the cutover's final failure-injection step §8.3.)
+
+**STILL OWNER-GATED (do NOT do until B3 is in a shipped App Store build):** the forced cutover
++ disabling Public Channels (see §8). Flipping the flag now would blackhole every currently
+deployed pre-B3 app.
+
+---
+
 ## 0. Ground-truth correction (read first)
 
 The plan's §0 said the v0.56 file "was never committed." **It actually exists** as a stale
@@ -343,9 +380,19 @@ base FIRST, and B2 (the Python producer, default-OFF) deployed. Then:
    messages when it tries the same `pterm:` topic (not a silent pass), AND the legacy
    `term:<uuid>` topic must carry **nothing** for that session.
 4. Roll forward (more users / default-on) only after that proof passes.
+5. 🔴 **FINAL step to actually close eavesdrop (Gemini-3.1-Pro CRITICAL, 2026-06-24):**
+   `pterm:` + RLS does **NOT** structurally close eavesdrop while **Public Channels** are
+   globally enabled — Supabase Realtime does not isolate public vs private joins on the same
+   topic string, so an attacker who joins `pterm:<uuid>` with `private:false` **bypasses RLS
+   entirely** and can eavesdrop/inject. Until you flip this, confidentiality rests ONLY on the
+   122-bit session-UUID entropy (unguessable externally, but not "structurally closed"). Once
+   ALL clients are on `pterm:`-private and `term:` is fully deprecated, **globally disable
+   "Public Channels"** in the Supabase Dashboard → Project Settings → Realtime (or the mgmt API
+   `realtime` config). Only then is the eavesdrop hole truly closed.
 
 Rollback at any point: `update public.user_settings set realtime_private_enabled = false`
 (new sessions revert to public `term:`); the columns/policies/RPC/edge-fn can stay (inert).
+Re-enable Public Channels if you disabled them and need the legacy path back.
 
 ---
 
