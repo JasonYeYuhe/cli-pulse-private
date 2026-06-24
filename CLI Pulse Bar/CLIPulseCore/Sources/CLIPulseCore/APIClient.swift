@@ -52,14 +52,20 @@ public actor APIClient {
     /// `RemoteTerminalViewRepresentable` can build a
     /// `RemoteSessionEventStream` without duplicating the
     /// Bundle.main / env-var resolution that the iOS app's
-    /// APIClient owns. Returned by value; no auth tokens included
-    /// because Realtime broadcast subscribes on the project anon
-    /// key alone (topic confidentiality rests on the server-
-    /// generated session UUID).
+    /// APIClient owns.
+    ///
+    /// R0 (B3): also plumbs the signed-in user's access_token. It is attached
+    /// to the Realtime WS ONLY for PRIVATE (`pterm:`) joins (the public
+    /// `term:` path ignores it), so this is safe while the R0 flag is off —
+    /// nothing reads `accessToken` until a session is `realtime_private`.
+    /// Re-fetch after a token refresh and push it via
+    /// `Cancellable.updateAccessToken` to keep a long-lived private join
+    /// authorized.
     public func realtimeConfiguration() -> RemoteSessionEventStream.Configuration {
         RemoteSessionEventStream.Configuration(
             supabaseURL: supabaseURL,
-            supabaseAnonKey: supabaseAnonKey
+            supabaseAnonKey: supabaseAnonKey,
+            accessToken: accessToken
         )
     }
 

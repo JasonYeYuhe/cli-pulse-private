@@ -26,6 +26,12 @@ import UIKit
 public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
 
     public let sessionId: String
+    /// R0 (B3): the session's `realtime_private` (default false). Picks the
+    /// `pterm:`-private + user-JWT join vs the legacy public `term:` + anon
+    /// join. The host should key this view's identity on `(sessionId,
+    /// isRealtimePrivate)` so a flip recreates cleanly; `updateUIView` also
+    /// reconciles a same-identity flip via `reconcilePrivacy`.
+    public let isRealtimePrivate: Bool
     public let streamConfig: RemoteSessionEventStream.Configuration
     /// v1.25 Phase 4 slice 4: drive lifecycle from the host's
     /// `@Environment(\.scenePhase)`. When this flips to `.background`
@@ -62,6 +68,7 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
 
     public init(
         sessionId: String,
+        isRealtimePrivate: Bool = false,
         streamConfig: RemoteSessionEventStream.Configuration,
         scenePhase: ScenePhase = .active,
         onDisconnect: ((Error?) -> Void)? = nil,
@@ -71,6 +78,7 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
         onSnapshotOutcome: ((Coordinator.SnapshotOutcome) -> Void)? = nil
     ) {
         self.sessionId = sessionId
+        self.isRealtimePrivate = isRealtimePrivate
         self.streamConfig = streamConfig
         self.scenePhase = scenePhase
         self.onDisconnect = onDisconnect
@@ -83,6 +91,7 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
     public func makeCoordinator() -> Coordinator {
         Coordinator(
             sessionId: sessionId,
+            isPrivate: isRealtimePrivate,
             streamConfig: streamConfig,
             onDisconnect: onDisconnect,
             onStdin: onStdin,
@@ -107,9 +116,17 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
         if context.coordinator.activeSessionId != sessionId {
             context.coordinator.cancel()
             context.coordinator.sessionId = sessionId
+            context.coordinator.isPrivate = isRealtimePrivate  // R0: adopt the new session's mode
             uiView.clear()
             context.coordinator.subscribeIfNeeded()
+        } else {
+            // R0 (B3): same session, privacy flipped (initial default-false →
+            // loaded value, or cutover) → rejoin on the correct topic.
+            context.coordinator.reconcilePrivacy(isRealtimePrivate)
         }
+        // R0 (B3): a token refresh re-renders with a fresh streamConfig — push
+        // the new token onto the live private join (no-op if unchanged/public).
+        context.coordinator.updateAccessToken(streamConfig.accessToken)
         // scenePhase reconciliation — fires every time the host's
         // @Environment(\.scenePhase) value changes (background ↔
         // active). Coordinator pauses / resumes the WS accordingly.
@@ -138,7 +155,14 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
     public final class Coordinator: NSObject, RemoteTerminalViewDelegate {
 
         var sessionId: String
-        let streamConfig: RemoteSessionEventStream.Configuration
+        /// R0 (B3): the session's resolved private-mode flag. Drives the
+        /// `pterm:`-private vs `term:`-public join. A change → cancel +
+        /// resubscribe (a mismatch with the helper is a silent blackhole).
+        var isPrivate: Bool
+        /// Mutable so a token refresh can rebuild the stream (future
+        /// reconnects use the fresh token) while `updateAccessToken` pushes
+        /// the new token onto the LIVE join.
+        var streamConfig: RemoteSessionEventStream.Configuration
         let onDisconnect: ((Error?) -> Void)?
         let onStdin: ((Data) -> Void)?
         let onResize: ((Int, Int) -> Void)?
@@ -179,14 +203,23 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
         /// session changes; `updateUIView` calls
         /// `subscribeIfNeeded` to reconcile.
         private(set) var activeSessionId: String?
+        /// The (sessionId, isPrivate) pair the live subscription is bound to —
+        /// so a privacy flip is detected even when the sessionId is unchanged.
+        private(set) var activeIsPrivate: Bool = false
         private var cancellable: RemoteSessionEventStream.Cancellable?
-        private let stream: RemoteSessionEventStream
+        private var stream: RemoteSessionEventStream
 
         /// v1.25 Phase 4 slice 4: lifecycle + reconnect state.
         private(set) var isPaused: Bool = false
         private(set) var isCancelled: Bool = false
         private(set) var reconnectAttempt: Int = 0
         private var reconnectTask: Task<Void, Never>?
+        /// R0 (B3): monotonic id for the live subscription. Bumped on every
+        /// (re)subscribe so the async `onDisconnect` of a subscription we've
+        /// intentionally torn down (privacy flip) can't drive a stray
+        /// reconnect — only the CURRENT subscription's disconnect does.
+        /// Guards [[feedback_codex_review_late_arrival_pattern]].
+        private var subscriptionEpoch: UInt64 = 0
 
         /// v1.26 B2: foreground-recovery state machine.
         /// `nil` = direct-write mode; non-`nil` = buffer live
@@ -224,6 +257,7 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
 
         init(
             sessionId: String,
+            isPrivate: Bool = false,
             streamConfig: RemoteSessionEventStream.Configuration,
             onDisconnect: ((Error?) -> Void)?,
             onStdin: ((Data) -> Void)? = nil,
@@ -232,6 +266,7 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
             onSnapshotOutcome: ((SnapshotOutcome) -> Void)? = nil
         ) {
             self.sessionId = sessionId
+            self.isPrivate = isPrivate
             self.streamConfig = streamConfig
             self.onDisconnect = onDisconnect
             self.onStdin = onStdin
@@ -249,7 +284,8 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
 
         func subscribeIfNeeded() {
             if isPaused || isCancelled { return }
-            if activeSessionId == sessionId, cancellable != nil { return }
+            if activeSessionId == sessionId, activeIsPrivate == isPrivate,
+               cancellable != nil { return }
 
             // v1.26 B2: warm-subscribe detection. If we've already
             // seen at least one chunk for this exact sessionId, the
@@ -275,8 +311,11 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
             let sid = sessionId
             let weakView = view  // captured by handlers
             let userDisconnectCB = onDisconnect
+            subscriptionEpoch &+= 1
+            let epoch = subscriptionEpoch
             cancellable = stream.subscribeTerminal(
                 sessionId: sid,
+                isPrivate: isPrivate,
                 onChunk: { [weak self] chunk in
                     // Successful chunk = healthy connection. Clear
                     // backoff so the next disconnect starts from
@@ -291,11 +330,12 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
                 onDisconnect: { [weak self] err in
                     DispatchQueue.main.async {
                         userDisconnectCB?(err)
-                        self?.handleStreamDisconnect()
+                        self?.handleStreamDisconnect(epoch: epoch)
                     }
                 }
             )
             activeSessionId = sid
+            activeIsPrivate = isPrivate
 
             // Now that the subscription is live AND the buffer is
             // primed, fire the snapshot RPC and start the timeout.
@@ -471,16 +511,58 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
 
         // MARK: - reconnect (slice 4)
 
-        private func handleStreamDisconnect() {
+        private func handleStreamDisconnect(epoch: UInt64) {
             // The stream's onDisconnect fires for ANY shutdown —
             // including the one we trigger via `cancel()` /
             // `pause()`. Don't reconnect in those cases.
             if isCancelled || isPaused { return }
+            // R0 (B3): ignore the (async) disconnect of a subscription we've
+            // already replaced — e.g. a privacy flip tore down the old join
+            // and resubscribed. Only the CURRENT epoch's disconnect reconnects.
+            guard epoch == subscriptionEpoch else { return }
             // Clear the dead subscription handle so subscribeIfNeeded
             // proceeds when the reconnect timer fires.
             cancellable = nil
             activeSessionId = nil
             scheduleReconnect()
+        }
+
+        // MARK: - R0 (B3): privacy-flip + token-refresh reconciliation
+
+        /// React to the session's `realtime_private` flipping (e.g. the
+        /// initial default-false subscribe → the loaded value, or the cutover).
+        /// Realtime can't switch a live channel between public `term:` and
+        /// private `pterm:` in place — they are DIFFERENT topics — so we tear
+        /// the current join down and resubscribe. The old join's async
+        /// `onDisconnect` carries a now-stale epoch, so it can't trigger a
+        /// reconnect race. Not a terminal `cancel()`: we WANT to resubscribe.
+        func reconcilePrivacy(_ newIsPrivate: Bool) {
+            if isPrivate == newIsPrivate { return }
+            isPrivate = newIsPrivate
+            cancellable?.cancel()
+            cancellable = nil
+            activeSessionId = nil
+            snapshotTimeoutTask?.cancel()
+            snapshotTimeoutTask = nil
+            pendingSnapshotBuffer = nil
+            subscribeIfNeeded()
+        }
+
+        /// Push a refreshed user access_token. Rebuilds the stream config so a
+        /// FUTURE (re)subscribe rejoins with the fresh token, AND pushes it onto
+        /// the LIVE private join so Realtime re-evaluates the cached RLS
+        /// decision immediately. No-op if unchanged; harmless on the public
+        /// path (the subscription ignores tokens there).
+        func updateAccessToken(_ token: String?) {
+            if streamConfig.accessToken == token { return }
+            streamConfig = RemoteSessionEventStream.Configuration(
+                supabaseURL: streamConfig.supabaseURL,
+                supabaseAnonKey: streamConfig.supabaseAnonKey,
+                accessToken: token,
+                heartbeatInterval: streamConfig.heartbeatInterval
+            )
+            stream = RemoteSessionEventStream(config: streamConfig)
+            cancellable?.updateAccessToken(token)
         }
 
         private func scheduleReconnect() {

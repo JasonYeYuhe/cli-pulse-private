@@ -34,6 +34,12 @@ public final class RemoteSessionEventStream: @unchecked Sendable {
     public struct Configuration: Sendable, Equatable {
         public let supabaseURL: String
         public let supabaseAnonKey: String
+        /// R0 (B3): the signed-in user's Supabase access_token (JWT). Attached
+        /// to the phx_join payload ONLY for PRIVATE (`pterm:`) joins so the
+        /// realtime.messages read-RLS can scope by owner. nil → the public
+        /// (`term:`) anon path, byte-identical to pre-R0 behavior. Re-sent on
+        /// token refresh via `Cancellable.updateAccessToken`.
+        public let accessToken: String?
         /// Heartbeat cadence. Supabase Realtime times out at 30 s
         /// of silence; 25 s default leaves a comfortable margin.
         public let heartbeatInterval: TimeInterval
@@ -41,10 +47,12 @@ public final class RemoteSessionEventStream: @unchecked Sendable {
         public init(
             supabaseURL: String,
             supabaseAnonKey: String,
+            accessToken: String? = nil,
             heartbeatInterval: TimeInterval = 25
         ) {
             self.supabaseURL = supabaseURL
             self.supabaseAnonKey = supabaseAnonKey
+            self.accessToken = accessToken
             self.heartbeatInterval = heartbeatInterval
         }
     }
@@ -85,11 +93,13 @@ public final class RemoteSessionEventStream: @unchecked Sendable {
     @discardableResult
     public func subscribeTerminal(
         sessionId: String,
+        isPrivate: Bool = false,
         onChunk: @escaping @Sendable (TerminalChunk) -> Void,
         onDisconnect: @escaping @Sendable (Error?) -> Void
     ) -> Cancellable {
         let sub = TerminalSubscription(
             sessionId: sessionId,
+            isPrivate: isPrivate,
             config: config,
             urlSession: urlSession,
             onChunk: onChunk,
@@ -104,6 +114,12 @@ public final class RemoteSessionEventStream: @unchecked Sendable {
     /// Idempotent — calling twice is safe.
     public protocol Cancellable: Sendable {
         func cancel()
+        /// R0 (B3): push a refreshed user access_token onto a live PRIVATE
+        /// join. Realtime caches the per-subscriber RLS decision until a new
+        /// token arrives, so a public-fallback subscription ignores this
+        /// (no-op). Safe to call before the socket is up — the token is
+        /// stored and used on the next (re)join.
+        func updateAccessToken(_ token: String?)
     }
 
     // MARK: - URL builder
@@ -146,33 +162,76 @@ public final class RemoteSessionEventStream: @unchecked Sendable {
 
     // MARK: - Frame encoders (static, unit-testable)
 
+    /// The broadcast topic name for a session, WITHOUT the Phoenix
+    /// `realtime:` prefix. R0: a PRIVATE session uses the distinct `pterm:`
+    /// prefix (RLS-governed) — a single `term:` topic can't be made
+    /// private-only because public joins always bypass RLS. A non-private
+    /// session keeps the legacy public `term:` topic for old helpers.
+    public static func topic(for sessionId: String, isPrivate: Bool) -> String {
+        (isPrivate ? "pterm:" : "term:") + sessionId
+    }
+
     /// Phoenix vsn-2.0.0 array frame for joining a broadcast topic.
     ///
     /// `realtime:<topic>` is the Phoenix convention; the helper-side
-    /// `SupabaseRealtimeBroadcastSink` POSTs to topic `term:<sid>`
-    /// (no `realtime:` prefix in HTTP body — the server adds it
-    /// internally for routing).
+    /// broadcast sink POSTs to the bare topic (`term:<sid>` /
+    /// `pterm:<sid>` — the server adds the `realtime:` prefix internally
+    /// for routing).
+    ///
+    /// R0 (B3): for a PRIVATE join we set `config.private = true` and attach
+    /// the user's `access_token` at the payload top level (sibling of
+    /// `config`) so Realtime evaluates the realtime.messages read-RLS as the
+    /// owner. For a PUBLIC join the frame is byte-identical to pre-R0
+    /// (`private:false`, NO `access_token`) → zero regression while the R0
+    /// flag is off.
     public static func encodePhxJoinFrame(
         joinRef: String,
         ref: String,
-        sessionId: String
+        sessionId: String,
+        isPrivate: Bool = false,
+        accessToken: String? = nil
+    ) throws -> Data {
+        var payload: [String: Any] = [
+            "config": [
+                "broadcast": [
+                    "ack": false,
+                    "self": false,  // we only want chunks from the helper, not our own
+                ],
+                "presence": ["enabled": false],
+                "postgres_changes": [] as [Any],
+                "private": isPrivate,
+            ],
+        ]
+        // Token only on the private path, and only when present — keeps the
+        // public frame identical to today.
+        if isPrivate, let accessToken, !accessToken.isEmpty {
+            payload["access_token"] = accessToken
+        }
+        let frame: [Any] = [
+            joinRef,
+            ref,
+            "realtime:\(topic(for: sessionId, isPrivate: isPrivate))",
+            "phx_join",
+            payload,
+        ]
+        return try JSONSerialization.data(withJSONObject: frame, options: [])
+    }
+
+    /// Phoenix `access_token` frame — pushes a refreshed user JWT onto a live
+    /// PRIVATE channel so Realtime re-evaluates the cached RLS decision. Sent
+    /// on token refresh (the realtime topic must match the live join).
+    public static func encodeAccessTokenFrame(
+        joinRef: String,
+        ref: String,
+        sessionId: String,
+        accessToken: String
     ) throws -> Data {
         let frame: [Any] = [
             joinRef,
             ref,
-            "realtime:term:\(sessionId)",
-            "phx_join",
-            [
-                "config": [
-                    "broadcast": [
-                        "ack": false,
-                        "self": false,  // we only want chunks from the helper, not our own
-                    ],
-                    "presence": ["enabled": false],
-                    "postgres_changes": [] as [Any],
-                    "private": false,
-                ],
-            ],
+            "realtime:\(topic(for: sessionId, isPrivate: true))",
+            "access_token",
+            ["access_token": accessToken],
         ]
         return try JSONSerialization.data(withJSONObject: frame, options: [])
     }
@@ -243,6 +302,7 @@ public final class RemoteSessionEventStream: @unchecked Sendable {
 private final class TerminalSubscription: RemoteSessionEventStream.Cancellable, @unchecked Sendable {
 
     private let sessionId: String
+    private let isPrivate: Bool
     private let config: RemoteSessionEventStream.Configuration
     private let urlSession: URLSession
     private let onChunk: @Sendable (RemoteSessionEventStream.TerminalChunk) -> Void
@@ -253,18 +313,24 @@ private final class TerminalSubscription: RemoteSessionEventStream.Cancellable, 
     private var heartbeatTask: Task<Void, Never>?
     private var disconnectFired = false
     private var refCounter: UInt64 = 0
+    /// R0 (B3): the current user access_token (mutable — refresh re-sends it on
+    /// the live private channel). Seeded from config; guarded by `lock`.
+    private var accessToken: String?
     private let joinRef: String = String(UInt64.random(in: 1...UInt64.max))
 
     init(
         sessionId: String,
+        isPrivate: Bool,
         config: RemoteSessionEventStream.Configuration,
         urlSession: URLSession,
         onChunk: @escaping @Sendable (RemoteSessionEventStream.TerminalChunk) -> Void,
         onDisconnect: @escaping @Sendable (Error?) -> Void
     ) {
         self.sessionId = sessionId
+        self.isPrivate = isPrivate
         self.config = config
         self.urlSession = urlSession
+        self.accessToken = config.accessToken
         self.onChunk = onChunk
         self.onDisconnect = onDisconnect
     }
@@ -296,6 +362,31 @@ private final class TerminalSubscription: RemoteSessionEventStream.Cancellable, 
         fireDisconnect(nil)
     }
 
+    func updateAccessToken(_ token: String?) {
+        // Store the token (used on any future rejoin). For a LIVE private
+        // channel, also push an access_token frame so Realtime re-evaluates
+        // the cached RLS decision right away. Public subscriptions are a no-op
+        // (no token in play). Best-effort: a failed push isn't fatal — the
+        // next reconnect rejoins with the stored token.
+        lock.lock()
+        accessToken = token
+        let t = task
+        lock.unlock()
+        guard isPrivate, let t, let token, !token.isEmpty else { return }
+        let ref = nextRef()
+        let sid = sessionId
+        let jref = joinRef
+        Task {
+            do {
+                let frame = try RemoteSessionEventStream.encodeAccessTokenFrame(
+                    joinRef: jref, ref: ref, sessionId: sid, accessToken: token)
+                try await t.send(.data(frame))
+            } catch {
+                // Non-fatal; reconnect will rejoin with the stored token.
+            }
+        }
+    }
+
     // MARK: - private
 
     private func nextRef() -> String {
@@ -315,12 +406,18 @@ private final class TerminalSubscription: RemoteSessionEventStream.Cancellable, 
     }
 
     private func joinAndPump(_ task: URLSessionWebSocketTask) async {
-        // Send phx_join.
+        // Send phx_join. Snapshot the current token under lock so a refresh
+        // racing the join uses one consistent value.
         do {
+            lock.lock()
+            let token = accessToken
+            lock.unlock()
             let frame = try RemoteSessionEventStream.encodePhxJoinFrame(
                 joinRef: joinRef,
                 ref: nextRef(),
-                sessionId: sessionId
+                sessionId: sessionId,
+                isPrivate: isPrivate,
+                accessToken: token
             )
             try await task.send(.data(frame))
         } catch {
