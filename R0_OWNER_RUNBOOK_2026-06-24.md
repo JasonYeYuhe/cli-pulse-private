@@ -329,6 +329,12 @@ hole stays open. Track as security debt until this step.
 **Pre-req: B3 (clients subscribe-private) must be SHIPPED and baked** to a measured install
 base FIRST, and B2 (the Python producer, default-OFF) deployed. Then:
 
+0. **Enable the helper-side producer gate** (B2): set
+   `"remote_realtime_broadcast_enabled": true` in `~/.cli-pulse-helper.json` on the test Mac
+   and restart the helper. This is a SEPARATE field from `remote_realtime_enabled` (which is a
+   vestigial Swift-round-trip flag defaulting true) — the broadcast producer reads ONLY
+   `remote_realtime_broadcast_enabled`, which defaults false so R0 stays dark until you flip it.
+   Even on, the helper only broadcasts sessions the mint edge fn authorizes (private-only).
 1. Flip per-user opt-in: `update public.user_settings set realtime_private_enabled = true
    where user_id = '<test user>';` (start with your own account).
 2. Start a NEW managed session → it is created `realtime_private=true` → helper emits ONLY to

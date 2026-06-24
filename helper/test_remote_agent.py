@@ -1543,3 +1543,79 @@ def test_post_stdout_chunk_normal_text_routes_both_streams():
     ]
     assert cloud and "hello" in cloud[0]["p_payload"]
     assert all("\x1b[31m" not in p["p_payload"] for p in cloud)
+
+
+# ---- R0 (B2) terminal-broadcast wiring -----------------------------------
+
+class _RecordingPublisher:
+    """Stand-in for realtime_broadcast.TerminalBroadcastPublisher."""
+
+    def __init__(self) -> None:
+        self.submitted: list[tuple[str, str, bytes]] = []
+        self.flushed: list[str] = []
+        self.forgotten: list[str] = []
+
+    def submit(self, session_id: str, event: str, data: bytes) -> None:
+        self.submitted.append((session_id, event, data))
+
+    def flush(self, session_id: str) -> None:
+        self.flushed.append(session_id)
+
+    def forget(self, session_id: str) -> None:
+        self.forgotten.append(session_id)
+
+
+def _make_manager_with_publisher(publisher):
+    def fake_rpc(name, params):
+        if name == "remote_helper_pull_commands":
+            return []
+        return {}
+
+    transport = FakeTransport()
+    mgr = RemoteAgentManager(
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        transport=transport,
+        broadcast_publisher=publisher,
+    )
+    return mgr, transport
+
+
+def test_broadcast_disabled_by_default_is_dark():
+    # Shipped state: no publisher → zero broadcast, behaves exactly as today.
+    mgr, _t, _log = _make_manager()
+    assert mgr._broadcast_publisher is None
+
+
+def test_post_stdout_chunk_submits_ansi_preserved_redacted_to_broadcast():
+    pub = _RecordingPublisher()
+    mgr, _t = _make_manager_with_publisher(pub)
+    sid = _spawn(mgr)
+    mgr._post_stdout_chunk(sid, "\x1b[31mhello\x1b[0m world")
+    assert len(pub.submitted) == 1
+    s_sid, event, data = pub.submitted[0]
+    assert s_sid == sid
+    assert event == "stdout"
+    # Same redact-at-write bytes as the ring / in-app terminal (ANSI kept).
+    assert data == "\x1b[31mhello\x1b[0m world".encode()
+
+
+def test_broadcast_payload_is_redacted_never_raw():
+    pub = _RecordingPublisher()
+    mgr, _t = _make_manager_with_publisher(pub)
+    sid = _spawn(mgr)
+    secret = "sk-ant-oat01-realtokenABCDEFGHIJKLMNOPQRSTUV"
+    mgr._post_stdout_chunk(sid, secret + " after")
+    assert pub.submitted, "a chunk should have been submitted"
+    data = pub.submitted[0][2]
+    assert b"realtokenABCDEFGHIJKLMNOPQRSTUV" not in data, \
+        "broadcast MUST carry redacted bytes, never the raw secret"
+
+
+def test_stop_session_flushes_and_forgets_broadcast():
+    pub = _RecordingPublisher()
+    mgr, _t = _make_manager_with_publisher(pub)
+    sid = _spawn(mgr)
+    mgr.stop_session(sid)
+    assert sid in pub.flushed
+    assert sid in pub.forgotten  # per-session state purged on teardown
