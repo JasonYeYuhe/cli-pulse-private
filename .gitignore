@@ -35,6 +35,11 @@ DerivedData/
 GoogleService-Info.plist
 google-services.json
 AuthKey_*
+# R0 realtime signing key material (the dedicated ES256 issuer key) — never commit.
+*.pem
+r0_private_pkcs8.pem
+r0_public_jwks.json
+gen_r0_keypair.ts
 
 # Claude Code
 .claude/
