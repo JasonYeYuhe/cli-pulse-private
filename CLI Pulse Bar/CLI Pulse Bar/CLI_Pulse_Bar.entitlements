@@ -8,6 +8,26 @@
 	<array>
 		<string>group.yyh.CLI-Pulse</string>
 	</array>
+	<!--
+	  Keychain Sharing (2026-06-26): the LoginItem helper
+	  (CLIPulseHelper.app, bundle id yyh.CLI-Pulse.helper) reads the
+	  per-provider apiKey/cookie items this app writes
+	  (`cli_pulse_provider_<kind>_apiKey` etc.) on every collection
+	  cycle. Without a SHARED keychain access group, each item's ACL
+	  trusts only the writing app, so every cross-process read from the
+	  LoginItem fires the "CLIPulseHelper wants to use information stored
+	  by ... in your keychain" consent dialog. Declaring the same group
+	  the .pkg daemon already uses (HelperSwift/cli_pulse_helper.entitlements)
+	  lets the app WRITE provider secrets into the group; the helper reads
+	  them prompt-free. `$(AppIdentifierPrefix)` expands at codesign time
+	  to the team prefix (KHMK6Q3L3K.); the bare `group.yyh.CLI-Pulse`
+	  passed at query time (ProviderConfig.saveSecrets) is auto-prefixed
+	  by Apple's keychain APIs.
+	-->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)group.yyh.CLI-Pulse</string>
+	</array>
 	<key>com.apple.security.network.client</key>
 	<true/>
 	<key>com.apple.security.files.bookmarks.app-scope</key>

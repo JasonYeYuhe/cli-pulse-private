@@ -652,6 +652,10 @@ public final class AppState: ObservableObject {
     let dataRefreshManager: DataRefreshManager
 
     private static let secretsMigratedKey = "cli_pulse_provider_secrets_migrated"
+    /// v1.33 keychain-access-group migration flag. One-shot: re-homes
+    /// pre-existing provider secrets into the shared app-group keychain so the
+    /// LoginItem helper stops firing the recurring consent prompt.
+    private static let keychainGroupMigratedKey = "cli_pulse_keychain_group_migrated"
 
     public init() {
         self.api = APIClient()
@@ -1149,6 +1153,12 @@ public final class AppState: ObservableObject {
             UserDefaults.standard.set(true, forKey: Self.secretsMigratedKey)
         }
 
+        // Must run BEFORE the loadSecrets() loop below: on macOS loadSecrets()
+        // now reads from the shared app-group keychain, so any secrets still
+        // living in the legacy no-group ACL must be re-homed first or the first
+        // hydrate would return nil for existing users.
+        migrateProviderSecretsToSharedGroup()
+
         if let configs = try? JSONDecoder().decode([ProviderConfig].self, from: data) {
             providerConfigs = configs
             let existingKinds = Set(configs.map(\.kind))
@@ -1178,5 +1188,24 @@ public final class AppState: ObservableObject {
            let cleanData = try? JSONEncoder().encode(configs) {
             UserDefaults.standard.set(cleanData, forKey: "cli_pulse_provider_configs")
         }
+    }
+
+    /// One-time (macOS) migration of per-provider apiKey/cookie keychain items
+    /// written before `keychain-access-groups` existed into the shared
+    /// app-group keychain. This is what stops the LoginItem helper's recurring
+    /// "wants to use information stored by ... in your keychain" consent prompt:
+    /// once the secrets live in the shared group, the helper reads them
+    /// prompt-free. Runs in the MAIN APP on its own items, so the migration
+    /// reads themselves never prompt. iOS/watchOS keep secrets in the no-group
+    /// keychain (no cross-process helper there), so this is macOS-only.
+    private func migrateProviderSecretsToSharedGroup() {
+        #if os(macOS)
+        guard !UserDefaults.standard.bool(forKey: Self.keychainGroupMigratedKey) else { return }
+        for kind in ProviderKind.allCases {
+            KeychainHelper.migrateToSharedGroup(key: "cli_pulse_provider_\(kind.rawValue)_apiKey")
+            KeychainHelper.migrateToSharedGroup(key: "cli_pulse_provider_\(kind.rawValue)_cookie")
+        }
+        UserDefaults.standard.set(true, forKey: Self.keychainGroupMigratedKey)
+        #endif
     }
 }
