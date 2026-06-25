@@ -364,6 +364,24 @@ public enum ProviderRegistry {
             cliNames: ["zai"], webDomain: "z.ai"
         ),
         ProviderDescriptor(
+            // Zhipu AI (智谱) GLM platform — prepaid token credits via
+            // open.bigmodel.cn. GLM had a ProviderKind case + a registered
+            // GLMCollector but NO descriptor, so it fell back to the synthetic
+            // `[.auto]`-only registry entry: its API-key field never rendered
+            // in the editor (ProviderConfigEditor gates that on supportedSources
+            // containing `.api`), so even manual key entry was effectively
+            // broken. `supportsCredits`/`supportsQuota` mirror GLMCollector,
+            // which emits `.credits` (balance) or `.statusOnly`, never a quota
+            // window. cliNames folds the CodexBar aliases (zhipu, chatglm) for
+            // parity; NOTE: process auto-detection is driven solely by
+            // LocalScanner's GLM pattern, not by cliNames.
+            kind: .glm, displayName: "GLM (智谱)", category: .cloud,
+            supportedSources: [.auto, .api],
+            supportsQuota: false, supportsExactCost: false, supportsCredits: true,
+            requiresHelperBackend: false,
+            cliNames: ["glm", "zhipu", "chatglm"], webDomain: "open.bigmodel.cn"
+        ),
+        ProviderDescriptor(
             kind: .minimax, displayName: "MiniMax", category: .cloud,
             supportedSources: [.auto, .web, .api],
             supportsQuota: true, requiresHelperBackend: true,
