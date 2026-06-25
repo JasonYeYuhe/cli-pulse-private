@@ -74,33 +74,50 @@ public struct ProviderConfig: Codable, Identifiable, Sendable {
         "cli_pulse_provider_\(kind.rawValue)_\(suffix)"
     }
 
+    /// Access group for per-provider secrets. On macOS the items live in the
+    /// shared app-group keychain so the LoginItem helper reads them prompt-free
+    /// (see `KeychainHelper.migrateToSharedGroup`). On iOS/watchOS there is no
+    /// cross-process helper reading these items, so we keep `nil` (no group) —
+    /// byte-identical to pre-2026-06-26 behavior, and no iOS entitlement change
+    /// is required.
+    static var secretsAccessGroup: String? {
+        #if os(macOS)
+        return KeychainHelper.sharedAccessGroup
+        #else
+        return nil
+        #endif
+    }
+
     /// Save this config's secrets to Keychain. Call after mutating apiKey / manualCookieHeader.
     public func saveSecrets() {
+        let group = Self.secretsAccessGroup
         let apiKeyKey = Self.keychainKey(kind, "apiKey")
         if let key = apiKey, !key.isEmpty {
-            KeychainHelper.save(key: apiKeyKey, value: key)
+            KeychainHelper.save(key: apiKeyKey, value: key, accessGroup: group)
         } else {
-            KeychainHelper.delete(key: apiKeyKey)
+            KeychainHelper.delete(key: apiKeyKey, accessGroup: group)
         }
 
         let cookieKey = Self.keychainKey(kind, "cookie")
         if let cookie = manualCookieHeader, !cookie.isEmpty {
-            KeychainHelper.save(key: cookieKey, value: cookie)
+            KeychainHelper.save(key: cookieKey, value: cookie, accessGroup: group)
         } else {
-            KeychainHelper.delete(key: cookieKey)
+            KeychainHelper.delete(key: cookieKey, accessGroup: group)
         }
     }
 
     /// Load secrets from Keychain into the in-memory fields.
     public mutating func loadSecrets() {
-        apiKey = KeychainHelper.load(key: Self.keychainKey(kind, "apiKey"))
-        manualCookieHeader = KeychainHelper.load(key: Self.keychainKey(kind, "cookie"))
+        let group = Self.secretsAccessGroup
+        apiKey = KeychainHelper.load(key: Self.keychainKey(kind, "apiKey"), accessGroup: group)
+        manualCookieHeader = KeychainHelper.load(key: Self.keychainKey(kind, "cookie"), accessGroup: group)
     }
 
     /// Remove all Keychain entries for this provider.
     public func deleteSecrets() {
-        KeychainHelper.delete(key: Self.keychainKey(kind, "apiKey"))
-        KeychainHelper.delete(key: Self.keychainKey(kind, "cookie"))
+        let group = Self.secretsAccessGroup
+        KeychainHelper.delete(key: Self.keychainKey(kind, "apiKey"), accessGroup: group)
+        KeychainHelper.delete(key: Self.keychainKey(kind, "cookie"), accessGroup: group)
     }
 }
 

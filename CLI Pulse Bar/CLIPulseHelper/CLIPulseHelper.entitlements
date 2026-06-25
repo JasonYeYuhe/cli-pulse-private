@@ -8,6 +8,22 @@
 	<array>
 		<string>group.yyh.CLI-Pulse</string>
 	</array>
+	<!--
+	  Keychain Sharing (2026-06-26): this LoginItem reads the per-provider
+	  apiKey/cookie keychain items the main app writes
+	  (ProviderConfig.loadSecrets, called every collection cycle by the
+	  helper). Without this entitlement those reads are scoped to the main
+	  app's ACL only and macOS shows the recurring "CLIPulseHelper wants to
+	  use information stored by ... in your keychain" consent dialog. Sharing
+	  the app-group keychain (same group as the main app + the .pkg daemon)
+	  makes the reads prompt-free. Do NOT add com.apple.developer.team-identifier
+	  here — unlike the standalone .pkg daemon, the embedded LoginItem inherits
+	  the team id from the parent app's provisioning profile.
+	-->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)group.yyh.CLI-Pulse</string>
+	</array>
 	<key>com.apple.security.network.client</key>
 	<true/>
 </dict>
