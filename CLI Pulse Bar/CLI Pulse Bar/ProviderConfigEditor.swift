@@ -327,6 +327,14 @@ struct ProviderConfigEditor: View {
         manualCookieHeader = config.manualCookieHeader ?? ""
         accountLabel = config.accountLabel ?? ""
         #if os(macOS)
+        // Cursor auto-imports its browser session cookie by default. Surface
+        // that as an explicit `.automatic` selection when the user has never
+        // chosen a source, so the picker, the auto-import note, and Test
+        // Connection all reflect the real (default-ON) behavior. The user can
+        // still pick Manual/Safari/etc. to turn auto-import off.
+        if kind == .cursor, config.cookieSource == nil {
+            cookieSource = .automatic
+        }
         if kind == .gemini {
             isGeminiConnected = GeminiOAuthManager.shared.isConnected
             geminiCliProbeFallback = config.geminiCliProbeFallback ?? false

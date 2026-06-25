@@ -177,6 +177,11 @@ public enum CollectorError: LocalizedError, Sendable {
     case invalidURL(String)
     case httpError(status: Int, provider: String)
     case parseFailed(String)
+    /// The credential resolved but the upstream rejected it as unauthenticated
+    /// (HTTP 401/403) — e.g. an expired browser session cookie. Distinct from
+    /// `missingCredentials` (nothing to send) and `httpError` (generic) so the
+    /// UI can tell the user to sign in again rather than showing a raw status.
+    case notSignedIn(String)
     /// v1.16 §2.2: error that should be skipped silently by the
     /// collector dispatcher (no error log) — used for repeated OAuth
     /// refresh failures that fire every collector tick once a refresh
@@ -191,6 +196,7 @@ public enum CollectorError: LocalizedError, Sendable {
         case .invalidURL(let url): return "Invalid URL: \(url)"
         case .httpError(let status, let provider): return "\(provider) HTTP \(status)"
         case .parseFailed(let msg): return "Parse error: \(msg)"
+        case .notSignedIn(let msg): return msg
         case .silentBackoff(let msg): return msg
         }
     }

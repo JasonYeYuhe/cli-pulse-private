@@ -153,8 +153,13 @@ final class OpenRouterCollectorTests: XCTestCase {
         XCTAssertNil(collector)
     }
 
-    func testRegistryReturnsNilForUnimplementedProvider() {
-        let config = ProviderConfig(kind: .cursor, apiKey: "test")
+    func testRegistryReturnsNilWhenCursorAutoImportDisabledAndNoCookie() {
+        // Cursor auto-imports its browser session by default, so a bare
+        // `ProviderConfig(kind: .cursor)` IS available. A user who explicitly
+        // picks a non-automatic source (.manual) without supplying a cookie has
+        // opted OUT — the registry must then return no collector. (An API key
+        // is irrelevant to Cursor, which is cookie-based.)
+        let config = ProviderConfig(kind: .cursor, cookieSource: .manual)
         let collector = CollectorRegistry.collector(for: .cursor, config: config)
         XCTAssertNil(collector)
     }

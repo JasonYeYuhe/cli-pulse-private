@@ -12,7 +12,12 @@ public struct CursorCollector: ProviderCollector, Sendable {
     public let kind = ProviderKind.cursor
 
     private static let envVars = ["CURSOR_COOKIE"]
-    private static let cookieDomains = ["cursor.com", "www.cursor.com"]
+    // `.contains` domain matching (BrowserCookieQuery) means "cursor.sh" also
+    // covers ".cursor.sh" and "authenticator.cursor.sh" — where Cursor's
+    // WorkOS SSO session cookie frequently lands — so listing those explicitly
+    // would be redundant. CodexBar parity: CursorStatusProbe imports the same
+    // cursor.com / cursor.sh family. (internal, not private, for test access.)
+    static let cookieDomains = ["cursor.com", "www.cursor.com", "cursor.sh"]
     private static let knownSessionNames: Set<String> = [
         "WorkosCursorSessionToken",
         "__Secure-next-auth.session-token", "next-auth.session-token",
@@ -20,13 +25,37 @@ public struct CursorCollector: ProviderCollector, Sendable {
         "authjs.session-token", "__Secure-authjs.session-token"
     ]
 
+    /// Cursor auto-imports its browser session cookie by DEFAULT. A user who
+    /// is logged into cursor.com in any browser is detected without first
+    /// digging into settings to flip a toggle. `nil` (never configured) and an
+    /// explicit `.automatic` both opt in; an explicit *other* source
+    /// (`.manual`/`.safari`/`.chrome`/`.firefox`) is the user turning
+    /// auto-import OFF and is honored. This default-ON behavior is scoped to
+    /// Cursor — every other cookie provider keeps the byte-for-byte opt-in gate
+    /// in `CookieResolver`.
+    static func autoImportEligible(_ source: CookieSource?) -> Bool {
+        source == nil || source == .automatic
+    }
+
     public func isAvailable(config: ProviderConfig) -> Bool {
-        hasManualOrEnv(config: config) || config.cookieSource == .automatic
+        if hasManualOrEnv(config: config) { return true }
+        return Self.autoImportEligible(config.cookieSource)
     }
 
     public func collect(config: ProviderConfig) async throws -> CollectorResult {
+        // Mirror the default-ON gate at resolution time: CookieResolver only
+        // attempts the browser importer when `cookieSource == .automatic`, so
+        // for an eligible Cursor config with no manual cookie we normalize a
+        // `nil` source to `.automatic` *locally* (the shared resolver — and
+        // thus every other provider's opt-in gate — is left untouched). We
+        // never override an explicit `.manual`/`.safari`/etc. choice.
+        var resolveConfig = config
+        if Self.autoImportEligible(config.cookieSource),
+           config.manualCookieHeader?.isEmpty ?? true {
+            resolveConfig.cookieSource = .automatic
+        }
         let resolution = await CookieResolver.resolve(
-            config: config,
+            config: resolveConfig,
             envVarNames: Self.envVars,
             domains: Self.cookieDomains,
             knownSessionCookieNames: Self.knownSessionNames
@@ -55,8 +84,17 @@ public struct CursorCollector: ProviderCollector, Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 15
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            throw CollectorError.httpError(status: (response as? HTTPURLResponse)?.statusCode ?? 0, provider: "Cursor")
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        // A stale/expired session cookie comes back as 401/403. Surface a
+        // clear "not signed in" state instead of a generic HTTP error so the
+        // user knows to re-open cursor.com (or paste a cookie) rather than
+        // wondering why Cursor shows no data.
+        if status == 401 || status == 403 {
+            throw CollectorError.notSignedIn(
+                "Cursor: not signed in — open cursor.com in your browser, or paste a session cookie")
+        }
+        guard (200...299).contains(status) else {
+            throw CollectorError.httpError(status: status, provider: "Cursor")
         }
         return data
     }
