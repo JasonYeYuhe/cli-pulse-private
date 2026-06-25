@@ -57,10 +57,49 @@ final class CursorCollectorTests: XCTestCase {
         XCTAssertEqual(c.planUsedCents, 0)
     }
 
-    func testAvailability() {
+    // Cursor auto-imports by DEFAULT: a browser-logged-in user is detected
+    // without first flipping a settings toggle. `nil` (never configured) is
+    // now available; an explicit non-automatic source disables auto-import.
+    func testAvailability_defaultOn_whenSourceNil() {
         let c = CursorCollector()
-        XCTAssertFalse(c.isAvailable(config: ProviderConfig(kind: .cursor)))
-        XCTAssertTrue(c.isAvailable(config: ProviderConfig(kind: .cursor, manualCookieHeader: "session=x")))
+        XCTAssertTrue(
+            c.isAvailable(config: ProviderConfig(kind: .cursor)),
+            "Cursor must be available by default (nil cookieSource) so a browser-logged-in user is detected without opting in")
+    }
+
+    func testAvailability_true_whenAutomatic() {
+        let c = CursorCollector()
+        XCTAssertTrue(c.isAvailable(config: ProviderConfig(kind: .cursor, cookieSource: .automatic)))
+    }
+
+    // The user can still turn auto-import OFF by explicitly picking a
+    // non-automatic source (and providing no manual cookie).
+    func testAvailability_false_whenExplicitManualSourceAndNoCookie() {
+        let c = CursorCollector()
+        XCTAssertFalse(c.isAvailable(config: ProviderConfig(kind: .cursor, cookieSource: .manual)))
+        XCTAssertFalse(c.isAvailable(config: ProviderConfig(kind: .cursor, cookieSource: .safari)))
+    }
+
+    func testAvailability_true_withManualCookieRegardlessOfSource() {
+        let c = CursorCollector()
+        XCTAssertTrue(c.isAvailable(config: ProviderConfig(kind: .cursor, cookieSource: .safari, manualCookieHeader: "session=x")))
+    }
+
+    func testAutoImportEligibleMatrix() {
+        XCTAssertTrue(CursorCollector.autoImportEligible(nil))
+        XCTAssertTrue(CursorCollector.autoImportEligible(.automatic))
+        XCTAssertFalse(CursorCollector.autoImportEligible(.manual))
+        XCTAssertFalse(CursorCollector.autoImportEligible(.safari))
+        XCTAssertFalse(CursorCollector.autoImportEligible(.chrome))
+        XCTAssertFalse(CursorCollector.autoImportEligible(.firefox))
+    }
+
+    // The WorkOS SSO session cookie often lands on cursor.sh /
+    // authenticator.cursor.sh; `.contains` matching means "cursor.sh" covers
+    // both, plus ".cursor.sh".
+    func testCookieDomainsIncludeCursorSh() {
+        XCTAssertTrue(CursorCollector.cookieDomains.contains("cursor.com"))
+        XCTAssertTrue(CursorCollector.cookieDomains.contains("cursor.sh"))
     }
 }
 
