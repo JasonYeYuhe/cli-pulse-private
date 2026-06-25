@@ -53,9 +53,15 @@ The infrastructure below is now **LIVE in prod** (`gkjwsxotmwrgqsvfijzs`), all *
 - 🔴 **CRITICAL BUG FOUND + FIXED by that proof:** the broadcast HTTP message **MUST include
   `"private": true`**. Without it the message goes to the PUBLIC channel of the same topic name
   and the private subscriber receives **nothing** (silent blackhole — 202 returned, zero
-  delivery). The B2 Python sink omitted it → fixed (PR). At cutover this would have made R0 appear
-  completely broken (helper streams, iPhone sees nothing). B3's client config (`private:true`
-  join, `self:false`) is correct as-is.
+  delivery). The B2 Python sink omitted it → fixed (PR #220). At cutover this would have made R0
+  appear completely broken (helper streams, iPhone sees nothing). B3's client config
+  (`private:true` join, `self:false`) is correct as-is.
+- **✅ TOKEN-REFRESH LIFECYCLE PROVEN live** (2026-06-24, TTL temporarily 60s, restored to 3600):
+  Realtime **drops an un-refreshed private join on token expiry** (the WS closes), and B3's
+  `access_token` refresh frame (`[joinRef, ref, "realtime:pterm:<id>", "access_token",
+  {access_token}]`) **keeps the join alive past the original token's expiry**. So B3's PROACTIVE
+  pre-expiry refresh is both correct AND required — a long (>1h) session WILL drop without it.
+  No bug; the design is validated.
 
 **STILL OWNER-GATED (do NOT do until B3 is in a shipped App Store build):** the forced cutover
 + disabling Public Channels (see §8). Flipping the flag now would blackhole every currently
