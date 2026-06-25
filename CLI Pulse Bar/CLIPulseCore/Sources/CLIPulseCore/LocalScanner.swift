@@ -43,6 +43,20 @@ public final class LocalScanner: @unchecked Sendable {
         ("MiniMax", #"\bminimax\b"#, "high"),
         ("Alibaba", #"\balibaba\b|\bqwen\b|\btongyi\b"#, "high"),
         ("z.ai", #"\bz\.ai\b|\bzai\b"#, "high"),
+        // Zhipu (智谱) GLM CLI. Provider string "GLM" == ProviderKind.glm
+        // rawValue so it maps back via `ProviderKind(rawValue:)`. `\bglm\b` is
+        // word-boundaried (won't match inside "chatglm", which its own branch
+        // catches). Enables auto-detection of a running glm/zhipu CLI — the
+        // GLM descriptor alone does NOT (cliNames is not read for detection).
+        ("GLM", #"\bglm\b|\bzhipu\b|\bchatglm\b"#, "high"),
+        // OWNER-BLOCKED (Issue 3): "zcode" — a Zhipu coding plan a user asked
+        // about. Its runtime/process signature and quota API are unknown (not
+        // present in CLI Pulse or CodexBar), so we do NOT guess a pattern. It
+        // is likely a Claude-Code-compatible CLI launched with ANTHROPIC_BASE_URL
+        // pointed at z.ai, in which case the `\bclaude\b` pattern above would
+        // currently MIS-ATTRIBUTE it to Claude. Do not enable until the owner
+        // confirms the launch command + usage endpoint:
+        //   ("GLM", #"\bzcode\b"#, "high"),
         ("Antigravity", #"\bantigravity\b"#, "high"),
         ("Droid", #"\bdroid\b"#, "low"),
         ("Synthetic", #"\bsynthetic\b"#, "medium"),

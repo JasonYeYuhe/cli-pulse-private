@@ -127,6 +127,20 @@ final class ProviderModelTests: XCTestCase {
         }
     }
 
+    func testGLMHasRealDescriptor() {
+        // GLM must have a REAL descriptor (not the synthetic [.auto] fallback),
+        // otherwise its API-key field never renders in the editor and manual
+        // key entry is broken. Asserting `ProviderRegistry.all[.glm]` (not
+        // `descriptor(for:)`, which masks the gap via its fallback).
+        let glm = ProviderRegistry.all[.glm]
+        XCTAssertNotNil(glm, "GLM must have a registered descriptor, not the synthetic fallback")
+        XCTAssertTrue(glm?.supportedSources.contains(.api) ?? false,
+                      "GLM descriptor must support .api so the editor renders the API-key field")
+        XCTAssertEqual(glm?.webDomain, "open.bigmodel.cn")
+        XCTAssertEqual(glm?.cliNames, ["glm", "zhipu", "chatglm"])
+        XCTAssertTrue(glm?.supportsCredits ?? false)
+    }
+
     func testRegistryCategories() {
         XCTAssertEqual(ProviderRegistry.descriptor(for: .ollama).category, .local)
         XCTAssertEqual(ProviderRegistry.descriptor(for: .openRouter).category, .aggregator)
@@ -294,6 +308,21 @@ final class ProviderModelTests: XCTestCase {
         XCTAssertEqual(scanner.detectProvider("pplx search")?.0, "Perplexity")
         XCTAssertEqual(scanner.detectProvider("vertex-ai predict")?.0, "Vertex AI")
         XCTAssertNil(scanner.detectProvider("ls -la /tmp"))
+
+        // Zhipu (智谱) GLM auto-detection (Issue 3). "GLM" == ProviderKind.glm
+        // rawValue. Aliases zhipu/chatglm map to the same provider.
+        XCTAssertEqual(scanner.detectProvider("glm chat")?.0, "GLM")
+        XCTAssertEqual(scanner.detectProvider("/usr/local/bin/glm --serve")?.0, "GLM")
+        XCTAssertEqual(scanner.detectProvider("zhipu run")?.0, "GLM")
+        XCTAssertEqual(scanner.detectProvider("chatglm --help")?.0, "GLM")
+        // Guard: adding the GLM pattern must NOT regress Claude detection — a
+        // Claude-Code CLI pointed at z.ai (the suspected "zcode" shape) is
+        // intentionally still attributed to Claude until the owner confirms.
+        XCTAssertEqual(scanner.detectProvider("claude --help")?.0, "Claude")
+        // Hyphenated model name still matches ("-" is a word boundary).
+        XCTAssertEqual(scanner.detectProvider("glm-4-plus generate")?.0, "GLM")
+        // "glm" embedded inside a larger token must NOT false-positive.
+        XCTAssertNil(scanner.detectProvider("realmglmx tool"))
     }
     #endif
 }
