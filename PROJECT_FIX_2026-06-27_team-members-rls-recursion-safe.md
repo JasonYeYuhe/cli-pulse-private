@@ -80,8 +80,20 @@ read path.
 - [x] `ci_check_search_path.py` green (helpers pinned); `ci_check_rpc_contract.py` green.
 - [x] No live client direct `team_members` writes (grep).
 - [x] Live-prod recursion confirmed (read-only impersonation).
-- [ ] **Owner sign-off** to apply `migrate_v0.59` to prod (flag-first schema change).
-- [ ] Applied to prod; re-verify: admin PATCH role='owner' denied; member roster read works.
+- [x] **APPLIED to prod 2026-06-27** (owner go-ahead): `migrate_v0.59` + `migrate_v0.59.1`.
+      Verified: old ALL policy gone, 4 split policies live (UPDATE=owner-only via
+      `_is_team_owner`), the previously-live 42P17 recursion fixed (demo/team-owner read
+      returns 1 row), helpers authenticated/service_role-only (anon revoked).
+
+## Post-apply follow-up (migrate_v0.59.1)
+
+After applying v0.59, a `proacl` check showed the helpers had `anon=X` — Supabase's
+default privileges grant EXECUTE to anon at CREATE time, and v0.59's `revoke all ...
+from public` doesn't drop the explicit anon grant. Harmless today (anon's auth.uid()
+is null → helpers return false), but per the repo convention (migrate_v0.53) anon
+must not hold EXECUTE on RLS-bypassing SECURITY DEFINER functions. Fixed by
+`migrate_v0.59.1` (applied to prod) + reconciled `schema.sql` to `revoke ... from
+public, anon`.
 
 ## Notes / follow-ups
 
