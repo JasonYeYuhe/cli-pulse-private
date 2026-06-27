@@ -307,7 +307,10 @@ public final class GeminiOAuthManager: NSObject, @unchecked Sendable {
 
     // MARK: - PKCE
 
-    private static func generateCodeVerifier() throws -> String {
+    // `internal` (not private) so the PKCE generation is unit-testable against the
+    // RFC 7636 vector — these are pure/deterministic apart from the RNG in the
+    // verifier, and a regression here silently breaks the Gemini OAuth handshake.
+    static func generateCodeVerifier() throws -> String {
         var buf = [UInt8](repeating: 0, count: 32)
         let status = SecRandomCopyBytes(kSecRandomDefault, buf.count, &buf)
         guard status == errSecSuccess else {
@@ -319,7 +322,7 @@ public final class GeminiOAuthManager: NSObject, @unchecked Sendable {
             .replacingOccurrences(of: "=", with: "")
     }
 
-    private static func generateCodeChallenge(from verifier: String) -> String {
+    static func generateCodeChallenge(from verifier: String) -> String {
         let hash = SHA256.hash(data: Data(verifier.utf8))
         return Data(hash).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
