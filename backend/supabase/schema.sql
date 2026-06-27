@@ -274,49 +274,71 @@ alter table public.team_invites enable row level security;
 create index idx_team_invites_team_id on public.team_invites(team_id);
 create index idx_team_invites_team_email on public.team_invites(team_id, email);
 
+-- Recursion-safe membership predicates. A team_members RLS policy whose USING/
+-- WITH CHECK selects from team_members triggers the same policy again →
+-- "infinite recursion detected in policy for relation team_members" on any
+-- DIRECT table access. These SECURITY DEFINER helpers read team_members/teams
+-- with RLS bypassed, so the policies below never self-reference. See
+-- migrate_v0.59_team_members_rls_recursion_safe.sql (the prod reconciliation).
+create or replace function public._is_team_member(p_team_id uuid)
+returns boolean language sql stable security definer
+set search_path = pg_catalog, public, extensions as $$
+  select exists (
+    select 1 from public.team_members tm
+    where tm.team_id = p_team_id and tm.user_id = (select auth.uid())
+  );
+$$;
+create or replace function public._is_team_admin(p_team_id uuid)
+returns boolean language sql stable security definer
+set search_path = pg_catalog, public, extensions as $$
+  select exists (
+    select 1 from public.team_members tm
+    where tm.team_id = p_team_id and tm.user_id = (select auth.uid())
+      and tm.role = any (array['owner', 'admin'])
+  );
+$$;
+create or replace function public._is_team_owner(p_team_id uuid)
+returns boolean language sql stable security definer
+set search_path = pg_catalog, public, extensions as $$
+  select exists (
+    select 1 from public.teams t
+    where t.id = p_team_id and t.owner_id = (select auth.uid())
+  );
+$$;
+-- Revoke from `public` AND `anon`: Supabase's default privileges grant EXECUTE
+-- to anon at CREATE time, so these RLS-bypassing SECURITY DEFINER helpers must
+-- have anon explicitly revoked (repo convention, migrate_v0.53). Prod got this
+-- via migrate_v0.59.1.
+revoke all on function
+  public._is_team_member(uuid), public._is_team_admin(uuid), public._is_team_owner(uuid)
+from public, anon;
+grant execute on function
+  public._is_team_member(uuid), public._is_team_admin(uuid), public._is_team_owner(uuid)
+to authenticated, service_role;
+
 -- Team RLS policies (after all team tables exist)
 create policy "Team members can view team"
-  on public.teams for select using (
-    id in (select team_id from public.team_members where user_id = auth.uid())
-  );
+  on public.teams for select using (public._is_team_member(id));
 create policy "Owner can manage team"
   on public.teams for all using (auth.uid() = owner_id);
 
 create policy "Team members can view members"
-  on public.team_members for select using (
-    team_id in (select team_id from public.team_members where user_id = auth.uid())
-  );
--- Admins can insert/delete members but only owners can update roles
+  on public.team_members for select using (public._is_team_member(team_id));
+-- Owner/admin can add (member-role only) and delete members; only the OWNER may
+-- update roles — this blocks an admin self-promoting to owner via direct PATCH
+-- (with_check on UPDATE re-asserts owner on the post-image). NEW-H2v / v0.59.
 create policy "Owner/admin can add members (as member role only)"
-  on public.team_members for insert with check (
-    role = 'member' and team_id in (
-      select team_id from public.team_members
-      where user_id = auth.uid() and role in ('owner', 'admin')
-    )
-  );
+  on public.team_members for insert
+  with check (role = 'member' and public._is_team_admin(team_id));
 create policy "Owner/admin can delete members"
-  on public.team_members for delete using (
-    team_id in (
-      select team_id from public.team_members
-      where user_id = auth.uid() and role in ('owner', 'admin')
-    )
-  );
+  on public.team_members for delete using (public._is_team_admin(team_id));
 create policy "Only owner can update member roles"
-  on public.team_members for update using (
-    team_id in (
-      select tm.team_id from public.team_members tm
-      join public.teams t on t.id = tm.team_id
-      where t.owner_id = auth.uid()
-    )
-  );
+  on public.team_members for update
+  using (public._is_team_owner(team_id))
+  with check (public._is_team_owner(team_id));
 
 create policy "Team owner/admin can manage invites"
-  on public.team_invites for all using (
-    team_id in (
-      select team_id from public.team_members
-      where user_id = auth.uid() and role in ('owner', 'admin')
-    )
-  );
+  on public.team_invites for all using (public._is_team_admin(team_id));
 
 -- ── Usage Snapshots (time-series for trend charts) ──
 create table public.usage_snapshots (
