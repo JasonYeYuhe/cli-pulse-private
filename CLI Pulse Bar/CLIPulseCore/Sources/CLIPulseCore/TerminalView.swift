@@ -99,6 +99,11 @@ public final class TerminalView: NSView {
         self.messageHandler = messageHandler
         super.init(frame: frame)
 
+        // Refuse any navigation that leaves the local bundle (defense-in-depth
+        // on the still-public term: stream). The initial loadFileURL stays
+        // within the bundle dir, so it is allowed by the same rule.
+        webView.navigationDelegate = messageHandler
+
         addSubview(webView)
         webView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -237,12 +242,22 @@ public final class TerminalView: NSView {
 
 /// Inner class so WKScriptMessageHandler conformance doesn't leak
 /// into the public surface. Owner is a weak ref so dealloc is
-/// clean.
-final class BridgeHandler: NSObject, WKScriptMessageHandler {
+/// clean. Also the WKNavigationDelegate so the terminal WebView can
+/// never be driven off the local xterm.js bundle.
+final class BridgeHandler: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     weak var owner: TerminalView?
     func userContentController(_ ucc: WKUserContentController,
                                didReceive message: WKScriptMessage) {
         owner?.handleBridgeMessage(message.body)
+    }
+
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        let allowed = TerminalNavigationGuard.allows(
+            navigationAction.request.url,
+            bundleDirectory: TerminalView.resourceURL?.deletingLastPathComponent())
+        decisionHandler(allowed ? .allow : .cancel)
     }
 }
 
