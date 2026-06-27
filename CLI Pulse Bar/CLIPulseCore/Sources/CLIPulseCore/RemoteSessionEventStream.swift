@@ -252,10 +252,25 @@ public final class RemoteSessionEventStream: @unchecked Sendable {
 
     // MARK: - Incoming frame decoder (static, unit-testable)
 
+    /// Inner event names a terminal broadcast frame may carry. The producer
+    /// (helper `realtime_broadcast.py`, `ALLOWED_EVENTS`) only ever emits these
+    /// three; any other inner event on the still-public `term:` channel is an
+    /// injection attempt or protocol drift and is rejected rather than blindly
+    /// surfaced to the local terminal.
+    public static let allowedInnerEvents: Set<String> = ["stdout", "stderr", "tail_snapshot_result"]
+
+    /// Hard ceiling on the decoded byte count of a single terminal chunk. The
+    /// producer coalesces stdout/stderr to `MAX_MESSAGE_BYTES = 48 KiB`
+    /// pre-base64 and caps snapshots at 8 KiB, so 256 KiB is comfortable
+    /// headroom while still rejecting an abusive multi-megabyte frame BEFORE it
+    /// is base64-decoded/allocated — cheap DoS protection on the public path.
+    public static let maxDecodedChunkBytes = 256 * 1024
+
     /// Parses a raw vsn-2.0.0 array frame into structured fields.
     /// Returns nil for non-broadcast / system frames the subscriber
     /// doesn't need to surface (heartbeat replies, phx_reply etc.).
-    /// Throws on completely malformed wire shape.
+    /// Throws on completely malformed wire shape, a disallowed inner event,
+    /// or an over-ceiling payload.
     public static func decodeBroadcastChunk(from data: Data) throws -> TerminalChunk? {
         let obj: Any
         do {
@@ -282,16 +297,30 @@ public final class RemoteSessionEventStream: @unchecked Sendable {
         // some Phoenix versions the user's event lands at the
         // outer level — accept either.
         let innerEvent = (outer["event"] as? String) ?? event
+        // Strict allow-list: never surface an inner event the producer can't emit.
+        guard allowedInnerEvents.contains(innerEvent) else {
+            throw StreamError.unexpectedFrame("disallowed inner event: \(innerEvent)")
+        }
         let innerPayload: [String: Any]
         if let nested = outer["payload"] as? [String: Any] {
             innerPayload = nested
         } else {
             innerPayload = outer
         }
-        guard let b64 = innerPayload["data_b64"] as? String,
-              let bytes = Data(base64Encoded: b64)
-        else {
+        guard let b64 = innerPayload["data_b64"] as? String else {
             throw StreamError.unexpectedFrame("payload missing data_b64")
+        }
+        // Reject an over-ceiling frame BEFORE allocating: base64 of N bytes is
+        // ~ceil(N/3)*4 chars, so a base64 string longer than that for the
+        // ceiling can only decode to something too large.
+        guard b64.utf8.count <= (maxDecodedChunkBytes + 2) / 3 * 4 else {
+            throw StreamError.unexpectedFrame("oversized chunk: base64 length \(b64.utf8.count)")
+        }
+        guard let bytes = Data(base64Encoded: b64) else {
+            throw StreamError.unexpectedFrame("payload data_b64 not valid base64")
+        }
+        guard bytes.count <= maxDecodedChunkBytes else {
+            throw StreamError.unexpectedFrame("oversized chunk: \(bytes.count) bytes")
         }
         return TerminalChunk(event: innerEvent, data: bytes)
     }
