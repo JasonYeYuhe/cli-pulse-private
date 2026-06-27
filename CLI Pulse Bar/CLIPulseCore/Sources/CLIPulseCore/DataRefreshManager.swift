@@ -643,43 +643,32 @@ internal final class DataRefreshManager {
     }
 
     func runCollectors(providerConfigs: [ProviderConfig]) async -> [CollectorResult] {
-        let enabledConfigs = providerConfigs.filter(\.isEnabled)
-        var results: [CollectorResult] = []
-
-        await withTaskGroup(of: CollectorResult?.self) { group in
-            for config in enabledConfigs {
-                guard let collector = CollectorRegistry.collector(for: config.kind, config: config) else { continue }
-                group.addTask {
-                    do {
-                        return try await collector.collect(config: config)
-                    } catch {
-                        let message = "[Collector] \(config.kind.rawValue) failed: \(error.localizedDescription)"
-                        if !Self.shouldSilenceCollectorError(kind: config.kind, error: error) {
-                            refreshLogger.warning("\(message)")
-                        }
-
-                        let logPath = NSTemporaryDirectory() + "clipulse_collector_errors.log"
-                        let entry = "\(sharedISO8601Formatter.string(from: Date())) \(message)\n"
-                        if let fileHandle = FileHandle(forWritingAtPath: logPath) {
-                            fileHandle.seekToEndOfFile()
-                            fileHandle.write(entry.data(using: .utf8) ?? Data())
-                            fileHandle.closeFile()
-                        } else {
-                            try? entry.write(toFile: logPath, atomically: true, encoding: .utf8)
-                        }
-                        return nil
-                    }
-                }
-            }
-
-            for await result in group {
-                if let result {
-                    results.append(result)
-                }
-            }
+        // Only providers that are enabled AND have a registered collector.
+        let runnable = providerConfigs.filter(\.isEnabled).filter {
+            CollectorRegistry.collector(for: $0.kind, config: $0) != nil
         }
+        // Bounded fan-out: at most `maxConcurrentCollectors` collectors run at
+        // once instead of spawning all ~48 every refresh (thundering herd).
+        return await mapWithConcurrencyLimit(runnable, maxConcurrent: maxConcurrentCollectors) { config in
+            await Self.runOneCollector(config: config)
+        }
+    }
 
-        return results
+    /// Runs a single collector, logging (and swallowing) any failure. Off-actor
+    /// so the bounded task group can run it concurrently. Error-log appends go
+    /// through `CollectorErrorLog` so concurrent failures can't corrupt the file.
+    nonisolated static func runOneCollector(config: ProviderConfig) async -> CollectorResult? {
+        guard let collector = CollectorRegistry.collector(for: config.kind, config: config) else { return nil }
+        do {
+            return try await collector.collect(config: config)
+        } catch {
+            let message = "[Collector] \(config.kind.rawValue) failed: \(error.localizedDescription)"
+            if !shouldSilenceCollectorError(kind: config.kind, error: error) {
+                refreshLogger.warning("\(message)")
+            }
+            await CollectorErrorLog.shared.append(message)
+            return nil
+        }
     }
 
     /// Read collector results written by the helper daemon to app group UserDefaults.
