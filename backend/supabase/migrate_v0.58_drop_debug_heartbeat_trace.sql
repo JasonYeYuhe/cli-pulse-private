@@ -1,0 +1,36 @@
+-- migrate_v0.58: drop the orphaned, anon-reachable _debug_heartbeat_trace(uuid, text)
+-- (2026-06-27 trust-hardening PR1 — P0 — verified live against prod
+--  gkjwsxotmwrgqsvfijzs via pg_get_functiondef + pg_proc.proacl, read-only)
+--
+-- public._debug_heartbeat_trace(p_device_id uuid, p_helper_secret text) was an
+-- ad-hoc debugging helper that NEVER entered version control (prod-only —
+-- it is not defined in any tracked backend/supabase/*.sql file). Live, it is:
+--   * SECURITY DEFINER, and
+--   * EXECUTE-granted to {anon, authenticated, service_role} (proacl shows
+--     anon=X), and therefore
+--   * reachable UNAUTHENTICATED at POST /rest/v1/rpc/_debug_heartbeat_trace.
+--
+-- Its body does:
+--     select user_id, helper_secret into v_user_id, v_stored
+--       from public.devices where id = p_device_id;
+--     return jsonb_build_object('v_user_id', v_user_id,
+--                               'stored_hash', v_stored, ...);
+-- i.e. it returns the device owner's `user_id` and the stored server-side
+-- helper-secret credential material (`stored_hash`) for ANY device_id,
+-- UNCONDITIONALLY — it never compares the caller-supplied p_helper_secret
+-- against the stored secret before returning. => an unauthenticated caller who
+-- enumerates/guesses a device_id learns that device's owner user_id and stored
+-- helper-secret hash. Real unauthenticated credential-material disclosure.
+--
+-- Zero callers anywhere in the repo (grep-clean across *.sql / *.swift / *.py /
+-- *.ts / *.kt). This is distinct from helper_heartbeat(uuid, uuid) — the
+-- vestigial overload that migrate_v0.57 already dropped. Because the function
+-- was never committed, this DROP is also the first time the object is
+-- acknowledged in version control.
+--
+-- Idempotent + zero-risk: orphaned debug helper, `drop ... if exists`.
+-- After apply: get_advisors(security) must no longer report
+-- `anon_security_definer_function` for this object, and pg_get_functiondef must
+-- return no such function.
+
+drop function if exists public._debug_heartbeat_trace(uuid, text);
