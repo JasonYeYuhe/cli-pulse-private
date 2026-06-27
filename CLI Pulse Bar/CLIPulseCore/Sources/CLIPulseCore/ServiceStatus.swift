@@ -142,6 +142,16 @@ public enum ServiceStatusCatalog {
         case .codex, .openaiAdmin: return "status.openai.com"
         case .cursor: return "status.cursor.com"
         case .copilot: return "www.githubstatus.com"
+        // Live-verified 2026-06-28: each host returns a valid Atlassian
+        // Statuspage v2 `/api/v2/status.json` (status.indicator + description +
+        // page.updated_at), so the existing parser handles them unchanged.
+        case .elevenLabs: return "status.elevenlabs.io"
+        case .groq: return "groqstatus.com"
+        case .warp: return "status.warp.dev"
+        case .moonshot: return "status.moonshot.cn"
+        case .deepgram: return "status.deepgram.com"
+        case .windsurf: return "status.codeium.com"
+        case .augment: return "status.augmentcode.com"
         default: return nil
         }
     }
@@ -165,7 +175,8 @@ public enum ServiceStatusCatalog {
 
     /// Providers with a known status page, in display order.
     public static let supportedProviders: [ProviderKind] =
-        [.claude, .codex, .cursor, .copilot, .openaiAdmin]
+        [.claude, .codex, .cursor, .copilot, .openaiAdmin,
+         .elevenLabs, .groq, .warp, .moonshot, .deepgram, .windsurf, .augment]
 }
 
 // MARK: - Fetcher
