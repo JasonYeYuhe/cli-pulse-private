@@ -125,13 +125,55 @@ jobs:
       - name: Run edge-function deno tests
         run: deno test backend/supabase/functions/
 
-  # v1.21 F9 (DEFERRED to v1.22): live migration replay against a fresh
-  # `supabase start` Postgres uncovers a deeper structural issue: the
-  # baseline `schema.sql` is a current-state snapshot, and replaying
-  # `schema.sql → migrate_v0.X.sql` in order doubly-applies anything
-  # already present in the snapshot (first surfaced at migrate_v0.9.sql
-  # CREATE POLICY → "policy already exists"). Fixing this needs either
-  # (a) a "schema.sql is anchored at vN" annotation so the replay skips
-  # migrations <=vN, or (b) restructuring so migrations are the sole
-  # source-of-truth and schema.sql is auto-generated from a replay. Out
-  # of scope for v1.21 long-tail; tracking as a v1.22 deliverable.
+  rls-cross-user:
+    # C-3 (DEV_PLAN 2026-06-27 PR3): cross-user RLS denial tests. Decoupled from
+    # the schema.sql double-apply blocker below — instead of replaying
+    # schema.sql onto a Supabase snapshot, we seed a BRAND-NEW Postgres from the
+    # repo schema (00_supabase_shim → schema.sql → remote-table DDL → fixtures)
+    # and assert, as a non-superuser `authenticated` role, that user-B cannot
+    # SELECT/INSERT/UPDATE user-A rows on remote_sessions, remote_session_commands,
+    # remote_session_events, remote_permission_requests, remote_permission_decisions,
+    # subscriptions, daily_usage_metrics — and that a team_members ADMIN cannot
+    # self-promote to owner (NEW-H2v / migrate_v0.59). psql -v ON_ERROR_STOP=1
+    # makes any cross-user success fail the job.
+    name: Cross-user RLS denial tests (C-3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Ensure psql client
+        run: psql --version || (sudo apt-get update && sudo apt-get install -y postgresql-client)
+
+      - name: Create a fresh database
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'drop database if exists rlstest;' -c 'create database rlstest;'
+
+      - name: Run cross-user RLS denial suite
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/rlstest
+        run: bash backend/supabase/tests/rls/run_rls_tests.sh
+
+  # v1.21 F9 (still DEFERRED): a FULL `schema.sql → migrate_v0.X.sql` replay
+  # against a fresh `supabase start` Postgres double-applies anything already in
+  # the schema.sql snapshot (first surfaced at migrate_v0.9.sql CREATE POLICY →
+  # "policy already exists"). The cross-user RLS coverage that blocker was
+  # holding up is now delivered by the `rls-cross-user` job above (fresh-seed,
+  # no replay). A clean end-to-end replay still needs either (a) a "schema.sql is
+  # anchored at vN" annotation so the replay skips migrations <=vN, or (b)
+  # migrations as the sole source-of-truth with schema.sql auto-generated.
