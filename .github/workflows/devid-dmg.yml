@@ -54,7 +54,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Show toolchain
         run: |
@@ -159,7 +159,7 @@ jobs:
           tar -cJf "../devid-dmg-artifact.tar.xz" .
           ls -la ../devid-dmg-artifact.tar.xz
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: devid-dmg-${{ github.run_id }}
           path: build/devid-dmg-artifact.tar.xz
