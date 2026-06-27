@@ -84,6 +84,11 @@ public final class RemoteTerminalView: UIView {
         self.messageHandler = messageHandler
         super.init(frame: frame)
 
+        // Refuse any navigation that leaves the local bundle (defense-in-depth
+        // on the still-public term: stream). The initial loadFileURL stays
+        // within the bundle dir, so it is allowed by the same rule.
+        webView.navigationDelegate = messageHandler
+
         // Match the Mac side: terminal background is xterm.js's
         // default (black-on-paper). Make the WKWebView opaque so
         // the SwiftUI host can't bleed through during scroll.
@@ -260,12 +265,22 @@ public final class RemoteTerminalView: UIView {
 }
 
 /// Inner class so `WKScriptMessageHandler` conformance doesn't
-/// leak into the public surface.
-final class RemoteTerminalBridgeHandler: NSObject, WKScriptMessageHandler {
+/// leak into the public surface. Also the WKNavigationDelegate so the
+/// terminal WebView can never be driven off the local xterm.js bundle.
+final class RemoteTerminalBridgeHandler: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     weak var owner: RemoteTerminalView?
     func userContentController(_ ucc: WKUserContentController,
                                didReceive message: WKScriptMessage) {
         owner?.handleBridgeMessage(message.body)
+    }
+
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        let allowed = TerminalNavigationGuard.allows(
+            navigationAction.request.url,
+            bundleDirectory: RemoteTerminalView.resourceURL?.deletingLastPathComponent())
+        decisionHandler(allowed ? .allow : .cancel)
     }
 }
 

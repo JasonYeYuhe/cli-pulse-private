@@ -319,6 +319,67 @@ final class RemoteSessionEventStreamTests: XCTestCase {
         XCTAssertEqual(chunk?.data, Data("flat".utf8))
     }
 
+    // MARK: - decoder hardening (allow-list + size ceiling)
+
+    func test_decodeBroadcastChunk_rejects_unknown_inner_event() throws {
+        // An inner event the producer can never emit must be refused, not
+        // surfaced to the terminal — defense-in-depth on the public term: path.
+        let b64 = Data("x".utf8).base64EncodedString()
+        let envelope: [Any] = [
+            NSNull(), NSNull(), "realtime:term:x", "broadcast",
+            ["event": "navigate", "payload": ["data_b64": b64]],
+        ]
+        let frame = try JSONSerialization.data(withJSONObject: envelope)
+        XCTAssertThrowsError(try RemoteSessionEventStream.decodeBroadcastChunk(from: frame)) { err in
+            switch err as? RemoteSessionEventStream.StreamError {
+            case .unexpectedFrame: break
+            default: XCTFail("expected unexpectedFrame, got \(err)")
+            }
+        }
+    }
+
+    func test_decodeBroadcastChunk_accepts_tail_snapshot_result() throws {
+        // The snapshot recovery event IS allow-listed and must decode normally.
+        let bytes = Data("SNAPSHOT".utf8)
+        let envelope: [Any] = [
+            NSNull(), NSNull(), "realtime:term:x", "broadcast",
+            ["event": "tail_snapshot_result", "payload": ["data_b64": bytes.base64EncodedString()]],
+        ]
+        let frame = try JSONSerialization.data(withJSONObject: envelope)
+        let chunk = try RemoteSessionEventStream.decodeBroadcastChunk(from: frame)
+        XCTAssertEqual(chunk?.event, "tail_snapshot_result")
+        XCTAssertEqual(chunk?.data, bytes)
+    }
+
+    func test_decodeBroadcastChunk_rejects_oversized_payload() throws {
+        // A frame decoding to more than maxDecodedChunkBytes is rejected before
+        // it can be surfaced (the producer caps coalesced output at 48 KiB).
+        let huge = Data(count: RemoteSessionEventStream.maxDecodedChunkBytes + 1)
+        let envelope: [Any] = [
+            NSNull(), NSNull(), "realtime:term:x", "broadcast",
+            ["event": "stdout", "payload": ["data_b64": huge.base64EncodedString()]],
+        ]
+        let frame = try JSONSerialization.data(withJSONObject: envelope)
+        XCTAssertThrowsError(try RemoteSessionEventStream.decodeBroadcastChunk(from: frame)) { err in
+            switch err as? RemoteSessionEventStream.StreamError {
+            case .unexpectedFrame: break
+            default: XCTFail("expected unexpectedFrame, got \(err)")
+            }
+        }
+    }
+
+    func test_decodeBroadcastChunk_accepts_payload_at_ceiling() throws {
+        // A frame exactly at the ceiling is still accepted (boundary).
+        let atLimit = Data(count: RemoteSessionEventStream.maxDecodedChunkBytes)
+        let envelope: [Any] = [
+            NSNull(), NSNull(), "realtime:term:x", "broadcast",
+            ["event": "stdout", "payload": ["data_b64": atLimit.base64EncodedString()]],
+        ]
+        let frame = try JSONSerialization.data(withJSONObject: envelope)
+        let chunk = try RemoteSessionEventStream.decodeBroadcastChunk(from: frame)
+        XCTAssertEqual(chunk?.data.count, RemoteSessionEventStream.maxDecodedChunkBytes)
+    }
+
     // MARK: - end-to-end shape parity with slice-3 sink
 
     func test_decoder_accepts_what_slice3_sink_produces() throws {

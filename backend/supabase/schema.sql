@@ -305,9 +305,13 @@ set search_path = pg_catalog, public, extensions as $$
     where t.id = p_team_id and t.owner_id = (select auth.uid())
   );
 $$;
+-- Revoke from `public` AND `anon`: Supabase's default privileges grant EXECUTE
+-- to anon at CREATE time, so these RLS-bypassing SECURITY DEFINER helpers must
+-- have anon explicitly revoked (repo convention, migrate_v0.53). Prod got this
+-- via migrate_v0.59.1.
 revoke all on function
   public._is_team_member(uuid), public._is_team_admin(uuid), public._is_team_owner(uuid)
-from public;
+from public, anon;
 grant execute on function
   public._is_team_member(uuid), public._is_team_admin(uuid), public._is_team_owner(uuid)
 to authenticated, service_role;
