@@ -82,19 +82,27 @@ public enum CredentialBridge {
     /// Read bridged credentials for a provider from Keychain.
     /// Returns nil if no credentials available or data is stale (>5 minutes).
     public static func readBridgedCredentials(provider: String) -> [String: Any]? {
-        guard let data = loadFromKeychain(),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard let data = loadFromKeychain() else { return nil }
+        return decodeBridgedCredentials(data, provider: provider)
+    }
+
+    /// Pure decode + freshness gate, split out of `readBridgedCredentials` so the
+    /// staleness logic is unit-testable without the Keychain. Returns nil when the
+    /// blob is malformed JSON, older than `maxAge` (default 5 min), or has no entry
+    /// for `provider`. A blob with no/unparseable `timestamp` is treated as fresh —
+    /// this matches the prior behavior exactly. `now`/`maxAge` are injectable for
+    /// deterministic tests.
+    static func decodeBridgedCredentials(_ data: Data, provider: String,
+                                         now: Date = Date(), maxAge: TimeInterval = 300) -> [String: Any]? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
         }
-
-        // Check freshness
         if let timestampStr = json["timestamp"] as? String,
            let timestamp = sharedISO8601Formatter.date(from: timestampStr) {
-            if Date().timeIntervalSince(timestamp) > 300 { // 5 minutes
+            if now.timeIntervalSince(timestamp) > maxAge {
                 return nil
             }
         }
-
         let allCreds = json["credentials"] as? [String: Any]
         return allCreds?[provider] as? [String: Any]
     }
