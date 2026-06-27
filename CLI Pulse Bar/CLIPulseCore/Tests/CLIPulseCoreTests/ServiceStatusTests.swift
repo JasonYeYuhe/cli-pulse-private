@@ -94,6 +94,22 @@ final class ServiceStatusTests: XCTestCase {
         XCTAssertEqual(snap?.pageURL, URL(string: "https://status.claude.com"))
     }
 
+    func testParsesExpandedProviderRealResponse() {
+        // Verbatim shape captured live from status.moonshot.cn (2026-06-28) — note
+        // the `+08:00` numeric offset (not `Z`) that some of the new providers use.
+        // The required fields (indicator/description) must parse to a usable
+        // snapshot; an offset timestamp that the parser can't read degrades
+        // gracefully to nil (never a crash / never a failed parse).
+        let json = """
+        {"page":{"id":"x","name":"Moonshot AI","url":"https://status.moonshot.cn","updated_at":"2026-06-27T23:14:37.403+08:00"},"status":{"indicator":"none","description":"All Systems Operational"}}
+        """
+        let snap = ServiceStatusParser.parseStatuspageStatus(data(json), provider: .moonshot)
+        XCTAssertNotNil(snap, "a real new-provider response must parse")
+        XCTAssertEqual(snap?.indicator, .operational)
+        XCTAssertEqual(snap?.description, "All Systems Operational")
+        XCTAssertEqual(snap?.pageURL, URL(string: "https://status.moonshot.cn"))
+    }
+
     func testParsesDegradedIndicators() {
         for (raw, expected) in [("minor", ServiceStatusIndicator.minor),
                                 ("major", .major),
@@ -157,6 +173,28 @@ final class ServiceStatusTests: XCTestCase {
                        URL(string: "https://www.githubstatus.com/api/v2/status.json"))
         XCTAssertEqual(ServiceStatusCatalog.statusPageURL(for: .claude),
                        URL(string: "https://status.claude.com"))
+    }
+
+    func testCatalogEndpointsForExpandedProviders() {
+        // Hosts live-verified 2026-06-28 to serve a valid Atlassian Statuspage v2
+        // `/api/v2/status.json` (status.indicator + description + page.updated_at),
+        // so the existing parser handles them unchanged. Pinned so a typo can't
+        // silently break a badge.
+        let expected: [ProviderKind: String] = [
+            .elevenLabs: "status.elevenlabs.io",
+            .groq: "groqstatus.com",
+            .warp: "status.warp.dev",
+            .moonshot: "status.moonshot.cn",
+            .deepgram: "status.deepgram.com",
+            .windsurf: "status.codeium.com",
+            .augment: "status.augmentcode.com",
+        ]
+        for (provider, host) in expected {
+            XCTAssertEqual(ServiceStatusCatalog.statusEndpoint(for: provider),
+                           URL(string: "https://\(host)/api/v2/status.json"),
+                           "endpoint for \(provider)")
+            XCTAssertTrue(ServiceStatusCatalog.hasStatusPage(for: provider))
+        }
     }
 
     func testCatalogReturnsNilForUnmappedProviders() {
