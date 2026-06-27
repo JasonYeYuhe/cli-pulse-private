@@ -20,45 +20,73 @@ public struct ClaudeCLIPTYStrategy: ClaudeSourceStrategy, Sendable {
     /// Timeout for the entire PTY capture.
     private let timeout: TimeInterval = 20
 
+    /// Shared throttle: reuse a recent snapshot for a TTL and sit out a growing
+    /// backoff after failures, so the up-to-20s (×2 on parse retry) `/usage` PTY
+    /// isn't re-spawned on every 120s tick / helper-sync / manual refresh when
+    /// OAuth is failing (the resolver order is OAuth → cli-pty → Web).
+    static let throttle = ClaudePTYProbeThrottle()
+
     public func isAvailable(config: ProviderConfig) -> Bool {
         Self.findClaudeBinary() != nil
     }
 
     public func fetch(config: ProviderConfig) async throws -> ClaudeSnapshot {
+        switch await Self.throttle.decide() {
+        case .useCached(let snapshot):
+            logger.debug("cli-pty: reusing cached snapshot within TTL, skipping PTY spawn")
+            return snapshot
+        case .backoff(let remaining):
+            // shouldFallback == true → resolver moves on to Web instead of
+            // burning a 20-40s PTY spawn while we're in the cooldown window.
+            throw ClaudeStrategyError.parseFailed(
+                String(format: "cli-pty probe throttled (~%.0fs backoff remaining); skipping PTY spawn", remaining))
+        case .proceed:
+            break
+        }
+
         guard let binary = Self.findClaudeBinary() else {
             throw ClaudeStrategyError.noBinary
         }
 
-        let rawOutput = try await capturePTY(binary: binary, subcommand: "/usage")
-
-        // Dump raw output for debugging
-        Self.dumpRawOutput(rawOutput)
-
-        let snapshot: CLISnapshot
         do {
-            snapshot = try Self.parseCLIOutput(rawOutput)
+            let rawOutput = try await capturePTY(binary: binary, subcommand: "/usage")
+
+            // Dump raw output for debugging
+            Self.dumpRawOutput(rawOutput)
+
+            let parsed: CLISnapshot
+            do {
+                parsed = try Self.parseCLIOutput(rawOutput)
+            } catch {
+                // If parse fails, try once more with a longer wait
+                let retryOutput = try await capturePTY(binary: binary, subcommand: "/usage")
+                Self.dumpRawOutput(retryOutput)
+                parsed = try Self.parseCLIOutput(retryOutput)
+            }
+
+            // Try to get tier from credentials if available
+            let tier = ClaudeCredentials.readCredentialsFile()?.rateLimitTier
+                ?? (PrivacySettings.shared.skipClaudeKeychain
+                    ? nil
+                    : ClaudeCredentials.readKeychainCredentials()?.rateLimitTier)
+
+            let snapshot = ClaudeSnapshot(
+                sessionUsed: parsed.sessionPercentLeft.map { 100 - $0 },
+                weeklyUsed: parsed.weeklyPercentLeft.map { 100 - $0 },
+                opusUsed: parsed.opusPercentLeft.map { 100 - $0 },
+                sessionReset: parsed.primaryResetDescription,
+                weeklyReset: parsed.secondaryResetDescription,
+                rateLimitTier: tier,
+                sourceLabel: sourceLabel
+            )
+            await Self.throttle.recordSuccess(snapshot)
+            return snapshot
         } catch {
-            // If parse fails, try once more with a longer wait
-            let retryOutput = try await capturePTY(binary: binary, subcommand: "/usage")
-            Self.dumpRawOutput(retryOutput)
-            snapshot = try Self.parseCLIOutput(retryOutput)
+            // Both the probe and its one retry failed — record so the next few
+            // refreshes skip the spawn entirely.
+            await Self.throttle.recordFailure()
+            throw error
         }
-
-        // Try to get tier from credentials if available
-        let tier = ClaudeCredentials.readCredentialsFile()?.rateLimitTier
-            ?? (PrivacySettings.shared.skipClaudeKeychain
-                ? nil
-                : ClaudeCredentials.readKeychainCredentials()?.rateLimitTier)
-
-        return ClaudeSnapshot(
-            sessionUsed: snapshot.sessionPercentLeft.map { 100 - $0 },
-            weeklyUsed: snapshot.weeklyPercentLeft.map { 100 - $0 },
-            opusUsed: snapshot.opusPercentLeft.map { 100 - $0 },
-            sessionReset: snapshot.primaryResetDescription,
-            weeklyReset: snapshot.secondaryResetDescription,
-            rateLimitTier: tier,
-            sourceLabel: sourceLabel
-        )
     }
 
     // MARK: - Binary discovery
@@ -408,6 +436,65 @@ public struct ClaudeCLIPTYStrategy: ClaudeSourceStrategy, Sendable {
             primaryResetDescription: primaryReset,
             secondaryResetDescription: secondaryReset
         )
+    }
+}
+
+/// Snapshot TTL cache + post-failure exponential backoff for the cli-pty
+/// `/usage` probe. The probe spawns a real PTY child (up to 20s, twice on a
+/// parse retry) and is NOT covered by the OAuth rate-limit backoff, so without
+/// this a persistently signed-in-but-unreadable user re-spawns it on every 120s
+/// tick, every helper-sync notification, and every manual refresh — a real
+/// battery/CPU regression. All times injectable so the decision logic is
+/// deterministically unit-testable.
+actor ClaudePTYProbeThrottle {
+    enum Decision {
+        /// No recent snapshot and not in backoff — run the probe.
+        case proceed
+        /// A snapshot from within `ttl` exists; reuse it (no spawn).
+        case useCached(ClaudeSnapshot)
+        /// In the post-failure cooldown; skip the spawn for `remaining` seconds.
+        case backoff(remaining: TimeInterval)
+    }
+
+    private struct Cached { let snapshot: ClaudeSnapshot; let at: Date }
+    private var cached: Cached?
+    private var lastFailureAt: Date?
+    private var consecutiveFailures = 0
+
+    let ttl: TimeInterval
+    let baseBackoff: TimeInterval
+    let maxBackoff: TimeInterval
+
+    init(ttl: TimeInterval = 300, baseBackoff: TimeInterval = 120, maxBackoff: TimeInterval = 900) {
+        self.ttl = ttl
+        self.baseBackoff = baseBackoff
+        self.maxBackoff = maxBackoff
+    }
+
+    func decide(now: Date = Date()) -> Decision {
+        if let c = cached, now.timeIntervalSince(c.at) < ttl {
+            return .useCached(c.snapshot)
+        }
+        if consecutiveFailures > 0, let failedAt = lastFailureAt {
+            // Exponential: base, 2·base, 4·base … capped at maxBackoff.
+            let window = min(maxBackoff, baseBackoff * pow(2, Double(consecutiveFailures - 1)))
+            let elapsed = now.timeIntervalSince(failedAt)
+            if elapsed < window {
+                return .backoff(remaining: window - elapsed)
+            }
+        }
+        return .proceed
+    }
+
+    func recordSuccess(_ snapshot: ClaudeSnapshot, at: Date = Date()) {
+        cached = Cached(snapshot: snapshot, at: at)
+        lastFailureAt = nil
+        consecutiveFailures = 0
+    }
+
+    func recordFailure(at: Date = Date()) {
+        lastFailureAt = at
+        consecutiveFailures += 1
     }
 }
 #endif
