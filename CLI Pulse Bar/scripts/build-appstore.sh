@@ -17,7 +17,17 @@ BUILD_DIR="$PROJECT_DIR/build/appstore"
 # App Store Connect credentials
 API_KEY_ID="DMMFP6XTXX"
 API_ISSUER="c5671c11-49ec-47d9-bd38-5e3c1a249416"
-API_KEY_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/Downloads/AuthKey_${API_KEY_ID}.p8"
+# API key path: honor an ASC_KEY_PATH override, else prefer the local
+# ~/.appstoreconnect/private_keys copy. The iCloud Drive copy
+# (com~apple~CloudDocs) is TCC-protected and reads as "Operation not
+# permitted" under headless / sandboxed runs, so it can't be the only source.
+if [[ -n "${ASC_KEY_PATH:-}" ]]; then
+    API_KEY_PATH="$ASC_KEY_PATH"
+elif [[ -f "$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8" ]]; then
+    API_KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8"
+else
+    API_KEY_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/Downloads/AuthKey_${API_KEY_ID}.p8"
+fi
 TEAM_ID="KHMK6Q3L3K"
 
 # Parse arguments
