@@ -78,9 +78,10 @@ struct CLIPulseBarApp: App {
             // VISIBLE only on the Developer-ID build (`canHostInAppTerminal`,
             // which after the W1-A un-sandboxing means "this is the DEVID
             // channel"); MAS stays hidden (W5a). Within DEVID, the spawn
-            // actions additionally require the background helper to be reachable
-            // AND Local Session Control enabled (`canStartLocalManagedSession`,
-            // LocalSessionControlState). We DISABLE the items when not ready
+            // actions additionally require the background helper to be PAIRED
+            // (selfDeviceId), reachable, AND Local Session Control enabled
+            // (`canStartLocalManagedSession`, LocalSessionControlState). We
+            // DISABLE the items when not ready
             // rather than hide the whole menu — hiding would flicker the menu
             // bar as the helper probe flaps, and disabled items don't fail
             // confusingly on tap. The App body already observes `appState`

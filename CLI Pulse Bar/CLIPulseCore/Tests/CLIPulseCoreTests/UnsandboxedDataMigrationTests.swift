@@ -149,6 +149,41 @@ final class UnsandboxedDataMigrationTests: XCTestCase {
                      "a second run must not re-migrate")
     }
 
+    // MARK: - Allowlist contract (W4)
+
+    /// Every app-owned `UserDefaults.standard` key must match an entry in
+    /// `appOwnedKeyPrefixes`, or it strands on the DEVID unsandbox transition.
+    /// This locks the audited contract (2026-06-28): adding a new
+    /// standard-defaults namespace requires extending `appOwnedKeyPrefixes`.
+    func test_appOwnedKeyPrefixes_coverEveryKnownStandardDefaultsKey() {
+        func covered(_ k: String) -> Bool {
+            UnsandboxedDataMigration.appOwnedKeyPrefixes.contains { k.hasPrefix($0) }
+        }
+        // Representative app-owned keys written to UserDefaults.standard.
+        let knownKeys = [
+            "cli_pulse_onboarding_completed",
+            "cli_pulse_provider_configs",
+            "cli_pulse_providers_disabled_by_tier",
+            "cli_pulse_refresh_interval",
+            "cli_pulse_appearance",
+            "cli_pulse_locale_override",
+            "cli_pulse_provider_secrets_migrated",
+            "cli_pulse_keychain_group_migrated",
+            "cli_pulse_alert_thresholds_v1",
+            "cli_pulse_suppressed_alert_ids_v2",
+            "privacy.skipClaudeKeychain",
+            "privacy.localOnlyMode",
+        ]
+        for k in knownKeys {
+            XCTAssertTrue(covered(k), "app-owned key '\(k)' is not in the migration allowlist")
+        }
+        // The cooldown key's app-group suite has a `.standard` fallback, so its
+        // key MUST be prefixed too — assert against the real constant so a revert
+        // to an unprefixed name fails here (verifier 2026-06-28).
+        XCTAssertTrue(covered(ClaudeCredentials.keychainReadCooldownKey),
+                      "ClaudeCredentials.keychainReadCooldownKey must match appOwnedKeyPrefixes")
+    }
+
     // MARK: - Path helpers
 
     func test_sandboxContainerDefaultsPlist_shape() {
