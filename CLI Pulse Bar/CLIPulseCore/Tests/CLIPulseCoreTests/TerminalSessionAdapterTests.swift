@@ -94,6 +94,31 @@ final class TerminalSessionAdapterTests: XCTestCase {
         XCTAssertEqual(adapter.cwd, "/tmp/project")
     }
 
+    // MARK: - W3: attachExisting reentrancy (supersession) logic
+
+    /// The reattach must paint its snapshot ONLY while `state` still points at
+    /// the same session — otherwise a rapid re-attach to a different session
+    /// would flush the old snapshot into the new buffer (the bug the dead
+    /// `Task.isCancelled` check failed to prevent).
+    func test_reattachSuperseded_sameRunningSession_notSuperseded() {
+        XCTAssertFalse(TerminalSessionAdapter.reattachSuperseded(
+            state: .running(sessionId: "A"), targetSessionId: "A"))
+    }
+
+    func test_reattachSuperseded_differentRunningSession_isSuperseded() {
+        // A newer attach to B replaced state while A's snapshot was in flight.
+        XCTAssertTrue(TerminalSessionAdapter.reattachSuperseded(
+            state: .running(sessionId: "B"), targetSessionId: "A"))
+    }
+
+    func test_reattachSuperseded_nonRunningStates_areSuperseded() {
+        for state: TerminalSessionAdapter.State in [.idle, .starting, .stopping, .stopped, .failed(reason: "x")] {
+            XCTAssertTrue(TerminalSessionAdapter.reattachSuperseded(
+                state: state, targetSessionId: "A"),
+                "state \(state) must count as superseded (don't paint a stale snapshot)")
+        }
+    }
+
     // MARK: - TerminalSessionAdapter.deliverLive with nil view
 
     /// `deliverLive` is the safety net for the "subscription fired after the

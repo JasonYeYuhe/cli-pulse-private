@@ -116,6 +116,17 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
     ///
     /// Idempotent when already attached to the same `sessionId`. Never spawns;
     /// the session's lifetime is owned by the helper, not this window.
+    /// True iff an in-flight `attachExisting(sessionId:)` has been SUPERSEDED by
+    /// a newer attach and must NOT paint its (now-stale) tail snapshot. The
+    /// adapter is `@MainActor`, so after the snapshot `await` resumes, `state`
+    /// reflects the most recent attach: it's superseded unless `state` is still
+    /// `.running` for the same `targetSessionId`. Pure + static so it's unit
+    /// tested without a WKWebView (the test host can't instantiate one).
+    nonisolated static func reattachSuperseded(state: State, targetSessionId: String) -> Bool {
+        if case let .running(sid) = state { return sid != targetSessionId }
+        return true
+    }
+
     @discardableResult
     public func attachExisting(to view: TerminalView, sessionId: String) async -> String {
         if case let .running(sid) = state, sid == sessionId {
@@ -139,7 +150,17 @@ public final class TerminalSessionAdapter: NSObject, TerminalViewDelegate, @unch
         // calls don't interleave their buffer flushes on the same adapter
         // (deep-review concurrency catch). The newer attach already replaced the
         // subscription + reattach buffer and will paint its own snapshot.
-        if Task.isCancelled { return sessionId }
+        //
+        // W3 fix: the previous `Task.isCancelled` check was DEAD — attachExisting
+        // never stored/cancelled its own Task, so `isCancelled` was always false
+        // and a rapid re-attach to a different session flushed THIS (old)
+        // snapshot into the NEW session's buffer. `@MainActor` serialises the
+        // mutations across the single `await` suspension above, so the live
+        // `state` is the authoritative supersession signal: if it no longer
+        // points at our `sessionId`, a newer attach won.
+        if Self.reattachSuperseded(state: state, targetSessionId: sessionId) {
+            return sessionId
+        }
         paintReattachSnapshot(snapshot)
         // Deep-review merge-blocker fix: if the view's single initial `resize`
         // fired into a not-yet-wired delegate during the work above (page-load
