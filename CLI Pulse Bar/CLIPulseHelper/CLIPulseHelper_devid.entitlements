@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Developer-ID (DEVID) entitlements for the embedded LoginItem
+  (CLIPulseHelper.app, bundle id yyh.CLI-Pulse.helper). Selected ONLY by
+  scripts/build_signed_app.sh when DEVID_BUILD_FLAG=1; the Mac App Store
+  archive keeps the sandboxed CLIPulseHelper.entitlements (MAS requires
+  every nested executable to be sandboxed — ITMS-90296).
+
+  Why unsandboxed on DEVID: the DEVID app is signed with
+  CODE_SIGNING_ALLOWED=NO, so Xcode never embeds a provisioning profile.
+  A SANDBOXED nested LoginItem that also requests restricted entitlements
+  (keychain-access-groups / application-groups) has no profile to authorise
+  them, so taskgated/AMFI can reject it on SMAppService.loginItem launch
+  (HelperLogin.register, CLIPulseBarApp.swift). Dropping the sandbox
+  sidesteps the profile requirement entirely: on an unsandboxed
+  Developer-ID binary the app-group + keychain group are honoured via the
+  team signature (KHMK6Q3L3K), the same proven config the LaunchAgent
+  helper (HelperSwift/cli_pulse_helper.entitlements) already ships. The
+  parent app is itself unsandboxed on DEVID, so this keeps the LoginItem
+  consistent with it.
+
+  KEPT: application-groups + keychain-access-groups (prompt-free reads of
+  the provider apiKey/cookie items the main app writes) + network.client.
+  DROPPED: com.apple.security.app-sandbox.
+  build_signed_app.sh expands `$(AppIdentifierPrefix)` at sign time.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.yyh.CLI-Pulse</string>
+	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)group.yyh.CLI-Pulse</string>
+	</array>
+	<key>com.apple.security.network.client</key>
+	<true/>
+</dict>
+</plist>

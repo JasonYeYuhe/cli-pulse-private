@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Developer-ID (DEVID) entitlements for the macOS app. Selected ONLY by
+  scripts/build_signed_app.sh when DEVID_BUILD_FLAG=1; the Mac App Store
+  archive (CLI Pulse Bar/scripts/build-appstore.sh via xcodebuild) keeps
+  using the sandboxed CLI_Pulse_Bar.entitlements — do NOT point the Xcode
+  target at this file.
+
+  Difference vs the MAS file: the App Sandbox is REMOVED. The in-app
+  terminal is gated on `MASSandboxGate.canHostInAppTerminal = !isSandboxed`,
+  so the sandboxed MAS-shaped signing hid it on every shipped build. The
+  PTY itself runs in the unsandboxed LaunchAgent helper (cli_pulse_helper),
+  so dropping the parent's sandbox is a distribution choice, not a technical
+  requirement — but it is the only drag-and-drop .app/DMG path that un-hides
+  the terminal (a sandboxed app cannot register an unsandboxed LaunchAgent
+  via SMAppService — the W1-B SMAppService catch-22).
+
+  KEPT: application-groups + keychain-access-groups so the shared
+  Group Container UDS/token path (LocalSessionControlClient) and the
+  prompt-free keychain reads keep working. On an unsandboxed Developer-ID
+  binary these are honoured via the team signature (KHMK6Q3L3K) without a
+  provisioning profile — exactly how the LaunchAgent helper already works.
+  build_signed_app.sh expands `$(AppIdentifierPrefix)` to the team prefix at
+  sign time (codesign does NOT expand the macro itself).
+
+  DROPPED (sandbox-only, meaningless / ignored once unsandboxed):
+    com.apple.security.app-sandbox
+    com.apple.security.files.bookmarks.app-scope
+    com.apple.security.files.user-selected.read-write
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.yyh.CLI-Pulse</string>
+	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)group.yyh.CLI-Pulse</string>
+	</array>
+	<key>com.apple.security.network.client</key>
+	<true/>
+</dict>
+</plist>
