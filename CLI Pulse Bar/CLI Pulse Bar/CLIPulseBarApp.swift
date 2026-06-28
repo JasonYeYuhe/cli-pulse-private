@@ -8,7 +8,7 @@ private let logger = Logger(subsystem: "com.clipulse.bar", category: "AppLifecyc
 
 @main
 struct CLIPulseBarApp: App {
-    @StateObject private var appState = AppState()
+    @StateObject private var appState: AppState
     @Environment(\.openWindow) private var openWindow
 
     /// Keeps the LSUIElement menu-bar app out of App Nap so the background
@@ -17,6 +17,17 @@ struct CLIPulseBarApp: App {
     private let backgroundActivity = BackgroundActivityAssertion()
 
     init() {
+        // W1-A: on the unsandboxed Developer-ID build, migrate per-app-container
+        // UserDefaults (provider configs, onboarding flag, display prefs,
+        // language override) from the old sandbox container to the real home
+        // BEFORE AppState is constructed — AppState.init() reads
+        // UserDefaults.standard immediately (loadProviderConfigs + legacy token
+        // migration). @StateObject defers AppState() to first body render, but
+        // assign it explicitly here AFTER the migration so the
+        // migration-before-read ordering is obvious and robust against future
+        // edits. No-op on sandboxed (MAS) builds and after the first DEVID run.
+        UnsandboxedDataMigration.runIfNeeded()
+        _appState = StateObject(wrappedValue: AppState())
         SentryLogger.start(platform: .macOS)
         backgroundActivity.begin()
         // Resolve stored security-scoped bookmarks shortly AFTER launch — off
@@ -142,7 +153,10 @@ struct CLIPulseBarApp: App {
         // grabbing `self.openWindow` from inside the escaping completion can
         // otherwise pick up a stale environment reference (Gemini 3.1 Pro review).
         let windowAction = openWindow
-        let home = FileManager.default.homeDirectoryForCurrentUser
+        // Real home even if sandboxed (future MAS-helper support); a no-op
+        // alias for homeDirectoryForCurrentUser on the unsandboxed DEVID build
+        // where the terminal actually runs. Keeps one cwd flow for both paths.
+        let home = UnsandboxedDataMigration.realUserHome()
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false

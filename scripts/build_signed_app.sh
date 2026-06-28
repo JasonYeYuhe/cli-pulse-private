@@ -69,6 +69,34 @@ DERIVED_DATA="$OUTPUT_DIR/DerivedData"
 HELPER_ENTITLEMENTS="$SWIFT_PKG_DIR/cli_pulse_helper.entitlements"
 APP_ENTITLEMENTS_SAVED="$OUTPUT_DIR/app_entitlements.plist"
 
+# W1-A (2026-06-28): team prefix used to expand $(AppIdentifierPrefix) in the
+# keychain-access-group. `codesign --entitlements` does NOT expand Xcode build
+# macros, so signing from a raw plist ships the LITERAL
+# "$(AppIdentifierPrefix)group.yyh.CLI-Pulse" string → keychain sharing breaks.
+# Matches the hard-coded team id in HelperSwift/cli_pulse_helper.entitlements
+# and CLI Pulse Bar/scripts/build-appstore.sh (KHMK6Q3L3K).
+APP_IDENTIFIER_PREFIX="KHMK6Q3L3K."
+
+# Expand Xcode entitlement macros into a plist codesign can use verbatim, then
+# assert no "$(" remains. plutil canonicalises (and drops XML comments) first.
+# Usage: expand_entitlements SRC DST
+expand_entitlements() {
+    local src="$1" dst="$2"
+    /usr/bin/plutil -convert xml1 -o "$dst" "$src" || {
+        echo "error: plutil could not read entitlements source: $src" >&2
+        exit 2
+    }
+    /usr/bin/sed -i '' \
+        -e "s/\$(AppIdentifierPrefix)/${APP_IDENTIFIER_PREFIX}/g" \
+        -e "s/\$(TeamIdentifierPrefix)/${APP_IDENTIFIER_PREFIX}/g" \
+        "$dst"
+    if /usr/bin/grep -q '\$(' "$dst"; then
+        echo "error: unexpanded macro remains in $dst after expand_entitlements:" >&2
+        /usr/bin/grep -n '\$(' "$dst" >&2
+        exit 2
+    fi
+}
+
 # 1. Build the Swift helper.
 echo "==> [1/7] Building Swift helper (release) ..."
 cd "$SWIFT_PKG_DIR"
@@ -145,13 +173,21 @@ fi
 # file directly. This is the EXACT same input Xcode would have
 # used had signing been on, so sandbox + app-group entitlements
 # survive intact.
-APP_ENTITLEMENTS_SOURCE="$PROJECT_ROOT/CLI Pulse Bar/CLI Pulse Bar/CLI_Pulse_Bar.entitlements"
+# W1-A: the Developer-ID build signs with an UNSANDBOXED entitlements file so
+# the in-app terminal (gated on !isSandboxed) becomes visible. The MAS archive
+# (build-appstore.sh via xcodebuild) is untouched and keeps the sandboxed
+# CLI_Pulse_Bar.entitlements. Both paths get macro expansion.
+if [[ -n "${DEVID_BUILD_FLAG:-}" ]]; then
+    APP_ENTITLEMENTS_SOURCE="$PROJECT_ROOT/CLI Pulse Bar/CLI Pulse Bar/CLI_Pulse_Bar_devid.entitlements"
+else
+    APP_ENTITLEMENTS_SOURCE="$PROJECT_ROOT/CLI Pulse Bar/CLI Pulse Bar/CLI_Pulse_Bar.entitlements"
+fi
 if [[ ! -f "$APP_ENTITLEMENTS_SOURCE" ]]; then
     echo "error: app entitlements source missing at $APP_ENTITLEMENTS_SOURCE" >&2
     exit 2
 fi
-cp "$APP_ENTITLEMENTS_SOURCE" "$APP_ENTITLEMENTS_SAVED"
-echo "    using: $APP_ENTITLEMENTS_SAVED"
+expand_entitlements "$APP_ENTITLEMENTS_SOURCE" "$APP_ENTITLEMENTS_SAVED"
+echo "    using: $APP_ENTITLEMENTS_SOURCE -> $APP_ENTITLEMENTS_SAVED (macros expanded)"
 
 # 6. Sign the embedded helper with its own minimal entitlements,
 #    then re-sign the app preserving its sandbox / app-group
@@ -207,13 +243,46 @@ for p in matches:
         sys.exit(rc)
 PYEOF
 # Helper: NOT sandboxed (it's a LaunchAgent), but Hardened Runtime
-# is on (--options runtime) for notarisation. Entitlements file is
-# intentionally minimal.
+# is on (--options runtime) for notarisation. Expand $(AppIdentifierPrefix)
+# in its keychain group first (W1-A: codesign won't, so it previously shipped
+# the literal macro → keychain sharing broken).
+HELPER_ENTITLEMENTS_EXPANDED="$OUTPUT_DIR/helper_entitlements.plist"
+expand_entitlements "$HELPER_ENTITLEMENTS" "$HELPER_ENTITLEMENTS_EXPANDED"
 xattr -cr "$APP_PATH/Contents/Helpers/cli_pulse_helper" 2>/dev/null || true
 codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
-    --entitlements "$HELPER_ENTITLEMENTS" \
+    --entitlements "$HELPER_ENTITLEMENTS_EXPANDED" \
     --sign "$SIGN_IDENTITY" \
     "$APP_PATH/Contents/Helpers/cli_pulse_helper"
+
+# W1-A: re-sign the embedded LoginItem (CLIPulseHelper.app) with its OWN
+# entitlements. The bottom-up walk above re-signed nested .app bundles with NO
+# entitlements, which STRIPPED this LoginItem's sandbox + app-group + keychain
+# (prior DEVID builds ran it entitlement-less → recurring keychain prompts /
+# legacy fallback). DEVID → UNSANDBOXED entitlements: the app is unsandboxed and
+# CODE_SIGNING_ALLOWED=NO embeds no provisioning profile, so a sandboxed nested
+# item requesting keychain/app-group has nothing to authorise the restricted
+# entitlements and taskgated can reject it on SMAppService.loginItem launch
+# (HelperLogin.register). Non-DEVID (MAS-shaped) → the sandboxed entitlements.
+LOGIN_ITEM_APP="$APP_PATH/Contents/Library/LoginItems/CLIPulseHelper.app"
+if [[ -d "$LOGIN_ITEM_APP" ]]; then
+    if [[ -n "${DEVID_BUILD_FLAG:-}" ]]; then
+        LOGIN_ITEM_ENT_SOURCE="$PROJECT_ROOT/CLI Pulse Bar/CLIPulseHelper/CLIPulseHelper_devid.entitlements"
+    else
+        LOGIN_ITEM_ENT_SOURCE="$PROJECT_ROOT/CLI Pulse Bar/CLIPulseHelper/CLIPulseHelper.entitlements"
+    fi
+    [[ -f "$LOGIN_ITEM_ENT_SOURCE" ]] || {
+        echo "error: LoginItem entitlements missing at $LOGIN_ITEM_ENT_SOURCE" >&2; exit 2; }
+    LOGIN_ITEM_ENT_EXPANDED="$OUTPUT_DIR/loginitem_entitlements.plist"
+    expand_entitlements "$LOGIN_ITEM_ENT_SOURCE" "$LOGIN_ITEM_ENT_EXPANDED"
+    xattr -cr "$LOGIN_ITEM_APP" 2>/dev/null || true
+    codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
+        --entitlements "$LOGIN_ITEM_ENT_EXPANDED" \
+        --sign "$SIGN_IDENTITY" \
+        "$LOGIN_ITEM_APP"
+    echo "    signed LoginItem with $(basename "$LOGIN_ITEM_ENT_SOURCE") (macros expanded)"
+else
+    echo "    note: no LoginItem at $LOGIN_ITEM_APP — skipping explicit LoginItem signing"
+fi
 
 # Re-sign the app with the original Xcode-emitted entitlements
 # (.xcent file we located above). NOT --deep — that would re-sign
@@ -242,33 +311,118 @@ test -f "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plis
 xattr -cr "$APP_PATH" 2>/dev/null || true
 codesign --verify --deep "$APP_PATH"
 
-# Codex P1.C: explicitly prove app entitlements survived re-sign.
-# Pin sandbox + app-group are still in the live signature.
-APP_ENT_AFTER="$(codesign -d --entitlements :- "$APP_PATH" 2>/dev/null || true)"
-if ! grep -q "com.apple.security.app-sandbox" <<< "$APP_ENT_AFTER"; then
-    echo "error: app sandbox entitlement was stripped by re-sign — abort" >&2
-    exit 2
-fi
-if ! grep -q "group.yyh.CLI-Pulse" <<< "$APP_ENT_AFTER"; then
-    echo "error: app-group entitlement was stripped by re-sign — abort" >&2
-    exit 2
-fi
-# And the helper MUST NOT have the app's sandbox entitlement (it's
-# a LaunchAgent, not a sandbox child).
-HELPER_ENT_AFTER="$(codesign -d --entitlements :- "$APP_PATH/Contents/Helpers/cli_pulse_helper" 2>/dev/null || true)"
-if grep -q "com.apple.security.app-sandbox" <<< "$HELPER_ENT_AFTER"; then
-    echo "error: helper accidentally inherited app-sandbox entitlement — abort" >&2
-    exit 2
-fi
-# Phase 4E e2e fix (2026-05-07): helper MUST have the app-group
-# entitlement, otherwise the kernel blocks all access to
-# ~/Library/Group Containers/group.yyh.CLI-Pulse/ → AuthToken.
-# rotateToken hangs forever. Phase 4D shipped this empty.
-if ! grep -q "group.yyh.CLI-Pulse" <<< "$HELPER_ENT_AFTER"; then
-    echo "error: helper missing application-groups entitlement (group.yyh.CLI-Pulse) — abort" >&2
-    echo "  → check HelperSwift/cli_pulse_helper.entitlements" >&2
-    exit 2
-fi
+# W1-A: semantic entitlement verification of the SIGNED products (not the
+# source files). Replaces the old substring greps with plist parsing so we can
+# assert the full matrix:
+#   * DEVID app has NO app-sandbox; non-DEVID app HAS it.
+#   * app + helper + LoginItem all carry application-group group.yyh.CLI-Pulse
+#     and keychain group KHMK6Q3L3K.group.yyh.CLI-Pulse (exact, macro-expanded).
+#   * LaunchAgent helper is never sandboxed.
+#   * LoginItem: unsandboxed on DEVID (no profile to authorise restricted
+#     entitlements), sandboxed on non-DEVID (MAS shape).
+#   * no entitlement contains an unexpanded "$(" macro.
+#   * (DEVID only) every signed binary has the Hardened Runtime flag — ad-hoc
+#     signing ignores --options runtime, so this is gated off for the Debug CI.
+IS_DEVID=0
+[[ -n "${DEVID_BUILD_FLAG:-}" ]] && IS_DEVID=1
+EXPECTED_KC_GROUP="${APP_IDENTIFIER_PREFIX}group.yyh.CLI-Pulse"
+EXPECTED_APP_GROUP="group.yyh.CLI-Pulse"
+python3 - "$APP_PATH" "$IS_DEVID" "$EXPECTED_KC_GROUP" "$EXPECTED_APP_GROUP" <<'PYEOF'
+import os, sys, subprocess, plistlib
+
+app_path, is_devid, kc_group, app_group = sys.argv[1], sys.argv[2] == "1", sys.argv[3], sys.argv[4]
+helper_bin = os.path.join(app_path, "Contents/Helpers/cli_pulse_helper")
+login_app  = os.path.join(app_path, "Contents/Library/LoginItems/CLIPulseHelper.app")
+login_bin  = os.path.join(login_app, "Contents/MacOS/CLIPulseHelper")
+errors = []
+
+def read_entitlements(path):
+    out = subprocess.run(["codesign", "-d", "--entitlements", ":-", path],
+                         capture_output=True)
+    data = out.stdout
+    for marker in (b"<?xml", b"<plist", b"bplist00"):
+        i = data.find(marker)
+        if i >= 0:
+            try:
+                return plistlib.loads(data[i:])
+            except Exception:
+                pass
+    try:
+        return plistlib.loads(data)
+    except Exception:
+        return None
+
+def cd_flags(path):
+    out = subprocess.run(["codesign", "-d", "-v", path], capture_output=True)
+    text = (out.stdout + out.stderr).decode("utf-8", "replace")
+    for line in text.splitlines():
+        if "flags=" in line:
+            return line.strip()
+    return ""
+
+def check(cond, msg):
+    if not cond:
+        errors.append(msg)
+
+def has_group(ent, key, val):
+    return ent is not None and val in (ent.get(key) or [])
+
+app_ent = read_entitlements(app_path)
+helper_ent = read_entitlements(helper_bin)
+login_ent = read_entitlements(login_bin) if os.path.isdir(login_app) else None
+
+check(app_ent is not None, "could not read app entitlements")
+if app_ent is not None:
+    sb = bool(app_ent.get("com.apple.security.app-sandbox", False))
+    if is_devid:
+        check(not sb, "DEVID app MUST NOT be sandboxed (app-sandbox present)")
+    else:
+        check(sb, "non-DEVID app MUST be sandboxed (app-sandbox missing/false)")
+    check(has_group(app_ent, "com.apple.security.application-groups", app_group),
+          "app missing application-group %s" % app_group)
+    check(has_group(app_ent, "keychain-access-groups", kc_group),
+          "app keychain group != %s (got %r)" % (kc_group, app_ent.get("keychain-access-groups")))
+
+check(helper_ent is not None, "could not read LaunchAgent helper entitlements")
+if helper_ent is not None:
+    check(not bool(helper_ent.get("com.apple.security.app-sandbox", False)),
+          "LaunchAgent helper MUST NOT be sandboxed")
+    check(has_group(helper_ent, "com.apple.security.application-groups", app_group),
+          "helper missing application-group %s" % app_group)
+    check(has_group(helper_ent, "keychain-access-groups", kc_group),
+          "helper keychain group != %s (got %r)" % (kc_group, helper_ent.get("keychain-access-groups")))
+
+check(os.path.isdir(login_app), "LoginItem not found at %s" % login_app)
+if login_ent is not None:
+    sb = bool(login_ent.get("com.apple.security.app-sandbox", False))
+    if is_devid:
+        check(not sb, "DEVID LoginItem MUST NOT be sandboxed (no embedded profile to authorise restricted entitlements)")
+    else:
+        check(sb, "non-DEVID LoginItem MUST be sandboxed (MAS shape)")
+    check(has_group(login_ent, "com.apple.security.application-groups", app_group),
+          "LoginItem missing application-group %s" % app_group)
+    check(has_group(login_ent, "keychain-access-groups", kc_group),
+          "LoginItem keychain group != %s (got %r)" % (kc_group, login_ent.get("keychain-access-groups")))
+elif os.path.isdir(login_app):
+    errors.append("could not read LoginItem entitlements")
+
+for label, ent in (("app", app_ent), ("helper", helper_ent), ("LoginItem", login_ent)):
+    if ent is not None and b"$(" in plistlib.dumps(ent):
+        errors.append("%s entitlements contain unexpanded macro '$('" % label)
+
+if is_devid:
+    for label, p in (("app", app_path), ("helper", helper_bin), ("LoginItem", login_bin)):
+        if os.path.exists(p):
+            flags = cd_flags(p)
+            check("runtime" in flags, "%s missing Hardened Runtime flag (got: %s)" % (label, flags))
+
+if errors:
+    sys.stderr.write("error: entitlement verification FAILED (DEVID=%s):\n" % is_devid)
+    for e in errors:
+        sys.stderr.write("  - %s\n" % e)
+    sys.exit(2)
+print("    entitlement verification OK (semantic; DEVID=%s)" % is_devid)
+PYEOF
 # Phase 4E e2e fix (2026-05-07): tilde paths in plist break
 # launchd. Reject so the bug can't ship.
 PLIST_PATH="$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
@@ -282,7 +436,11 @@ if [[ -f "$PLIST_PATH" ]]; then
         exit 2
     fi
 fi
-echo "    OK: $APP_PATH is signed; entitlements verified (sandbox + group preserved on app, helper unsandboxed but has group, plist clean)"
+if [[ "$IS_DEVID" == "1" ]]; then
+    echo "    OK: $APP_PATH signed UNSANDBOXED (DEVID); app/helper/LoginItem entitlements verified semantically (macros expanded, hardened runtime), plist clean"
+else
+    echo "    OK: $APP_PATH signed SANDBOXED (MAS-shaped); app/helper/LoginItem entitlements verified semantically (macros expanded), plist clean"
+fi
 
 echo ""
 echo "Final layout:"
