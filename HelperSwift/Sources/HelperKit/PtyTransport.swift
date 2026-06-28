@@ -94,7 +94,8 @@ public final class PtyTransport: @unchecked Sendable {
         env: [String: String] = [:],
         cwd: String? = nil,
         cols: UInt16 = PtyTransport.defaultCols,
-        rows: UInt16 = PtyTransport.defaultRows
+        rows: UInt16 = PtyTransport.defaultRows,
+        inheritedFD: (envVar: String, data: Data)? = nil
     ) throws -> Handle {
         guard !argv.isEmpty else { throw TransportError.emptyArgv }
 
@@ -132,6 +133,46 @@ public final class PtyTransport: @unchecked Sendable {
         // if explicitly set, so this is a default not an override.
         if mergedEnv["COLUMNS"] == nil { mergedEnv["COLUMNS"] = String(cols) }
         if mergedEnv["LINES"] == nil { mergedEnv["LINES"] = String(rows) }
+
+        // Optionally hand the child a read-only inherited fd carrying a secret
+        // (the Claude subscription OAuth token). Keeping it on an fd — not in the
+        // env — means it never appears in `ps eww`. The read end is intentionally
+        // non-CLOEXEC so it survives the posix_spawn exec into the child; claude
+        // reads it once at startup and is responsible for closing it before
+        // spawning tool subprocesses (the proven leak-safe contract — see
+        // feedback_managed_claude_agy_auth). We write the payload BEFORE the
+        // child exists, so it must fit the pipe buffer (an OAuth token is ~100B,
+        // far under it); a partial or oversized write injects NOTHING rather than
+        // a truncated token (claude then falls back to its own ambient auth).
+        var inheritedReadFD: Int32 = -1
+        if let inheritedFD {
+            var fds: [Int32] = [-1, -1]
+            if pipe(&fds) == 0 {
+                let rfd = fds[0], wfd = fds[1]
+                let maxPayload = 16 * 1024  // « the 64KiB pipe buffer
+                var wroteAll = false
+                if inheritedFD.data.count > 0, inheritedFD.data.count <= maxPayload {
+                    wroteAll = inheritedFD.data.withUnsafeBytes { raw -> Bool in
+                        guard let base = raw.baseAddress else { return false }
+                        var off = 0
+                        while off < raw.count {
+                            let n = Darwin.write(wfd, base.advanced(by: off), raw.count - off)
+                            if n <= 0 { return false }
+                            off += n
+                        }
+                        return true
+                    }
+                }
+                Darwin.close(wfd)
+                if wroteAll {
+                    inheritedReadFD = rfd
+                    mergedEnv[inheritedFD.envVar] = String(rfd)
+                } else {
+                    Darwin.close(rfd)  // failed/oversized write → inject nothing
+                }
+            }
+        }
+
         let envStrings: [String] = mergedEnv.map { "\($0.key)=\($0.value)" }
         let envCStrings: [UnsafeMutablePointer<CChar>?] = envStrings.map { strdup($0) } + [nil]
         defer {
@@ -188,11 +229,14 @@ public final class PtyTransport: @unchecked Sendable {
         if spawnResult != 0 {
             Darwin.close(masterFD)
             Darwin.close(slaveFD)
+            if inheritedReadFD >= 0 { Darwin.close(inheritedReadFD) }
             throw TransportError.spawnFailed(String(cString: strerror(spawnResult)))
         }
 
-        // Slave fd is now owned by the child; close our copy.
+        // Slave fd is now owned by the child; close our copy. Same for the
+        // inherited-secret read end — the child has its own copy now.
         Darwin.close(slaveFD)
+        if inheritedReadFD >= 0 { Darwin.close(inheritedReadFD) }
 
         // Set master fd non-blocking for read_stdout.
         let oldFlags = fcntl(masterFD, F_GETFL)

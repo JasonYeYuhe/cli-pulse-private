@@ -72,6 +72,12 @@ public final class ManagedSessionManager: @unchecked Sendable {
     /// managed Claude sessions — same byte-for-byte behaviour as
     /// pre-v1.15 Phase 4D.
     private let providerRegistry: ProviderSpawnerRegistry
+    /// Resolves the Claude subscription OAuth access token injected into managed
+    /// `claude` sessions so they run on the user's plan (e.g. Max) instead of
+    /// "Claude API" pay-per-token. Returns nil → no injection (claude's own
+    /// ambient auth, unchanged behaviour). Overridable so tests don't read the
+    /// real credentials file / hit the network.
+    private let claudeTokenResolver: @Sendable () -> String?
     private let lock = NSLock()
     private var sessions: [String: ManagedSessionRecord] = [:]
     private var stopFlag = AtomicBool()
@@ -118,7 +124,8 @@ public final class ManagedSessionManager: @unchecked Sendable {
         config: Config = Config(),
         getHelperArgv0: @escaping @Sendable () -> String? = { nil },
         providerRegistry: ProviderSpawnerRegistry? = nil,
-        broadcastPublisher: TerminalBroadcastPublisher? = nil
+        broadcastPublisher: TerminalBroadcastPublisher? = nil,
+        claudeTokenResolver: @escaping @Sendable () -> String? = { ClaudeOAuthInjector.resolveAccessToken() }
     ) {
         self.config = config
         self.transport = transport
@@ -126,6 +133,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
         self.broker = broker
         self.broadcastPublisher = broadcastPublisher
         self.getHelperArgv0 = getHelperArgv0
+        self.claudeTokenResolver = claudeTokenResolver
         // v1.15: default registry wires Claude with inline-settings
         // injection (same hook semantics as Phase 4D iter10) +
         // Codex/Gemini spawners. Tests can pass a custom registry
@@ -242,10 +250,21 @@ public final class ManagedSessionManager: @unchecked Sendable {
                 .appendingPathComponent("clipulse-helper.sock").path
         }
 
+        // Run managed `claude` on the user's subscription (e.g. Max) instead of
+        // "Claude API": inject the OAuth access token over an inherited fd
+        // (leak-safe — not in the env / tool subprocs / `ps eww`). Best-effort;
+        // a nil result leaves claude's own ambient auth untouched.
+        var inheritedFD: (envVar: String, data: Data)? = nil
+        if provider.lowercased() == "claude",
+           let token = claudeTokenResolver(), !token.isEmpty {
+            inheritedFD = (ClaudeOAuthInjector.fdEnvVar, Data(token.utf8))
+        }
+
         let handle: PtyTransport.Handle
         do {
             handle = try transport.start(
-                sessionId: sessionId, argv: argv, env: env, cwd: cwd
+                sessionId: sessionId, argv: argv, env: env, cwd: cwd,
+                inheritedFD: inheritedFD
             )
         } catch {
             // Roll back the registry register so we don't keep a
