@@ -153,6 +153,38 @@ jobs:
           xcrun stapler validate "$APP"
           xcrun stapler validate "$DMG"
 
+      - name: Verify DEVID app unsandboxed + xterm bundle present (W2)
+        # The in-app terminal is gated on !isSandboxed, so a sandboxed DEVID app
+        # would re-hide the feature on every shipped build (the W1-A bug).
+        # build_signed_app.sh already runs a full semantic verifier DURING the
+        # build; this re-checks the FINAL notarized + stapled artifact that
+        # actually ships to AppUpdater clients. Render fidelity itself stays a
+        # manual on-device smoke (docs/DEVID_TERMINAL_SMOKE.md) — headless macOS
+        # suppresses rAF/GPU compositing so a WKWebView render test would flake.
+        run: |
+          set -o pipefail
+          APP="build/devid-dmg/staging/CLI Pulse.app"
+          ENT="$(codesign -d --entitlements :- "$APP" 2>/dev/null)"
+          if grep -qF "com.apple.security.app-sandbox" <<< "$ENT"; then
+            echo "::error::DEVID app is SANDBOXED — the in-app terminal would be hidden"; exit 1
+          fi
+          if ! grep -qF "KHMK6Q3L3K.group.yyh.CLI-Pulse" <<< "$ENT"; then
+            echo "::error::keychain-access-group missing/unexpanded (want KHMK6Q3L3K.group.yyh.CLI-Pulse)"; exit 1
+          fi
+          if ! grep -qF "group.yyh.CLI-Pulse" <<< "$ENT"; then
+            echo "::error::application-group group.yyh.CLI-Pulse missing"; exit 1
+          fi
+          if grep -qF '$(' <<< "$ENT"; then
+            echo "::error::unexpanded \$( macro in signed entitlements"; exit 1
+          fi
+          XTERM="$APP/Contents/Resources/CLIPulseCore_CLIPulseCore.bundle/Contents/Resources"
+          for f in index.html xterm.js xterm.css; do
+            if [[ ! -f "$XTERM/$f" ]]; then
+              echo "::error::xterm bundle missing $f at $XTERM"; exit 1
+            fi
+          done
+          echo "OK: DEVID app unsandboxed; keychain group expanded; xterm bundle present"
+
       - name: Tar archive (act as build artifact)
         run: |
           cd build/devid-dmg
