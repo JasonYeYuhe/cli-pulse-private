@@ -273,13 +273,29 @@ public actor RemoteAgentCloud {
         let extraEnv = ["CLI_PULSE_REMOTE_SESSION_ID": sessionId]
         let summary: ManagedSessionManager.Summary
         do {
-            summary = try sessionManager.startSession(
-                provider: provider,
-                clientLabel: clientLabel,
-                cwd: nil,
-                extraEnv: extraEnv,
-                forcedSessionId: sessionId
-            )
+            // `startSession` for `claude` may do a SYNCHRONOUS OAuth-token refresh
+            // (rare — only on ~8h expiry, ≤ a few seconds). handleStart runs on
+            // the Swift Concurrency cooperative pool, so run the blocking call on
+            // a dedicated global-queue thread and await it, rather than parking a
+            // cooperative thread (Gemini 3.5 Flash review). The LOCAL UDS path
+            // already runs on a dedicated per-connection Thread, so it's unaffected.
+            let mgr = sessionManager
+            summary = try await withCheckedThrowingContinuation {
+                (cont: CheckedContinuation<ManagedSessionManager.Summary, Error>) in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        cont.resume(returning: try mgr.startSession(
+                            provider: provider,
+                            clientLabel: clientLabel,
+                            cwd: nil,
+                            extraEnv: extraEnv,
+                            forcedSessionId: sessionId
+                        ))
+                    } catch {
+                        cont.resume(throwing: error)
+                    }
+                }
+            }
         } catch let err as ManagedSessionManager.ManagerError {
             // Status payload MUST be exactly 'errored' for the
             // SQL gate. Detail goes via redacted info event.
