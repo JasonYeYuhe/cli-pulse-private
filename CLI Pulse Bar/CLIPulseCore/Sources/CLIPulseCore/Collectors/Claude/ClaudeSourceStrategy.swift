@@ -338,7 +338,16 @@ public enum ClaudeCredentials {
     /// Injectable clock for tests.
     static var nowProvider: () -> Date = { Date() }
 
-    private static let keychainReadCooldownKey = "claudeCodeKeychainReadCooldownUntil"
+    // W4: `cli_pulse_`-prefixed so it falls inside UnsandboxedDataMigration's
+    // allowlist. The primary store is the app-group suite (which doesn't move on
+    // unsandbox), but `cooldownDefaults` falls back to `.standard` if the suite
+    // ever fails to initialise; without the prefix that fallback value would be
+    // stranded on the DEVID unsandbox transition, falsifying the migration's
+    // "every app-owned standard-defaults key is prefixed" invariant. (Renaming
+    // orphans any old value once — a benign 30-min anti-prompt-spam timestamp.)
+    // internal (not private) so a migration-allowlist guard test can assert the
+    // prefix contract directly against the real constant.
+    static let keychainReadCooldownKey = "cli_pulse_claude_keychain_read_cooldown_until"
 
     /// Cooldown state lives in the app-group defaults (NOT the per-app
     /// keychain) so it is SHARED between the main app and the CLIPulseHelper

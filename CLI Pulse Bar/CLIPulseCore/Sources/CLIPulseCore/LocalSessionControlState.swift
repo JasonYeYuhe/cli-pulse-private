@@ -285,9 +285,11 @@ extension AppState {
 
     /// Same predicate framed for the "is starting a new local
     /// managed session viable right now?" question — used by the
-    /// Open button to decide whether to render. Doesn't require a
-    /// target device id because the start path implicitly targets
-    /// THIS Mac.
+    /// in-app Terminal menu + Open button to decide whether to enable.
+    /// Requires THIS Mac's helper to be paired (`selfDeviceId` present —
+    /// the local `HelperConfig.deviceId`, NOT cloud Remote-Control consent),
+    /// reachable, and with Local Session Control on. Doesn't require a
+    /// *target* device id because the start path implicitly targets THIS Mac.
     public var canStartLocalManagedSession: Bool {
         guard let mine = selfDeviceId, !mine.isEmpty else { return false }
         return localHelperReachable && localControlEnabled
