@@ -74,23 +74,41 @@ struct CLIPulseBarApp: App {
                 }
                 .keyboardShortcut("r", modifiers: .command)
             }
-            // v1.24 Phase 3 — in-app terminal entry. DEVID-only;
-            // MAS builds get nothing here (helper-mediated MAS PTY
-            // is post-v1.24, per plan §R1 + Gemini LOW). The
-            // sandbox probe is a constant per process so the check
-            // happens once at scene build.
+            // v1.24 Phase 3 / W1-B — in-app terminal entry. The menu is
+            // VISIBLE only on the Developer-ID build (`canHostInAppTerminal`,
+            // which after the W1-A un-sandboxing means "this is the DEVID
+            // channel"); MAS stays hidden (W5a). Within DEVID, the spawn
+            // actions additionally require the background helper to be reachable
+            // AND Local Session Control enabled (`canStartLocalManagedSession`,
+            // LocalSessionControlState). We DISABLE the items when not ready
+            // rather than hide the whole menu — hiding would flicker the menu
+            // bar as the helper probe flaps, and disabled items don't fail
+            // confusingly on tap. The App body already observes `appState`
+            // (@StateObject), so reading the predicate here adds no new scene
+            // invalidation.
             if MASSandboxGate.canHostInAppTerminal {
                 CommandMenu("Terminal") {
+                    let ready = appState.canStartLocalManagedSession
                     Button("New Terminal — Claude") {
                         newTerminal(provider: "claude")
                     }
                     .keyboardShortcut("t", modifiers: [.command, .shift])
+                    .disabled(!ready)
                     Button("New Terminal — Gemini (agy)") {
                         newTerminal(provider: "gemini")
                     }
                     .keyboardShortcut("g", modifiers: [.command, .shift])
+                    .disabled(!ready)
                     Button("New Terminal — Codex") {
                         newTerminal(provider: "codex")
+                    }
+                    .disabled(!ready)
+                    if !ready {
+                        Divider()
+                        Button("Background helper not ready — open Settings…") {
+                            appState.selectedTab = .settings
+                            NSApp.activate(ignoringOtherApps: true)
+                        }
                     }
                 }
             }
@@ -149,6 +167,24 @@ struct CLIPulseBarApp: App {
     /// unifying "New" and "Open existing" on one code path.
     @MainActor
     private func newTerminal(provider: String) {
+        // W1-B readiness guard: the menu items are disabled when the helper
+        // isn't ready, but guard here too in case the gate flipped between menu
+        // render and tap. Surface a clear, actionable message instead of failing
+        // deep in the spawn. Reads `appState` only in this action closure (no
+        // scene-reactivity cost).
+        guard appState.canStartLocalManagedSession else {
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = "In-app terminal isn't ready"
+            alert.informativeText = "The background helper must be running and Local Session Control must be enabled. Open Settings to set it up."
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "Open Settings")
+            alert.addButton(withTitle: "Cancel")
+            if alert.runModal() == .alertFirstButtonReturn {
+                appState.selectedTab = .settings
+            }
+            return
+        }
         // Capture the action before the modal panel runs its nested runloop —
         // grabbing `self.openWindow` from inside the escaping completion can
         // otherwise pick up a stale environment reference (Gemini 3.1 Pro review).
