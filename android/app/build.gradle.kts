@@ -32,8 +32,8 @@ android {
         applicationId = "com.clipulse.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 48
-        versionName = "1.32.3"
+        versionCode = 49
+        versionName = "1.33.0"
 
         buildConfigField("String", "SUPABASE_URL",
             "\"${localProps.getProperty("SUPABASE_URL", "https://gkjwsxotmwrgqsvfijzs.supabase.co")}\"")
