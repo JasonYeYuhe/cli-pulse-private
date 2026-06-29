@@ -131,6 +131,22 @@ jobs:
         # the total wall time is still under 2 min.
         run: swift test
 
+      - name: Swift test (DEVID_BUILD updater path)
+        working-directory: CLI Pulse Bar/CLIPulseCore
+        env:
+          CLI_PULSE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY || 'ci-stub-anon-key' }}
+        # Trust Hardening v2 (2026-06-30): AppUpdater + UpdateVerifier compile ONLY
+        # under DEVID_BUILD, so the default `swift test` above never compiles them —
+        # a self-updater RCE-relevant path could silently rot. This step compiles the
+        # whole package under DEVID_BUILD (failing CI on any verifier compile-rot) and
+        # runs the updater unit tests. Filtered to the updater suites on purpose: a
+        # full DEVID test run also trips a PRE-EXISTING, unrelated DEVID-only
+        # divergence in SubscriptionTierResolutionTests (devid-beta-channel resolves a
+        # confirmed tier without an apiClient) — tracked separately, not this change.
+        # The real notarized-DMG verification (no-false-reject) runs in the published
+        # -artifact gate in devid-dmg.yml.
+        run: swift test -Xswiftc -DDEVID_BUILD --filter UpdateVerifierTests --filter AppUpdaterTests
+
   build-apps:
     name: Build ${{ matrix.scheme }}
     needs: decide
