@@ -93,12 +93,25 @@ jobs:
           security list-keychains -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
           security find-identity -v -p codesigning "$KEYCHAIN"
 
+      - name: Install sentry-cli (for dSYM upload)
+        # build_devid_dmg.sh Step 2b uploads dSYMs to Sentry so v1.34+ DEVID
+        # production crashes symbolicate. The runner has no sentry-cli by
+        # default, so the upload silently skipped ("sentry-cli not installed").
+        # Best-effort: `|| true` keeps a brew hiccup from failing a release
+        # build — the dSYM upload is non-blocking, and without the
+        # SENTRY_AUTH_TOKEN secret it skips cleanly anyway.
+        run: brew install getsentry/tools/sentry-cli || true
+
       - name: Build + notarize DMG
         env:
           DEV_ID_APP: ${{ secrets.DEV_ID_APP }}
           APPLE_NOTARY_USER: ${{ secrets.APPLE_NOTARY_USER }}
           APPLE_NOTARY_APP_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Set the SENTRY_AUTH_TOKEN repo secret to enable dSYM upload (org
+          # scope: Source Map Upload + Release Creation). Absent => Step 2b
+          # skips gracefully (build_devid_dmg.sh load_sentry_auth_token).
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         run: |
           set -o pipefail
           if [[ -z "${DEV_ID_APP:-}" ]]; then
