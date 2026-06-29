@@ -161,6 +161,96 @@ run() {
     fi
 }
 
+# === Sentry dSYM upload (R4 — symbolicate v1.34 DEVID prod crashes) ===
+# The MAS path (CLI Pulse Bar/scripts/build-appstore.sh) uploads dSYMs from its
+# xcarchive; the DEVID DMG path did NOT, so Developer-ID production crashes came
+# back unsymbolicated. Mirror the MAS approach here. macOS uses the `apple-macos`
+# Sentry project (slug == display name). Auth token lives outside the repo in the
+# standard secrets dir (chmod 600); see reference_sentry. Best-effort: every guard
+# below skips cleanly (returns 0) when sentry-cli / the token / dSYMs are absent,
+# so CI and unsigned local runs are unaffected — the DMG build itself never fails
+# on a dSYM-upload problem.
+SENTRY_ORG="jason-yeyuhe"
+SENTRY_PROJECT="apple-macos"
+SENTRY_AUTH_TOKEN_FILE="$HOME/Library/Application Support/CLI-Pulse-Secrets/sentry-cli-auth-token-2026-04-29.txt"
+
+load_sentry_auth_token() {
+    if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
+        return 0
+    fi
+    if [[ ! -f "$SENTRY_AUTH_TOKEN_FILE" ]]; then
+        return 1
+    fi
+    # File format: one line `SENTRY_AUTH_TOKEN=sntrys_...` plus prose around it.
+    # `|| true`: under `set -euo pipefail` a no-match grep (exit 1) or a head
+    # SIGPIPE (141) would otherwise abort the ENTIRE build via the `extracted=$(…)`
+    # assignment — this loader must stay best-effort (empty => return 1 => skip).
+    local extracted
+    extracted=$(grep -E '^SENTRY_AUTH_TOKEN=' "$SENTRY_AUTH_TOKEN_FILE" | head -1 | cut -d= -f2- || true)
+    if [[ -z "$extracted" ]]; then
+        return 1
+    fi
+    export SENTRY_AUTH_TOKEN="$extracted"
+}
+
+# Collect every top-level *.dSYM the Release build produced (the app's dSYM plus
+# each embedded framework's) into a flat dir and upload it, then finalize the
+# Sentry release so crashes attribute to "first seen in <version>". Unlike the
+# MAS xcarchive (which bundles a dSYMs/ dir), build_signed_app.sh runs
+# `xcodebuild build`, so the dSYMs sit alongside the .app in the Products dir.
+# Args: $1 = DerivedData Release Products dir.
+upload_dsyms_to_sentry() {
+    local PRODUCTS_DIR="$1"
+
+    if ! command -v sentry-cli >/dev/null 2>&1; then
+        echo "  ⚠ sentry-cli not installed — skipping dSYM upload."
+        echo "    Install: brew install getsentry/tools/sentry-cli"
+        return 0
+    fi
+    if ! load_sentry_auth_token; then
+        echo "  ⚠ SENTRY_AUTH_TOKEN not available — skipping dSYM upload."
+        echo "    Expected at: $SENTRY_AUTH_TOKEN_FILE"
+        return 0
+    fi
+    if [[ ! -d "$PRODUCTS_DIR" ]]; then
+        echo "  ⚠ Products dir $PRODUCTS_DIR not found — skipping dSYM upload."
+        return 0
+    fi
+
+    local DSYMS_DIR="$OUTPUT_DIR/dSYMs"
+    rm -rf "$DSYMS_DIR"
+    mkdir -p "$DSYMS_DIR"
+    # Top-level only: the app + framework dSYMs are siblings of the .app in a
+    # `build` (non-archive) Products dir. -maxdepth 1 avoids walking into the
+    # .app bundle itself (whose stripped Mach-O carries no useful debug info).
+    find "$PRODUCTS_DIR" -maxdepth 1 -name "*.dSYM" -exec cp -R {} "$DSYMS_DIR/" \; 2>/dev/null || true
+    if ! ls "$DSYMS_DIR"/*.dSYM >/dev/null 2>&1; then
+        echo "  ⚠ No *.dSYM found in $PRODUCTS_DIR — skipping dSYM upload."
+        echo "    (Release must emit DEBUG_INFORMATION_FORMAT=dwarf-with-dsym.)"
+        return 0
+    fi
+
+    echo "  ↗ Uploading dSYMs to Sentry (org=$SENTRY_ORG project=$SENTRY_PROJECT)..."
+    if sentry-cli debug-files upload \
+            --org "$SENTRY_ORG" \
+            --project "$SENTRY_PROJECT" \
+            --include-sources \
+            "$DSYMS_DIR" 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ dSYMs uploaded"
+    else
+        echo "  ⚠ dSYM upload failed — see above. Build itself is unaffected."
+    fi
+
+    # Finalize the release so Sentry attributes "first seen in <version>".
+    # Idempotent: re-running for the same version is a no-op once finalized.
+    local RELEASE="cli-pulse@${APP_VERSION}+${APP_BUILD}"
+    echo "  ↗ Finalizing Sentry release $RELEASE for project $SENTRY_PROJECT..."
+    sentry-cli releases --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" \
+        new "$RELEASE" 2>&1 | sed 's/^/    /' || true
+    sentry-cli releases --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" \
+        finalize "$RELEASE" 2>&1 | sed 's/^/    /' || true
+}
+
 # === Step 1: Prerequisite check ===
 require() {
     command -v "$1" >/dev/null 2>&1 || { echo "error: '$1' not found in PATH" >&2; exit 2; }
@@ -230,6 +320,18 @@ fi
 if [[ $DRY_RUN -eq 0 ]]; then
     rm -rf "$APP_OUT"
     cp -R "$INNER_APP_PATH" "$APP_OUT"
+fi
+
+# === Step 2b: Upload dSYMs to Sentry (R4) ===
+# Done here, from the DerivedData Products dir, BEFORE notarization — codesign /
+# notarization do NOT change the Mach-O LC_UUID, so dSYMs from the pre-notarized
+# build match the shipped binary exactly. Only for real signed release builds
+# (a --skip-sign run is a throwaway test, not shipped); the upload itself is
+# best-effort and no-ops without sentry-cli / a token.
+if [[ $SKIP_SIGN -eq 0 ]] && [[ $DRY_RUN -eq 0 ]]; then
+    echo
+    echo "--- Step 2b: dSYM upload (Sentry) ---"
+    upload_dsyms_to_sentry "$(dirname "$INNER_APP_PATH")"
 fi
 
 # === Step 3: Notarize the .app ===
