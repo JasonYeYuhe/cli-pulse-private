@@ -166,6 +166,29 @@ jobs:
           xcrun stapler validate "$APP"
           xcrun stapler validate "$DMG"
 
+      - name: Verify artifact identity (mirror client UpdateVerifier)
+        # Trust Hardening v2 (PR-3): server-side mirror of UpdateVerifier (PR-1).
+        # Assert the shipped .app satisfies the EXACT designated requirement the
+        # client enforces before installing an update (Developer ID + team OU +
+        # bundle id + Developer ID marker OIDs), and that its version/build match
+        # the manifest the AppUpdater clients will read. Catches a mis-signed or
+        # mis-versioned release before it can reach the update channel.
+        run: |
+          set -o pipefail
+          APP="build/devid-dmg/staging/CLI Pulse.app"
+          MANIFEST=$(ls build/devid-dmg/manifest-fragment-*.json | head -1)
+          REQ='anchor apple generic and identifier "yyh.CLI-Pulse" and certificate leaf[subject.OU] = "KHMK6Q3L3K" and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
+          codesign --verify --strict -R="$REQ" "$APP"
+          BID=$(codesign -dv "$APP" 2>&1 | sed -n 's/^Identifier=//p')
+          [[ "$BID" == "yyh.CLI-Pulse" ]] || { echo "::error::bundle id '$BID' != yyh.CLI-Pulse"; exit 1; }
+          APP_VER=$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")
+          APP_BUILD=$(plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")
+          M_VER=$(jq -r .version "$MANIFEST")
+          M_BUILD=$(jq -r .build "$MANIFEST")
+          [[ "$APP_VER" == "$M_VER" ]] || { echo "::error::app version $APP_VER != manifest $M_VER"; exit 1; }
+          [[ "$APP_BUILD" == "$M_BUILD" ]] || { echo "::error::app build $APP_BUILD != manifest $M_BUILD"; exit 1; }
+          echo "OK: client requirement satisfied; bundle=$BID version=$APP_VER build=$APP_BUILD == manifest"
+
       - name: Verify DEVID app unsandboxed + xterm bundle present (W2)
         # The in-app terminal is gated on !isSandboxed, so a sandboxed DEVID app
         # would re-hide the feature on every shipped build (the W1-A bug).
@@ -241,4 +264,54 @@ jobs:
             "$DMG" \
             "$SHA" \
             "$MANIFEST"
-          echo "Uploaded artifacts to $TAG. Manual `latest` promotion still required after clean-Mac smoke."
+          echo "Uploaded artifacts to $TAG. Manual latest promotion still required after clean-Mac smoke."
+
+      - name: Promote to latest manifest (manual, gated)
+        # Trust Hardening v2 (PR-3): wires the previously-dead promote_to_latest
+        # input. On an explicit manual run with promote_to_latest=true (and only
+        # after every codesign/notarization/identity gate above has passed),
+        # publish the freshly-built+verified DMG to its app-v<version> release and
+        # promote latest.json to point at it, then re-verify the published
+        # manifest matches the built artifact. Codifies the manual promotion so it
+        # can't repeat the `gh release create file#name` rename pitfall (the asset
+        # MUST be named latest.json — we upload a file literally named latest.json).
+        if: github.event_name == 'workflow_dispatch' && inputs.promote_to_latest == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DISTRIB_REPO_PAT }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::DISTRIB_REPO_PAT not set; cannot promote"; exit 1
+          fi
+          DMG=$(ls build/devid-dmg/CLI-Pulse-*-arm64.dmg | head -1)
+          SHA_FILE="${DMG}.sha256"
+          MANIFEST=$(ls build/devid-dmg/manifest-fragment-*.json | head -1)
+          VERSION=$(jq -r .version "$MANIFEST")
+          DMG_SHA=$(jq -r .sha256 "$MANIFEST")
+          TAG="app-v${VERSION}"
+          echo "Promoting $TAG (sha ${DMG_SHA:0:12}) to latest"
+          # 1) ensure the versioned release carries the exact verified artifact
+          if ! gh release view "$TAG" --repo JasonYeYuhe/cli-pulse-distrib >/dev/null 2>&1; then
+            gh release create "$TAG" --repo JasonYeYuhe/cli-pulse-distrib \
+              --title "CLI Pulse Mac ${VERSION} (Developer ID Beta)" \
+              --notes "Built + promoted by GitHub Actions ($(date -u +%FT%TZ))."
+          fi
+          gh release upload "$TAG" --repo JasonYeYuhe/cli-pulse-distrib --clobber "$DMG" "$SHA_FILE" "$MANIFEST"
+          # 2) promote latest.json — upload a file literally named latest.json
+          #    (NEVER `gh release create file#name`, whose rename is a no-op).
+          cp "$MANIFEST" "$RUNNER_TEMP/latest.json"
+          if ! gh release view latest --repo JasonYeYuhe/cli-pulse-distrib >/dev/null 2>&1; then
+            gh release create latest --repo JasonYeYuhe/cli-pulse-distrib --prerelease \
+              --title "Latest app manifest" \
+              --notes "Points to the current Developer ID Beta build."
+          fi
+          gh release upload latest --repo JasonYeYuhe/cli-pulse-distrib --clobber "$RUNNER_TEMP/latest.json"
+          # 3) re-verify the promoted manifest matches the built artifact (API, no CDN cache)
+          rm -rf "$RUNNER_TEMP/verify" && mkdir -p "$RUNNER_TEMP/verify"
+          gh release download latest --repo JasonYeYuhe/cli-pulse-distrib --pattern latest.json --dir "$RUNNER_TEMP/verify" --clobber
+          PUB_VER=$(jq -r .version "$RUNNER_TEMP/verify/latest.json")
+          PUB_SHA=$(jq -r .sha256 "$RUNNER_TEMP/verify/latest.json")
+          if [[ "$PUB_VER" != "$VERSION" || "$PUB_SHA" != "$DMG_SHA" ]]; then
+            echo "::error::latest.json mismatch after promote (got ${PUB_VER}/${PUB_SHA:0:12}, want ${VERSION}/${DMG_SHA:0:12})"; exit 1
+          fi
+          echo "OK: latest.json promoted to ${PUB_VER} (sha ${PUB_SHA:0:12})"
