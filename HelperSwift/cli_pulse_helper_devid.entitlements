@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- v1.34 DEVID fix: the LaunchAgent helper is a BARE Mach-O, so it cannot
+	     embed a provisioning profile. On an unsandboxed, hardened-runtime
+	     Developer-ID binary, ANY restricted entitlement (keychain-access-groups,
+	     application-groups, team-identifier) without a profile to authorise it
+	     causes AMFI to SIGKILL the process at launch. So this helper ships with
+	     NO restricted entitlements: it reaches the shared Group Container by
+	     ABSOLUTE PATH (AuthToken.containerPath via getpwuid), not the
+	     app-groups-gated containerURL API, and uses the FILE-based auth token —
+	     so it needs none of them. (Keychain-based remote-pairing-secret read is
+	     deferred to v1.34.1; it degrades gracefully to nil.) MAS strips this
+	     helper entirely; the non-DEVID path still uses cli_pulse_helper.entitlements. -->
+</dict>
+</plist>

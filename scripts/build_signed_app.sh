@@ -66,7 +66,24 @@ APP_PROJECT="$PROJECT_ROOT/CLI Pulse Bar/CLI Pulse Bar.xcodeproj"
 APP_SCHEME="CLI Pulse Bar"
 PLIST_TEMPLATE="$PROJECT_ROOT/CLI Pulse Bar/CLI Pulse Bar/HelperAgent.plist"
 DERIVED_DATA="$OUTPUT_DIR/DerivedData"
-HELPER_ENTITLEMENTS="$SWIFT_PKG_DIR/cli_pulse_helper.entitlements"
+# v1.34 DEVID keychain fix: the LaunchAgent helper is a BARE Mach-O and cannot
+# embed a provisioning profile, so on the unsandboxed Developer-ID build it must
+# carry NO restricted entitlements (keychain/app-groups/team-id) — otherwise AMFI
+# SIGKILLs it at launch. The app + LoginItem are .app bundles and instead EMBED a
+# Developer ID provisioning profile (below) that authorises keychain-access-groups.
+# Non-DEVID (Debug-CI) keeps the historical entitlements (it never launches).
+if [[ -n "${DEVID_BUILD_FLAG:-}" ]]; then
+    HELPER_ENTITLEMENTS="$SWIFT_PKG_DIR/cli_pulse_helper_devid.entitlements"
+else
+    HELPER_ENTITLEMENTS="$SWIFT_PKG_DIR/cli_pulse_helper.entitlements"
+fi
+# Developer ID provisioning profiles (committed; long-lived — exp 2044). Embedded
+# at Contents/embedded.provisionprofile in the DEVID app + LoginItem so AMFI
+# authorises their keychain-access-groups. Created via the App Store Connect API
+# (MAC_APP_DIRECT; grants keychain-access-groups KHMK6Q3L3K.*).
+DEVID_PROFILES_DIR="$PROJECT_ROOT/scripts/devid-profiles"
+APP_PROVISION_PROFILE="$DEVID_PROFILES_DIR/CLI_Pulse_Bar_devid.provisionprofile"
+LOGINITEM_PROVISION_PROFILE="$DEVID_PROFILES_DIR/CLIPulseHelper_devid.provisionprofile"
 APP_ENTITLEMENTS_SAVED="$OUTPUT_DIR/app_entitlements.plist"
 
 # W1-A (2026-06-28): team prefix used to expand $(AppIdentifierPrefix) in the
@@ -287,6 +304,15 @@ fi
     echo "error: LoginItem entitlements missing at $LOGIN_ITEM_ENT_SOURCE" >&2; exit 2; }
 LOGIN_ITEM_ENT_EXPANDED="$OUTPUT_DIR/loginitem_entitlements.plist"
 expand_entitlements "$LOGIN_ITEM_ENT_SOURCE" "$LOGIN_ITEM_ENT_EXPANDED"
+# v1.34: embed the Developer ID profile so AMFI authorises the LoginItem's
+# keychain-access-groups on the unsandboxed DEVID build (it hydrates secrets from
+# the Keychain). DEVID only; the profile is sealed by the codesign below.
+if [[ -n "${DEVID_BUILD_FLAG:-}" ]]; then
+    [[ -f "$LOGINITEM_PROVISION_PROFILE" ]] || {
+        echo "error: LoginItem Developer ID profile missing at $LOGINITEM_PROVISION_PROFILE" >&2; exit 2; }
+    cp "$LOGINITEM_PROVISION_PROFILE" "$LOGIN_ITEM_APP/Contents/embedded.provisionprofile"
+    echo "    embedded LoginItem Developer ID profile"
+fi
 xattr -cr "$LOGIN_ITEM_APP" 2>/dev/null || true
 codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
     --entitlements "$LOGIN_ITEM_ENT_EXPANDED" \
@@ -294,6 +320,16 @@ codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
     "$LOGIN_ITEM_APP"
 echo "    signed LoginItem with $(basename "$LOGIN_ITEM_ENT_SOURCE") (macros expanded)"
 
+# v1.34: embed the Developer ID profile into the app bundle so AMFI authorises
+# its keychain-access-groups (account auth tokens + provider API keys) on the
+# unsandboxed DEVID build. DEVID only; sealed by the app re-sign below. Without
+# this the notarized app is AMFI-SIGKILLed at launch (verified).
+if [[ -n "${DEVID_BUILD_FLAG:-}" ]]; then
+    [[ -f "$APP_PROVISION_PROFILE" ]] || {
+        echo "error: app Developer ID profile missing at $APP_PROVISION_PROFILE" >&2; exit 2; }
+    cp "$APP_PROVISION_PROFILE" "$APP_PATH/Contents/embedded.provisionprofile"
+    echo "    embedded app Developer ID profile"
+fi
 # Re-sign the app with the original Xcode-emitted entitlements
 # (.xcent file we located above). NOT --deep — that would re-sign
 # every nested binary with our top-level entitlements (overwriting
@@ -325,11 +361,13 @@ codesign --verify --deep "$APP_PATH"
 # source files). Replaces the old substring greps with plist parsing so we can
 # assert the full matrix:
 #   * DEVID app has NO app-sandbox; non-DEVID app HAS it.
-#   * app + helper + LoginItem all carry application-group group.yyh.CLI-Pulse
-#     and keychain group KHMK6Q3L3K.group.yyh.CLI-Pulse (exact, macro-expanded).
-#   * LaunchAgent helper is never sandboxed.
-#   * LoginItem: unsandboxed on DEVID (no profile to authorise restricted
-#     entitlements), sandboxed on non-DEVID (MAS shape).
+#   * app + LoginItem carry application-group group.yyh.CLI-Pulse and keychain
+#     group KHMK6Q3L3K.group.yyh.CLI-Pulse (exact, macro-expanded); on DEVID they
+#     also EMBED a Developer ID provisioning profile that authorises those
+#     restricted entitlements (else AMFI SIGKILLs them at launch — v1.34 fix).
+#   * LaunchAgent helper is never sandboxed; on DEVID it carries NO restricted
+#     entitlements at all (bare Mach-O can't embed a profile) — reaches the Group
+#     Container by path. Non-DEVID keeps the historical keychain/app-group.
 #   * no entitlement contains an unexpanded "$(" macro.
 #   * (DEVID only) every signed binary has the Hardened Runtime flag — ad-hoc
 #     signing ignores --options runtime, so this is gated off for the Debug CI.
@@ -392,15 +430,32 @@ if app_ent is not None:
           "app missing application-group %s" % app_group)
     check(has_group(app_ent, "keychain-access-groups", kc_group),
           "app keychain group != %s (got %r)" % (kc_group, app_ent.get("keychain-access-groups")))
+    if is_devid:
+        # v1.34: the embedded Developer ID profile is what AMFI uses to authorise
+        # the app's keychain-access-groups (it grants KHMK6Q3L3K.*). Without it the
+        # notarized app is SIGKILLed at launch.
+        check(os.path.isfile(os.path.join(app_path, "Contents/embedded.provisionprofile")),
+              "DEVID app missing Contents/embedded.provisionprofile (authorises keychain-access-groups)")
 
 check(helper_ent is not None, "could not read LaunchAgent helper entitlements")
 if helper_ent is not None:
     check(not bool(helper_ent.get("com.apple.security.app-sandbox", False)),
           "LaunchAgent helper MUST NOT be sandboxed")
-    check(has_group(helper_ent, "com.apple.security.application-groups", app_group),
-          "helper missing application-group %s" % app_group)
-    check(has_group(helper_ent, "keychain-access-groups", kc_group),
-          "helper keychain group != %s (got %r)" % (kc_group, helper_ent.get("keychain-access-groups")))
+    if is_devid:
+        # v1.34: the bare-Mach-O LaunchAgent helper can't embed a provisioning
+        # profile, so on the unsandboxed DEVID build it must carry NO restricted
+        # entitlements — AMFI SIGKILLs an unsandboxed Developer-ID binary that has
+        # keychain-access-groups/application-groups without a profile (verified).
+        # It reaches the Group Container by absolute path + uses the file token.
+        check(not helper_ent.get("keychain-access-groups"),
+              "DEVID helper MUST NOT have keychain-access-groups (got %r)" % helper_ent.get("keychain-access-groups"))
+        check(not helper_ent.get("com.apple.security.application-groups"),
+              "DEVID helper MUST NOT have application-groups (got %r)" % helper_ent.get("com.apple.security.application-groups"))
+    else:
+        check(has_group(helper_ent, "com.apple.security.application-groups", app_group),
+              "helper missing application-group %s" % app_group)
+        check(has_group(helper_ent, "keychain-access-groups", kc_group),
+              "helper keychain group != %s (got %r)" % (kc_group, helper_ent.get("keychain-access-groups")))
 
 check(os.path.isdir(login_app), "LoginItem not found at %s" % login_app)
 if login_ent is not None:
@@ -413,6 +468,9 @@ if login_ent is not None:
           "LoginItem missing application-group %s" % app_group)
     check(has_group(login_ent, "keychain-access-groups", kc_group),
           "LoginItem keychain group != %s (got %r)" % (kc_group, login_ent.get("keychain-access-groups")))
+    if is_devid:
+        check(os.path.isfile(os.path.join(login_app, "Contents/embedded.provisionprofile")),
+              "DEVID LoginItem missing Contents/embedded.provisionprofile (authorises keychain-access-groups)")
 elif os.path.isdir(login_app):
     errors.append("could not read LoginItem entitlements")
 
