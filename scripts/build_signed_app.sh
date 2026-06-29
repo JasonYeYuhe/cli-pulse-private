@@ -264,25 +264,35 @@ codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
 # entitlements and taskgated can reject it on SMAppService.loginItem launch
 # (HelperLogin.register). Non-DEVID (MAS-shaped) → the sandboxed entitlements.
 LOGIN_ITEM_APP="$APP_PATH/Contents/Library/LoginItems/CLIPulseHelper.app"
-if [[ -d "$LOGIN_ITEM_APP" ]]; then
-    if [[ -n "${DEVID_BUILD_FLAG:-}" ]]; then
-        LOGIN_ITEM_ENT_SOURCE="$PROJECT_ROOT/CLI Pulse Bar/CLIPulseHelper/CLIPulseHelper_devid.entitlements"
-    else
-        LOGIN_ITEM_ENT_SOURCE="$PROJECT_ROOT/CLI Pulse Bar/CLIPulseHelper/CLIPulseHelper.entitlements"
-    fi
-    [[ -f "$LOGIN_ITEM_ENT_SOURCE" ]] || {
-        echo "error: LoginItem entitlements missing at $LOGIN_ITEM_ENT_SOURCE" >&2; exit 2; }
-    LOGIN_ITEM_ENT_EXPANDED="$OUTPUT_DIR/loginitem_entitlements.plist"
-    expand_entitlements "$LOGIN_ITEM_ENT_SOURCE" "$LOGIN_ITEM_ENT_EXPANDED"
-    xattr -cr "$LOGIN_ITEM_APP" 2>/dev/null || true
-    codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
-        --entitlements "$LOGIN_ITEM_ENT_EXPANDED" \
-        --sign "$SIGN_IDENTITY" \
-        "$LOGIN_ITEM_APP"
-    echo "    signed LoginItem with $(basename "$LOGIN_ITEM_ENT_SOURCE") (macros expanded)"
+# The LoginItem (CLIPulseHelper.app) is embedded by Xcode as a Copy Files build
+# phase / target dependency, so it is ALWAYS present in a real build. The
+# semantic verifier in step 7 already asserts it present UNCONDITIONALLY
+# (`check(os.path.isdir(login_app), "LoginItem not found …")`). Make the signing
+# step equally strict so a missing LoginItem fails HERE — clear and early —
+# instead of: (a) slipping through this `else` branch unsigned (entitlements
+# stripped by the bottom-up nested-bundle re-sign above) only to fail the
+# verifier with a more confusing error, or (b) on any future non-verified code
+# path, shipping an entitlement-stripped LoginItem that taskgated rejects at
+# SMAppService.loginItem launch.
+[[ -d "$LOGIN_ITEM_APP" ]] || {
+    echo "error: LoginItem missing at $LOGIN_ITEM_APP — expected Xcode to embed CLIPulseHelper.app (Copy Files phase / target dependency)" >&2
+    exit 2
+}
+if [[ -n "${DEVID_BUILD_FLAG:-}" ]]; then
+    LOGIN_ITEM_ENT_SOURCE="$PROJECT_ROOT/CLI Pulse Bar/CLIPulseHelper/CLIPulseHelper_devid.entitlements"
 else
-    echo "    note: no LoginItem at $LOGIN_ITEM_APP — skipping explicit LoginItem signing"
+    LOGIN_ITEM_ENT_SOURCE="$PROJECT_ROOT/CLI Pulse Bar/CLIPulseHelper/CLIPulseHelper.entitlements"
 fi
+[[ -f "$LOGIN_ITEM_ENT_SOURCE" ]] || {
+    echo "error: LoginItem entitlements missing at $LOGIN_ITEM_ENT_SOURCE" >&2; exit 2; }
+LOGIN_ITEM_ENT_EXPANDED="$OUTPUT_DIR/loginitem_entitlements.plist"
+expand_entitlements "$LOGIN_ITEM_ENT_SOURCE" "$LOGIN_ITEM_ENT_EXPANDED"
+xattr -cr "$LOGIN_ITEM_APP" 2>/dev/null || true
+codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
+    --entitlements "$LOGIN_ITEM_ENT_EXPANDED" \
+    --sign "$SIGN_IDENTITY" \
+    "$LOGIN_ITEM_APP"
+echo "    signed LoginItem with $(basename "$LOGIN_ITEM_ENT_SOURCE") (macros expanded)"
 
 # Re-sign the app with the original Xcode-emitted entitlements
 # (.xcent file we located above). NOT --deep — that would re-sign
