@@ -56,6 +56,25 @@ struct PrivacySettingsSection: View {
                 .foregroundStyle(.secondary)
                 .padding(.leading, 18)
                 .fixedSize(horizontal: false, vertical: true)
+
+            Divider()
+                .padding(.vertical, 2)
+
+            // v1.34 R1d: opt-in hard block for managed Claude on an outdated
+            // helper. Default OFF = warn-only (a banner tells the user the
+            // session is on the Claude API, not their plan).
+            Toggle(isOn: $settings.blockClaudeOnOutdatedHelper) {
+                Text("Block managed Claude on outdated helper")
+                    .font(.system(size: 11))
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+
+            Text("When the Companion CLI helper is too old to run Claude on your Max/Pro plan, prevent starting managed Claude sessions (which would silently use the Claude API). Off by default — you'll only see a warning.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .padding(.leading, 2)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(10)
         .background(Color.gray.opacity(0.08))

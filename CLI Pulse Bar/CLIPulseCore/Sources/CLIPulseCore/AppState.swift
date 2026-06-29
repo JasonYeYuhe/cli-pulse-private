@@ -416,6 +416,15 @@ public final class AppState: ObservableObject {
     /// rolling-out helper aren't blocked from spawning Claude.
     @Published public var localProviderAvailability: [String] = []
 
+    /// v1.34 R1d: the semantic version of the helper that currently OWNS the
+    /// managed-session socket, from the `hello` reply (`helper_version`). Empty
+    /// when unreachable, or when an ancient helper omits the field. Drives
+    /// `localHelperBelowOAuthFloor` — the Claude-on-Max safety gate. Note this
+    /// is the SOCKET OWNER, which on a Mac with a stale `.pkg` helper installed
+    /// is NOT necessarily the app-bundled helper (the bundled helper cedes to a
+    /// live peer), so we must check whoever actually answers `hello`.
+    @Published public var localHelperVersion: String = ""
+
     /// Last error string from any local-control call, surfaced inline
     /// in the Sessions UI when non-nil. Cleared on a successful
     /// `refreshLocalSessionControlState`.

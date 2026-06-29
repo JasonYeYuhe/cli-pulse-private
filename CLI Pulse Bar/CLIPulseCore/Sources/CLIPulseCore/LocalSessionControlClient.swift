@@ -312,6 +312,15 @@ public final class LocalSessionControlClient: SessionControlClient {
             .appendingPathComponent("Library/Group Containers/\(appGroupID)")
     }
     public static let protocolVersion = 1
+
+    /// v1.34 R1d: the minimum helper version that injects the user's Claude
+    /// subscription (Max/Pro) OAuth token into managed `claude` sessions. A
+    /// socket-owner helper BELOW this floor spawns `claude` on the Claude API
+    /// instead. The injection landed in the Python helper at 1.20.0 and in the
+    /// Swift helper at 1.21.0 (`kHelperVersion`), both on this version line, so
+    /// a single floor comparison covers whichever helper owns the socket.
+    public static let oauthInjectionHelperFloor = "1.20.0"
+
     public static let maxPayload: UInt32 = 1 << 20    // 1 MiB
 
     private let socketPath: String

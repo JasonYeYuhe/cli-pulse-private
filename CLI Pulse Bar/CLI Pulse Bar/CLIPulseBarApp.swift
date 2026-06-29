@@ -90,11 +90,17 @@ struct CLIPulseBarApp: App {
             if MASSandboxGate.canHostInAppTerminal {
                 CommandMenu("Terminal") {
                     let ready = appState.canStartLocalManagedSession
+                    // v1.34 R1d: when the user opted into the strict block AND
+                    // the socket-owner helper is below the Claude-OAuth floor,
+                    // disable the Claude item (managed Claude would run on the
+                    // API, not Max). Gemini/Codex are unaffected.
+                    let claudeBlocked = appState.localHelperBelowOAuthFloor
+                        && PrivacySettings.shared.blockClaudeOnOutdatedHelper
                     Button("New Terminal — Claude") {
                         newTerminal(provider: "claude")
                     }
                     .keyboardShortcut("t", modifiers: [.command, .shift])
-                    .disabled(!ready)
+                    .disabled(!ready || claudeBlocked)
                     Button("New Terminal — Gemini (agy)") {
                         newTerminal(provider: "gemini")
                     }
@@ -185,6 +191,39 @@ struct CLIPulseBarApp: App {
                 appState.selectedTab = .settings
             }
             return
+        }
+        // v1.34 R1d: Claude-on-Max safety gate. The in-app terminal spawns via
+        // startManagedSession DIRECTLY (not requestLocalClaudeSessionStart), so
+        // the gate must live here too. If the socket-owner helper is below the
+        // OAuth-injection floor, managed Claude runs on the Claude API, not the
+        // user's Max/Pro plan. Warn-by-default (Start Anyway); hard-block only
+        // when the user opted in. Codex/Gemini are unaffected.
+        if provider == "claude", appState.localHelperBelowOAuthFloor {
+            NSApp.activate(ignoringOtherApps: true)
+            let blocking = PrivacySettings.shared.blockClaudeOnOutdatedHelper
+            let shown = appState.localHelperVersion.isEmpty
+                ? "an old version" : "v\(appState.localHelperVersion)"
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = blocking
+                ? "Managed Claude is blocked — helper is outdated"
+                : "Managed Claude will use the Claude API, not your plan"
+            alert.informativeText = "This Mac's Companion CLI helper (\(shown)) is older than \(LocalSessionControlClient.oauthInjectionHelperFloor), so managed Claude sessions run on the Claude API instead of your Max/Pro subscription. Update the helper in Settings → Companion CLI."
+            if blocking {
+                alert.addButton(withTitle: "Open Settings")
+                alert.addButton(withTitle: "Cancel")
+                if alert.runModal() == .alertFirstButtonReturn {
+                    appState.selectedTab = .settings
+                }
+                return  // hard-blocked
+            }
+            alert.addButton(withTitle: "Start Anyway")
+            alert.addButton(withTitle: "Open Settings")
+            if alert.runModal() != .alertFirstButtonReturn {
+                appState.selectedTab = .settings
+                return  // user chose to update instead of starting
+            }
+            // "Start Anyway" → fall through and spawn on the API.
         }
         // Capture the action before the modal panel runs its nested runloop —
         // grabbing `self.openWindow` from inside the escaping completion can
