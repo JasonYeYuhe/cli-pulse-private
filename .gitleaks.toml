@@ -1,0 +1,30 @@
+# gitleaks config — Trust Hardening v2 (2026-06-30).
+# Preventative secret-scan gate. PRs/pushes scan only NEW commits (so the
+# pre-existing historical leak handled by the O1 rotation + O2 repo-visibility
+# does NOT block PRs); a weekly scheduled run scans full history informationally.
+title = "CLI Pulse gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known non-secrets (public-by-design or test/CI material)"
+# NOTE: we deliberately do NOT allowlist any real secret literal here — that
+# would re-commit it. The historical demo credential is handled out-of-band
+# (rotation + repo-visibility), not by an allowlist entry.
+paths = [
+    # Developer ID provisioning profiles are public-by-design (they contain
+    # certs + entitlements, no private keys) and are committed intentionally.
+    '''scripts/devid-profiles/.*\.provisionprofile''',
+    # Localization string catalogs — translated UI text, never secrets.
+    '''.*\.lproj/.*''',
+    # gitleaks' own config.
+    '''\.gitleaks\.toml''',
+]
+regexes = [
+    # Redacted placeholders left in docs after PR #104.
+    '''<[A-Z0-9_]+_REDACTED>''',
+    # CI stub anon key used by the Swift test job.
+    '''ci-stub-anon-key''',
+]
+stopwords = ["example", "redacted", "stub", "dummy", "placeholder", "changeme", "your-"]
