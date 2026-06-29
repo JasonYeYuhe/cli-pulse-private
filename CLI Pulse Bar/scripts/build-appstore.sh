@@ -80,8 +80,11 @@ load_sentry_auth_token() {
         return 1
     fi
     # File format: one line `SENTRY_AUTH_TOKEN=sntrys_...` plus prose around it.
+    # `|| true`: under `set -euo pipefail` a no-match grep (exit 1) or a head
+    # SIGPIPE (141) would otherwise abort the ENTIRE build via the `extracted=$(…)`
+    # assignment — this loader must stay best-effort (empty => return 1 => skip).
     local extracted
-    extracted=$(grep -E '^SENTRY_AUTH_TOKEN=' "$SENTRY_AUTH_TOKEN_FILE" | head -1 | cut -d= -f2-)
+    extracted=$(grep -E '^SENTRY_AUTH_TOKEN=' "$SENTRY_AUTH_TOKEN_FILE" | head -1 | cut -d= -f2- || true)
     if [[ -z "$extracted" ]]; then
         return 1
     fi
