@@ -65,15 +65,13 @@ public enum UnsandboxedDataMigration {
     // MARK: - Path helpers
 
     /// The user's REAL home directory, resolved even if the process were
-    /// sandboxed (`getpwuid` bypasses the container redirect that
-    /// `NSHomeDirectory()` / `homeDirectoryForCurrentUser` apply under the
-    /// sandbox). Mirrors `LocalSessionControlClient.groupContainerBasePath`.
+    /// sandboxed (the password-database lookup bypasses the container redirect
+    /// that `NSHomeDirectory()` / `homeDirectoryForCurrentUser` apply under the
+    /// sandbox). Uses the thread-safe `passwdHomeDirectory()` (`getpwuid_r`).
+    /// Mirrors `LocalSessionControlClient.groupContainerBasePath`.
     public static func realUserHome() -> URL {
-        if let pw = getpwuid(getuid()), let cstr = pw.pointee.pw_dir {
-            let path = String(cString: cstr)
-            if !path.isEmpty {
-                return URL(fileURLWithPath: path, isDirectory: true)
-            }
+        if let path = passwdHomeDirectory() {
+            return URL(fileURLWithPath: path, isDirectory: true)
         }
         if let s = NSHomeDirectoryForUser(NSUserName()) {
             return URL(fileURLWithPath: s, isDirectory: true)

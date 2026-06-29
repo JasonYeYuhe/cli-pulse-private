@@ -198,7 +198,26 @@ final class UnsandboxedDataMigrationTests: XCTestCase {
         let home = UnsandboxedDataMigration.realUserHome()
         XCTAssertTrue(home.path.hasPrefix("/"))
         XCTAssertFalse(home.path.contains("/Library/Containers/"),
-                       "getpwuid resolves the real home, never the sandbox container")
+                       "getpwuid_r resolves the real home, never the sandbox container")
+    }
+
+    /// The thread-safe `passwdHomeDirectory()` (`getpwuid_r`) that replaced the
+    /// scattered `getpwuid` calls must resolve a real, absolute home — and must
+    /// agree with the legacy single-shot `getpwuid` it replaced.
+    func test_passwdHomeDirectory_agreesWithLegacyGetpwuid() {
+        guard let resolved = passwdHomeDirectory() else {
+            return XCTFail("passwdHomeDirectory should resolve a home for the test user")
+        }
+        XCTAssertTrue(resolved.hasPrefix("/"), "home must be an absolute path")
+        XCTAssertFalse(resolved.isEmpty)
+        XCTAssertFalse(resolved.contains("/Library/Containers/"),
+                       "passwd lookup bypasses the sandbox container redirect")
+        // Cross-check against the legacy non-reentrant call: the _r variant must
+        // return the identical home directory.
+        if let pw = getpwuid(getuid()), let cstr = pw.pointee.pw_dir {
+            XCTAssertEqual(resolved, String(cString: cstr),
+                           "getpwuid_r must agree with getpwuid on the home dir")
+        }
     }
 }
 #endif

@@ -372,10 +372,8 @@ public final class BookmarkManager {
 // MARK: - Real Home Directory Helper
 
 /// Resolve the real user home directory, bypassing App Sandbox container path.
+/// Uses the thread-safe `passwdHomeDirectory()` (`getpwuid_r`).
 func realUserHome() -> String {
-    if let pw = getpwuid(getuid()), let home = pw.pointee.pw_dir {
-        return String(cString: home)
-    }
-    return NSHomeDirectory()
+    passwdHomeDirectory() ?? NSHomeDirectory()
 }
 #endif
