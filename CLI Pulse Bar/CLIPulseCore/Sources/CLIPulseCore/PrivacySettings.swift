@@ -30,6 +30,10 @@ public final class PrivacySettings: ObservableObject {
     private enum Keys {
         static let skipClaudeKeychain = "privacy.skipClaudeKeychain"
         static let localOnlyMode = "privacy.localOnlyMode"
+        // v1.34 R1d: managed-session safety toggle (co-located here for the same
+        // didSet→defaults plumbing). The `privacy.` namespace is in the
+        // UnsandboxedDataMigration allowlist, so it survives the MAS→DEVID move.
+        static let blockClaudeOnOutdatedHelper = "privacy.blockClaudeOnOutdatedHelper"
     }
 
     @Published public var skipClaudeKeychain: Bool {
@@ -47,6 +51,17 @@ public final class PrivacySettings: ObservableObject {
         }
     }
 
+    /// v1.34 R1d: when ON, the app HARD-BLOCKS starting a managed Claude session
+    /// whenever the helper owning the socket is below the OAuth-injection floor
+    /// (which would silently run Claude on the API, not the user's Max/Pro
+    /// plan). Default OFF = warn-only: the session is allowed but a prominent
+    /// banner tells the user to update the helper.
+    @Published public var blockClaudeOnOutdatedHelper: Bool {
+        didSet {
+            defaults.set(blockClaudeOnOutdatedHelper, forKey: Keys.blockClaudeOnOutdatedHelper)
+        }
+    }
+
     private let defaults: UserDefaults
 
     public init(defaults: UserDefaults = .standard) {
@@ -55,5 +70,6 @@ public final class PrivacySettings: ObservableObject {
         let storedSpecific = defaults.bool(forKey: Keys.skipClaudeKeychain)
         self.localOnlyMode = storedMaster
         self.skipClaudeKeychain = storedMaster || storedSpecific
+        self.blockClaudeOnOutdatedHelper = defaults.bool(forKey: Keys.blockClaudeOnOutdatedHelper)
     }
 }

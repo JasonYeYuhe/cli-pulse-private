@@ -12,6 +12,23 @@ import Foundation
 /// surface but kept the version. Ports advertise this in `hello`.
 public let kProtocolVersion: Int = 1
 
+/// Semantic version of THIS (Swift) helper, advertised in the `hello`
+/// reply as `helper_version` so the macOS app can compare the SOCKET
+/// OWNER against the Claude-OAuth-injection floor (1.20.0).
+///
+/// Why this matters: the bundled Swift helper and the separately-
+/// `.pkg`-installed Python helper bind the SAME UDS socket
+/// (`clipulse-helper.sock`) and neither evicts a live peer — so on a Mac
+/// with a stale pre-1.20.0 `.pkg` helper already bound at login, this
+/// (newer) bundled helper cedes and the app talks to the OLD one, which
+/// spawns `claude` on the Claude API instead of the user's Max plan.
+/// Until this constant existed the Swift helper sent NO version, so the
+/// app couldn't tell the bundled (injection-capable) helper from an
+/// ancient one. Kept on the SAME version line as the Python helper
+/// (`helper/system_collector.py:HELPER_VERSION`) so the app's single
+/// floor comparison works for whichever helper owns the socket.
+public let kHelperVersion: String = "1.21.0"
+
 /// Methods this revision of the helper advertises in `hello`. Must
 /// match `helper/local_session_server.py:SUPPORTED_METHODS`
 /// element-for-element so the macOS app's capability negotiation

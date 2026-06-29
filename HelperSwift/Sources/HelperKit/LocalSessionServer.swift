@@ -473,6 +473,13 @@ public final class LocalSessionServer: @unchecked Sendable {
             }
             return .ok(id: request.id, result: [
                 "protocol_version": kProtocolVersion,
+                // v1.34 R1d: advertise our semantic version so the app can gate
+                // managed Claude sessions on the SOCKET OWNER being >= the
+                // OAuth-injection floor (1.20.0). Mirrors the Python helper's
+                // `helper_version` (local_session_server.py). Without this the
+                // app couldn't distinguish this injection-capable Swift helper
+                // from a pre-injection one (both reported no version).
+                "helper_version": kHelperVersion,
                 "supported_methods": SupportedMethod.allCases.map(\.rawValue),
                 "helper_pid": Int(getpid()),
                 "capabilities": [

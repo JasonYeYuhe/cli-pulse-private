@@ -50,7 +50,7 @@ if args.isEmpty { usage() }
 
 switch args[0] {
 case "version":
-    print("cli_pulse_helper Swift port phase4e-slice4 — protocol \(kProtocolVersion)")
+    print("cli_pulse_helper \(kHelperVersion) (Swift port) — protocol \(kProtocolVersion)")
 
 case "self-path":
     // Phase 4D iter11 (Codex P1④ smoke): print the path the

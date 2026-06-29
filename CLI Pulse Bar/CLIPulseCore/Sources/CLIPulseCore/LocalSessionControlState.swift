@@ -85,6 +85,9 @@ extension AppState {
             self.localCapabilities = hello.capabilities
             self.localProtocolVersion = hello.protocolVersion
             self.localProviderAvailability = hello.providerAvailability
+            // v1.34 R1d: record the SOCKET OWNER's version for the
+            // Claude-on-Max safety gate (`localHelperBelowOAuthFloor`).
+            self.localHelperVersion = hello.helperVersion
             self.localHelperError = nil
             // Self-heal the Companion CLI badge: the installer's one-shot
             // refresh() (CompanionCLISection .task) may have probed while the
@@ -110,6 +113,7 @@ extension AppState {
             }
         } catch let err as SessionControlError {
             self.localHelperReachable = false
+            self.localHelperVersion = ""
             switch err {
             case .helperNotRunning:
                 self.localHelperError = nil  // not really an error
@@ -122,6 +126,7 @@ extension AppState {
             return
         } catch {
             self.localHelperReachable = false
+            self.localHelperVersion = ""
             self.localHelperError = String(describing: error)
             Self.localStateLogger.info(
                 "hello failed (non-typed): \(String(describing: error), privacy: .public)"
@@ -295,6 +300,27 @@ extension AppState {
         return localHelperReachable && localControlEnabled
     }
 
+    /// v1.34 R1d: true when the helper currently OWNING the managed-session
+    /// socket is older than the Claude-OAuth-injection floor (or reports no
+    /// version at all — an ancient helper that predates `helper_version`). Such
+    /// a helper spawns managed `claude` on the Claude API instead of the user's
+    /// Max/Pro plan. Only meaningful while the helper is reachable (otherwise
+    /// there is no session helper to gate), so it returns `false` when
+    /// unreachable — `canStartLocalManagedSession` already covers that case.
+    ///
+    /// This intentionally checks the SOCKET OWNER (whoever answered `hello`),
+    /// not the app-bundled helper: on a Mac with a stale `.pkg` helper bound at
+    /// login, the app-bundled (injection-capable) helper cedes the socket, so
+    /// the owner the app actually talks to can be the old one.
+    public var localHelperBelowOAuthFloor: Bool {
+        guard localHelperReachable else { return false }
+        // No reported version == predates the `helper_version` field == old.
+        if localHelperVersion.isEmpty { return true }
+        return HelperInstaller.compareVersions(
+            localHelperVersion, LocalSessionControlClient.oauthInjectionHelperFloor
+        ) < 0
+    }
+
     /// True iff actions on `session` should route through the local
     /// UDS path. **This is the right router for stop / send / row
     /// transport-badge decisions, not `shouldUseLocalSession
@@ -451,12 +477,50 @@ extension AppState {
     /// v1.15: `provider` is settable (was hardcoded `"claude"`). The
     /// helper UDS server already accepts the param via Phase 1's
     /// spawner registry; we just plumb the user's pick through.
+    /// Outcome of a local managed-session start attempt. `.blocked` is distinct
+    /// from `.failed` so the caller does NOT fall through to the remote path
+    /// when the v1.34 R1d safety gate hard-blocks a Claude start (the remote
+    /// fallback could otherwise target this same stale helper, defeating the
+    /// opt-in block).
+    public enum LocalManagedStartOutcome: Sendable, Equatable {
+        case started(String)   // helper session id
+        case blocked           // OAuth-floor safety gate (opt-in hard block)
+        case failed            // start RPC failed (helper down / error)
+    }
+
     @MainActor
     public func requestLocalClaudeSessionStart(
         provider: String = "claude",
         clientLabel: String?
-    ) async -> String? {
+    ) async -> LocalManagedStartOutcome {
         let client = LocalSessionControlClient()
+        // v1.34 R1d: Claude-on-Max safety gate. If the helper that OWNS the
+        // socket predates the OAuth-injection floor, a managed `claude` session
+        // would silently run on the Claude API, not the user's Max/Pro plan.
+        // Check the LIVE socket owner here (one cheap `hello`), NOT the cached
+        // `localHelperBelowOAuthFloor`: that cache is empty before the first
+        // poll (a cold-launch click would skip the gate) and can be stale if a
+        // helper swapped the socket since the last refresh. Codex/Gemini don't
+        // use token injection, so only gate `claude`. Warn is the default (the
+        // ambient banner); HARD-BLOCK only when the user opted in.
+        if provider == "claude", let owner = try? await client.hello() {
+            // Hydrate the cache from this confirmed-good probe.
+            self.localHelperReachable = true
+            self.localHelperVersion = owner.helperVersion
+            let belowFloor = owner.helperVersion.isEmpty
+                || HelperInstaller.compareVersions(
+                    owner.helperVersion, LocalSessionControlClient.oauthInjectionHelperFloor
+                ) < 0
+            if belowFloor, PrivacySettings.shared.blockClaudeOnOutdatedHelper {
+                Self.localStateLogger.warning(
+                    "blocked managed Claude start: live socket-owner '\(owner.helperVersion, privacy: .public)' < OAuth floor \(LocalSessionControlClient.oauthInjectionHelperFloor, privacy: .public) and block-setting is on"
+                )
+                self.localHelperError = "Managed Claude is blocked: this Mac's helper (\(owner.helperVersion.isEmpty ? "an old version" : "v\(owner.helperVersion)")) is older than \(LocalSessionControlClient.oauthInjectionHelperFloor) and would run Claude on the API, not your Max/Pro plan. Update the Companion CLI in Settings (or turn off the block in Privacy)."
+                return .blocked
+            }
+        }
+        // hello() failure ⇒ helper likely down: don't block on an unknown owner;
+        // the start below fails fast and the caller falls back to remote.
         do {
             let result = try await client.startManagedSession(
                 provider: provider,
@@ -498,13 +562,13 @@ extension AppState {
             // lands. Best effort — failure here doesn't change the
             // "local start succeeded" outcome.
             await refreshRemoteSessions()
-            return result.sessionId
+            return .started(result.sessionId)
         } catch {
             Self.localStateLogger.warning(
                 "local start failed: \(String(describing: error), privacy: .public)"
             )
             self.localHelperError = String(describing: error)
-            return nil
+            return .failed
         }
     }
 

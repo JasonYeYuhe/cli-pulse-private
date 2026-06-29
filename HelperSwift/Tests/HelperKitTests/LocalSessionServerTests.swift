@@ -84,6 +84,9 @@ final class LocalSessionServerTests: XCTestCase {
         XCTAssertEqual(reply["ok"] as? Bool, true)
         let result = reply["result"] as? [String: Any]
         XCTAssertEqual(result?["protocol_version"] as? Int, kProtocolVersion)
+        // v1.34 R1d: hello must advertise helper_version so the app can gate
+        // managed Claude sessions on the socket-owner being >= the OAuth floor.
+        XCTAssertEqual(result?["helper_version"] as? String, kHelperVersion)
         let supported = (result?["supported_methods"] as? [String])?.sorted() ?? []
         // hello SHOULD be in the supported list; pick a few
         // representative methods to pin without requiring the

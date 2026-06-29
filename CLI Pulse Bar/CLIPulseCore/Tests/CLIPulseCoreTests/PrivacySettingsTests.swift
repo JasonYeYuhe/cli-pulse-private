@@ -71,4 +71,24 @@ final class PrivacySettingsTests: XCTestCase {
                       "User may still want keychain skip after disabling master mode")
     }
 
+    // MARK: - v1.34 R1d: blockClaudeOnOutdatedHelper
+
+    func test_blockClaudeOnOutdatedHelper_defaultsOff() {
+        // Default OFF = warn-only (the session is allowed; a banner warns).
+        let settings = PrivacySettings(defaults: defaults)
+        XCTAssertFalse(settings.blockClaudeOnOutdatedHelper)
+    }
+
+    func test_blockClaudeOnOutdatedHelper_roundTrips() {
+        let first = PrivacySettings(defaults: defaults)
+        first.blockClaudeOnOutdatedHelper = true
+
+        let second = PrivacySettings(defaults: defaults)
+        XCTAssertTrue(second.blockClaudeOnOutdatedHelper,
+                      "the opt-in hard-block setting must persist across reloads")
+        // Independent of the keychain toggles.
+        XCTAssertFalse(second.skipClaudeKeychain)
+        XCTAssertFalse(second.localOnlyMode)
+    }
+
 }

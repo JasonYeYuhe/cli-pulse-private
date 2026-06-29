@@ -237,13 +237,21 @@ struct SessionsTab: View {
                         avail.contains("gemini")
                     )
                 }()
+                // v1.34 R1d: when the user opted into the strict block AND this
+                // Mac's local helper (the one a local start would use) is below
+                // the Claude-OAuth-injection floor, disable the Claude button so
+                // they can't start a session that would run on the API not Max.
+                // Local-only (`canStartLocal`); cross-Mac Claude is unaffected.
+                let claudeHardBlocked = canStartLocal
+                    && state.localHelperBelowOAuthFloor
+                    && PrivacySettings.shared.blockClaudeOnOutdatedHelper
                 Menu {
                     Button {
                         Task { await openManagedClaudeSession(provider: "claude") }
                     } label: {
                         Label("Claude", systemImage: "sparkles")
                     }
-                    .disabled(!claudeOK)
+                    .disabled(!claudeOK || claudeHardBlocked)
                     Button {
                         Task { await openManagedClaudeSession(provider: "codex") }
                     } label: {
@@ -338,10 +346,19 @@ struct SessionsTab: View {
         if localUIAvailable {
             if !state.localHelperReachable {
                 helperNotRunningBanner
-            } else if let err = state.localHelperError {
-                localHelperErrorBanner(message: err)
             } else {
-                localFastPathToggle
+                // v1.34 R1d: warn-by-default whenever the helper that owns the
+                // socket is below the Claude-OAuth-injection floor — managed
+                // Claude would silently run on the API, not the user's Max/Pro
+                // plan. Shown above the normal error/toggle row.
+                if state.localHelperBelowOAuthFloor {
+                    claudeOAuthFloorWarningBanner
+                }
+                if let err = state.localHelperError {
+                    localHelperErrorBanner(message: err)
+                } else {
+                    localFastPathToggle
+                }
             }
             // PR #18 follow-up: surface "approval hook not wired"
             // when the helper advertises structured approvals but
@@ -1383,12 +1400,21 @@ struct SessionsTab: View {
         let label = "Local \(ProviderDisplay.displayName(for: provider)) session"
 
         if state.selfDeviceId != nil {
-            newSessionId = await state.requestLocalClaudeSessionStart(
+            switch await state.requestLocalClaudeSessionStart(
                 provider: provider,
                 clientLabel: label
-            )
-            if newSessionId != nil {
+            ) {
+            case .started(let sid):
+                newSessionId = sid
                 Task { await state.refreshLocalSessionControlState() }
+            case .blocked:
+                // v1.34 R1d: hard-blocked by the OAuth-floor safety gate. Do NOT
+                // fall through to the remote path — it could target this same
+                // stale helper, defeating the opt-in block. The localHelperError
+                // banner already explains why.
+                return
+            case .failed:
+                break  // helper down / error → try the remote fallback below
             }
         }
 
@@ -1541,6 +1567,41 @@ struct SessionsTab: View {
         }
         .padding(10)
         .background(Color.orange.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    /// v1.34 R1d: shown when the helper owning the managed-session socket is
+    /// below the Claude-OAuth-injection floor (1.20.0). Managed `claude` would
+    /// run on the Claude API instead of the user's Max/Pro plan. Warn-by-default
+    /// (the Claude button stays usable unless the user opted into the strict
+    /// block in Privacy settings).
+    private var claudeOAuthFloorWarningBanner: some View {
+        let shown = state.localHelperVersion.isEmpty
+            ? "an old version" : "v\(state.localHelperVersion)"
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Managed Claude is running on the Claude API, not your plan")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("This Mac's Companion CLI helper (\(shown)) is older than \(LocalSessionControlClient.oauthInjectionHelperFloor), so managed Claude sessions use the Claude API instead of your Max/Pro subscription. Update the helper to run on your plan.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button("Update Helper") {
+                    state.selectedTab = .settings
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Open Settings → Companion CLI to update the background helper.")
+            }
+        }
+        .padding(10)
+        .background(Color.red.opacity(0.10))
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
