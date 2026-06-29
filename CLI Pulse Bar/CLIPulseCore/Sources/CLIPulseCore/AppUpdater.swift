@@ -29,16 +29,22 @@ private let appUpdaterLog = Logger(
 ///       │
 ///       │ user clicks "Download Update"
 ///       ▼
-///   .downloading(progress:)
-///       │
-///       ▼
-///   .readyToInstall(dmgURL:)
+///   .downloading(progress:)  — download + SHA + ARTIFACT VERIFICATION
+///       │                       (container sig/notarization before mount, then inner
+///       │                        .app sig/notarization + version/build + downgrade
+///       ▼                        guard; see UpdateVerifier)
+///   .readyToInstall(dmgURL:)  — DMG is mounted + fully verified, mount held
 ///       │
 ///       │ user clicks "Install Update"
 ///       ▼
-///   open DMG in Finder; NSApp.terminate(nil) ~500ms later
+///   reveal the VERIFIED mounted volume in Finder; NSApp.terminate(nil) ~500ms later
 ///   (user drags new .app over old in /Applications; relaunches manually)
 /// ```
+///
+/// Trust Hardening v2 (2026-06-30): `download()` no longer trusts the manifest's
+/// url/sha alone (a manifest attacker controls both). It verifies the artifact is a
+/// genuine, current, Jason-notarized CLI Pulse build before `.readyToInstall`, and
+/// `install()` hands off the already-verified mounted volume (no detach/reopen TOCTOU).
 ///
 /// Gemini G2 mitigation: macOS Finder hard-blocks "drag .app to /Applications"
 /// when the target is running. The "Install Update" action must
@@ -107,6 +113,12 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
     /// sync with the downloaded artifact. Cleared on error.
     private var cachedManifest: Manifest?
 
+    /// The live, already-verified DMG mount produced by `download()`. `install()` hands
+    /// THIS volume to Finder (no detach/reopen) so there's no TOCTOU window between
+    /// verification and the user's drag-install. Owned on the main actor; detached on the
+    /// next download or on error.
+    private var verifiedMount: (device: String, mountpoint: URL, appPath: URL)?
+
     public static let defaultManifestURL = URL(string:
         "https://github.com/JasonYeYuhe/cli-pulse-distrib/releases/download/latest/latest.json"
     )!
@@ -171,6 +183,8 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
     /// without a prior `refresh()`).
     @MainActor
     public func download() async {
+        // Detach any volume left mounted by a prior download/verify pass.
+        detachVerifiedMount()
         state = .downloading(progress: 0)
         do {
             let manifest: Manifest
@@ -180,11 +194,13 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
                 manifest = try await fetchManifest()
             }
             try Self.assertArchitectureMatches(manifest)
-            let dmgURL = try await downloadDmg(manifest: manifest)
-            state = .readyToInstall(dmgURL: dmgURL)
+            let verified = try await downloadAndVerify(manifest: manifest)
+            verifiedMount = verified.mount
+            state = .readyToInstall(dmgURL: verified.dmgURL)
         } catch {
             appUpdaterLog.error("download failed: \(error.localizedDescription, privacy: .public)")
             cachedManifest = nil
+            detachVerifiedMount()
             state = .error(error.localizedDescription)
         }
     }
@@ -194,27 +210,40 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
     /// Finder focus the DMG window before the menubar app vanishes.
     @MainActor
     public func install() {
-        guard case .readyToInstall(let dmgURL) = state else {
-            appUpdaterLog.warning("install() called from non-ready state: \(String(describing: self.state))")
+        guard case .readyToInstall = state, let mount = verifiedMount else {
+            appUpdaterLog.warning("install() called without a verified mount: \(String(describing: self.state))")
+            // Fail safe: never present an unverified artifact for install.
+            state = .error("Update not verified — please re-download.")
             return
         }
-        appUpdaterLog.info("opening DMG and quitting for user drag-replace")
-        // NSWorkspace.shared.open mounts the .dmg + shows its window in
-        // Finder. The user then drags "CLI Pulse.app" over the old one
-        // in /Applications. macOS Finder + Gatekeeper handle the
-        // "Replace?" confirmation. After the replace + relaunch, the
-        // new version's AppUpdater will resolve to `.upToDate`.
+        appUpdaterLog.info("revealing verified update volume and quitting for user drag-replace")
+        // Reveal the ALREADY-VERIFIED, still-mounted volume in Finder. We do NOT
+        // re-open the .dmg file (that detach→reopen would reintroduce a TOCTOU window
+        // the artifact verification just closed — Apple's SecStaticCode docs warn the
+        // verdict is only valid while the code is not concurrently modified). The user
+        // drags "CLI Pulse.app" from the verified volume over the old one in
+        // /Applications; Finder handles the "Replace?" confirmation. After replace +
+        // relaunch, the new version's AppUpdater resolves to `.upToDate`.
         //
-        // Run the open off the main thread: the synchronous overload does a
-        // blocking LaunchServices XPC round-trip (same main-thread-hang class
-        // as the helper-install path). Detaching keeps the menu-bar UI
-        // responsive for the ~500ms window before we terminate.
-        Task.detached { NSWorkspace.shared.open(dmgURL) }
-        // Give Finder ~500ms to focus the DMG window before we quit
-        // ourselves. If we terminate too eagerly the user might miss
-        // where the DMG opened.
+        // Off the main thread: selectFile does a blocking LaunchServices XPC round-trip
+        // (same main-thread-hang class as the helper-install path). The verified volume
+        // stays mounted so the drag can complete after we quit.
+        let appPath = mount.appPath.path
+        let volumePath = mount.mountpoint.path
+        Task.detached { NSWorkspace.shared.selectFile(appPath, inFileViewerRootedAtPath: volumePath) }
+        // Give Finder ~500ms to focus the volume window before we quit ourselves.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             NSApp.terminate(nil)
+        }
+    }
+
+    /// Detach the verified volume (if any) and forget it. Best-effort; the volume is
+    /// read-only so a leaked mount is harmless, but we tidy up on each new download.
+    @MainActor
+    private func detachVerifiedMount() {
+        if let mount = verifiedMount {
+            UpdateVerifier.detach(device: mount.device)
+            verifiedMount = nil
         }
     }
 
@@ -235,48 +264,82 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
                 userInfo: [NSLocalizedDescriptionKey: "Manifest fetch HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)"]
             )
         }
-        return try JSONDecoder().decode(Manifest.self, from: data)
+        let manifest = try JSONDecoder().decode(Manifest.self, from: data)
+        // Trust Hardening v2: manifest hardening — reject any update URL that is not
+        // https under the official cli-pulse-distrib release prefix, and any insane size.
+        // This runs on every refresh() so a tampered/redirected manifest is rejected
+        // before the user is ever offered the "update available" prompt.
+        try UpdateVerifier.validateManifestURL(manifest.url)
+        try UpdateVerifier.validateSize(manifest.sizeBytes)
+        return manifest
     }
 
-    private func downloadDmg(manifest: Manifest) async throws -> URL {
+    /// Download the DMG to a fresh private directory, then prove it is a genuine,
+    /// current, Jason-notarized CLI Pulse build BEFORE presenting it for install:
+    /// size + SHA-256 (integrity) → DMG-container signature/notarization (authenticity,
+    /// verified before mounting) → mount read-only + inner-app signature/notarization +
+    /// version/build match + strictly-newer (downgrade protection). Returns the dmg URL
+    /// and the live verified mount; the caller hands that mount to Finder.
+    private func downloadAndVerify(
+        manifest: Manifest
+    ) async throws -> (dmgURL: URL, mount: (device: String, mountpoint: URL, appPath: URL)) {
         guard let url = URL(string: manifest.url) else {
             throw NSError(
-                domain: "AppUpdater",
-                code: 2,
+                domain: "AppUpdater", code: 2,
                 userInfo: [NSLocalizedDescriptionKey: "Invalid manifest URL: \(manifest.url)"]
             )
         }
         let (tempURL, response) = try await urlSession.download(from: url)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw NSError(
-                domain: "AppUpdater",
-                code: 3,
+                domain: "AppUpdater", code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "DMG download HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)"]
             )
         }
-        // Move to a stable temp path so NSWorkspace.open has a valid URL
-        // after URLSession's temp file gets cleaned up by the system.
-        let finalURL = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("CLI-Pulse-\(manifest.version)-\(manifest.arch).dmg")
-        try? FileManager.default.removeItem(at: finalURL)
+        // Download into a fresh, private (0700) per-update directory rather than a
+        // predictable NSTemporaryDirectory() path — removes a local file-swap race.
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("CLI-Pulse-update-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: dir, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        let finalURL = dir.appendingPathComponent("CLI-Pulse-\(manifest.version)-\(manifest.arch).dmg")
         try FileManager.default.moveItem(at: tempURL, to: finalURL)
 
-        // Verify SHA-256 of the downloaded DMG against the manifest. v1.21 D4:
-        // hashes a 50-150 MB file — must run off the @MainActor download() path
-        // to avoid freezing the popover. `Task.detached` hops to a background
-        // executor; SHA256.hash is CPU-bound and Sendable-safe.
+        // Size must match the manifest exactly.
+        let attrs = try FileManager.default.attributesOfItem(atPath: finalURL.path)
+        try UpdateVerifier.assertSizeMatch(expected: manifest.sizeBytes, actual: (attrs[.size] as? Int) ?? -1)
+
+        // SHA-256 (download integrity). v1.21 D4: hashing a 50-150 MB file is CPU-bound —
+        // run off the @MainActor download() path to avoid freezing the popover.
         let actualSHA = try await Task.detached {
             try CryptoHelpers.sha256Hex(of: finalURL)
         }.value
         guard actualSHA.lowercased() == manifest.sha256.lowercased() else {
-            try? FileManager.default.removeItem(at: finalURL)
+            try? FileManager.default.removeItem(at: dir)
             throw NSError(
-                domain: "AppUpdater",
-                code: 4,
+                domain: "AppUpdater", code: 4,
                 userInfo: [NSLocalizedDescriptionKey: "DMG SHA-256 mismatch (expected \(manifest.sha256), got \(actualSHA))"]
             )
         }
-        return finalURL
+
+        // Authenticity + downgrade protection (blocking codesign/spctl/hdiutil work →
+        // off the main actor). Verifies the container BEFORE mounting, then the inner app.
+        let installed = Self.installedVersion()
+        let version = manifest.version
+        let build = manifest.build
+        do {
+            let mount = try await Task.detached { () -> (device: String, mountpoint: URL, appPath: URL) in
+                try UpdateVerifier.verifyDMGContainer(finalURL)
+                return try UpdateVerifier.mountAndVerifyApp(
+                    dmg: finalURL, manifestVersion: version,
+                    manifestBuild: build, installedVersion: installed)
+            }.value
+            return (finalURL, mount)
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            throw error
+        }
     }
 
     // MARK: - Helpers
