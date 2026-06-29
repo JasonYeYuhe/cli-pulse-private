@@ -296,21 +296,18 @@ public final class LocalSessionControlClient: SessionControlClient {
     /// under the App Sandbox is the app's PRIVATE container
     /// (`~/Library/Containers/yyh.CLI-Pulse/Data`), a path the helper never
     /// creates → permanent ENOENT → "helper running but app reports not
-    /// detected". `getpwuid(getuid())->pw_dir` bypasses the sandbox home
-    /// redirect, matching the helper's `AuthToken.containerPath()` and the
-    /// existing `HelperInstaller.helperDir` resolution.
+    /// detected". `passwdHomeDirectory()` (thread-safe `getpwuid_r`) bypasses
+    /// the sandbox home redirect, matching the helper's
+    /// `AuthToken.containerPath()` and the existing `HelperInstaller.helperDir`
+    /// resolution.
     public static func groupContainerBasePath() -> String {
         if let url = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: appGroupID
         ) {
             return url.path
         }
-        let realHome: String = {
-            if let pw = getpwuid(getuid()), let cstr = pw.pointee.pw_dir {
-                return String(cString: cstr)
-            }
-            return NSHomeDirectoryForUser(NSUserName()) ?? NSHomeDirectory()
-        }()
+        let realHome: String = passwdHomeDirectory()
+            ?? NSHomeDirectoryForUser(NSUserName()) ?? NSHomeDirectory()
         return (realHome as NSString)
             .appendingPathComponent("Library/Group Containers/\(appGroupID)")
     }

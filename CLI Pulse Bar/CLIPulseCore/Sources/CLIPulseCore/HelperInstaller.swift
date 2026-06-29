@@ -119,14 +119,10 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
         // user's real home. The helper .pkg installs to the REAL
         // `~/Library/CLI-Pulse-Helper/` (the postinstall script runs
         // unsandboxed as the user), so the macOS app must look there
-        // too. `getpwuid(getuid())->pw_dir` bypasses the sandbox
-        // redirect on macOS and returns the actual home directory.
-        let realHome: String = {
-            if let pw = getpwuid(getuid()), let cstr = pw.pointee.pw_dir {
-                return String(cString: cstr)
-            }
-            return NSHomeDirectoryForUser(NSUserName()) ?? NSHomeDirectory()
-        }()
+        // too. `passwdHomeDirectory()` (thread-safe `getpwuid_r`) bypasses the
+        // sandbox redirect on macOS and returns the actual home directory.
+        let realHome: String = passwdHomeDirectory()
+            ?? NSHomeDirectoryForUser(NSUserName()) ?? NSHomeDirectory()
         self.helperDir = (realHome as NSString)
             .appendingPathComponent("Library/CLI-Pulse-Helper")
     }

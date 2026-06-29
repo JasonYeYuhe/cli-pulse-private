@@ -226,11 +226,10 @@ public enum ClaudeResultBuilder {
 
 /// Shared helpers for Claude credential resolution, used by multiple strategies.
 public enum ClaudeCredentials {
-    /// Real home directory (not sandbox-remapped).
+    /// Real home directory (not sandbox-remapped). Uses the thread-safe
+    /// `passwdHomeDirectory()` (`getpwuid_r`).
     public static var realHomeDir: String {
-        if let pw = getpwuid(getuid()), let dir = pw.pointee.pw_dir {
-            return String(cString: dir)
-        }
+        if let dir = passwdHomeDirectory() { return dir }
         let nsHome = NSHomeDirectory()
         if let range = nsHome.range(of: "/Library/Containers/") {
             return String(nsHome[nsHome.startIndex..<range.lowerBound])
