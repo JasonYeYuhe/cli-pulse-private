@@ -180,10 +180,25 @@ final class ClaudePricingOpus47Tests: XCTestCase {
         let fileURL = projectDir.appendingPathComponent("synthetic.jsonl")
         try body.write(to: fileURL)
 
+        // Sandbox the Codex sessions root too. `CostUsageScanner.scan()`
+        // ALWAYS scans Codex alongside Claude, and without an override it
+        // falls back to the real `~/.codex/sessions/`. The Claude-only
+        // assertions above stay correct (Claude roots are sandboxed), but
+        // `result.totalCost(for:)` below sums cost across ALL providers, so
+        // any real Codex usage dated `dayKey` (3 days ago) leaks into the
+        // total. That made this test non-hermetic: green in CI (no Codex
+        // data) yet failing locally with `0.0885 → 4.15…` whenever the dev
+        // had real Codex sessions on that calendar day. An empty dir gives
+        // the scanner a real, zero-file Codex root. Mirrors the sibling
+        // CostUsageScannerSessionSynthTests setup.
+        let codexSessionsRoot = tmpDir.appendingPathComponent("codex-sessions", isDirectory: true)
+        try FileManager.default.createDirectory(at: codexSessionsRoot, withIntermediateDirectories: true)
+
         // Use a separate cache root so we don't touch the user's
         // real CostUsageCache state. Force a fresh scan.
         let cacheRoot = tmpDir.appendingPathComponent("cache", isDirectory: true)
         var opts = CostUsageScanner.Options(
+            codexSessionsRoot: codexSessionsRoot,
             claudeProjectsRoots: [projectsRoot],
             cacheRoot: cacheRoot,
             daysToScan: 30
