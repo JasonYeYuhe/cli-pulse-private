@@ -20,6 +20,13 @@ paths = [
     '''.*\.lproj/.*''',
     # gitleaks' own config.
     '''\.gitleaks\.toml''',
+    # Test fixtures: the redaction/hook/ring-buffer/parse tests intentionally embed
+    # fake secrets + JWTs + Authorization headers to verify scrubbing + parsing.
+    # These are not real credentials; allowlisted so the weekly full-history scan
+    # stays actionable (a full scan over history otherwise reports ~300 fixtures).
+    '''helper/test_.*\.py''',
+    '''.*/Tests/.*''',
+    '''.*Tests\.swift''',
 ]
 regexes = [
     # Redacted placeholders left in docs after PR #104.
