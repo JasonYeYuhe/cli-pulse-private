@@ -301,21 +301,36 @@ public struct UpdateVerifier {
             let entities = plist["system-entities"] as? [[String: Any]]
         else { throw UpdateVerifierError.mountFailed("unparseable hdiutil plist") }
 
-        var mountpoint: String?
-        var topDevice: String?
-        for e in entities {
-            if let dev = e["dev-entry"] as? String {
-                // The top-level device (e.g. /dev/disk5, no slice suffix) is what we detach.
-                if topDevice == nil || dev.count < (topDevice?.count ?? .max) { topDevice = dev }
-            }
-            if let mp = e["mount-point"] as? String, !mp.isEmpty { mountpoint = mp }
-        }
-        guard let mp = mountpoint, let dev = topDevice else {
-            // Best-effort detach anything we did attach, then fail.
-            if let dev = topDevice { detach(device: dev) }
+        guard let sel = Self.selectMount(from: entities) else {
+            // No mount-point in the output: best-effort detach every device we attached
+            // (don't leak), then fail.
+            for e in entities { if let dev = e["dev-entry"] as? String { detach(device: dev) } }
             throw UpdateVerifierError.mountFailed("no mount-point in hdiutil output")
         }
-        return (dev, URL(fileURLWithPath: mp, isDirectory: true))
+        return (sel.device, URL(fileURLWithPath: sel.mountpoint, isDirectory: true))
+    }
+
+    /// Pick the detach device from `hdiutil attach -plist` system-entities (pure; unit
+    /// tested). The detach target must be the WHOLE-DISK node of the entity that actually
+    /// carries the mount-point (e.g. mount on `/dev/disk13s1` → detach `/dev/disk13`), NOT
+    /// the globally-shortest dev-entry — in a multi-volume DMG that shortest entry can be a
+    /// DIFFERENT disk, so the old heuristic detached the wrong (or no) disk and leaked the
+    /// real mount. Falls back to the mount-point itself (hdiutil detach accepts it) if the
+    /// mount entity has no dev-entry.
+    static func selectMount(from entities: [[String: Any]]) -> (device: String, mountpoint: String)? {
+        guard let mountEntity = entities.first(where: {
+            ($0["mount-point"] as? String).map { !$0.isEmpty } ?? false
+        }), let mp = mountEntity["mount-point"] as? String else {
+            return nil
+        }
+        let devEntry = (mountEntity["dev-entry"] as? String) ?? ""
+        let device: String
+        if let r = devEntry.range(of: #"^/dev/disk[0-9]+"#, options: .regularExpression) {
+            device = String(devEntry[r])           // strip the trailing slice (sNN)
+        } else {
+            device = mp                              // last resort: detach by mount-point
+        }
+        return (device, mp)
     }
 
     // MARK: - App location (exactly one, no symlink)

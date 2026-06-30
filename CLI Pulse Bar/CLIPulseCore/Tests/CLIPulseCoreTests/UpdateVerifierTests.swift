@@ -139,6 +139,41 @@ final class UpdateVerifierTests: XCTestCase {
         defer { UpdateVerifier.detach(device: mount.device) }
         XCTAssertTrue(mount.appPath.lastPathComponent.hasSuffix(".app"))
     }
+
+    // MARK: selectMount (detach the mount-carrying volume's whole disk, not shortest)
+
+    func test_selectMount_multiVolume_picksMountCarryingWholeDisk() {
+        // Real-shape multi-volume hdiutil output: the mount is on /dev/disk13s1, but the
+        // globally-shortest dev-entry is /dev/disk12 (a DIFFERENT disk). Must detach
+        // /dev/disk13 (the mount-carrier's whole disk), not /dev/disk12.
+        let entities: [[String: Any]] = [
+            ["dev-entry": "/dev/disk12s1"],
+            ["dev-entry": "/dev/disk12"],
+            ["dev-entry": "/dev/disk13s1", "mount-point": "/private/tmp/dmg.q8h07U"],
+            ["dev-entry": "/dev/disk13"],
+        ]
+        let sel = UpdateVerifier.selectMount(from: entities)
+        XCTAssertEqual(sel?.device, "/dev/disk13")
+        XCTAssertEqual(sel?.mountpoint, "/private/tmp/dmg.q8h07U")
+    }
+
+    func test_selectMount_singleVolume() {
+        let entities: [[String: Any]] = [
+            ["dev-entry": "/dev/disk7"],
+            ["dev-entry": "/dev/disk7s1", "mount-point": "/Volumes/CLI Pulse"],
+        ]
+        XCTAssertEqual(UpdateVerifier.selectMount(from: entities)?.device, "/dev/disk7")
+    }
+
+    func test_selectMount_noMountPoint_returnsNil() {
+        XCTAssertNil(UpdateVerifier.selectMount(from: [["dev-entry": "/dev/disk9"]]))
+        XCTAssertNil(UpdateVerifier.selectMount(from: []))
+    }
+
+    func test_selectMount_mountEntityWithoutDevEntry_fallsBackToMountpoint() {
+        let entities: [[String: Any]] = [["mount-point": "/Volumes/X"]]
+        XCTAssertEqual(UpdateVerifier.selectMount(from: entities)?.device, "/Volumes/X")
+    }
 }
 
 #endif
