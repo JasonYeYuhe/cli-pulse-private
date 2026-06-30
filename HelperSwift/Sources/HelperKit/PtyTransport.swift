@@ -76,6 +76,42 @@ public final class PtyTransport: @unchecked Sendable {
 
     public init() {}
 
+    // MARK: - environment
+
+    /// Build the spawned child's environment, in order:
+    ///   1. inherit the helper's (launchd) `parent` env,
+    ///   2. overlay the caller's `overlay` (spawn-request env + cap-token vars +
+    ///      the spawner's `ProviderEnvPatch.set`),
+    ///   3. augment HOME + PATH from the getpwuid home (launchd often hands the agent a
+    ///      bogus `$HOME`/sparse PATH; managed providers are HOME-driven). HOME is only
+    ///      forced when the caller didn't set it; PATH gains the Homebrew/local bin dirs
+    ///      with the home INTERPOLATED (posix_spawn won't expand `$HOME`),
+    ///   4. apply `envRemove` (DELETE inherited keys a merge can't — e.g. scrub
+    ///      `OPENAI_API_KEY` to force Codex onto the ChatGPT plan),
+    ///   5. default TERM/COLUMNS/LINES if unset.
+    /// Pure + static so the merge is unit-tested without spawning.
+    static func buildChildEnv(
+        parent: [String: String],
+        overlay: [String: String],
+        envRemove: Set<String>,
+        cols: UInt16,
+        rows: UInt16
+    ) -> [String: String] {
+        var merged = parent
+        for (k, v) in overlay { merged[k] = v }
+        if let home = HelperEnvironment.resolvedUserHome() {
+            if overlay["HOME"] == nil { merged["HOME"] = home }   // caller override wins
+            merged["PATH"] = HelperEnvironment.augmentedPATH(base: merged["PATH"], home: home)
+        }
+        for k in envRemove { merged.removeValue(forKey: k) }
+        if merged["TERM"] == nil { merged["TERM"] = "xterm-256color" }
+        // v1.24 Phase 2a: COLUMNS/LINES hints for ncurses fallbacks that probe env
+        // instead of ioctl(TIOCGWINSZ). Caller-supplied wins (default, not override).
+        if merged["COLUMNS"] == nil { merged["COLUMNS"] = String(cols) }
+        if merged["LINES"] == nil { merged["LINES"] = String(rows) }
+        return merged
+    }
+
     // MARK: - lifecycle
 
     /// Spawn `argv` under a fresh PTY and return a `Handle`. Throws
@@ -95,7 +131,8 @@ public final class PtyTransport: @unchecked Sendable {
         cwd: String? = nil,
         cols: UInt16 = PtyTransport.defaultCols,
         rows: UInt16 = PtyTransport.defaultRows,
-        inheritedFD: (envVar: String, data: Data)? = nil
+        inheritedFD: (envVar: String, data: Data)? = nil,
+        envRemove: Set<String> = []
     ) throws -> Handle {
         guard !argv.isEmpty else { throw TransportError.emptyArgv }
 
@@ -123,16 +160,12 @@ public final class PtyTransport: @unchecked Sendable {
             for p in argvCStrings { if let p { free(p) } }
         }
 
-        // Build the merged environment as C strings.
-        var mergedEnv = ProcessInfo.processInfo.environment
-        for (k, v) in env { mergedEnv[k] = v }
-        if mergedEnv["TERM"] == nil { mergedEnv["TERM"] = "xterm-256color" }
-        // v1.24 Phase 2a: COLUMNS/LINES env hints for ncurses fallbacks
-        // (e.g. when a child shell doesn't ioctl(TIOCGWINSZ) at startup
-        // and relies on env-var probes instead). Caller-supplied env wins
-        // if explicitly set, so this is a default not an override.
-        if mergedEnv["COLUMNS"] == nil { mergedEnv["COLUMNS"] = String(cols) }
-        if mergedEnv["LINES"] == nil { mergedEnv["LINES"] = String(rows) }
+        // Build the merged child environment (parent ⊕ caller overlay ⊕ HOME/PATH
+        // augmentation ⊖ envRemove ⊕ TERM/COLUMNS/LINES defaults). Extracted to a
+        // pure static so the merge logic is unit-tested without spawning.
+        var mergedEnv = PtyTransport.buildChildEnv(
+            parent: ProcessInfo.processInfo.environment,
+            overlay: env, envRemove: envRemove, cols: cols, rows: rows)
 
         // Optionally hand the child a read-only inherited fd carrying a secret
         // (the Claude subscription OAuth token). Keeping it on an fd — not in the
