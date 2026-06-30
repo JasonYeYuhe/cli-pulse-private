@@ -73,10 +73,22 @@ public protocol ProviderSpawner: Sendable {
     /// (via `--settings` injection); false for Codex/Gemini
     /// because their TUIs handle approvals natively.
     func supportsRemoteApproval() -> Bool
+
+    /// Whether a managed session for this provider would run on the user's PLAN vs the
+    /// billed pay-per-token API. Surfaced in the UDS hello reply (`provider_plan_status`)
+    /// so the picker can warn before silently launching an off-plan (billed) session.
+    /// Returns `"on_plan"`, `"off_plan"`, or `"unknown"` (can't determine — the picker
+    /// must NOT warn on unknown). `resolvedHome` is the getpwuid home (nil if
+    /// unresolvable). Default `"unknown"`. (Codex: chatgpt-auth ⇒ on_plan, apikey ⇒
+    /// off_plan. Gemini: agy resolvable ⇒ on_plan. Claude's on-plan-ness is signaled by
+    /// the separate OAuth-floor gate, so it stays "unknown" here.)
+    func planAuthStatus(resolvedHome: String?) -> String
 }
 
 public extension ProviderSpawner {
     func envPatch(extraEnv: [String: String], resolvedHome: String?) -> ProviderEnvPatch { .none }
+
+    func planAuthStatus(resolvedHome: String?) -> String { "unknown" }
 
     /// Resolve the binary's argv0 from `CLI_PULSE_<NAME>_ARGV0` env
     /// (if set, whitespace-tokenized so multi-token argv0 like

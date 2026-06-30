@@ -466,10 +466,13 @@ public final class LocalSessionServer: @unchecked Sendable {
             // configuring `LocalSessionServer` without a session
             // manager hook).
             let providerAvailability: [String]
+            let providerPlanStatus: [String: String]
             if let mgr = hooks.sessionManager {
                 providerAvailability = mgr.availableProviders()
+                providerPlanStatus = mgr.providerPlanStatus()
             } else {
                 providerAvailability = []
+                providerPlanStatus = [:]
             }
             return .ok(id: request.id, result: [
                 "protocol_version": kProtocolVersion,
@@ -488,6 +491,10 @@ public final class LocalSessionServer: @unchecked Sendable {
                     "approvals": true,
                 ],
                 "provider_availability": providerAvailability,
+                // Per-provider plan-auth status ("on_plan"/"off_plan") so the picker can
+                // warn before silently launching an off-plan (billed) managed session
+                // (e.g. Codex with an api-key login). Omits "unknown" providers.
+                "provider_plan_status": providerPlanStatus,
             ])
         case .ping:
             return .ok(id: request.id, result: ["pong": true])

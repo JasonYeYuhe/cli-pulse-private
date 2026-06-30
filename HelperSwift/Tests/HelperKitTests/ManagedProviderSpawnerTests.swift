@@ -90,6 +90,35 @@ final class ManagedProviderSpawnerTests: XCTestCase {
         XCTAssertEqual(patch, .none)
     }
 
+    // MARK: - planAuthStatus (drives the picker's off-plan warning)
+
+    func test_codex_planAuthStatus_nilHome_unknown() {
+        XCTAssertEqual(CodexSpawner().planAuthStatus(resolvedHome: nil), "unknown")
+    }
+
+    func test_codex_planAuthStatus_noAuthFile_offPlan() {
+        // A resolvable home with no ~/.codex/auth.json → not verified → off_plan (would
+        // bill the API), so the picker warns rather than silently launching.
+        XCTAssertEqual(
+            CodexSpawner().planAuthStatus(resolvedHome: "/Users/nonexistent-clipulse-test-xyz"),
+            "off_plan")
+    }
+
+    func test_gemini_planAuthStatus_neverOffPlan() {
+        // Gemini is either on_plan (agy resolvable) or unknown (no agy) — never a billed
+        // off_plan fallback.
+        let status = GeminiSpawner().planAuthStatus(resolvedHome: "/Users/x")
+        XCTAssertTrue(["on_plan", "unknown"].contains(status), "got \(status)")
+    }
+
+    func test_default_planAuthStatus_unknown() {
+        // ClaudeSpawner uses the default (its on-plan-ness is signaled by the OAuth floor
+        // gate, not this status), so it must be "unknown" → no picker plan-status warning.
+        XCTAssertEqual(
+            ClaudeSpawner(buildInlineSettings: { _ in nil }).planAuthStatus(resolvedHome: "/Users/x"),
+            "unknown")
+    }
+
     // MARK: - Manager composition (proves startSession DERIVES + FORWARDS the patch)
 
     /// Stub spawner returning a fixed patch, to test the manager's derivation glue in

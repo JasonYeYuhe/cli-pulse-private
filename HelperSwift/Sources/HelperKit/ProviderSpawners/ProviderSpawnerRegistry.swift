@@ -60,4 +60,17 @@ public final class ProviderSpawnerRegistry: @unchecked Sendable {
             .keys
             .sorted()
     }
+
+    /// Per-provider plan-auth status ("on_plan" / "off_plan" / "unknown") for the
+    /// AVAILABLE providers — shipped in the hello reply as `provider_plan_status` so the
+    /// picker can warn before silently launching an off-plan (billed) session. Omits
+    /// `"unknown"` so older/indeterminate providers don't add noise (absent ⇒ no warning).
+    public func planAuthStatuses(resolvedHome: String?) -> [String: String] {
+        var out: [String: String] = [:]
+        for (name, spawner) in spawners where spawner.isAvailable() {
+            let status = spawner.planAuthStatus(resolvedHome: resolvedHome)
+            if status != "unknown" { out[name] = status }
+        }
+        return out
+    }
 }

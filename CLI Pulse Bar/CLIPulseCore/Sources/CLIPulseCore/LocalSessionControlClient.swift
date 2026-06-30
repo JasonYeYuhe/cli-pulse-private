@@ -434,13 +434,18 @@ public final class LocalSessionControlClient: SessionControlClient {
         // v1.30.2 (RC-1): optional `paired` flag. Absent on older helpers →
         // nil (unknown). false ⇒ installed + running but not yet paired.
         let paired = result["paired"] as? Bool
+        // Optional `provider_plan_status` (on_plan/off_plan per provider). Absent on older
+        // helpers → empty → no warning (the picker treats a missing entry as unknown).
+        let providerPlanStatus =
+            (result["provider_plan_status"] as? [String: String]) ?? [:]
         return SessionControlHello(
             protocolVersion: version,
             supportedMethods: Set(methods),
             capabilities: caps,
             providerAvailability: providerAvailability,
             helperVersion: helperVersion,
-            paired: paired
+            paired: paired,
+            providerPlanStatus: providerPlanStatus
         )
     }
 

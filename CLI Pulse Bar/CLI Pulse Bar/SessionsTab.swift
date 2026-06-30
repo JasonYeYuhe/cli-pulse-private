@@ -245,6 +245,12 @@ struct SessionsTab: View {
                 let claudeHardBlocked = canStartLocal
                     && state.localHelperBelowOAuthFloor
                     && PrivacySettings.shared.blockClaudeOnOutdatedHelper
+                // Warn (don't block) when a managed Codex session would run on the billed
+                // OpenAI API instead of the user's ChatGPT plan — the helper reports this
+                // via `provider_plan_status` (off_plan = api-key login). Local-only;
+                // cross-Mac has no per-provider plan status.
+                let codexOffPlan = canStartLocal
+                    && state.localProviderPlanStatus["codex"] == "off_plan"
                 Menu {
                     Button {
                         Task { await openManagedClaudeSession(provider: "claude") }
@@ -255,7 +261,9 @@ struct SessionsTab: View {
                     Button {
                         Task { await openManagedClaudeSession(provider: "codex") }
                     } label: {
-                        Label("Codex", systemImage: "chevron.left.slash.chevron.right")
+                        Label(
+                            codexOffPlan ? "Codex — OpenAI API (billed, not your plan)" : "Codex",
+                            systemImage: codexOffPlan ? "exclamationmark.triangle" : "chevron.left.slash.chevron.right")
                     }
                     .disabled(!codexOK)
                     Button {
