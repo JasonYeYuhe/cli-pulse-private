@@ -44,38 +44,36 @@ final class ProviderSpawnerRegistryTests: XCTestCase {
         )
     }
 
-    func test_gemini_argv_default_omits_yolo() {
+    // v1.35: managed Gemini routes through the `agy` wrapper (runs on the user's plan),
+    // not bare `gemini`/`--yolo`. argv() does machine-dependent filesystem resolution, so
+    // the deterministic contract is tested via the pure helpers (also in
+    // ManagedProviderSpawnerTests).
+
+    func test_gemini_routesThroughAgy_viaExplicitOverride() {
         XCTAssertEqual(
-            GeminiSpawner().argv(extraEnv: [:], helperArgv0: nil),
-            ["gemini"]
-        )
+            GeminiSpawner.resolveAgyArgv0(env: ["CLI_PULSE_GEMINI_ARGV0": "/opt/x/agy"]),
+            ["/opt/x/agy"])
     }
 
-    func test_gemini_argv_adds_yolo_when_opted_in() {
-        let argv = GeminiSpawner().argv(
-            extraEnv: ["CLI_PULSE_GEMINI_YOLO": "1"],
-            helperArgv0: nil
-        )
-        XCTAssertEqual(argv, ["gemini", "--yolo"])
+    func test_gemini_default_isBareAgy_noYolo() {
+        XCTAssertEqual(
+            GeminiSpawner.buildArgv(argv0: ["agy"], yoloRequested: false, helpText: nil),
+            ["agy"])
     }
 
-    func test_gemini_argv_yolo_accepts_truthy_aliases() {
+    func test_gemini_yolo_remapsToSkipPermissions_whenSupported() {
         for value in ["1", "true", "yes", "TRUE", " yes "] {
-            let argv = GeminiSpawner().argv(
-                extraEnv: ["CLI_PULSE_GEMINI_YOLO": value],
-                helperArgv0: nil
-            )
-            XCTAssertEqual(argv, ["gemini", "--yolo"], "value=\(value)")
+            XCTAssertTrue(GeminiSpawner.envFlagEnabled(value), "value=\(value)")
         }
+        XCTAssertEqual(
+            GeminiSpawner.buildArgv(argv0: ["agy"], yoloRequested: true,
+                                    helpText: "  --dangerously-skip-permissions  Auto-approve"),
+            ["agy", "--dangerously-skip-permissions"])
     }
 
-    func test_gemini_argv_yolo_falsy_keeps_default() {
+    func test_gemini_yolo_falsy_keeps_default() {
         for value in ["", "0", "false", "no"] {
-            let argv = GeminiSpawner().argv(
-                extraEnv: ["CLI_PULSE_GEMINI_YOLO": value],
-                helperArgv0: nil
-            )
-            XCTAssertEqual(argv, ["gemini"], "value=\(value)")
+            XCTAssertFalse(GeminiSpawner.envFlagEnabled(value), "value=\(value)")
         }
     }
 
