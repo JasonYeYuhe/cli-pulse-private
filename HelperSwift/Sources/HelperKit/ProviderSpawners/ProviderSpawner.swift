@@ -25,12 +25,26 @@ import Foundation
 ///      `helperArgv0` is the absolute path to the helper itself,
 ///      used by Claude's `--settings <json>` hook injection. Other
 ///      providers ignore it.
-///   3. `envOverrides(extraEnv:)` at spawn time — provider-specific
-///      env merged onto the manager's base env.
+///   3. `envPatch(extraEnv:resolvedHome:)` at spawn time — provider-specific
+///      env mutations (set + REMOVE) applied after the base+parent env merge.
 ///   4. `supportsRemoteApproval()` informational — only Claude has
 ///      a hook protocol; Codex/Gemini handle approvals inline in
 ///      the TUI. The iOS picker may use this to surface a "this
 ///      session can't be remote-approved" hint.
+/// A set/remove patch applied to the spawned child's environment AFTER the manager's
+/// base env and the parent (launchd) env are merged. `remove` is essential: a plain
+/// dictionary merge cannot DELETE an inherited variable, and forcing Codex onto the
+/// ChatGPT plan requires deleting any inherited `OPENAI_API_KEY`.
+public struct ProviderEnvPatch: Sendable, Equatable {
+    public var set: [String: String]
+    public var remove: Set<String>
+    public init(set: [String: String] = [:], remove: Set<String> = []) {
+        self.set = set
+        self.remove = remove
+    }
+    public static let none = ProviderEnvPatch()
+}
+
 public protocol ProviderSpawner: Sendable {
     /// Canonical lower-case provider name, e.g. `"claude"`. Used as
     /// the registry key.
@@ -47,10 +61,12 @@ public protocol ProviderSpawner: Sendable {
     /// it to inject the structured-approval hook via `--settings`.
     func argv(extraEnv: [String: String], helperArgv0: String?) -> [String]
 
-    /// Provider-specific env additions beyond what the manager
-    /// already injects (`CLI_PULSE_LOCAL_HOOK_TOKEN`, etc.).
-    /// Default is empty — most providers don't need anything.
-    func envOverrides(extraEnv: [String: String]) -> [String: String]
+    /// Provider-specific env mutations applied AFTER the manager's base env and the
+    /// parent (launchd) env are merged: `set` overlays keys, `remove` DELETES inherited
+    /// keys. `resolvedHome` is the getpwuid home (nil if unresolvable/root). Default:
+    /// no change. (Codex pins `CODEX_HOME` + removes `OPENAI_API_KEY`; Claude/Gemini
+    /// don't need it.)
+    func envPatch(extraEnv: [String: String], resolvedHome: String?) -> ProviderEnvPatch
 
     /// Does this provider's session route approvals through the
     /// helper's `kind='approval'` hook protocol? True for Claude
@@ -60,7 +76,7 @@ public protocol ProviderSpawner: Sendable {
 }
 
 public extension ProviderSpawner {
-    func envOverrides(extraEnv: [String: String]) -> [String: String] { [:] }
+    func envPatch(extraEnv: [String: String], resolvedHome: String?) -> ProviderEnvPatch { .none }
 
     /// Resolve the binary's argv0 from `CLI_PULSE_<NAME>_ARGV0` env
     /// (if set, whitespace-tokenized so multi-token argv0 like
@@ -91,9 +107,13 @@ public extension ProviderSpawner {
     }
 
     /// $PATH lookup. Public for tests; production callers use
-    /// `defaultIsAvailable()`.
+    /// `defaultIsAvailable()`. Searches the AUGMENTED PATH (launchd PATH + Homebrew /
+    /// local bin dirs) so the picker doesn't gray out a `claude`/`codex`/`agy` that
+    /// lives in `/opt/homebrew/bin` outside the sparse launchd PATH — the same PATH
+    /// the spawned child gets (see `HelperEnvironment`/`PtyTransport.buildChildEnv`).
     static func findOnPath(_ name: String) -> String? {
-        let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        let base = ProcessInfo.processInfo.environment["PATH"]
+        let path = HelperEnvironment.augmentedPATH(base: base, home: HelperEnvironment.resolvedUserHome())
         for dir in path.split(separator: ":") {
             let candidate = "\(dir)/\(name)"
             if FileManager.default.isExecutableFile(atPath: candidate) {

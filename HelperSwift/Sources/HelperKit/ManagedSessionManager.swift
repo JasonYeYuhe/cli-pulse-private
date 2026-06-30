@@ -250,6 +250,15 @@ public final class ManagedSessionManager: @unchecked Sendable {
                 .appendingPathComponent("clipulse-helper.sock").path
         }
 
+        // v1.35: per-provider env patch (set + REMOVE). Lets a spawner pin a config
+        // dir (Codex `CODEX_HOME`) and DELETE an inherited var (scrub `OPENAI_API_KEY`
+        // so managed Codex can't silently fall back to the pay-per-token API). The
+        // `set` overlays here; `remove` is applied by PtyTransport AFTER it merges the
+        // parent (launchd) env — a dict merge alone can't delete an inherited key.
+        let resolvedHome = HelperEnvironment.resolvedUserHome()
+        let envPatch = spawner.envPatch(extraEnv: extraEnv, resolvedHome: resolvedHome)
+        for (k, v) in envPatch.set { env[k] = v }
+
         // Run managed `claude` on the user's subscription (e.g. Max) instead of
         // "Claude API": inject the OAuth access token over an inherited fd
         // (leak-safe — not in the env / tool subprocs / `ps eww`). Best-effort;
@@ -264,7 +273,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
         do {
             handle = try transport.start(
                 sessionId: sessionId, argv: argv, env: env, cwd: cwd,
-                inheritedFD: inheritedFD
+                inheritedFD: inheritedFD, envRemove: envPatch.remove
             )
         } catch {
             // Roll back the registry register so we don't keep a
