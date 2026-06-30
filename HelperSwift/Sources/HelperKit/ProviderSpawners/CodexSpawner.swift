@@ -20,4 +20,53 @@ public struct CodexSpawner: ProviderSpawner {
         defaultArgv0()
     }
     public func supportsRemoteApproval() -> Bool { false }
+
+    /// v1.35: make a managed Codex session run on the user's CHATGPT PLAN, not the
+    /// pay-per-token API. Codex is file-driven — it reads `~/.codex/auth.json`, honors
+    /// `CODEX_HOME`, and self-refreshes its own token on launch — so we don't inject a
+    /// token. We:
+    ///   - pin `CODEX_HOME=<home>/.codex` so codex reads the right dir even when a
+    ///     launchd `HOME` drifted; and
+    ///   - DELETE any inherited `OPENAI_API_KEY` so codex can't silently fall back to the
+    ///     billed API — but ONLY when the user has a VERIFIED ChatGPT login
+    ///     (`auth_mode=="chatgpt"` + a non-empty access/refresh token). For an api-key
+    ///     user (`auth_mode=="apikey"`) or a missing/unreadable auth.json we DON'T scrub,
+    ///     leaving their own auth intact (no worse than today).
+    public func envPatch(extraEnv: [String: String], resolvedHome: String?) -> ProviderEnvPatch {
+        var patch = ProviderEnvPatch()
+        if let home = resolvedHome {
+            patch.set["CODEX_HOME"] = "\(home)/.codex"
+        }
+        if Self.hasVerifiedChatGPTAuth(home: resolvedHome) {
+            patch.remove.insert("OPENAI_API_KEY")
+        }
+        return patch
+    }
+
+    /// True iff `~/.codex/auth.json` is a verified ChatGPT-plan login: `auth_mode ==
+    /// "chatgpt"` AND a non-empty `tokens.access_token` or `tokens.refresh_token`.
+    /// `fileLoader` is injectable for tests.
+    static func hasVerifiedChatGPTAuth(
+        home: String?,
+        fileLoader: ((URL) -> Data?)? = nil
+    ) -> Bool {
+        let url: URL = {
+            if let home, home.hasPrefix("/") {
+                return URL(fileURLWithPath: home).appendingPathComponent(".codex/auth.json")
+            }
+            return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/auth.json")
+        }()
+        let load = fileLoader ?? { try? Data(contentsOf: $0) }
+        guard let data = load(url),
+              let outer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return false }
+        guard (outer["auth_mode"] as? String)?.lowercased() == "chatgpt" else { return false }
+        // Reuse CodexQuotaFetcher's flat/nested tokens.access_token reader.
+        if CodexQuotaFetcher.extractAccessToken(from: outer) != nil { return true }
+        if let tokens = outer["tokens"] as? [String: Any],
+           let refresh = tokens["refresh_token"] as? String, !refresh.isEmpty {
+            return true
+        }
+        return false
+    }
 }
