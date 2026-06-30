@@ -106,6 +106,23 @@ final class SessionDetectorTests: XCTestCase {
         XCTAssertEqual(SessionDetector.detectProvider("/Applications/Cursor.app/Contents/MacOS/Cursor")?.provider, "Cursor")
     }
 
+    func testDetectProvider_agyClassifiesAsGemini() {
+        // CLI Pulse spawns `agy` as the managed Gemini-on-plan wrapper; without the
+        // `\bagy\b` pattern these sessions were invisible to the system/Swarm scan.
+        XCTAssertEqual(SessionDetector.detectProvider("/opt/homebrew/bin/agy")?.provider, "Gemini")
+        XCTAssertEqual(
+            SessionDetector.detectProvider("/opt/homebrew/bin/agy --dangerously-skip-permissions")?.provider,
+            "Gemini")
+    }
+
+    func testDetectProvider_antigravityStillClassifiesAsAntigravity() {
+        // Regression guard for the first-match ordering: an explicit "antigravity"
+        // reference must NOT be swallowed by the new `agy` Gemini pattern.
+        XCTAssertEqual(
+            SessionDetector.detectProvider("/Applications/Antigravity.app/Contents/MacOS/antigravity")?.provider,
+            "Antigravity")
+    }
+
     // MARK: - shouldIgnoreCommand
 
     func testShouldIgnoreCommand_codexHelper() {

@@ -29,6 +29,14 @@ public struct SessionDetector: Sendable {
         ("OpenCode", #"\bopencode\b"#, "high"),
         ("Droid", #"\bdroid\b"#, "low"),
         ("Antigravity", #"\bantigravity\b"#, "high"),
+        // `agy` is the Antigravity CLI that CLI Pulse spawns as the managed
+        // Gemini-on-plan wrapper (GeminiSpawner). Without this, every managed
+        // Gemini session (process `.../agy`, no "gemini" substring) is invisible
+        // to the system-wide session/Swarm scan. Placed AFTER the explicit
+        // "antigravity" pattern (first-match-wins) so a full Antigravity reference
+        // still classifies as Antigravity, while the bare `agy` binary classifies
+        // as Gemini (the provider the user selected).
+        ("Gemini", #"\bagy\b"#, "high"),
         ("Copilot", #"\bcopilot\b|\bgithub.copilot\b"#, "high"),
         ("z.ai", #"\bz\.ai\b|\bzai\b"#, "high"),
         ("MiniMax", #"\bminimax\b"#, "high"),
