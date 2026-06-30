@@ -127,10 +127,22 @@ final class SubscriptionTierResolutionTests: XCTestCase {
         let mgr = SubscriptionManager()
         // No apiClient assignment — simulates the race.
         await mgr.updateCurrentEntitlements()
+        #if DEVID_BUILD
+        // DEVID Beta channel intentionally short-circuits to a LOCAL Pro-Lifetime grant
+        // (v1.19 SR1, SubscriptionManager.updateCurrentEntitlements) BEFORE the apiClient
+        // check — DEVID DMG users have no MAS receipt and are positioned as a power-user
+        // beta tier. It's LOCAL-ONLY (server endpoints still reject the beta channel), so
+        // it does not silently unlock paid server resources. The apiClient-race path
+        // (#else) is therefore unreachable on DEVID.
+        XCTAssertEqual(mgr.tierResolutionState, .resolvedConfirmed)
+        XCTAssertEqual(mgr.lastTierRefreshSource, "devid-beta-channel")
+        XCTAssertNil(mgr.lastTierRefreshError)
+        #else
         XCTAssertEqual(mgr.tierResolutionState, .resolvedDegraded,
                        "missing apiClient must NOT silently produce confirmed-free")
         XCTAssertEqual(mgr.lastTierRefreshError, .noApiClient)
         XCTAssertEqual(mgr.lastTierRefreshSource, "local-only-fallback")
+        #endif
     }
 
     // MARK: - Diagnostic field semantics

@@ -131,21 +131,17 @@ jobs:
         # the total wall time is still under 2 min.
         run: swift test
 
-      - name: Swift test (DEVID_BUILD updater path)
+      - name: Swift test (DEVID_BUILD full suite)
         working-directory: CLI Pulse Bar/CLIPulseCore
         env:
           CLI_PULSE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY || 'ci-stub-anon-key' }}
-        # Trust Hardening v2 (2026-06-30): AppUpdater + UpdateVerifier compile ONLY
-        # under DEVID_BUILD, so the default `swift test` above never compiles them —
-        # a self-updater RCE-relevant path could silently rot. This step compiles the
-        # whole package under DEVID_BUILD (failing CI on any verifier compile-rot) and
-        # runs the updater unit tests. Filtered to the updater suites on purpose: a
-        # full DEVID test run also trips a PRE-EXISTING, unrelated DEVID-only
-        # divergence in SubscriptionTierResolutionTests (devid-beta-channel resolves a
-        # confirmed tier without an apiClient) — tracked separately, not this change.
-        # The real notarized-DMG verification (no-false-reject) runs in the published
-        # -artifact gate in devid-dmg.yml.
-        run: swift test -Xswiftc -DDEVID_BUILD --filter UpdateVerifierTests --filter AppUpdaterTests
+        # AppUpdater + UpdateVerifier (and the DEVID SubscriptionManager short-circuit)
+        # compile ONLY under DEVID_BUILD, so the default `swift test` above never
+        # exercises them — a DEVID-only divergence or compile-rot could ship silently.
+        # Run the FULL suite under DEVID_BUILD now that SubscriptionTierResolutionTests is
+        # DEVID-aware (was the one pre-existing divergence the old filter dodged). This
+        # catches the whole class of DEVID-only regressions, not just the updater path.
+        run: swift test -Xswiftc -DDEVID_BUILD
 
   build-apps:
     name: Build ${{ matrix.scheme }}
