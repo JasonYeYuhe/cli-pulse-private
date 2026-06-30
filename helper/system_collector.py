@@ -62,6 +62,11 @@ PROCESS_PATTERNS: list[tuple[str, str, str]] = [
     ("OpenCode", r"\bopencode\b", "high"),
     ("Droid", r"\bdroid\b", "low"),
     ("Antigravity", r"\bantigravity\b", "high"),
+    # `agy` is the Antigravity CLI CLI Pulse spawns as the managed Gemini-on-plan
+    # wrapper; placed after "antigravity" (first-match-wins) so a full Antigravity
+    # reference stays Antigravity while a bare `agy` binary classifies as Gemini.
+    # 1:1 with SessionDetector.swift providerPatterns.
+    ("Gemini", r"\bagy\b", "high"),
     ("Copilot", r"\bcopilot\b|\bgithub.copilot\b", "high"),
     ("z.ai", r"\bz\.ai\b|\bzai\b", "high"),
     ("MiniMax", r"\bminimax\b", "high"),
