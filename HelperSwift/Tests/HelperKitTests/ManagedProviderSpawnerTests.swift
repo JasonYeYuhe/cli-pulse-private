@@ -81,8 +81,38 @@ final class ManagedProviderSpawnerTests: XCTestCase {
         XCTAssertEqual(patch.set["CODEX_HOME"], "/Users/x/.codex")
     }
 
-    func test_codex_envPatch_nilHomeNoPin() {
+    func test_codex_envPatch_nilHome_noPinAndNoScrub() {
+        // Consistency: an unresolvable home must yield NEITHER a CODEX_HOME pin NOR an
+        // OPENAI_API_KEY scrub. (Before the guard, a nil home still scrubbed via
+        // hasVerifiedChatGPTAuth's homeDirectoryForCurrentUser fallback when the real
+        // ~/.codex/auth.json was chatgpt — pinning and scrubbing off DIFFERENT homes.)
         let patch = CodexSpawner().envPatch(extraEnv: [:], resolvedHome: nil)
-        XCTAssertNil(patch.set["CODEX_HOME"])
+        XCTAssertEqual(patch, .none)
+    }
+
+    // MARK: - Manager composition (proves startSession DERIVES + FORWARDS the patch)
+
+    /// Stub spawner returning a fixed patch, to test the manager's derivation glue in
+    /// isolation from any real auth file.
+    private struct StubPatchSpawner: ProviderSpawner {
+        let name = "stub"
+        let patch: ProviderEnvPatch
+        func isAvailable() -> Bool { true }
+        func argv(extraEnv: [String: String], helperArgv0: String?) -> [String] { ["stub"] }
+        func supportsRemoteApproval() -> Bool { false }
+        func envPatch(extraEnv: [String: String], resolvedHome: String?) -> ProviderEnvPatch { patch }
+    }
+
+    func test_manager_applyProviderEnvPatch_mergesSetAndForwardsRemove() {
+        let spawner = StubPatchSpawner(
+            patch: ProviderEnvPatch(set: ["CODEX_HOME": "/x/.codex"], remove: ["OPENAI_API_KEY"]))
+        let result = ManagedSessionManager.applyProviderEnvPatch(
+            spawner, env: ["OPENAI_API_KEY": "sk-leak", "A": "1"], extraEnv: [:], resolvedHome: "/x")
+        XCTAssertEqual(result.env["CODEX_HOME"], "/x/.codex", "set must be merged into env")
+        XCTAssertEqual(result.env["A"], "1", "base env preserved")
+        XCTAssertEqual(result.remove, ["OPENAI_API_KEY"], "remove must be FORWARDED to the transport")
+        // The manager forwards `remove` to PtyTransport.buildChildEnv (which deletes it);
+        // applyProviderEnvPatch itself only merges `set`, so the key is still present here.
+        XCTAssertEqual(result.env["OPENAI_API_KEY"], "sk-leak")
     }
 }

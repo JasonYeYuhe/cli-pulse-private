@@ -152,6 +152,23 @@ public final class ManagedSessionManager: @unchecked Sendable {
         providerRegistry.availableProviderNames()
     }
 
+    /// Derive the spawn env from a provider's `envPatch`: overlay `set` onto `env` and
+    /// return the keys to `remove` (which PtyTransport deletes AFTER merging the parent
+    /// env). Extracted as a pure static so the manager's patch-derivation glue — not just
+    /// the spawner's patch in isolation — is unit-tested (e.g. that a Codex spawn forwards
+    /// the OPENAI_API_KEY removal to the transport). See ManagedEnvSeamTests.
+    static func applyProviderEnvPatch(
+        _ spawner: ProviderSpawner,
+        env: [String: String],
+        extraEnv: [String: String],
+        resolvedHome: String?
+    ) -> (env: [String: String], remove: Set<String>) {
+        var env = env
+        let patch = spawner.envPatch(extraEnv: extraEnv, resolvedHome: resolvedHome)
+        for (k, v) in patch.set { env[k] = v }
+        return (env, patch.remove)
+    }
+
     /// Build the inline JSON Claude Code's `--settings` flag
     /// accepts, populated with our PermissionRequest hook entry
     /// pointing at `helperPath`. Returns nil only if JSON
@@ -256,8 +273,9 @@ public final class ManagedSessionManager: @unchecked Sendable {
         // `set` overlays here; `remove` is applied by PtyTransport AFTER it merges the
         // parent (launchd) env — a dict merge alone can't delete an inherited key.
         let resolvedHome = HelperEnvironment.resolvedUserHome()
-        let envPatch = spawner.envPatch(extraEnv: extraEnv, resolvedHome: resolvedHome)
-        for (k, v) in envPatch.set { env[k] = v }
+        let patched = Self.applyProviderEnvPatch(
+            spawner, env: env, extraEnv: extraEnv, resolvedHome: resolvedHome)
+        env = patched.env
 
         // Run managed `claude` on the user's subscription (e.g. Max) instead of
         // "Claude API": inject the OAuth access token over an inherited fd
@@ -273,7 +291,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
         do {
             handle = try transport.start(
                 sessionId: sessionId, argv: argv, env: env, cwd: cwd,
-                inheritedFD: inheritedFD, envRemove: envPatch.remove
+                inheritedFD: inheritedFD, envRemove: patched.remove
             )
         } catch {
             // Roll back the registry register so we don't keep a

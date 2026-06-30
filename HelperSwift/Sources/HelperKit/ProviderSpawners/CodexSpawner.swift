@@ -34,10 +34,13 @@ public struct CodexSpawner: ProviderSpawner {
     ///     leaving their own auth intact (no worse than today).
     public func envPatch(extraEnv: [String: String], resolvedHome: String?) -> ProviderEnvPatch {
         var patch = ProviderEnvPatch()
-        if let home = resolvedHome {
-            patch.set["CODEX_HOME"] = "\(home)/.codex"
-        }
-        if Self.hasVerifiedChatGPTAuth(home: resolvedHome) {
+        // If the home can't be resolved, do NOTHING — neither pin CODEX_HOME nor scrub.
+        // Scrubbing while skipping the pin would be self-inconsistent (and would key the
+        // auth check off a DIFFERENT home than the pin via hasVerifiedChatGPTAuth's
+        // fallback). Honor the documented invariant: unresolvable home => no pin, no scrub.
+        guard let home = resolvedHome else { return patch }
+        patch.set["CODEX_HOME"] = "\(home)/.codex"
+        if Self.hasVerifiedChatGPTAuth(home: home) {
             patch.remove.insert("OPENAI_API_KEY")
         }
         return patch
