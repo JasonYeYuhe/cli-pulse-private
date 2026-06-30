@@ -152,6 +152,13 @@ public final class ManagedSessionManager: @unchecked Sendable {
         providerRegistry.availableProviderNames()
     }
 
+    /// Per-provider plan-auth status ("on_plan"/"off_plan") for the hello reply's
+    /// `provider_plan_status`, so the picker can warn before silently launching an
+    /// off-plan (billed) managed session. Keyed off the same getpwuid home used at spawn.
+    public func providerPlanStatus() -> [String: String] {
+        providerRegistry.planAuthStatuses(resolvedHome: HelperEnvironment.resolvedUserHome())
+    }
+
     /// Derive the spawn env from a provider's `envPatch`: overlay `set` onto `env` and
     /// return the keys to `remove` (which PtyTransport deletes AFTER merging the parent
     /// env). Extracted as a pure static so the manager's patch-derivation glue — not just

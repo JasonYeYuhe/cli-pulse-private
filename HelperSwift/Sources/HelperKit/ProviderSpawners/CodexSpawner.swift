@@ -72,4 +72,13 @@ public struct CodexSpawner: ProviderSpawner {
         }
         return false
     }
+
+    /// "on_plan" when a verified ChatGPT login exists (the scrub fires → runs on the
+    /// plan); "off_plan" when an api-key/other login means codex would bill the API;
+    /// "unknown" when the home is unresolvable. Lets the picker warn before silently
+    /// launching a billed session.
+    public func planAuthStatus(resolvedHome: String?) -> String {
+        guard resolvedHome != nil else { return "unknown" }
+        return Self.hasVerifiedChatGPTAuth(home: resolvedHome) ? "on_plan" : "off_plan"
+    }
 }

@@ -32,6 +32,14 @@ public struct GeminiSpawner: ProviderSpawner {
 
     public func supportsRemoteApproval() -> Bool { false }
 
+    /// "on_plan" when `agy` is resolvable (managed Gemini runs on the user's Gemini plan
+    /// via agy's OAuth); "unknown" otherwise (no agy ⇒ managed Gemini is unavailable, so
+    /// don't emit a false off-plan warning). Never "off_plan" — we don't fall back to a
+    /// billed path.
+    public func planAuthStatus(resolvedHome: String?) -> String {
+        Self.resolveAgyArgv0() != nil ? "on_plan" : "unknown"
+    }
+
     // MARK: - Pure helpers (testable)
 
     /// Decide the final argv. Default is bare interactive `agy`. When YOLO is requested,

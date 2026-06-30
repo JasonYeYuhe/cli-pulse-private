@@ -85,6 +85,7 @@ extension AppState {
             self.localCapabilities = hello.capabilities
             self.localProtocolVersion = hello.protocolVersion
             self.localProviderAvailability = hello.providerAvailability
+            self.localProviderPlanStatus = hello.providerPlanStatus
             // v1.34 R1d: record the SOCKET OWNER's version for the
             // Claude-on-Max safety gate (`localHelperBelowOAuthFloor`).
             self.localHelperVersion = hello.helperVersion

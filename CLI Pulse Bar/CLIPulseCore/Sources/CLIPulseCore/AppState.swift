@@ -416,6 +416,12 @@ public final class AppState: ObservableObject {
     /// rolling-out helper aren't blocked from spawning Claude.
     @Published public var localProviderAvailability: [String] = []
 
+    /// Per-provider plan-auth status ("on_plan"/"off_plan") from the helper's hello reply.
+    /// A provider absent here (older helper, or status "unknown") ⇒ no warning. The spawn
+    /// picker reads this to warn before launching an off-plan (billed) managed session
+    /// (e.g. Codex with an api-key login that would bill the OpenAI API, not the plan).
+    @Published public var localProviderPlanStatus: [String: String] = [:]
+
     /// v1.34 R1d: the semantic version of the helper that currently OWNS the
     /// managed-session socket, from the `hello` reply (`helper_version`). Empty
     /// when unreachable, or when an ancient helper omits the field. Drives

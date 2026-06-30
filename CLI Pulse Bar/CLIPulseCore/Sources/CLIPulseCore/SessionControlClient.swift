@@ -126,6 +126,10 @@ public struct SessionControlHello: Sendable, Equatable {
     /// installed and answering hello but has no config yet → the UI can show
     /// "installed — pair to activate" instead of a misleading "not installed".
     public let paired: Bool?
+    /// Per-provider plan-auth status ("on_plan"/"off_plan") so the picker can warn before
+    /// silently launching an off-plan (billed) managed session (e.g. Codex with an api-key
+    /// login). Absent providers / older helpers ⇒ no entry ⇒ no warning (treat unknown).
+    public let providerPlanStatus: [String: String]
 
     public init(
         protocolVersion: Int,
@@ -133,7 +137,8 @@ public struct SessionControlHello: Sendable, Equatable {
         capabilities: SessionControlCapabilities,
         providerAvailability: [String] = [],
         helperVersion: String = "",
-        paired: Bool? = nil
+        paired: Bool? = nil,
+        providerPlanStatus: [String: String] = [:]
     ) {
         self.protocolVersion = protocolVersion
         self.supportedMethods = supportedMethods
@@ -141,6 +146,7 @@ public struct SessionControlHello: Sendable, Equatable {
         self.providerAvailability = providerAvailability
         self.helperVersion = helperVersion
         self.paired = paired
+        self.providerPlanStatus = providerPlanStatus
     }
 }
 
