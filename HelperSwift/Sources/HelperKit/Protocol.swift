@@ -27,7 +27,7 @@ public let kProtocolVersion: Int = 1
 /// ancient one. Kept on the SAME version line as the Python helper
 /// (`helper/system_collector.py:HELPER_VERSION`) so the app's single
 /// floor comparison works for whichever helper owns the socket.
-public let kHelperVersion: String = "1.22.0"
+public let kHelperVersion: String = "1.23.0"
 
 /// Methods this revision of the helper advertises in `hello`. Must
 /// match `helper/local_session_server.py:SUPPORTED_METHODS`
