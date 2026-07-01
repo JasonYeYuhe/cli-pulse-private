@@ -55,6 +55,11 @@ data class ManagedSessionsUiState(
     fun supportsProvider(provider: String): Boolean =
         targetDevice?.supportsManagedSessionProvider(provider) == true
 
+    /** v0.60: warn (don't block) when a managed session for [provider] on the
+     *  target Mac would run off-plan (billed via API) — mirrors macOS/iOS. */
+    fun isProviderOffPlan(provider: String): Boolean =
+        targetDevice?.isProviderOffPlan(provider) == true
+
     /**
      * Device name to show in the "upgrade your helper" hint, or null when
      * the target Mac already supports multi-CLI managed sessions (or there

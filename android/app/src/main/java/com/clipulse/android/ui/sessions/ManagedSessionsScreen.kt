@@ -125,14 +125,23 @@ private fun ManagedSessionsHeader(
             DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                 MANAGED_PROVIDERS.forEach { provider ->
                     val kind = managedProviderKind(provider)
+                    // v0.60: warn (don't block) when this provider would run
+                    // off-plan (billed via API) on the target Mac — mirrors macOS/iOS.
+                    val offPlan = state.isProviderOffPlan(provider)
                     DropdownMenuItem(
-                        text = { Text(managedProviderDisplayName(provider)) },
+                        text = {
+                            Text(
+                                if (offPlan) "${managedProviderDisplayName(provider)} — OpenAI API (billed, not your plan)"
+                                else managedProviderDisplayName(provider)
+                            )
+                        },
                         leadingIcon = {
                             Icon(
-                                kind?.icon ?: Icons.Default.Terminal,
+                                if (offPlan) Icons.Default.Warning else (kind?.icon ?: Icons.Default.Terminal),
                                 contentDescription = null,
-                                tint = kind?.let { providerColor(it) }
-                                    ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (offPlan) MaterialTheme.colorScheme.error
+                                    else kind?.let { providerColor(it) }
+                                        ?: MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         },
                         enabled = state.supportsProvider(provider),

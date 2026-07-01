@@ -108,16 +108,22 @@ end;
 $$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
 
 -- Helper heartbeat — requires device secret
+-- v0.60: optional p_provider_plan_status carries the per-provider managed-session
+-- plan map ({"codex":"off_plan",...}); defaults NULL so pre-v0.60 callers that omit
+-- it never clobber the stored value (coalesce preserves last-known). Payload is
+-- normalized server-side (only on_plan/off_plan string values, short keys, bounded).
 create or replace function public.helper_heartbeat(
   p_device_id uuid,
   p_helper_secret text,
   p_cpu_usage integer default 0,
   p_memory_usage integer default 0,
-  p_active_session_count integer default 0
+  p_active_session_count integer default 0,
+  p_provider_plan_status jsonb default null
 )
 returns jsonb as $$
 declare
   v_user_id uuid;
+  v_plan jsonb;
 begin
   -- Authenticate via device secret (compare SHA-256 hash)
   select user_id into v_user_id
@@ -127,14 +133,30 @@ begin
     raise exception 'Device not found or unauthorized';
   end if;
 
+  -- Normalize the optional plan map: NULL / non-object => leave stored value
+  -- untouched; valid object => keep only on_plan/off_plan entries (bounded).
+  v_plan := null;
+  if p_provider_plan_status is not null and jsonb_typeof(p_provider_plan_status) = 'object' then
+    select coalesce(jsonb_object_agg(k, v), '{}'::jsonb) into v_plan
+    from (
+      select key as k, value as v
+      from jsonb_each_text(p_provider_plan_status)
+      where value in ('on_plan', 'off_plan') and char_length(key) <= 32
+      order by key
+      limit 24
+    ) s;
+  end if;
+
   update public.devices set
     status = 'Online', cpu_usage = p_cpu_usage,
-    memory_usage = p_memory_usage, last_seen_at = now()
+    memory_usage = p_memory_usage, last_seen_at = now(),
+    provider_plan_status = coalesce(v_plan, provider_plan_status)
   where id = p_device_id;
 
   return jsonb_build_object('status', 'ok');
 end;
 $$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
+grant execute on function public.helper_heartbeat(uuid, text, integer, integer, integer, jsonb) to anon, authenticated;
 
 -- Helper sync — upsert sessions, alerts, provider quotas
 -- Requires device secret for authentication

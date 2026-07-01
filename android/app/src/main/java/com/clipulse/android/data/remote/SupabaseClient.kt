@@ -281,8 +281,23 @@ class SupabaseClient(
                 currentSessionCount = 0,
                 cpuUsage = r.optIntOrNull("cpu_usage"),
                 memoryUsage = r.optIntOrNull("memory_usage"),
+                providerPlanStatus = parseProviderPlanStatus(r.optJSONObject("provider_plan_status")),
             )
         }
+    }
+
+    // v0.60: defensively parse the provider_plan_status jsonb into a map, keeping
+    // ONLY string values in on_plan/off_plan (ignore arrays/scalars/bad values).
+    private fun parseProviderPlanStatus(obj: org.json.JSONObject?): Map<String, String> {
+        if (obj == null) return emptyMap()
+        val out = LinkedHashMap<String, String>()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            val v = obj.optString(k)
+            if (v == "on_plan" || v == "off_plan") out[k] = v
+        }
+        return out
     }
 
     // ── Swarm View (v1.22 P0 S5 / backend v0.48) ─────────

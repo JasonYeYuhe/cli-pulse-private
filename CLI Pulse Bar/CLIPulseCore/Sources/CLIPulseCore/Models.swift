@@ -690,6 +690,11 @@ public struct DeviceRecord: Codable, Identifiable, Sendable {
     public let current_session_count: Int
     public let cpu_usage: Int?
     public let memory_usage: Int?
+    /// v0.60: per-provider managed-session plan status ({"codex":"off_plan",…}),
+    /// published by this device's helper heartbeat. Values are "on_plan"/"off_plan";
+    /// a provider is ABSENT when unknown. Used to warn (mirroring the macOS picker)
+    /// before starting an off-plan (billed) managed session on this device.
+    public let providerPlanStatus: [String: String]
 
     public var deviceStatus: DeviceStatus? {
         DeviceStatus(rawValue: status)
@@ -698,7 +703,8 @@ public struct DeviceRecord: Codable, Identifiable, Sendable {
     public init(
         id: String, name: String, type: String, system: String,
         status: String, last_sync_at: String?, helper_version: String,
-        current_session_count: Int, cpu_usage: Int?, memory_usage: Int?
+        current_session_count: Int, cpu_usage: Int?, memory_usage: Int?,
+        providerPlanStatus: [String: String] = [:]
     ) {
         self.id = id
         self.name = name
@@ -710,6 +716,36 @@ public struct DeviceRecord: Codable, Identifiable, Sendable {
         self.current_session_count = current_session_count
         self.cpu_usage = cpu_usage
         self.memory_usage = memory_usage
+        self.providerPlanStatus = providerPlanStatus
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, type, system, status, last_sync_at, helper_version
+        case current_session_count, cpu_usage, memory_usage, providerPlanStatus
+    }
+
+    // Defensive decode: `providerPlanStatus` decodeIfPresent (default [:]) so any
+    // older/foreign persisted DeviceRecord JSON lacking the key still decodes.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        type = try c.decode(String.self, forKey: .type)
+        system = try c.decode(String.self, forKey: .system)
+        status = try c.decode(String.self, forKey: .status)
+        last_sync_at = try c.decodeIfPresent(String.self, forKey: .last_sync_at)
+        helper_version = try c.decode(String.self, forKey: .helper_version)
+        current_session_count = try c.decode(Int.self, forKey: .current_session_count)
+        cpu_usage = try c.decodeIfPresent(Int.self, forKey: .cpu_usage)
+        memory_usage = try c.decodeIfPresent(Int.self, forKey: .memory_usage)
+        providerPlanStatus = try c.decodeIfPresent([String: String].self, forKey: .providerPlanStatus) ?? [:]
+    }
+
+    /// True when a managed session for `provider` on this device would run
+    /// OFF-plan (billed via the provider's API) rather than the user's plan —
+    /// mirrors the macOS picker warning. Absent/unknown/on_plan => false.
+    public func isProviderOffPlan(_ provider: String) -> Bool {
+        providerPlanStatus[provider] == "off_plan"
     }
 }
 

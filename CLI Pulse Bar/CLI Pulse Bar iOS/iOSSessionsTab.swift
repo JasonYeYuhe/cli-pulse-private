@@ -142,7 +142,9 @@ struct iOSSessionsTab: View {
                         Button {
                             Task { await openManagedClaudeSession(provider: "codex") }
                         } label: {
-                            Label("Codex", systemImage: "chevron.left.slash.chevron.right")
+                            Label(
+                                codexOffPlan ? "Codex — OpenAI API (billed, not your plan)" : "Codex",
+                                systemImage: codexOffPlan ? "exclamationmark.triangle" : "chevron.left.slash.chevron.right")
                         }
                         .disabled(!canStartManagedProvider("codex"))
                         Button {
@@ -428,7 +430,9 @@ struct iOSSessionsTab: View {
                         Button {
                             Task { await openManagedClaudeSession(provider: "codex") }
                         } label: {
-                            Label("Codex", systemImage: "chevron.left.slash.chevron.right")
+                            Label(
+                                codexOffPlan ? "Codex — OpenAI API (billed, not your plan)" : "Codex",
+                                systemImage: codexOffPlan ? "exclamationmark.triangle" : "chevron.left.slash.chevron.right")
                         }
                         .disabled(!canStartManagedProvider("codex"))
                         Button {
@@ -470,6 +474,14 @@ struct iOSSessionsTab: View {
                 return lt > rt
             }
             .first
+    }
+
+    /// v0.60: warn (don't block) when a managed Codex session on the target Mac
+    /// would run on the billed OpenAI API instead of the user's ChatGPT plan —
+    /// mirrors the macOS picker. Keyed strictly off the target device's reported
+    /// plan status (absent/unknown/on_plan => no warning).
+    private var codexOffPlan: Bool {
+        targetDeviceForStart?.isProviderOffPlan("codex") == true
     }
 
     private func openManagedClaudeSession(provider: String = "claude") async {

@@ -58,19 +58,31 @@ public actor HelperAPIClient {
     }
 
     /// Send a heartbeat with device metrics.
+    ///
+    /// `providerPlanStatus` (v0.60): the per-provider managed-session plan map
+    /// ({"codex":"off_plan",…}) so phones can warn before starting an off-plan
+    /// (billed) managed session. Pass `nil` when it couldn't be determined — the
+    /// param is then OMITTED and the server's `coalesce` preserves the last-known
+    /// value (never clobbers to `{}` on a transient miss). An empty map is sent
+    /// as-is (authoritative "nothing off-plan").
     public func heartbeat(
         config: HelperConfig,
         cpuUsage: Int,
         memoryUsage: Int,
-        activeSessionCount: Int
+        activeSessionCount: Int,
+        providerPlanStatus: [String: String]? = nil
     ) async throws {
-        let _: [String: Any] = try await rpc("helper_heartbeat", params: [
+        var params: [String: Any] = [
             "p_device_id": config.deviceId,
             "p_helper_secret": config.helperSecret,
             "p_cpu_usage": cpuUsage,
             "p_memory_usage": memoryUsage,
             "p_active_session_count": activeSessionCount,
-        ])
+        ]
+        if let providerPlanStatus {
+            params["p_provider_plan_status"] = providerPlanStatus
+        }
+        let _: [String: Any] = try await rpc("helper_heartbeat", params: params)
     }
 
     /// Sync sessions, alerts, and provider quota data.

@@ -301,10 +301,25 @@ class DashboardRepository(
         put("system", d.system); put("status", d.status)
         if (d.lastSyncAt != null) put("lastSyncAt", d.lastSyncAt)
         put("helperVersion", d.helperVersion)
+        // v0.60: round-trip the plan map through the existing JSON blob cache
+        // (no Room schema/version bump needed).
+        if (d.providerPlanStatus.isNotEmpty()) {
+            put("providerPlanStatus", JSONObject(d.providerPlanStatus as Map<*, *>))
+        }
     }.toString()
 
     private fun parseDevice(json: String): DeviceRecord? = try {
         val j = JSONObject(json)
+        val plan = j.optJSONObject("providerPlanStatus")?.let { obj ->
+            val out = LinkedHashMap<String, String>()
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val v = obj.optString(k)
+                if (v == "on_plan" || v == "off_plan") out[k] = v
+            }
+            out
+        } ?: emptyMap()
         DeviceRecord(
             id = j.optString("id"), name = j.optString("name"),
             type = j.optString("type", "macOS"), system = j.optString("system"),
@@ -312,6 +327,7 @@ class DashboardRepository(
             lastSyncAt = j.optString("lastSyncAt").takeIf { it.isNotBlank() },
             helperVersion = j.optString("helperVersion"),
             currentSessionCount = 0,
+            providerPlanStatus = plan,
         )
     } catch (_: Exception) { null }
 
