@@ -76,6 +76,7 @@ class PosixPtyTransport(SessionTransport):
         cwd: str | None = None,
         *,
         pass_fds: tuple[int, ...] = (),
+        env_remove: frozenset[str] = frozenset(),
     ) -> SessionHandle:
         if not argv:
             raise TransportError("argv must not be empty")
@@ -85,6 +86,12 @@ class PosixPtyTransport(SessionTransport):
         full_env = os.environ.copy()
         if env:
             full_env.update(env)
+        # v1.35: scrub keys a spawner asked to DELETE (e.g. Codex's
+        # OPENAI_API_KEY on-plan). Done AFTER the parent merge — that's the
+        # whole point: the var lives in os.environ, so an overlay can't
+        # remove it. Mirrors Swift PtyTransport(envRemove:).
+        for _k in env_remove:
+            full_env.pop(_k, None)
         # Force a sane TERM so Claude Code (which probes capabilities)
         # doesn't degrade to a teletype mode if the helper was launched
         # without one (e.g. from launchd).

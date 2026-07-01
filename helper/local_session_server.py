@@ -808,6 +808,17 @@ class LocalSessionServer:
                 provider_availability = list(available_providers())
             except Exception:  # noqa: BLE001
                 provider_availability = ["claude"]
+            # v1.35: per-provider plan-auth status ("on_plan"/"off_plan")
+            # so the spawn picker can warn before silently launching a
+            # BILLED managed session (e.g. Codex with an api-key login,
+            # not the ChatGPT plan). Omits "unknown" providers. Mirrors
+            # the Swift helper's `provider_plan_status`. Fail-soft — a
+            # stale import must never break the hello handshake.
+            try:
+                from provider_spawners import provider_plan_statuses
+                provider_plan_status = provider_plan_statuses()
+            except Exception:  # noqa: BLE001
+                provider_plan_status = {}
             # v1.16: expose helper_version in the hello reply so the MAS
             # app's HelperInstaller state machine can distinguish
             # "v1.15 nohup helper" from "v1.16 pkg-installed helper" and
@@ -853,6 +864,11 @@ class LocalSessionServer:
                 # ['claude','codex','gemini']). UI uses this to disable
                 # menu items for providers whose binary is missing.
                 "provider_availability": provider_availability,
+                # v1.35: per-provider plan-auth status ("on_plan"/
+                # "off_plan"); omits "unknown". The picker warns before
+                # launching an off-plan (billed) managed session. Mirrors
+                # the Swift helper (LocalSessionServer hello).
+                "provider_plan_status": provider_plan_status,
             }
 
         if method == "ping":

@@ -385,6 +385,25 @@ class RemoteAgentManager:
                 capability_token = None
 
         env = self._build_env(params, capability_token=capability_token)
+        # v1.35: apply the spawner's provider-specific env overrides. This
+        # was never wired before — `env_overrides` existed but nothing
+        # merged it — so Codex's CODEX_HOME pin (and RUST_BACKTRACE) reach
+        # the child only via this line. `env_removals` returns keys the
+        # transport DELETES after the parent-env merge (Codex's on-plan
+        # OPENAI_API_KEY scrub). Mirrors the Swift manager's envPatch glue.
+        # Fail-soft via getattr so the ultra-old legacy claude fallback
+        # spawner (no env_removals) still spawns.
+        try:
+            env.update(spawner.env_overrides(params) or {})
+        except Exception as exc:  # noqa: BLE001 — overrides must not break spawn
+            logger.warning("env_overrides(%s) failed: %s", params.provider, exc)
+        try:
+            env_remove = frozenset(
+                getattr(spawner, "env_removals", lambda _p: set())(params) or ()
+            )
+        except Exception as exc:  # noqa: BLE001 — removals must not break spawn
+            logger.warning("env_removals(%s) failed: %s", params.provider, exc)
+            env_remove = frozenset()
         cwd = params.cwd or None  # POSIX transport interprets None as inherit
 
         # v-next P0-A: resolve + inject a fresh provider auth token. For
@@ -398,6 +417,8 @@ class RemoteAgentManager:
             )
             if auth_fd is not None:
                 start_kwargs["pass_fds"] = (auth_fd,)
+            if env_remove:
+                start_kwargs["env_remove"] = env_remove
             handle = self.transport.start(**start_kwargs)
         except TransportError as exc:
             # Status payload MUST be exactly `'errored'` for the SQL

@@ -129,10 +129,12 @@ class FakeTransport(SessionTransport):
         self.stdin_log: dict[str, list[bytes]] = {}
         self.canned_stdout: dict[str, bytes] = {}
 
-    def start(self, session_id, argv, env=None, cwd=None, *, pass_fds=()):
+    def start(self, session_id, argv, env=None, cwd=None, *,
+              pass_fds=(), env_remove=frozenset()):
         self.calls.append(("start", {"session_id": session_id, "argv": argv,
                                      "env": dict(env or {}), "cwd": cwd,
-                                     "pass_fds": tuple(pass_fds)}))
+                                     "pass_fds": tuple(pass_fds),
+                                     "env_remove": frozenset(env_remove)}))
         self.alive[session_id] = True
         self.stdin_log[session_id] = []
         return SessionHandle(session_id=session_id, payload=FakeHandle())
@@ -552,6 +554,40 @@ def test_no_auth_injection_for_non_claude_provider():
     assert all(_INJECTED_TOKEN not in v for v in env.values())
 
 
+def test_codex_spawn_pins_home_and_scrubs_openai_key_on_plan(monkeypatch):
+    """v1.35 parity: an on-plan Codex spawn (a) applies the spawner's
+    env_overrides — CODEX_HOME + RUST_BACKTRACE — which nothing merged
+    before, and (b) forwards env_remove={OPENAI_API_KEY} to the transport
+    so the child can't fall back to the billed API. Mirrors the Swift
+    manager's envPatch glue."""
+    import provider_spawners.codex as codex_mod
+    monkeypatch.setattr(codex_mod, "resolved_user_home", lambda: "/Users/z")
+    monkeypatch.setattr(
+        codex_mod.CodexSpawner, "has_verified_chatgpt_auth",
+        staticmethod(lambda home, file_loader=None: True),
+    )
+    mgr, transport, _log = _make_manager()
+    start = _spawn_claude_and_get_start(mgr, transport, provider="codex")
+    assert start["env"]["CODEX_HOME"] == "/Users/z/.codex"
+    assert start["env"]["RUST_BACKTRACE"] == "1"
+    assert "OPENAI_API_KEY" in start["env_remove"]
+
+
+def test_codex_spawn_off_plan_does_not_scrub(monkeypatch):
+    """An api-key Codex user is left alone: CODEX_HOME is still pinned but
+    OPENAI_API_KEY is NOT scrubbed (their own auth stays intact)."""
+    import provider_spawners.codex as codex_mod
+    monkeypatch.setattr(codex_mod, "resolved_user_home", lambda: "/Users/z")
+    monkeypatch.setattr(
+        codex_mod.CodexSpawner, "has_verified_chatgpt_auth",
+        staticmethod(lambda home, file_loader=None: False),
+    )
+    mgr, transport, _log = _make_manager()
+    start = _spawn_claude_and_get_start(mgr, transport, provider="codex")
+    assert start["env"]["CODEX_HOME"] == "/Users/z/.codex"
+    assert "OPENAI_API_KEY" not in start["env_remove"]
+
+
 def test_no_auth_injection_when_resolver_returns_none():
     """Resolver present but yields no token (no creds) → spawn proceeds
     with no injection (pre-existing 401 behaviour, not a crash)."""
@@ -745,7 +781,8 @@ def test_spawn_failure_sanitizes_cwd_path_from_info_event():
     from remote_agent import SessionStartParams
 
     class _RaisingTransport(FakeTransport):
-        def start(self, session_id, argv, env=None, cwd=None, *, pass_fds=()):
+        def start(self, session_id, argv, env=None, cwd=None, *,
+                  pass_fds=(), env_remove=frozenset()):
             raise TransportError(
                 f"failed to spawn {argv[0]}: [Errno 2] No such file or directory: '{cwd}'"
             )
@@ -973,7 +1010,8 @@ class _SpawnFailingTransport(FakeTransport):
     """Variant that always raises TransportError on start, to simulate
     a missing `claude` binary or PATH lookup miss."""
 
-    def start(self, session_id, argv, env=None, cwd=None):
+    def start(self, session_id, argv, env=None, cwd=None, *,
+              pass_fds=(), env_remove=frozenset()):
         self.calls.append(("start", {"session_id": session_id, "argv": argv}))
         raise TransportError(f"failed to spawn {argv[0]}: ENOENT")
 

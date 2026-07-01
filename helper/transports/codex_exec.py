@@ -170,6 +170,8 @@ class CodexExecTransport(SessionTransport):
         argv: list[str],
         env: Optional[dict[str, str]] = None,
         cwd: Optional[str] = None,
+        *,
+        env_remove: frozenset[str] = frozenset(),
     ) -> SessionHandle:
         # `argv` from the spawner is `["codex"]` (the interactive form).
         # We ignore it entirely — exec mode has its own argv shape we
@@ -180,6 +182,13 @@ class CodexExecTransport(SessionTransport):
         merged_env = os.environ.copy()
         if env:
             merged_env.update(env)
+        # v1.35: managed Codex runs through THIS transport, so this is the
+        # scrub that actually fires for a Codex session — delete keys the
+        # spawner asked to remove (OPENAI_API_KEY when on-plan) AFTER the
+        # parent merge. Without this the child inherits os.environ's key and
+        # codex bills the API instead of using the ChatGPT plan.
+        for _k in env_remove:
+            merged_env.pop(_k, None)
 
         state = _CodexExecState(
             session_id=session_id,

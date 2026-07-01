@@ -199,15 +199,177 @@ def test_gemini_yolo_compounds_with_argv0_override(monkeypatch):
 # ── env_overrides ───────────────────────────────────────────
 
 
-def test_env_overrides_default_empty():
-    """v1.16 §2.1: only CodexSpawner adds env (RUST_BACKTRACE=1 for
-    panic diagnostics). Claude + Gemini stay empty. Pinned to flag if a
-    future change accidentally adds a leak.
+def test_env_overrides_default_empty(monkeypatch):
+    """v1.16 §2.1: only CodexSpawner adds env. Claude + Gemini stay empty.
+    Pinned to flag if a future change accidentally adds a leak.
+
+    v1.35: Codex also pins CODEX_HOME when a home resolves; force the home
+    unresolvable here to pin the RUST_BACKTRACE-only invariant, then test
+    the CODEX_HOME pin separately below.
     """
     assert ClaudeSpawner().env_overrides(_EMPTY) == {}
     assert GeminiSpawner().env_overrides(_EMPTY) == {}
-    # Codex: RUST_BACKTRACE=1 only; nothing else.
+    monkeypatch.setattr(
+        "provider_spawners.codex.resolved_user_home", lambda: None
+    )
+    # Codex with no resolvable home: RUST_BACKTRACE=1 only, no CODEX_HOME.
     assert CodexSpawner().env_overrides(_EMPTY) == {"RUST_BACKTRACE": "1"}
+
+
+# ── v1.35 Codex on-plan (Swift↔Python parity) ───────────────
+
+# A verified ChatGPT auth.json (auth_mode=chatgpt + a real access token),
+# and an api-key variant that must NOT trigger the scrub.
+_CHATGPT_AUTH = (
+    b'{"auth_mode":"chatgpt","tokens":{"access_token":"tok-abc",'
+    b'"refresh_token":"ref-xyz"},"OPENAI_API_KEY":"sk-in-file"}'
+)
+_APIKEY_AUTH = b'{"auth_mode":"apikey","OPENAI_API_KEY":"sk-live"}'
+
+
+def test_codex_env_overrides_pins_codex_home(monkeypatch):
+    """When a home resolves, Codex pins CODEX_HOME=<home>/.codex so codex
+    reads the on-plan auth.json even if launchd drifted HOME. Mirrors Swift
+    CodexSpawner.envPatch."""
+    monkeypatch.setattr(
+        "provider_spawners.codex.resolved_user_home", lambda: "/Users/z"
+    )
+    env = CodexSpawner().env_overrides(_EMPTY)
+    assert env["RUST_BACKTRACE"] == "1"
+    assert env["CODEX_HOME"] == "/Users/z/.codex"
+
+
+def test_codex_has_verified_chatgpt_auth_true_for_chatgpt_token():
+    assert CodexSpawner.has_verified_chatgpt_auth(
+        "/home/u", file_loader=lambda _p: _CHATGPT_AUTH
+    ) is True
+
+
+def test_codex_has_verified_chatgpt_auth_refresh_only():
+    raw = b'{"auth_mode":"chatgpt","tokens":{"refresh_token":"r"}}'
+    assert CodexSpawner.has_verified_chatgpt_auth(
+        "/home/u", file_loader=lambda _p: raw
+    ) is True
+
+
+def test_codex_has_verified_chatgpt_auth_false_for_apikey():
+    assert CodexSpawner.has_verified_chatgpt_auth(
+        "/home/u", file_loader=lambda _p: _APIKEY_AUTH
+    ) is False
+
+
+def test_codex_has_verified_chatgpt_auth_false_when_missing_or_bad():
+    assert CodexSpawner.has_verified_chatgpt_auth(
+        "/home/u", file_loader=lambda _p: None
+    ) is False
+    assert CodexSpawner.has_verified_chatgpt_auth(
+        "/home/u", file_loader=lambda _p: b"not json"
+    ) is False
+    # chatgpt mode but no tokens at all → not verified.
+    assert CodexSpawner.has_verified_chatgpt_auth(
+        "/home/u", file_loader=lambda _p: b'{"auth_mode":"chatgpt"}'
+    ) is False
+    # No home → never verified (avoids keying off a bad path).
+    assert CodexSpawner.has_verified_chatgpt_auth(None) is False
+
+
+def test_codex_env_removals_scrubs_openai_key_on_plan(monkeypatch):
+    """The whole point: an on-plan Codex spawn scrubs an inherited
+    OPENAI_API_KEY so codex can't fall back to the billed API. Mirrors
+    Swift ProviderEnvPatch.remove."""
+    monkeypatch.setattr(
+        "provider_spawners.codex.resolved_user_home", lambda: "/Users/z"
+    )
+    monkeypatch.setattr(
+        CodexSpawner, "has_verified_chatgpt_auth",
+        staticmethod(lambda home, file_loader=None: True),
+    )
+    assert CodexSpawner().env_removals(_EMPTY) == {"OPENAI_API_KEY"}
+
+
+def test_codex_env_removals_empty_when_off_plan(monkeypatch):
+    monkeypatch.setattr(
+        "provider_spawners.codex.resolved_user_home", lambda: "/Users/z"
+    )
+    monkeypatch.setattr(
+        CodexSpawner, "has_verified_chatgpt_auth",
+        staticmethod(lambda home, file_loader=None: False),
+    )
+    # api-key user: DON'T scrub — leave their own auth intact.
+    assert CodexSpawner().env_removals(_EMPTY) == set()
+
+
+def test_codex_env_removals_empty_when_no_home(monkeypatch):
+    monkeypatch.setattr(
+        "provider_spawners.codex.resolved_user_home", lambda: None
+    )
+    # Unresolvable home ⇒ no pin AND no scrub (documented invariant).
+    assert CodexSpawner().env_removals(_EMPTY) == set()
+    assert "CODEX_HOME" not in CodexSpawner().env_overrides(_EMPTY)
+
+
+def test_codex_plan_auth_status(monkeypatch):
+    monkeypatch.setattr(
+        "provider_spawners.codex.resolved_user_home", lambda: "/Users/z"
+    )
+    monkeypatch.setattr(
+        CodexSpawner, "has_verified_chatgpt_auth",
+        staticmethod(lambda home, file_loader=None: True),
+    )
+    assert CodexSpawner().plan_auth_status() == "on_plan"
+    monkeypatch.setattr(
+        CodexSpawner, "has_verified_chatgpt_auth",
+        staticmethod(lambda home, file_loader=None: False),
+    )
+    assert CodexSpawner().plan_auth_status() == "off_plan"
+    monkeypatch.setattr(
+        "provider_spawners.codex.resolved_user_home", lambda: None
+    )
+    assert CodexSpawner().plan_auth_status() == "unknown"
+
+
+def test_gemini_plan_auth_status_follows_availability(monkeypatch):
+    """agy resolvable ⇒ on_plan (Gemini via agy's own OAuth); else unknown.
+    Never off_plan. Mirrors Swift GeminiSpawner.planAuthStatus."""
+    g = GeminiSpawner()
+    monkeypatch.setattr(g, "is_available", lambda: True)
+    assert g.plan_auth_status() == "on_plan"
+    monkeypatch.setattr(g, "is_available", lambda: False)
+    assert g.plan_auth_status() == "unknown"
+
+
+def test_base_defaults_no_removals_unknown_plan():
+    """A vanilla spawner removes nothing and is plan-unknown, so adding a
+    provider can't accidentally scrub env or emit a false warning."""
+    assert AiderSpawner().env_removals(_EMPTY) == set()
+    assert AiderSpawner().plan_auth_status() == "unknown"
+
+
+def test_provider_plan_statuses_omits_unknown(monkeypatch):
+    """The hello map carries only decisive statuses; unknown + unavailable
+    providers are omitted (absent ⇒ no picker warning). Mirrors Swift
+    ProviderSpawnerRegistry.planAuthStatuses."""
+    import provider_spawners as ps
+
+    class _Fake:
+        def __init__(self, avail, status):
+            self._a, self._s = avail, status
+
+        def is_available(self):
+            return self._a
+
+        def plan_auth_status(self, params=None):
+            return self._s
+
+    monkeypatch.setattr(ps, "_REGISTRY", {
+        "codex": _Fake(True, "on_plan"),
+        "gemini": _Fake(True, "off_plan"),
+        "aider": _Fake(True, "unknown"),      # decisive-only ⇒ omitted
+        "cursor": _Fake(False, "on_plan"),    # unavailable ⇒ omitted
+    })
+    assert ps.provider_plan_statuses() == {
+        "codex": "on_plan", "gemini": "off_plan",
+    }
 
 
 # ── approval-surface contract ───────────────────────────────

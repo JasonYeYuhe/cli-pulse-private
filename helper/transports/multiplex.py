@@ -88,6 +88,7 @@ class MultiplexTransport(SessionTransport):
         cwd: Optional[str] = None,
         *,
         pass_fds: tuple[int, ...] = (),
+        env_remove: frozenset[str] = frozenset(),
     ) -> SessionHandle:
         inner = self._transport_for_argv(argv)
         if inner is self._codex:
@@ -99,9 +100,15 @@ class MultiplexTransport(SessionTransport):
         # exec transports are never spawned with auth fds — claude is the
         # only FD-injected provider and it always routes to PTY). Forward
         # only when present + PTY so codex_exec.start keeps its signature.
+        # v1.35: `env_remove` (the on-plan OPENAI_API_KEY scrub) applies to
+        # BOTH the PTY and codex_exec transports, so it forwards
+        # unconditionally — codex_exec.start now accepts it.
         if pass_fds and inner is self._pty:
-            return inner.start(session_id, argv, env, cwd, pass_fds=pass_fds)
-        return inner.start(session_id, argv, env, cwd)
+            return inner.start(
+                session_id, argv, env, cwd,
+                pass_fds=pass_fds, env_remove=env_remove,
+            )
+        return inner.start(session_id, argv, env, cwd, env_remove=env_remove)
 
     def write_stdin(self, handle: SessionHandle, data: bytes) -> int:
         return self._transport_for_handle(handle).write_stdin(handle, data)
