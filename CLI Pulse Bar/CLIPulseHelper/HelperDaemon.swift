@@ -166,13 +166,25 @@ final class HelperDaemon {
             (dict as? [String: Any])?["remaining"] as? Int
         }
 
+        // v0.60: source the per-provider managed-session plan map from the local
+        // spawn helper's UDS `hello` (the single source of truth — reuses the real
+        // ProviderSpawner logic instead of a divergent parser) and forward it on the
+        // heartbeat so phones can warn before an off-plan managed session. Best-effort:
+        // if no local helper is listening, pass nil → the RPC omits the param → the
+        // server preserves the last-known value (never clobbers to {}).
+        let providerPlanStatus: [String: String]? = await {
+            do { return try await LocalSessionControlClient().hello().providerPlanStatus }
+            catch { return nil }
+        }()
+
         do {
             // Heartbeat
             try await apiClient.heartbeat(
                 config: config,
                 cpuUsage: device.cpuUsage,
                 memoryUsage: device.memoryUsage,
-                activeSessionCount: scanResult.activeSessionCount
+                activeSessionCount: scanResult.activeSessionCount,
+                providerPlanStatus: providerPlanStatus
             )
 
             // Sync

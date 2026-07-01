@@ -96,6 +96,10 @@ create table public.devices (
   helper_secret text,
   push_token text,
   push_platform text,
+  -- v0.60: per-provider managed-session plan status, e.g. {"codex":"off_plan"}.
+  -- Non-secret login-mode label; written by helper_heartbeat, read by clients to
+  -- warn that a managed Codex session on this Mac would run billed-on-API.
+  provider_plan_status jsonb not null default '{}'::jsonb,
   last_seen_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );

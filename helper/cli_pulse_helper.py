@@ -275,13 +275,25 @@ def heartbeat(_: argparse.Namespace) -> None:
     config = load_config()
     snapshot = collect_device_snapshot()
     sessions = collect_sessions()
-    supabase_rpc("helper_heartbeat", {
+    params = {
         "p_device_id": config.device_id,
         "p_helper_secret": config.helper_secret,
         "p_cpu_usage": snapshot.cpu_usage,
         "p_memory_usage": snapshot.memory_usage,
         "p_active_session_count": len(sessions),
-    })
+    }
+    # v0.60: publish the per-provider managed-session plan map ({codex:off_plan,…})
+    # to the device row so phones can warn before starting an off-plan (billed)
+    # managed session — same signal the macOS picker shows. On SUCCESS we send the
+    # map (incl. {} when nothing is decisive → clears the warning); on failure we
+    # OMIT the param so the server's coalesce preserves the last-known value
+    # (never clobber to {} on a transient compute error).
+    try:
+        from provider_spawners import provider_plan_statuses  # local import: fail-soft
+        params["p_provider_plan_status"] = provider_plan_statuses()
+    except Exception as exc:  # noqa: BLE001 — plan status must never break the heartbeat
+        logger.debug("provider_plan_statuses() failed; omitting from heartbeat: %s", exc)
+    supabase_rpc("helper_heartbeat", params)
     logger.debug("heartbeat sent")
 
 

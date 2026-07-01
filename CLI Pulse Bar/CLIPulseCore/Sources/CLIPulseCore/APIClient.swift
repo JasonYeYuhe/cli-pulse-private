@@ -347,6 +347,7 @@ public actor APIClient {
         let helper_version: String?
         let cpu_usage: Int?
         let memory_usage: Int?
+        let provider_plan_status: [String: String]?  // v0.60
     }
 
     private struct AlertRecordPayload: Decodable {
@@ -738,7 +739,8 @@ public actor APIClient {
                 helper_version: row.helper_version ?? "",
                 current_session_count: 0,
                 cpu_usage: row.cpu_usage,
-                memory_usage: row.memory_usage
+                memory_usage: row.memory_usage,
+                providerPlanStatus: row.provider_plan_status ?? [:]
             )
         }
     }
