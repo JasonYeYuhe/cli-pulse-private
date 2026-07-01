@@ -72,29 +72,32 @@ run swiftc -o "$APP_BIN" \
 
 # === Step 3: Codesign ===
 if [[ $SKIP_SIGN -eq 0 ]]; then
-    # v1.16.1 hotfix: strip extended attributes before signing. swiftc
-    # output, Spotlight indexing, or Finder metadata can attach xattrs
-    # (com.apple.quarantine, com.apple.provenance, etc.) that codesign
-    # rejects with "resource fork, Finder information, or similar
-    # detritus not allowed". `set -e` then bails the whole pipeline.
-    # `xattr -cr` clears them recursively without touching the binary.
-    run xattr -cr "$APP_BUNDLE"
+    # v1.22.0 durable fix for the "resource fork, Finder information, or
+    # similar detritus not allowed" codesign failure. The v1.16.x hotfixes
+    # tried `xattr -cr` immediately before `codesign`, but when the build
+    # dir lives under ~/Documents (iCloud Desktop&Documents sync) the
+    # fileprovider/mds daemons RE-ATTACH `com.apple.FinderInfo` in the
+    # window between the two commands — a race the build loses
+    # intermittently (hard-failed the v1.22.0 build). Fix: sign in a
+    # NON-indexed temp dir (nothing re-attaches xattrs there), then copy
+    # the signed bundle back. `pkgbuild` stores the payload in a xar/cpio
+    # archive that does NOT carry extended attributes, so a FinderInfo
+    # xattr re-attached to the copied-back bundle never reaches the .pkg
+    # and never touches the (embedded, byte-preserved) code signature.
+    SIGN_TMP="$(mktemp -d "${TMPDIR:-/tmp}/uninstaller-sign.XXXXXX")"
+    run cp -R "$APP_BUNDLE" "$SIGN_TMP/$APP_NAME"
+    run xattr -cr "$SIGN_TMP/$APP_NAME"
     # Single outermost sign — codesign recursively walks the bundle.
     # --options runtime: Hardened Runtime, required for notarization.
     # --timestamp: ensures the signature remains valid past cert expiration.
-    # (Per Gemini review of slice 4E.1.5: separate inner+outer sign was
-    # redundant.)
     run codesign --force --timestamp --options runtime \
-        --sign "$DEV_ID_APP" "$APP_BUNDLE"
-    # v1.16.2 hotfix: drop --strict from verify. Spotlight's mds daemon
-    # re-attaches `com.apple.FinderInfo` to bundles under ~/Documents/
-    # faster than we can xattr -cr + verify, and --strict treats that
-    # xattr as a hard failure (even though the cryptographic signature
-    # itself is valid). The notarization step downstream is the real
-    # gate — if codesign produced a malformed signature, notarytool
-    # would reject it. Plain --verify --verbose=2 still catches that.
-    run xattr -cr "$APP_BUNDLE"
-    run codesign --verify --verbose=2 "$APP_BUNDLE"
+        --sign "$DEV_ID_APP" "$SIGN_TMP/$APP_NAME"
+    # --strict is safe here: the temp dir isn't indexed, so no xattr race.
+    run codesign --verify --strict --verbose=2 "$SIGN_TMP/$APP_NAME"
+    # Swap the signed bundle back into place for pkgbuild to consume.
+    run rm -rf "$APP_BUNDLE"
+    run cp -R "$SIGN_TMP/$APP_NAME" "$APP_BUNDLE"
+    run rm -rf "$SIGN_TMP"
 fi
 
 # === Step 4: Sanity check ===
