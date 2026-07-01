@@ -24,6 +24,7 @@ stay green across this refactor.
 from __future__ import annotations
 
 import os
+import pwd
 import shutil
 from typing import Any
 
@@ -51,6 +52,26 @@ def augmented_path(base: str | None = None) -> str:
         if d and d not in parts:
             parts.append(d)
     return os.pathsep.join(parts)
+
+
+def resolved_user_home() -> str | None:
+    """The invoking user's home via ``getpwuid(getuid())`` — deliberately
+    NOT ``$HOME``, which launchd can set to a bogus ``/var/empty`` for a
+    LaunchAgent (the same drift that motivated Swift
+    ``HelperEnvironment.resolvedUserHome()``). Returns ``None`` for root
+    (uid 0) or a non-absolute ``pw_dir`` so callers SKIP the Codex
+    ``CODEX_HOME`` pin + ``OPENAI_API_KEY`` scrub rather than key them off
+    a bad home. Mirrors the Swift helper so the two spawners agree on the
+    on-plan decision.
+    """
+    try:
+        uid = os.getuid()
+        if uid == 0:
+            return None
+        home = pwd.getpwuid(uid).pw_dir
+    except (KeyError, OSError):
+        return None
+    return home if home and home.startswith("/") else None
 
 
 class BaseSpawner:
@@ -94,8 +115,29 @@ class BaseSpawner:
     def env_overrides(self, params: Any) -> dict[str, str]:  # noqa: ARG002
         # Most providers need no provider-specific env beyond what the
         # manager injects in `_build_env`. Subclasses override when they
-        # genuinely do (Codex → RUST_BACKTRACE).
+        # genuinely do (Codex → RUST_BACKTRACE + CODEX_HOME). These vars
+        # are ADDED / override on merge; they can never DELETE an inherited
+        # var — see `env_removals` for that.
         return {}
+
+    def env_removals(self, params: Any) -> set[str]:  # noqa: ARG002
+        # Keys to DELETE from the child env AFTER the parent-env merge.
+        # A dict overlay (`env_overrides`) can only ADD or override, never
+        # remove an inherited var, so a provider that must ensure a var is
+        # ABSENT returns it here. CodexSpawner overrides this to scrub
+        # `OPENAI_API_KEY` when the user has a verified ChatGPT login, so a
+        # managed Codex session can't silently fall back to the billed API.
+        # Mirrors Swift `ProviderEnvPatch.remove` (deleted by the transport
+        # after it merges the parent env). Default: nothing removed.
+        return set()
+
+    def plan_auth_status(self, params: Any = None) -> str:  # noqa: ARG002
+        # "on_plan" / "off_plan" / "unknown" — surfaced in the UDS hello
+        # reply's `provider_plan_status` so the spawn picker can warn before
+        # silently launching a BILLED (off-plan) managed session. Default
+        # "unknown" (the registry omits these so they add no false warning).
+        # Mirrors Swift `ProviderSpawner.planAuthStatus`.
+        return "unknown"
 
     def is_available(self) -> bool:
         """True if the override OR a PATH binary is runnable.

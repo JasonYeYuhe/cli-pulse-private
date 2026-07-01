@@ -35,7 +35,7 @@ from typing import Protocol, runtime_checkable
 # both at runtime (helper invoked from inside `helper/`) and in CI
 # (`pytest -q` from `helper/`).
 from .aider import AiderSpawner
-from .base import BaseSpawner, augmented_path
+from .base import BaseSpawner, augmented_path, resolved_user_home
 from .claude import ClaudeSpawner
 from .codex import CodexSpawner
 from .cursor import CursorSpawner
@@ -54,10 +54,16 @@ class ProviderSpawner(Protocol):
          transport.
       3. `env_overrides(params)` at spawn time — provider-specific env
          vars merged onto the manager's base env.
+      3b. `env_removals(params)` at spawn time — keys the transport
+         DELETES after merging the parent env (a dict overlay can only
+         add; Codex uses this to scrub `OPENAI_API_KEY` on-plan).
       4. `supports_remote_approval()` informational; today only Claude
          returns True (it has the `claude-pre-tool-use` hook). Codex
          and Gemini handle approvals inline in their TUI; the iOS
          spawn UI surfaces this so the user knows what they're getting.
+      5. `plan_auth_status()` at hello time — "on_plan"/"off_plan"/
+         "unknown", surfaced in `provider_plan_status` so the picker can
+         warn before launching a billed managed session.
     """
 
     name: str
@@ -68,10 +74,16 @@ class ProviderSpawner(Protocol):
     def env_overrides(self, params) -> dict[str, str]:
         ...
 
+    def env_removals(self, params) -> set[str]:
+        ...
+
     def is_available(self) -> bool:
         ...
 
     def supports_remote_approval(self) -> bool:
+        ...
+
+    def plan_auth_status(self, params=None) -> str:
         ...
 
 
@@ -117,10 +129,33 @@ def all_provider_names() -> list[str]:
     return sorted(_REGISTRY.keys())
 
 
+def provider_plan_statuses() -> dict[str, str]:
+    """Per-provider plan-auth status ("on_plan" / "off_plan") for the
+    AVAILABLE providers — shipped in the UDS hello reply as
+    `provider_plan_status` so the spawn picker can warn before silently
+    launching an off-plan (billed) managed session (e.g. Codex with an
+    api-key login). Omits "unknown" so indeterminate providers don't add
+    a false warning (absent ⇒ no warning). Mirrors Swift
+    `ProviderSpawnerRegistry.planAuthStatuses`.
+    """
+    out: dict[str, str] = {}
+    for name, spawner in _REGISTRY.items():
+        try:
+            if not spawner.is_available():
+                continue
+            status = spawner.plan_auth_status()
+        except Exception:  # noqa: BLE001 — one bad spawner must not break hello
+            continue
+        if status and status != "unknown":
+            out[name] = status
+    return out
+
+
 __all__ = [
     "ProviderSpawner",
     "BaseSpawner",
     "augmented_path",
+    "resolved_user_home",
     "ClaudeSpawner",
     "CodexSpawner",
     "GeminiSpawner",
@@ -130,4 +165,5 @@ __all__ = [
     "get_spawner",
     "available_providers",
     "all_provider_names",
+    "provider_plan_statuses",
 ]

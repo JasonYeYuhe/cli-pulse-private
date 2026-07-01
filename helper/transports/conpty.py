@@ -51,7 +51,10 @@ class ConPtyTransport(SessionTransport):
             "satisfy."
         )
 
-    def start(self, session_id, argv, env=None, cwd=None):  # pragma: no cover
+    def start(
+        self, session_id, argv, env=None, cwd=None, *,
+        pass_fds=(), env_remove=frozenset(),
+    ):  # pragma: no cover
         raise NotImplementedError
 
     def write_stdin(self, handle, data):  # pragma: no cover

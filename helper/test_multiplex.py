@@ -53,12 +53,22 @@ class _FakeTransport(SessionTransport):
         argv: list[str],
         env: Optional[dict[str, str]] = None,
         cwd: Optional[str] = None,
+        *,
+        pass_fds: tuple[int, ...] = (),
+        env_remove: frozenset[str] = frozenset(),
     ) -> SessionHandle:
         # Record env + cwd too so tests can assert that the multiplex
         # forwards them verbatim without dropping or mutating them.
         # `argv is None` is recorded as None (not coerced) so the test
         # for None-tolerant routing can verify the multiplex actually
         # forwarded the value the caller passed.
+        # v1.35: `env_remove` (the on-plan OPENAI_API_KEY scrub) is
+        # forwarded to BOTH transports; stash the last value so a
+        # dedicated test can assert the forwarding, but keep the recorded
+        # `calls` tuple at its original 4-field shape so the routing
+        # assertions below are undisturbed.
+        self.last_env_remove = frozenset(env_remove)
+        self.last_pass_fds = tuple(pass_fds)
         argv_recorded = tuple(argv) if argv is not None else None
         self.calls.append((
             "start",
@@ -124,6 +134,20 @@ class TestStartRoutingByArgv:
         assert codex.calls == [("start", ("s1", ("codex",), env, cwd))]
         assert pty.calls == []
         assert h.payload.kind == "codex"
+
+    def test_env_remove_forwarded_to_codex(self, mux):
+        """v1.35: the on-plan OPENAI_API_KEY scrub must reach codex_exec —
+        the transport that actually spawns a managed Codex session."""
+        m, pty, codex = mux
+        m.start("sr1", ["codex"], env_remove=frozenset({"OPENAI_API_KEY"}))
+        assert codex.last_env_remove == frozenset({"OPENAI_API_KEY"})
+
+    def test_env_remove_forwarded_to_pty(self, mux):
+        """And it forwards to the PTY transport too (claude/gemini path),
+        so the seam is provider-agnostic."""
+        m, pty, codex = mux
+        m.start("sr2", ["claude"], env_remove=frozenset({"OPENAI_API_KEY"}))
+        assert pty.last_env_remove == frozenset({"OPENAI_API_KEY"})
 
     def test_argv0_codex_with_absolute_path_routes_to_codex(self, mux):
         m, pty, codex = mux

@@ -61,3 +61,11 @@ class GeminiSpawner(BaseSpawner):
             argv = argv + ["--dangerously-skip-permissions"]
 
         return argv
+
+    def plan_auth_status(self, params: Any = None) -> str:  # noqa: ARG002
+        # "on_plan" when `agy` is resolvable (managed Gemini runs on the
+        # user's Gemini plan via agy's own OAuth — we never fall back to a
+        # billed path); "unknown" otherwise (no agy ⇒ managed Gemini is
+        # unavailable, so don't emit a false off-plan warning). Never
+        # "off_plan". Mirrors Swift GeminiSpawner.planAuthStatus.
+        return "on_plan" if self.is_available() else "unknown"

@@ -287,6 +287,16 @@ def test_hello_returns_caps_without_auth(short_sock_dir):
         # get_paired wired) is True so legacy callers / a paired helper
         # are unaffected.
         assert result.get("paired") is True
+        # v1.35: provider_plan_status is present (a dict). Contents depend
+        # on the host's installed CLIs + on-plan auth, so the assertion is
+        # structural: always a dict; every value is a decisive status
+        # ("unknown" is omitted by provider_plan_statuses()).
+        assert "provider_plan_status" in result
+        assert isinstance(result["provider_plan_status"], dict)
+        assert all(
+            v in ("on_plan", "off_plan")
+            for v in result["provider_plan_status"].values()
+        )
     finally:
         server.stop()
 

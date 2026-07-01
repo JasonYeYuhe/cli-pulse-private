@@ -64,6 +64,7 @@ class SessionTransport(ABC):
         cwd: str | None = None,
         *,
         pass_fds: tuple[int, ...] = (),
+        env_remove: frozenset[str] = frozenset(),
     ) -> SessionHandle:
         """Spawn the provider CLI under a PTY. Raises TransportError on
         spawn failure.
@@ -79,6 +80,13 @@ class SessionTransport(ABC):
         (codex/gemini) inherit the default and ignore it — they are never
         spawned with auth fds. The CALLER owns the fd lifecycle (closes
         its own copy after start returns).
+
+        `env_remove` (v1.35): keys DELETED from the child env AFTER the
+        parent-env (`os.environ`) merge — the only way to ensure an
+        inherited var is ABSENT (a dict overlay can only add/override).
+        CodexSpawner uses it to scrub `OPENAI_API_KEY` so an on-plan
+        managed Codex can't fall back to the billed API. Mirrors the
+        Swift `PtyTransport(envRemove:)` seam.
         """
 
     @abstractmethod
