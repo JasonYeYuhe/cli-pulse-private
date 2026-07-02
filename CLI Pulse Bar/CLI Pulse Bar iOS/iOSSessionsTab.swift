@@ -606,6 +606,11 @@ struct ManagedSessionDetailView: View {
     /// keystrokes; slice 4 adds lifecycle / reconnect.
     @State private var showLiveTerminal: Bool = false
 
+    /// R0 (S4): set when a PRIVATE live-terminal join is fatally rejected (auth)
+    /// after one refresh-retry. Surfaces a banner and the view falls back to the
+    /// polled output panel instead of a permanently blank terminal.
+    @State private var liveTerminalAuthFailed: Bool = false
+
     /// Cached Supabase config snapshot for the live-terminal
     /// subscription. Loaded once on appear; the actor hop is one-
     /// shot so the body can pass a value type into the
@@ -807,6 +812,23 @@ struct ManagedSessionDetailView: View {
                     && realtimeConfig != nil
                     && (isRunning || isPending) {
                     showLiveTerminalToggle
+                    // R0 (S4): a private join was fatally rejected → explain the
+                    // fallback to the polled panel (which we auto-enabled).
+                    if liveTerminalAuthFailed {
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "lock.trianglebadge.exclamationmark")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                            Text("Live terminal unavailable for this session — showing polled output instead.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, 6)
+                        .background(Color.orange.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
                     if showLiveTerminal, let cfg = realtimeConfig {
                         liveTerminalPanel(streamConfig: cfg)
                     }
@@ -935,8 +957,16 @@ struct ManagedSessionDetailView: View {
                     .foregroundStyle(.tertiary)
             }
             Spacer()
-            Toggle("", isOn: $showLiveTerminal)
-                .labelsHidden()
+            Toggle("", isOn: Binding(
+                get: { showLiveTerminal },
+                set: { on in
+                    // R0 (S4): re-arm on a manual retry so a fresh subscribe can
+                    // clear the "auth failed" fallback banner if it succeeds.
+                    if on { liveTerminalAuthFailed = false }
+                    showLiveTerminal = on
+                }
+            ))
+            .labelsHidden()
         }
     }
 
@@ -1008,6 +1038,18 @@ struct ManagedSessionDetailView: View {
                             level: .warning,
                             data: ["buffered_chunks": buffered])
                     }
+                },
+                // R0 (S4, Gemini #3): imperative fresh-JWT fetch for a private
+                // rejoin (warm resume / reconnect) — before the join frame, not
+                // relying on the 3 s refresh loop below having run.
+                refreshAccessToken: { await state.api.realtimeConfiguration().accessToken },
+                // R0 (S4): a fatal private-join rejection (auth) after one
+                // refresh-retry → surface a banner + fall back to the polled
+                // output panel instead of a permanently blank terminal.
+                onFatalJoinRejection: {
+                    liveTerminalAuthFailed = true
+                    showLiveTerminal = false
+                    showOutput = true
                 }
             )
             .frame(height: 280)

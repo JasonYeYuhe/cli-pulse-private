@@ -72,6 +72,19 @@ public final class RemoteSessionEventStream: @unchecked Sendable {
         case unexpectedFrame(String)
         case peerClosed(code: Int)
         case transport(String)
+        /// R0 (S4): a PRIVATE join was rejected by read-RLS / a bad or expired
+        /// token (phx_reply `status:"error"`). Delivered via `onDisconnect` so
+        /// the Coordinator can refresh-and-retry once, then surface a fatal
+        /// fallback instead of hanging on a permanently blank terminal.
+        case joinRejected(reason: String)
+    }
+
+    /// R0 (S4): result of `decodeJoinReply` — a phx_reply to our channel's join.
+    public enum JoinReply: Equatable {
+        /// Join (or a later access_token push) accepted.
+        case ok
+        /// Join rejected (RLS / auth); `reason` is the server's phx_reply reason.
+        case error(reason: String)
     }
 
     private let config: Configuration
@@ -324,6 +337,35 @@ public final class RemoteSessionEventStream: @unchecked Sendable {
         }
         return TerminalChunk(event: innerEvent, data: bytes)
     }
+
+    /// R0 (S4): a Phoenix `phx_reply` to OUR channel's join (or a later
+    /// access_token push), matched by `ourJoinRef`. Returns nil for any other
+    /// frame (broadcasts, heartbeat replies with a `null`/different joinRef,
+    /// presence). A PRIVATE join rejected by read-RLS / a bad token replies
+    /// `status:"error"` — the caller surfaces it and stops hanging on a blank
+    /// terminal instead of ignoring the reply (the pre-S4 behavior). Mirrors the
+    /// Android `decodeJoinReply`.
+    public static func decodeJoinReply(from data: Data, ourJoinRef: String) -> JoinReply? {
+        guard let obj = try? JSONSerialization.jsonObject(with: data, options: []),
+              let arr = obj as? [Any], arr.count >= 5 else {
+            return nil
+        }
+        guard (arr[3] as? String) == "phx_reply" else { return nil }
+        // Only our channel's replies carry our joinRef in slot 0; heartbeat
+        // acks (phoenix topic) carry a null joinRef.
+        guard (arr[0] as? String) == ourJoinRef else { return nil }
+        guard let payload = arr[4] as? [String: Any] else { return nil }
+        switch payload["status"] as? String {
+        case "ok":
+            return .ok
+        case "error":
+            let response = payload["response"] as? [String: Any]
+            let reason = (response?["reason"] as? String) ?? ""
+            return .error(reason: reason.isEmpty ? "join rejected" : reason)
+        default:
+            return nil
+        }
+    }
 }
 
 // MARK: - Subscription
@@ -507,6 +549,15 @@ private final class TerminalSubscription: RemoteSessionEventStream.Cancellable, 
                 data = Data(s.utf8)
             @unknown default:
                 continue
+            }
+            // R0 (S4): a phx_reply error on OUR join = a rejected PRIVATE join
+            // (read-RLS / bad or expired token). Surface it as a disconnect so
+            // the Coordinator can refresh-and-retry once, then fall back — a
+            // public `term:` join always replies `ok`, so this is inert pre-cutover.
+            if case .error(let reason)? = RemoteSessionEventStream.decodeJoinReply(
+                from: data, ourJoinRef: joinRef) {
+                fireDisconnect(RemoteSessionEventStream.StreamError.joinRejected(reason: reason))
+                return
             }
             do {
                 if let chunk = try RemoteSessionEventStream.decodeBroadcastChunk(from: data) {
