@@ -676,10 +676,11 @@ def test_claude_auth_fd_partial_failure_closes_read_fd_and_falls_back(monkeypatc
 # ── v-next P1-2: get_tail_snapshot + per-session raw ring ────────────
 
 
-def _spawn(mgr, provider="claude"):
+def _spawn(mgr, provider="claude", realtime_private=None):
     from remote_agent import SessionStartParams
     sid = str(uuid.uuid4())
-    mgr.spawn_session(SessionStartParams(session_id=sid, provider=provider))
+    mgr.spawn_session(SessionStartParams(
+        session_id=sid, provider=provider, realtime_private=realtime_private))
     return sid
 
 
@@ -1628,7 +1629,7 @@ def test_broadcast_disabled_by_default_is_dark():
 def test_post_stdout_chunk_submits_ansi_preserved_redacted_to_broadcast():
     pub = _RecordingPublisher()
     mgr, _t = _make_manager_with_publisher(pub)
-    sid = _spawn(mgr)
+    sid = _spawn(mgr, realtime_private=True)  # R0 (S3): only PRIVATE sessions broadcast
     mgr._post_stdout_chunk(sid, "\x1b[31mhello\x1b[0m world")
     assert len(pub.submitted) == 1
     s_sid, event, data = pub.submitted[0]
@@ -1641,13 +1642,23 @@ def test_post_stdout_chunk_submits_ansi_preserved_redacted_to_broadcast():
 def test_broadcast_payload_is_redacted_never_raw():
     pub = _RecordingPublisher()
     mgr, _t = _make_manager_with_publisher(pub)
-    sid = _spawn(mgr)
+    sid = _spawn(mgr, realtime_private=True)  # R0 (S3): only PRIVATE sessions broadcast
     secret = "sk-ant-oat01-realtokenABCDEFGHIJKLMNOPQRSTUV"
     mgr._post_stdout_chunk(sid, secret + " after")
     assert pub.submitted, "a chunk should have been submitted"
     data = pub.submitted[0][2]
     assert b"realtokenABCDEFGHIJKLMNOPQRSTUV" not in data, \
         "broadcast MUST carry redacted bytes, never the raw secret"
+
+
+def test_post_stdout_chunk_does_not_broadcast_a_public_session():
+    # R0 (S3) local gate: a PUBLIC session (realtime_private=False) must never
+    # reach the producer — zero mint calls, zero HTTP fleet-wide.
+    pub = _RecordingPublisher()
+    mgr, _t = _make_manager_with_publisher(pub)
+    sid = _spawn(mgr, realtime_private=False)
+    mgr._post_stdout_chunk(sid, "public output here")
+    assert pub.submitted == []
 
 
 def test_stop_session_flushes_and_forgets_broadcast():

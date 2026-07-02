@@ -72,6 +72,12 @@ a = Analysis(
         "local_auth_token",
         "remote_agent",
         "remote_hook",
+        # R0 (S3): the terminal-broadcast producer is imported LAZILY inside a
+        # nested conditional in cli_pulse_helper.py (`from realtime_broadcast
+        # import ...` under `if remote_realtime_broadcast_enabled`), which
+        # PyInstaller's static graph can miss. Now that the gate defaults ON, a
+        # missing module would ImportError → silently no broadcast. Pin it.
+        "realtime_broadcast",
     ],
     hookspath=[],
     hooksconfig={},

@@ -150,6 +150,12 @@ class SessionStartParams:
     cwd_hmac: str | None = None
     client_label: str | None = None
     extra_env: dict[str, str] = field(default_factory=dict)
+    # R0 (S3/S5): the session's `realtime_private` from the cloud start payload
+    # (migrate_v0.61). `True` → mirror to the PRIVATE `pterm:` topic; `False`
+    # (public) or `None` (UNKNOWN — pre-v0.61 payload / local session) → do NOT
+    # broadcast and do NOT mint (the local gate that keeps a fleet-wide
+    # default-ON producer from hammering mint-realtime-token with 403s — Gemini #2).
+    realtime_private: bool | None = None
 
 
 @dataclass
@@ -690,6 +696,29 @@ class RemoteAgentManager:
     ) -> dict[str, Any] | None:
         return self._dispatch(self._local_get_tail_snapshot_impl, session_id, max_bytes)
 
+    def _tail_snapshot_bytes(
+        self, session_id: str, max_bytes: int
+    ) -> bytes | None:
+        """Raw REDACTED tail of the per-session ring — shared by the local UDS
+        snapshot and the R0 cloud `tail_snapshot` broadcast. Returns None for an
+        unknown session. Re-redacts the ASSEMBLED tail (review M3: a secret
+        straddling a chunk boundary could survive the per-chunk write-time
+        redact — cheap here since snapshots are infrequent). Marks the (re)attach
+        as presence so an attached-but-quiet session outlives the idle reaper
+        (P1-6). Must be called on the single-writer executor thread (reads
+        `raw_ring`, written by `_post_stdout_chunk` on the same thread)."""
+        sess = self._sessions.get(session_id)
+        if sess is None:
+            return None
+        sess.last_activity_at = time.monotonic()
+        try:
+            n = int(max_bytes)
+        except (TypeError, ValueError):
+            n = 8192
+        n = max(1, min(n, _RAW_RING_CAP_BYTES))
+        tail = bytes(sess.raw_ring[-n:])
+        return redact(tail.decode("utf-8", "replace")).encode("utf-8", "replace")
+
     def _local_get_tail_snapshot_impl(
         self, session_id: str, max_bytes: int
     ) -> dict[str, Any] | None:
@@ -700,25 +729,47 @@ class RemoteAgentManager:
         begin mid-escape-sequence; xterm.js drops an incomplete leading
         sequence, and the app can request the full 64 KB for a clean
         repaint."""
+        tail = self._tail_snapshot_bytes(session_id, max_bytes)
+        if tail is None:
+            return None
+        import base64
+        return {"bytes_base64": base64.b64encode(tail).decode("ascii")}
+
+    def _handle_tail_snapshot(
+        self, session_id: str, payload: str
+    ) -> tuple[bool, str]:
+        """R0 (S3): cloud `tail_snapshot` command — the iOS/Android warm-resume
+        path (the client waits ~2 s for a `tail_snapshot_result` broadcast on
+        resubscribe). Broadcasts the RAW-redacted ring tail on the PRIVATE
+        `pterm:` topic via the SAME publisher + event allowlist the stdout
+        stream uses. Gated exactly like the stdout stream: only a PRIVATE session
+        broadcasts (Gemini #2 local gate). For a public/unknown session, or when
+        no producer is wired, it's a no-op SUCCESS — the client just falls back
+        to its 2 s timeout drain (not an error). Runs on the dispatcher (= the
+        single-writer executor) thread, so reading the ring is race-free."""
+        if session_id not in self._sessions:
+            return False, "session not running on this helper"
         sess = self._sessions.get(session_id)
         if sess is None:
-            return None
-        # A (re)attach is user presence — keep an attached-but-output-quiet
-        # session alive past the idle reaper (P1-6, codex review).
-        sess.last_activity_at = time.monotonic()
+            return False, "session not running on this helper"
+        if (
+            self._broadcast_publisher is None
+            or sess.params.realtime_private is not True
+        ):
+            return True, ""   # nothing to broadcast — not an error
         try:
-            n = int(max_bytes)
+            max_bytes = int(payload) if payload and payload.strip() else 8192
         except (TypeError, ValueError):
-            n = 8192
-        n = max(1, min(n, _RAW_RING_CAP_BYTES))
-        import base64
-        tail = bytes(sess.raw_ring[-n:])
-        # review M3: redact() runs per-chunk at write time, so a secret
-        # straddling a chunk boundary could survive in the concatenated ring.
-        # Re-redact the ASSEMBLED tail before returning — cheap (snapshots are
-        # infrequent) and closes the cross-chunk reassembly leak.
-        tail = redact(tail.decode("utf-8", "replace")).encode("utf-8", "replace")
-        return {"bytes_base64": base64.b64encode(tail).decode("ascii")}
+            max_bytes = 8192
+        tail = self._tail_snapshot_bytes(session_id, max_bytes)
+        if tail:
+            try:
+                self._broadcast_publisher.submit(
+                    session_id, "tail_snapshot_result", tail
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("tail_snapshot broadcast failed: %s", exc)
+        return True, ""
 
     def shutdown(self) -> None:
         return self._dispatch(self._shutdown_impl)
@@ -927,6 +978,11 @@ class RemoteAgentManager:
                 else:
                     self._interrupt_session_impl(session_id)
                     ok, err = True, ""
+            elif kind == "tail_snapshot":
+                # R0 (S3): serve the iOS/Android warm-resume snapshot over the
+                # PRIVATE broadcast topic. get_tail_snapshot was local-UDS-only
+                # before this — so cloud resume ALWAYS hit the 2 s degraded path.
+                ok, err = self._handle_tail_snapshot(session_id, payload)
             else:
                 ok, err = False, f"unknown command kind: {kind!r}"
         except Exception as exc:
@@ -970,6 +1026,10 @@ class RemoteAgentManager:
         cwd_hmac: str | None = None
         client_label: str | None = None
         provider = "claude"
+        # R0 (S3): None = UNKNOWN privacy (fail-closed: no broadcast). Only a
+        # literal JSON `true`/`false` sets it; a missing or non-bool value stays
+        # None so a public session is never inferred and re-broadcast.
+        realtime_private: bool | None = None
         try:
             obj = json.loads(payload) if payload else {}
             if isinstance(obj, dict):
@@ -978,6 +1038,8 @@ class RemoteAgentManager:
                 cwd_hmac = str(cwd_hmac_v) if cwd_hmac_v else None
                 client_label_v = obj.get("client_label")
                 client_label = str(client_label_v) if client_label_v else None
+                rp_v = obj.get("realtime_private")
+                realtime_private = rp_v if isinstance(rp_v, bool) else None
         except (json.JSONDecodeError, TypeError, ValueError):
             return False, "invalid start payload"
 
@@ -1003,6 +1065,7 @@ class RemoteAgentManager:
             cwd="",
             cwd_hmac=cwd_hmac,
             client_label=client_label,
+            realtime_private=realtime_private,
         )
         ok = self._spawn_session_impl(params)
         return ok, "" if ok else "spawn failed"
@@ -1629,13 +1692,18 @@ class RemoteAgentManager:
                 overflow = len(sess.raw_ring) - _RAW_RING_CAP_BYTES
                 if overflow > 0:
                     del sess.raw_ring[:overflow]
-                # R0 (B2): ALSO stream these already-redacted raw bytes to the
-                # private broadcast topic. No-op when the producer is absent
-                # (gate off — the shipped state) or the session isn't private
-                # (the token mint denies public sessions → publisher skips).
-                # Reuses the SAME redact-at-write path as the ring/in-app
-                # terminal — the broadcast never sees un-redacted bytes.
-                if self._broadcast_publisher is not None:
+                # R0 (B2/S3): ALSO stream these already-redacted raw bytes to the
+                # PRIVATE `pterm:` broadcast topic — but ONLY for a session the
+                # start payload marked private (Gemini #2 local gate). Skipping
+                # public/unknown sessions HERE means zero mint calls + zero HTTP
+                # for them, so a fleet-wide default-ON producer can't hammer
+                # mint-realtime-token with 403s (never rely on the 403→backoff as
+                # the public filter). Reuses the SAME redact-at-write path as the
+                # ring/in-app terminal — the broadcast never sees un-redacted bytes.
+                if (
+                    self._broadcast_publisher is not None
+                    and sess.params.realtime_private is True
+                ):
                     # Guard like the sibling broker publishes: a producer fault
                     # must never break the redacted DB-event path below.
                     try:

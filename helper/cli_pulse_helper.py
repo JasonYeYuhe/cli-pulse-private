@@ -66,16 +66,19 @@ class HelperConfig:
     # dropping it. Authoritative reader is Swift's
     # HelperConfigStore.remoteRealtimeEnabled.
     remote_realtime_enabled: bool = True
-    # R0 (B2): gate for the PYTHON helper's terminal-broadcast producer
+    # R0 (B2/S3): gate for the PYTHON helper's terminal-broadcast producer
     # (realtime_broadcast.TerminalBroadcastPublisher). DISTINCT from
-    # `remote_realtime_enabled` above on purpose — that one defaults True and
-    # is already written into shipped configs (Swift round-trip), so it cannot
-    # be the dark-gate. This one defaults FALSE and is absent from existing
-    # configs → loads False → R0 stays DARK until the owner cutover. When False:
-    # zero broadcasts, zero edge-fn calls, byte-identical to today. Even when
-    # True, only PRIVATE sessions broadcast (the mint-realtime-token edge fn
-    # authorizes private-only); public sessions stay on the DB-event path.
-    remote_realtime_broadcast_enabled: bool = False
+    # `remote_realtime_enabled` above on purpose.
+    #
+    # helper 1.24.0 (S3) DEFAULTS THIS TRUE — the fleet flip. It is safe because
+    # the producer emits NOTHING unless a session is POSITIVELY private: the
+    # local gate in `_post_stdout_chunk` only submits when the start payload's
+    # `realtime_private` is true (S5), and the mint edge fn authorizes
+    # private-only. So default-ON is ZERO behavior change until a user opts into
+    # `user_settings.realtime_private_enabled` — no broadcasts, no mint calls,
+    # no HTTP for the 100% of sessions that are still public. Owners who need to
+    # kill the path (Supabase quota brake) set it False in the config JSON.
+    remote_realtime_broadcast_enabled: bool = True
 
 
 def now_iso() -> str:
