@@ -55,6 +55,10 @@ a = Analysis(
         # PyInstaller's hook bundles the OpenSSL bindings.
         "cryptography.hazmat.backends.openssl",
         "cryptography.hazmat.bindings._rust",
+        # R0 (S3): lazily imported terminal-broadcast producer (see the pkg
+        # spec note). Pinned here too for parity (Codex P1-6) — cheap insurance
+        # even though build_helper_pkg.sh's spec is the shipped one.
+        "realtime_broadcast",
     ],
     hookspath=[],
     hooksconfig={},
