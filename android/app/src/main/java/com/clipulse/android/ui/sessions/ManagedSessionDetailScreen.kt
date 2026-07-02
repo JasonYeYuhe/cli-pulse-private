@@ -63,6 +63,7 @@ fun ManagedSessionDetailRoute(
             onSendInput = { bytes -> viewModel.sendInput(sessionId, bytes) },
             onSendResize = { cols, rows -> viewModel.sendResize(sessionId, cols, rows) },
             onRequestTailSnapshot = { sid, maxBytes -> viewModel.requestTailSnapshot(sid, maxBytes) },
+            onRealtimeToken = { force -> viewModel.realtimeAccessToken(force) },
             onDecideApproval = { id, decision -> viewModel.decideApproval(id, decision) },
             onBack = onBack,
         )
@@ -97,6 +98,7 @@ fun ManagedSessionDetailScreen(
     onRequestTailSnapshot: (sessionId: String, maxBytes: Int) -> Unit,
     onDecideApproval: (requestId: String, decision: RemotePermissionDecision) -> Unit,
     onBack: () -> Unit,
+    onRealtimeToken: (suspend (forceRefresh: Boolean) -> String?)? = null,
 ) {
     val isPending = session.status.equals("pending", ignoreCase = true)
     val isRunning = session.status.equals("running", ignoreCase = true)
@@ -210,6 +212,8 @@ fun ManagedSessionDetailScreen(
                             onSendInput = onSendInput,
                             onSendResize = onSendResize,
                             onRequestTailSnapshot = onRequestTailSnapshot,
+                            isPrivate = session.realtimePrivate,
+                            realtimeToken = onRealtimeToken,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(280.dp)

@@ -20,6 +20,15 @@ data class RemoteSession(
     val clientLabel: String?,
     val createdAt: String,
     val lastEventAt: String?,
+    /**
+     * R0 (B3): true when this session streams over the PRIVATE `pterm:`
+     * RLS-governed Realtime topic (owner-scoped JWT join) instead of the legacy
+     * public `term:` channel. Decoded from `remote_app_list_sessions`'
+     * `realtime_private` (default false for pre-cutover rows / old backends).
+     * Mirrors iOS `RemoteSession.isRealtimePrivate`; the live-terminal subscriber
+     * picks the topic + join auth off this flag.
+     */
+    val realtimePrivate: Boolean = false,
 ) {
     /** `pending` or `running` — a live managed session (matches iOS). */
     val isManaged: Boolean get() = status == "pending" || status == "running"

@@ -86,4 +86,29 @@ class RemoteSessionParseTest {
         val s = parseRemoteSessions(JSONArray(json)).single()
         assertFalse(s.isManaged)
     }
+
+    // ── R0 (B3): realtime_private ───────────────────────────
+
+    @Test
+    fun `realtime_private true decodes to private session`() {
+        val json =
+            """[{"id":"s1","device_id":"d1","provider":"claude","cwd_basename":"x","status":"running","created_at":"t","realtime_private":true}]"""
+        assertTrue(parseRemoteSessions(JSONArray(json)).single().realtimePrivate)
+    }
+
+    @Test
+    fun `realtime_private false decodes to public session`() {
+        val json =
+            """[{"id":"s1","device_id":"d1","provider":"claude","cwd_basename":"x","status":"running","created_at":"t","realtime_private":false}]"""
+        assertFalse(parseRemoteSessions(JSONArray(json)).single().realtimePrivate)
+    }
+
+    @Test
+    fun `absent realtime_private defaults to public (old backend)`() {
+        // Pre-migrate_v0.56 backends omit the key entirely — must decode to
+        // public so the client stays on the term: channel, not a dead pterm:.
+        val json =
+            """[{"id":"s1","device_id":"d1","provider":"claude","cwd_basename":"x","status":"running","created_at":"t"}]"""
+        assertFalse(parseRemoteSessions(JSONArray(json)).single().realtimePrivate)
+    }
 }

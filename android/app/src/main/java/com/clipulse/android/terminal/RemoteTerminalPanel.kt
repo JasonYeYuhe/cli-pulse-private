@@ -23,6 +23,9 @@ import com.clipulse.android.data.remote.RemoteRealtimeConfig
  * Input (E5): xterm `onData` → [onSendInput] (`input_raw`); `ResizeObserver` →
  * [onSendResize] (`resize`); the [RemoteTerminalKeyBar] below the terminal.
  *
+ * R0 (B3): [isPrivate] (the session's `realtime_private`) selects the private
+ * `pterm:` join; [realtimeToken] supplies the signed-in user's JWT for it.
+ *
  * Render + reconnect/lifecycle are device-verified (no instrumented tests in CI);
  * the controller's state machines are unit-tested in isolation.
  */
@@ -34,6 +37,8 @@ fun RemoteTerminalPanel(
     onSendResize: (cols: Int, rows: Int) -> Unit,
     onRequestTailSnapshot: (sessionId: String, maxBytes: Int) -> Unit,
     modifier: Modifier = Modifier,
+    isPrivate: Boolean = false,
+    realtimeToken: (suspend (forceRefresh: Boolean) -> String?)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -46,12 +51,20 @@ fun RemoteTerminalPanel(
         host.onResize = { cols, rows -> onSendResize(cols, rows) }
     }
 
-    DisposableEffect(sessionId) {
+    // R0 (B3): re-key on (sessionId, isPrivate) so a privacy flip tears down the
+    // public `term:` join and re-subscribes on the private `pterm:` topic
+    // (Android's equivalent of the iOS `reconcilePrivacy`).
+    DisposableEffect(sessionId, isPrivate) {
         val controller = RemoteTerminalController(
             sessionId = sessionId,
             config = config,
             onWrite = { bytes -> host.pushStdout(bytes) },
             onRequestTailSnapshot = onRequestTailSnapshot,
+            isPrivate = isPrivate,
+            tokenProvider = realtimeToken,
+            // Surface a fatal private-join rejection as a visible terminal line
+            // instead of a permanently blank pane (Codex P0-3).
+            onError = { msg -> host.pushStdout("\r\n$msg\r\n".toByteArray(Charsets.UTF_8)) },
         )
         lifecycleOwner.lifecycle.addObserver(controller)
         controller.start()
