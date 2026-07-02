@@ -65,6 +65,15 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
     /// sink. Wired to a Sentry breadcrumb so we get field visibility
     /// into recovery success rate.
     public let onSnapshotOutcome: ((Coordinator.SnapshotOutcome) -> Void)?
+    /// R0 (S4, Gemini #3): fetch a FRESH GoTrue JWT for a PRIVATE join. Called
+    /// imperatively BEFORE a warm-resume / reconnect join so a >1 h background
+    /// can't rejoin on a stale token (the detail-view refresh loop may not have
+    /// run yet). Wired to `state.api.realtimeConfiguration().accessToken`.
+    public let refreshAccessToken: (() async -> String?)?
+    /// R0 (S4): fired ONCE when a PRIVATE join is fatally rejected (auth) after a
+    /// single refresh-retry. The host surfaces a banner and falls back to the
+    /// polled output panel instead of leaving a permanently blank terminal.
+    public let onFatalJoinRejection: (() -> Void)?
 
     public init(
         sessionId: String,
@@ -75,7 +84,9 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
         onStdin: ((Data) -> Void)? = nil,
         onResize: ((Int, Int) -> Void)? = nil,
         onRequestTailSnapshot: ((String, Int) -> Void)? = nil,
-        onSnapshotOutcome: ((Coordinator.SnapshotOutcome) -> Void)? = nil
+        onSnapshotOutcome: ((Coordinator.SnapshotOutcome) -> Void)? = nil,
+        refreshAccessToken: (() async -> String?)? = nil,
+        onFatalJoinRejection: (() -> Void)? = nil
     ) {
         self.sessionId = sessionId
         self.isRealtimePrivate = isRealtimePrivate
@@ -86,6 +97,8 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
         self.onResize = onResize
         self.onRequestTailSnapshot = onRequestTailSnapshot
         self.onSnapshotOutcome = onSnapshotOutcome
+        self.refreshAccessToken = refreshAccessToken
+        self.onFatalJoinRejection = onFatalJoinRejection
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -97,7 +110,9 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
             onStdin: onStdin,
             onResize: onResize,
             onRequestTailSnapshot: onRequestTailSnapshot,
-            onSnapshotOutcome: onSnapshotOutcome
+            onSnapshotOutcome: onSnapshotOutcome,
+            refreshAccessToken: refreshAccessToken,
+            onFatalJoinRejection: onFatalJoinRejection
         )
     }
 
@@ -185,6 +200,14 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
         /// the Coordinator never touches Sentry directly, keeping the
         /// state machine unit-testable.
         let onSnapshotOutcome: ((SnapshotOutcome) -> Void)?
+        /// R0 (S4, Gemini #3): async fresh-JWT provider for a private rejoin.
+        let refreshAccessToken: (() async -> String?)?
+        /// R0 (S4): fatal private-join-rejection surface (host falls back).
+        let onFatalJoinRejection: (() -> Void)?
+        /// R0 (S4): one-shot guard — a single forced-refresh rejoin per healthy
+        /// streak (reset on any chunk). Stops a stale-JWT bounce from becoming a
+        /// reconnect storm; a SECOND consecutive rejection is fatal.
+        private var authRetryUsed: Bool = false
         weak var view: RemoteTerminalView?
 
         /// v1.26.1 telemetry: resolution of a warm-subscribe
@@ -263,7 +286,9 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
             onStdin: ((Data) -> Void)? = nil,
             onResize: ((Int, Int) -> Void)? = nil,
             onRequestTailSnapshot: ((String, Int) -> Void)? = nil,
-            onSnapshotOutcome: ((SnapshotOutcome) -> Void)? = nil
+            onSnapshotOutcome: ((SnapshotOutcome) -> Void)? = nil,
+            refreshAccessToken: (() async -> String?)? = nil,
+            onFatalJoinRejection: (() -> Void)? = nil
         ) {
             self.sessionId = sessionId
             self.isPrivate = isPrivate
@@ -273,6 +298,8 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
             self.onResize = onResize
             self.onRequestTailSnapshot = onRequestTailSnapshot
             self.onSnapshotOutcome = onSnapshotOutcome
+            self.refreshAccessToken = refreshAccessToken
+            self.onFatalJoinRejection = onFatalJoinRejection
             self.stream = RemoteSessionEventStream(config: streamConfig)
             super.init()
         }
@@ -324,13 +351,14 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
                     DispatchQueue.main.async {
                         guard let self = self else { return }
                         self.reconnectAttempt = 0
+                        self.authRetryUsed = false  // healthy traffic re-arms the auth retry
                         self.routeChunk(chunk, into: weakView)
                     }
                 },
                 onDisconnect: { [weak self] err in
                     DispatchQueue.main.async {
                         userDisconnectCB?(err)
-                        self?.handleStreamDisconnect(epoch: epoch)
+                        self?.handleStreamDisconnect(epoch: epoch, error: err)
                     }
                 }
             )
@@ -506,12 +534,15 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
             // server doesn't hold our subscription so resubscribing
             // is the only path.
             activeSessionId = nil
-            subscribeIfNeeded()
+            // R0 (S4, Gemini #3): a background >1 h leaves a STALE JWT in
+            // streamConfig; fetch a fresh one before the private rejoin (public
+            // resumes immediately, unchanged).
+            fetchFreshTokenThenSubscribe()
         }
 
         // MARK: - reconnect (slice 4)
 
-        private func handleStreamDisconnect(epoch: UInt64) {
+        private func handleStreamDisconnect(epoch: UInt64, error: Error?) {
             // The stream's onDisconnect fires for ANY shutdown —
             // including the one we trigger via `cancel()` /
             // `pause()`. Don't reconnect in those cases.
@@ -524,7 +555,58 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
             // proceeds when the reconnect timer fires.
             cancellable = nil
             activeSessionId = nil
+            // R0 (S4): a PRIVATE join rejected by read-RLS / a bad or expired
+            // token. Try ONE forced-refresh rejoin (covers a stale JWT after a
+            // long background — Gemini #3); a SECOND consecutive rejection is a
+            // real authz failure → surface it and fall back to the polled panel,
+            // NOT a blind reconnect storm against a doomed join.
+            if let streamError = error as? RemoteSessionEventStream.StreamError,
+               case .joinRejected = streamError {
+                if isPrivate, refreshAccessToken != nil, !authRetryUsed {
+                    authRetryUsed = true
+                    fetchFreshTokenThenSubscribe()
+                } else {
+                    reconnectTask?.cancel()
+                    reconnectTask = nil
+                    onFatalJoinRejection?()
+                }
+                return
+            }
             scheduleReconnect()
+        }
+
+        /// R0 (S4, Gemini #3): fetch a FRESH GoTrue JWT (for a private join)
+        /// BEFORE building the join frame, then subscribe — so a warm-resume /
+        /// reconnect after a long background never rejoins on an expired token.
+        /// For a public session (or when no provider is wired) it subscribes
+        /// immediately, byte-identical to pre-S4.
+        func fetchFreshTokenThenSubscribe() {
+            guard isPrivate, let provider = refreshAccessToken else {
+                subscribeIfNeeded()
+                return
+            }
+            Task { [weak self] in
+                let fresh = await provider()
+                await MainActor.run {
+                    guard let self = self, !self.isCancelled, !self.isPaused else { return }
+                    if let fresh { self.adoptFreshToken(fresh) }
+                    self.subscribeIfNeeded()
+                }
+            }
+        }
+
+        /// Rebuild the stream config + stream with a fresh token WITHOUT pushing
+        /// onto a live join (we're about to (re)subscribe fresh). Distinct from
+        /// `updateAccessToken`, which pushes onto an EXISTING live private join.
+        private func adoptFreshToken(_ token: String) {
+            if streamConfig.accessToken == token { return }
+            streamConfig = RemoteSessionEventStream.Configuration(
+                supabaseURL: streamConfig.supabaseURL,
+                supabaseAnonKey: streamConfig.supabaseAnonKey,
+                accessToken: token,
+                heartbeatInterval: streamConfig.heartbeatInterval
+            )
+            stream = RemoteSessionEventStream(config: streamConfig)
         }
 
         // MARK: - R0 (B3): privacy-flip + token-refresh reconciliation
@@ -576,7 +658,9 @@ public struct RemoteTerminalViewRepresentable: UIViewRepresentable {
                 try? await Task.sleep(nanoseconds: nanos)
                 guard let self = self, !Task.isCancelled else { return }
                 await MainActor.run {
-                    self.subscribeIfNeeded()
+                    // R0 (S4): refresh the private JWT before the rejoin so a
+                    // reconnect after a long stall doesn't 401 on a stale token.
+                    self.fetchFreshTokenThenSubscribe()
                 }
             }
         }

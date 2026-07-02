@@ -411,4 +411,47 @@ final class RemoteSessionEventStreamTests: XCTestCase {
         XCTAssertEqual(chunk?.event, "stdout")
         XCTAssertEqual(chunk?.data, payloadBytes)
     }
+
+    // MARK: - R0 (S4): join-reply decode
+
+    private func phxReply(joinRef: String, status: String, reason: String? = nil) throws -> Data {
+        var response: [String: Any] = [:]
+        if let reason { response["reason"] = reason }
+        let frame: [Any] = [joinRef, "1", "realtime:pterm:x", "phx_reply",
+                            ["status": status, "response": response]]
+        return try JSONSerialization.data(withJSONObject: frame)
+    }
+
+    func test_decodeJoinReply_detects_error_for_our_joinRef() throws {
+        let data = try phxReply(joinRef: "100", status: "error", reason: "unauthorized")
+        let reply = RemoteSessionEventStream.decodeJoinReply(from: data, ourJoinRef: "100")
+        XCTAssertEqual(reply, .error(reason: "unauthorized"))
+    }
+
+    func test_decodeJoinReply_returns_ok_for_successful_join() throws {
+        let data = try phxReply(joinRef: "100", status: "ok")
+        XCTAssertEqual(
+            RemoteSessionEventStream.decodeJoinReply(from: data, ourJoinRef: "100"), .ok)
+    }
+
+    func test_decodeJoinReply_ignores_a_reply_for_a_different_joinRef() throws {
+        let data = try phxReply(joinRef: "999", status: "error", reason: "nope")
+        XCTAssertNil(RemoteSessionEventStream.decodeJoinReply(from: data, ourJoinRef: "100"))
+    }
+
+    func test_decodeJoinReply_ignores_a_broadcast_frame() throws {
+        let envelope: [Any] = [
+            NSNull(), NSNull(), "realtime:pterm:x", "broadcast",
+            ["event": "stdout", "payload": ["data_b64": "AA=="]],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: envelope)
+        XCTAssertNil(RemoteSessionEventStream.decodeJoinReply(from: data, ourJoinRef: "100"))
+    }
+
+    func test_decodeJoinReply_error_defaults_reason_when_absent() throws {
+        let data = try phxReply(joinRef: "100", status: "error")
+        XCTAssertEqual(
+            RemoteSessionEventStream.decodeJoinReply(from: data, ourJoinRef: "100"),
+            .error(reason: "join rejected"))
+    }
 }
