@@ -136,6 +136,26 @@ class SupabaseClient(
         }
     }
 
+    /**
+     * R0 (B3): the signed-in user's Supabase GoTrue JWT for a PRIVATE realtime
+     * terminal join (subscriber auth — distinct from the helper's minted ES256
+     * producer token). [forceRefresh] mints a fresh one via the single-flight
+     * [refreshAccessToken] (used on a join rejection or the proactive live-join
+     * push, so a >1 h background can't leave the join on an expired token —
+     * Gemini #3); otherwise returns the current cached token. Null when signed
+     * out. A refresh failure falls back to the current token rather than
+     * blanking the join.
+     */
+    suspend fun realtimeAccessToken(forceRefresh: Boolean = false): String? {
+        val current = tokenStore.accessToken?.takeIf { it.isNotBlank() }
+        if (!forceRefresh) return current
+        return try {
+            refreshAccessToken(staleToken = current).first.takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            current
+        }
+    }
+
     suspend fun signOut(): Unit = withContext(Dispatchers.IO) {
         val token = tokenStore.accessToken
         tokenStore.clear()
@@ -1226,6 +1246,9 @@ internal fun parseRemoteSessions(arr: JSONArray): List<RemoteSession> =
             clientLabel = if (d.isNull("client_label")) null else d.optString("client_label"),
             createdAt = d.optString("created_at"),
             lastEventAt = if (d.isNull("last_event_at")) null else d.optString("last_event_at"),
+            // R0 (B3): backend returns realtime_private since migrate_v0.56;
+            // absent/null on an old backend decodes to false (public term:).
+            realtimePrivate = d.optBoolean("realtime_private", false),
         )
     }
 

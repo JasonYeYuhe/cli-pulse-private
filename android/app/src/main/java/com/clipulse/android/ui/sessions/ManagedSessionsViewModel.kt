@@ -253,6 +253,16 @@ class ManagedSessionsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * R0 (B3): the signed-in user's realtime JWT for a PRIVATE live-terminal
+     * join. Passed to [com.clipulse.android.terminal.RemoteTerminalPanel] →
+     * controller as the token provider; [forceRefresh] mints a fresh one on a
+     * join rejection / proactive live-join push. Only consulted for private
+     * sessions.
+     */
+    suspend fun realtimeAccessToken(forceRefresh: Boolean = false): String? =
+        supabase.realtimeAccessToken(forceRefresh)
+
     /** Clear the one-shot navigation trigger after the host has consumed it. */
     fun consumeStartedSession() {
         if (_state.value.startedSessionId != null) {

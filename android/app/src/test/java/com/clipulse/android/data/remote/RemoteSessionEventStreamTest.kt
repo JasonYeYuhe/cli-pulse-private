@@ -214,4 +214,179 @@ class RemoteSessionEventStreamTest {
         assertEquals("stdout", chunk!!.event)
         assertArrayEquals(payloadBytes, chunk.data)
     }
+
+    // ── R0 (B3): topic selection ────────────────────────────
+
+    @Test
+    fun `topic picks pterm for private and term for public`() {
+        assertEquals("pterm:sid-1", RemoteSessionEventStream.topic("sid-1", isPrivate = true))
+        assertEquals("term:sid-1", RemoteSessionEventStream.topic("sid-1", isPrivate = false))
+    }
+
+    // ── R0 (B3): private phx_join + access_token frame ──────
+
+    @Test
+    fun `encodePhxJoinFrame private uses pterm and attaches token as payload sibling`() {
+        val arr = JSONArray(
+            RemoteSessionEventStream.encodePhxJoinFrame(
+                "j", "r", "sid-9", isPrivate = true, accessToken = "user-jwt-abc",
+            )
+        )
+        assertEquals("realtime:pterm:sid-9", arr.getString(2))
+        assertEquals("phx_join", arr.getString(3))
+        val payload = arr.getJSONObject(4)
+        // access_token is a SIBLING of config INSIDE payload (Gemini MUST-FIX #4).
+        assertEquals("user-jwt-abc", payload.getString("access_token"))
+        assertTrue(payload.getJSONObject("config").getBoolean("private"))
+    }
+
+    @Test
+    fun `encodePhxJoinFrame public omits token even when passed`() {
+        // Zero-regression invariant: the PUBLIC frame stays byte-identical to
+        // pre-R0 — private:false, term: topic, NO access_token.
+        val arr = JSONArray(
+            RemoteSessionEventStream.encodePhxJoinFrame(
+                "j", "r", "sid-9", isPrivate = false, accessToken = "user-jwt-abc",
+            )
+        )
+        assertEquals("realtime:term:sid-9", arr.getString(2))
+        val payload = arr.getJSONObject(4)
+        assertFalse(payload.has("access_token"))
+        assertFalse(payload.getJSONObject("config").getBoolean("private"))
+    }
+
+    @Test
+    fun `encodePhxJoinFrame private without token omits access_token`() {
+        val arr = JSONArray(
+            RemoteSessionEventStream.encodePhxJoinFrame(
+                "j", "r", "sid-9", isPrivate = true, accessToken = null,
+            )
+        )
+        assertFalse(arr.getJSONObject(4).has("access_token"))
+        assertTrue(arr.getJSONObject(4).getJSONObject("config").getBoolean("private"))
+    }
+
+    @Test
+    fun `encodeAccessTokenFrame shape targets the private topic`() {
+        val arr = JSONArray(
+            RemoteSessionEventStream.encodeAccessTokenFrame("j", "5", "sid-9", "fresh-jwt")
+        )
+        assertEquals(5, arr.length())
+        assertEquals("j", arr.getString(0))
+        assertEquals("5", arr.getString(1))
+        assertEquals("realtime:pterm:sid-9", arr.getString(2))
+        assertEquals("access_token", arr.getString(3))
+        assertEquals("fresh-jwt", arr.getJSONObject(4).getString("access_token"))
+    }
+
+    // ── R0 (B3): decoder hardening (Codex P0-4) ─────────────
+
+    @Test
+    fun `decodeBroadcastChunk rejects a disallowed inner event`() {
+        // Only stdout/stderr/tail_snapshot_result may surface; a foreign event on
+        // the still-public term: channel is injection / drift.
+        val frame = nestedBroadcast("evil_exec", JSONObject().put("data_b64", "AA=="))
+        assertThrowsOf<StreamException.MalformedFrame> {
+            RemoteSessionEventStream.decodeBroadcastChunk(frame)
+        }
+    }
+
+    @Test
+    fun `decodeBroadcastChunk allows tail_snapshot_result`() {
+        val raw = "SNAP".toByteArray()
+        val frame = nestedBroadcast(
+            "tail_snapshot_result",
+            JSONObject().put("data_b64", Base64.getEncoder().encodeToString(raw)),
+        )
+        assertArrayEquals(raw, RemoteSessionEventStream.decodeBroadcastChunk(frame)!!.data)
+    }
+
+    @Test
+    fun `decodeBroadcastChunk rejects an over-ceiling base64 before decoding`() {
+        // A base64 string longer than the ceiling's encoded length is rejected
+        // WITHOUT allocating the decoded bytes.
+        val overCeilingChars = (RemoteSessionEventStream.MAX_DECODED_CHUNK_BYTES + 2) / 3 * 4 + 4
+        val hugeB64 = "A".repeat(overCeilingChars)
+        val frame = nestedBroadcast("stdout", JSONObject().put("data_b64", hugeB64))
+        assertThrowsOf<StreamException.MalformedFrame> {
+            RemoteSessionEventStream.decodeBroadcastChunk(frame)
+        }
+    }
+
+    @Test
+    fun `decodeBroadcastChunk rejects a session_id that does not match the subscription`() {
+        val frame = nestedBroadcast(
+            "stdout",
+            JSONObject().put("session_id", "other-sid")
+                .put("data_b64", Base64.getEncoder().encodeToString("x".toByteArray())),
+        )
+        assertThrowsOf<StreamException.MalformedFrame> {
+            RemoteSessionEventStream.decodeBroadcastChunk(frame, expectedSessionId = "my-sid")
+        }
+    }
+
+    @Test
+    fun `decodeBroadcastChunk accepts a matching session_id`() {
+        val raw = "ok".toByteArray()
+        val frame = nestedBroadcast(
+            "stdout",
+            JSONObject().put("session_id", "my-sid")
+                .put("data_b64", Base64.getEncoder().encodeToString(raw)),
+        )
+        val chunk = RemoteSessionEventStream.decodeBroadcastChunk(frame, expectedSessionId = "my-sid")
+        assertArrayEquals(raw, chunk!!.data)
+    }
+
+    @Test
+    fun `decodeBroadcastChunk tolerates absent session_id even when one is expected`() {
+        // Older producers / flat frames may omit session_id — the topic already
+        // scopes delivery, so an absent id is not a mismatch.
+        val raw = "ok".toByteArray()
+        val frame = nestedBroadcast("stdout", JSONObject().put("data_b64", Base64.getEncoder().encodeToString(raw)))
+        val chunk = RemoteSessionEventStream.decodeBroadcastChunk(frame, expectedSessionId = "my-sid")
+        assertArrayEquals(raw, chunk!!.data)
+    }
+
+    // ── R0 (B3): join-reply decode (Codex P0-3) ─────────────
+
+    @Test
+    fun `decodeJoinReply detects an error reply for our joinRef`() {
+        val frame = JSONArray()
+            .put("100").put("1").put("realtime:pterm:x").put("phx_reply")
+            .put(
+                JSONObject().put("status", "error")
+                    .put("response", JSONObject().put("reason", "unauthorized")),
+            )
+            .toString()
+        val reply = RemoteSessionEventStream.decodeJoinReply(frame, ourJoinRef = "100")
+        assertTrue(reply is RemoteSessionEventStream.JoinReply.Error)
+        assertEquals("unauthorized", (reply as RemoteSessionEventStream.JoinReply.Error).reason)
+    }
+
+    @Test
+    fun `decodeJoinReply returns Ok for a successful join`() {
+        val frame = JSONArray()
+            .put("100").put("1").put("realtime:pterm:x").put("phx_reply")
+            .put(JSONObject().put("status", "ok").put("response", JSONObject()))
+            .toString()
+        assertTrue(
+            RemoteSessionEventStream.decodeJoinReply(frame, ourJoinRef = "100")
+                is RemoteSessionEventStream.JoinReply.Ok
+        )
+    }
+
+    @Test
+    fun `decodeJoinReply ignores a reply for a different joinRef`() {
+        val frame = JSONArray()
+            .put("999").put("1").put("realtime:pterm:x").put("phx_reply")
+            .put(JSONObject().put("status", "error").put("response", JSONObject()))
+            .toString()
+        assertNull(RemoteSessionEventStream.decodeJoinReply(frame, ourJoinRef = "100"))
+    }
+
+    @Test
+    fun `decodeJoinReply ignores a broadcast frame`() {
+        val frame = nestedBroadcast("stdout", JSONObject().put("data_b64", "AA=="))
+        assertNull(RemoteSessionEventStream.decodeJoinReply(frame, ourJoinRef = "100"))
+    }
 }
