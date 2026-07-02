@@ -88,6 +88,11 @@ public final class ManagedSessionManager: @unchecked Sendable {
         let clientLabel: String?
         let handle: PtyTransport.Handle
         let spawnedAtMono: TimeInterval
+        /// R0 (S2): the session's `realtime_private` from the cloud start
+        /// payload — `false` = positively public, `true` = private, `nil` =
+        /// UNKNOWN (a local/UDS session, or a pre-v0.61 payload without the
+        /// flag). Governs the fail-closed public-broadcast gate below.
+        let realtimePrivate: Bool?
         // Mutable fields below are governed by `ManagedSessionManager.lock`.
         // `status` is read/written only under that lock. `drainThread` is
         // assigned once before the record is published into `sessions` and
@@ -102,19 +107,42 @@ public final class ManagedSessionManager: @unchecked Sendable {
         /// the full event stream. 64 KB ≈ several screens of terminal
         /// output; bytes are stored verbatim and redacted at read time.
         let tailBuffer = TerminalRingBuffer(capacity: 65536)
+
+        /// R0 fail-closed: mirror to the PUBLIC `term:` sink ONLY when the
+        /// session is POSITIVELY known public. Private OR unknown => mute, so a
+        /// private session's output can never leak on the public channel and
+        /// "public" is never *inferred* from a missing flag (Codex fail-closed
+        /// invariant).
+        var allowsPublicBroadcast: Bool {
+            ManagedSessionManager.allowsPublicBroadcast(realtimePrivate: realtimePrivate)
+        }
+
         init(
             sessionId: String,
             provider: String,
             clientLabel: String?,
             handle: PtyTransport.Handle,
-            spawnedAtMono: TimeInterval
+            spawnedAtMono: TimeInterval,
+            realtimePrivate: Bool?
         ) {
             self.sessionId = sessionId
             self.provider = provider
             self.clientLabel = clientLabel
             self.handle = handle
             self.spawnedAtMono = spawnedAtMono
+            self.realtimePrivate = realtimePrivate
         }
+    }
+
+    /// R0 (S2) fail-closed public-broadcast gate (pure, unit-testable). Returns
+    /// true ONLY for a session POSITIVELY known public (`realtime_private ==
+    /// false`). A `nil` (unknown — local session / pre-v0.61 payload) or `true`
+    /// (private) => false, so a private session's redacted output is NEVER
+    /// POSTed to the public `term:<sid>` topic. The Swift helper does not run
+    /// Route B-lite (no minted producer token), so a private session simply
+    /// gets no realtime mirror — the phone degrades to event-polling.
+    static func allowsPublicBroadcast(realtimePrivate: Bool?) -> Bool {
+        realtimePrivate == false
     }
 
     public init(
@@ -242,7 +270,8 @@ public final class ManagedSessionManager: @unchecked Sendable {
         clientLabel: String?,
         cwd: String? = nil,
         extraEnv: [String: String] = [:],
-        forcedSessionId: String? = nil
+        forcedSessionId: String? = nil,
+        realtimePrivate: Bool? = nil
     ) throws -> Summary {
         // v1.15 multi-CLI dispatch: resolve provider → spawner via
         // the registry. Pre-v1.15 this was a hardcoded
@@ -313,7 +342,8 @@ public final class ManagedSessionManager: @unchecked Sendable {
             provider: provider,
             clientLabel: clientLabel,
             handle: handle,
-            spawnedAtMono: ProcessInfo.processInfo.systemUptime
+            spawnedAtMono: ProcessInfo.processInfo.systemUptime,
+            realtimePrivate: realtimePrivate
         )
 
         // Build the drain thread and stash its handle on the record
@@ -532,6 +562,12 @@ public final class ManagedSessionManager: @unchecked Sendable {
     @discardableResult
     public func publishTailSnapshot(sessionId: String, maxBytes: Int) async -> Bool {
         guard let publisher = broadcastPublisher else { return false }
+        // R0 (S2) fail-closed: never publish a private/unknown session's snapshot
+        // on the public `term:` channel (a gone session → nil → also muted).
+        lock.lock()
+        let allowPublic = sessions[sessionId]?.allowsPublicBroadcast ?? false
+        lock.unlock()
+        guard allowPublic else { return false }
         guard let snapshot = getTailSnapshot(sessionId: sessionId, maxBytes: maxBytes) else {
             return false
         }
@@ -571,7 +607,14 @@ public final class ManagedSessionManager: @unchecked Sendable {
                     // Publisher redacts + ships to sink; this call
                     // is fire-and-forget (actor handles its own
                     // queue/drop policy).
-                    if let publisher = broadcastPublisher {
+                    //
+                    // R0 (S2) fail-closed: the publisher POSTs to the PUBLIC
+                    // `term:<sid>` topic, so mirror there ONLY for a session
+                    // positively known public. A private or unknown-privacy
+                    // session gets NO broadcast — its output never leaks on the
+                    // public channel (the Swift helper has no `pterm:` producer;
+                    // the phone falls back to polling).
+                    if record.allowsPublicBroadcast, let publisher = broadcastPublisher {
                         let sid = record.sessionId
                         let payload = chunk
                         Task { await publisher.submit(sessionId: sid, chunk: payload) }

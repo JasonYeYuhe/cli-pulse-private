@@ -247,18 +247,15 @@ public actor RemoteAgentCloud {
         if UUID(uuidString: sessionId) == nil {
             return (false, "invalid session_id")
         }
-        var provider = "claude"
-        var cwdHmac: String?
-        var clientLabel: String?
-        if !payload.isEmpty,
-           let data = payload.data(using: .utf8),
-           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if let p = obj["provider"] as? String { provider = p }
-            if let h = obj["cwd_hmac"] as? String, !h.isEmpty { cwdHmac = h }
-            if let lbl = obj["client_label"] as? String, !lbl.isEmpty { clientLabel = lbl }
-        } else if !payload.isEmpty {
+        guard let parsed = Self.decodeStartPayload(payload) else {
             return (false, "invalid start payload")
         }
+        let provider = parsed.provider
+        let cwdHmac = parsed.cwdHmac
+        let clientLabel = parsed.clientLabel
+        // R0 (S2): authoritative privacy source for the fail-closed broadcast
+        // gate — nil (absent) stays UNKNOWN → muted downstream.
+        let realtimePrivate = parsed.realtimePrivate
         // No cloud-layer provider allowlist: ManagedSessionManager
         // validates the provider against the ProviderSpawnerRegistry
         // (Claude / Codex / Gemini) and throws .unsupportedProvider for
@@ -289,7 +286,8 @@ public actor RemoteAgentCloud {
                             clientLabel: clientLabel,
                             cwd: nil,
                             extraEnv: extraEnv,
-                            forcedSessionId: sessionId
+                            forcedSessionId: sessionId,
+                            realtimePrivate: realtimePrivate
                         ))
                     } catch {
                         cont.resume(throwing: error)
@@ -392,6 +390,43 @@ public actor RemoteAgentCloud {
             return (false, "child exited")
         }
         return ok ? (true, "") : (false, "child exited")
+    }
+
+    /// Parsed fields of a cloud `start` command payload.
+    struct StartPayload: Equatable {
+        let provider: String
+        let cwdHmac: String?
+        let clientLabel: String?
+        /// R0 (S2/S5): `realtime_private` from the backend start payload
+        /// (migrate_v0.61). `nil` when the key is ABSENT — an old backend or a
+        /// truncated payload — which the broadcast gate treats as UNKNOWN and
+        /// fail-closed mutes. NEVER default a missing flag to `false` (that
+        /// would infer "public" and re-open the leak).
+        let realtimePrivate: Bool?
+    }
+
+    /// Pure parser for the `start` command payload (S5 added `realtime_private`).
+    /// Returns nil ONLY for a non-empty payload that isn't valid JSON (the
+    /// caller rejects it); an EMPTY payload yields defaults (provider=claude,
+    /// privacy unknown). Static so unit tests pin the wire shape without a live
+    /// RPC caller / session manager.
+    static func decodeStartPayload(_ payload: String) -> StartPayload? {
+        if payload.isEmpty {
+            return StartPayload(provider: "claude", cwdHmac: nil, clientLabel: nil, realtimePrivate: nil)
+        }
+        guard let data = payload.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        let provider = (obj["provider"] as? String) ?? "claude"
+        let cwdHmac = (obj["cwd_hmac"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let clientLabel = (obj["client_label"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        // Bool ONLY — a non-bool (string "true", number) is treated as absent →
+        // unknown → fail-closed, never coerced to public.
+        let realtimePrivate = obj["realtime_private"] as? Bool
+        return StartPayload(
+            provider: provider, cwdHmac: cwdHmac,
+            clientLabel: clientLabel, realtimePrivate: realtimePrivate)
     }
 
     /// Pure parser. Returns nil for empty / non-base64 payloads.

@@ -213,6 +213,46 @@ final class RemoteAgentCloudTests: XCTestCase {
         XCTAssertEqual(RemoteAgentCloud.decodeTailSnapshotPayload("-50"), 0)
     }
 
+    // MARK: - R0 (S2/S5): start payload realtime_private parse
+
+    func test_decodeStartPayload_reads_realtime_private_true() {
+        let p = RemoteAgentCloud.decodeStartPayload(#"{"provider":"claude","realtime_private":true}"#)
+        XCTAssertEqual(p?.provider, "claude")
+        XCTAssertEqual(p?.realtimePrivate, true)
+    }
+
+    func test_decodeStartPayload_reads_realtime_private_false() {
+        let p = RemoteAgentCloud.decodeStartPayload(#"{"provider":"codex","realtime_private":false}"#)
+        XCTAssertEqual(p?.provider, "codex")
+        XCTAssertEqual(p?.realtimePrivate, false)
+    }
+
+    func test_decodeStartPayload_absent_flag_is_unknown_nil() {
+        // A pre-v0.61 backend omits the key — MUST stay nil (unknown), never
+        // coerced to false/public (that would re-open the leak on the gate).
+        let p = RemoteAgentCloud.decodeStartPayload(#"{"provider":"claude"}"#)
+        XCTAssertNil(p?.realtimePrivate)
+    }
+
+    func test_decodeStartPayload_non_bool_flag_is_unknown_nil() {
+        // A string/number "realtime_private" is NOT coerced to a Bool → unknown.
+        let p = RemoteAgentCloud.decodeStartPayload(#"{"realtime_private":"true"}"#)
+        XCTAssertNotNil(p)
+        XCTAssertNil(p?.realtimePrivate)
+    }
+
+    func test_decodeStartPayload_empty_yields_defaults() {
+        let p = RemoteAgentCloud.decodeStartPayload("")
+        XCTAssertEqual(p?.provider, "claude")
+        XCTAssertNil(p?.realtimePrivate)
+        XCTAssertNil(p?.cwdHmac)
+        XCTAssertNil(p?.clientLabel)
+    }
+
+    func test_decodeStartPayload_invalid_json_returns_nil() {
+        XCTAssertNil(RemoteAgentCloud.decodeStartPayload("not json"))
+    }
+
     func test_dispatch_tail_snapshot_for_unknown_session_completes_failed() async throws {
         // The helper must report failure when iOS requests a
         // snapshot of a session it doesn't own (e.g. wrong device,
