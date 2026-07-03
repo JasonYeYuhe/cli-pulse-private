@@ -46,7 +46,14 @@ struct iOSSessionsTab: View {
                 .navigationTitle(L10n.tab.sessions)
         } detail: {
             if let managed = selectedManagedSession {
+                // 2026-07-03 review: key the detail view to the session
+                // identity. On iPad the detail COLUMN is reused across
+                // selections (unlike iPhone's per-push NavigationStack), so
+                // without .id() every per-session @State — liveTerminalAuthFailed,
+                // showOutput/showLiveTerminal flips, realtimeConfig — leaked
+                // from one session onto the next.
                 ManagedSessionDetailView(session: managed)
+                    .id(managed.id)
             } else if let session = selectedSession {
                 SessionDetailView(session: session, showCost: state.showCost)
             } else {
@@ -1042,7 +1049,19 @@ struct ManagedSessionDetailView: View {
                 // R0 (S4, Gemini #3): imperative fresh-JWT fetch for a private
                 // rejoin (warm resume / reconnect) — before the join frame, not
                 // relying on the 3 s refresh loop below having run.
-                refreshAccessToken: { await state.api.realtimeConfiguration().accessToken },
+                refreshAccessToken: { force in
+                    // 2026-07-03 review (the S4 gap): `force` (the join-
+                    // rejection retry) must perform a REAL GoTrue refresh —
+                    // realtimeConfiguration() is a cached actor read, so the
+                    // old wiring re-sent the same expired JWT and spuriously
+                    // went fatal. refreshAccessToken() is single-flight
+                    // (NEW-H5) and persists via onTokenRefreshed; fall back
+                    // to the cached token if the network refresh fails.
+                    if force, let fresh = try? await state.api.refreshAccessToken().accessToken {
+                        return fresh
+                    }
+                    return await state.api.realtimeConfiguration().accessToken
+                },
                 // R0 (S4): a fatal private-join rejection (auth) after one
                 // refresh-retry → surface a banner + fall back to the polled
                 // output panel instead of a permanently blank terminal.
@@ -1067,7 +1086,7 @@ struct ManagedSessionDetailView: View {
                     sessionId: sessionId, bytes: bytes
                 ) }
             }
-            Text("Interactive terminal. Backgrounding the app disconnects the stream; foreground resubscribes (no replay).")
+            Text("Interactive terminal. Backgrounding the app disconnects the stream; foreground resubscribes and recovers recent output.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)

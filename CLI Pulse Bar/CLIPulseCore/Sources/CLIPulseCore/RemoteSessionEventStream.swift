@@ -108,7 +108,8 @@ public final class RemoteSessionEventStream: @unchecked Sendable {
         sessionId: String,
         isPrivate: Bool = false,
         onChunk: @escaping @Sendable (TerminalChunk) -> Void,
-        onDisconnect: @escaping @Sendable (Error?) -> Void
+        onDisconnect: @escaping @Sendable (Error?) -> Void,
+        onJoinOk: (@Sendable () -> Void)? = nil
     ) -> Cancellable {
         let sub = TerminalSubscription(
             sessionId: sessionId,
@@ -116,7 +117,8 @@ public final class RemoteSessionEventStream: @unchecked Sendable {
             config: config,
             urlSession: urlSession,
             onChunk: onChunk,
-            onDisconnect: onDisconnect
+            onDisconnect: onDisconnect,
+            onJoinOk: onJoinOk
         )
         sub.start()
         return sub
@@ -378,6 +380,11 @@ private final class TerminalSubscription: RemoteSessionEventStream.Cancellable, 
     private let urlSession: URLSession
     private let onChunk: @Sendable (RemoteSessionEventStream.TerminalChunk) -> Void
     private let onDisconnect: @Sendable (Error?) -> Void
+    /// 2026-07-03 review: fired on a phx_reply `ok` for OUR join (or a later
+    /// access_token push) so the consumer can re-arm its one-shot auth retry —
+    /// a join that SUCCEEDED but stayed silent (no output yet) must not leave
+    /// the retry consumed.
+    private let onJoinOk: (@Sendable () -> Void)?
 
     private let lock = NSLock()
     private var task: URLSessionWebSocketTask?
@@ -395,7 +402,8 @@ private final class TerminalSubscription: RemoteSessionEventStream.Cancellable, 
         config: RemoteSessionEventStream.Configuration,
         urlSession: URLSession,
         onChunk: @escaping @Sendable (RemoteSessionEventStream.TerminalChunk) -> Void,
-        onDisconnect: @escaping @Sendable (Error?) -> Void
+        onDisconnect: @escaping @Sendable (Error?) -> Void,
+        onJoinOk: (@Sendable () -> Void)? = nil
     ) {
         self.sessionId = sessionId
         self.isPrivate = isPrivate
@@ -404,6 +412,7 @@ private final class TerminalSubscription: RemoteSessionEventStream.Cancellable, 
         self.accessToken = config.accessToken
         self.onChunk = onChunk
         self.onDisconnect = onDisconnect
+        self.onJoinOk = onJoinOk
     }
 
     func start() {
@@ -550,14 +559,20 @@ private final class TerminalSubscription: RemoteSessionEventStream.Cancellable, 
             @unknown default:
                 continue
             }
-            // R0 (S4): a phx_reply error on OUR join = a rejected PRIVATE join
-            // (read-RLS / bad or expired token). Surface it as a disconnect so
-            // the Coordinator can refresh-and-retry once, then fall back — a
-            // public `term:` join always replies `ok`, so this is inert pre-cutover.
-            if case .error(let reason)? = RemoteSessionEventStream.decodeJoinReply(
-                from: data, ourJoinRef: joinRef) {
+            // R0 (S4): a phx_reply on OUR join. `error` = a rejected join
+            // (read-RLS / bad or expired token on the private path; transient
+            // rate-limit on the public one) — surface it as a disconnect so
+            // the Coordinator reacts (private: refresh-retry once then fall
+            // back; public: normal backoff). `ok` = joined — re-arm the
+            // consumer's one-shot auth retry (2026-07-03 review).
+            switch RemoteSessionEventStream.decodeJoinReply(from: data, ourJoinRef: joinRef) {
+            case .error(let reason):
                 fireDisconnect(RemoteSessionEventStream.StreamError.joinRejected(reason: reason))
                 return
+            case .ok:
+                onJoinOk?()
+            case nil:
+                break
             }
             do {
                 if let chunk = try RemoteSessionEventStream.decodeBroadcastChunk(from: data) {
