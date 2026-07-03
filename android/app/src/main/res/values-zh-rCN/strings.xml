@@ -254,9 +254,9 @@
     <string name="managed_cancel">取消会话</string>
     <string name="managed_ended_body">此托管会话已不再活动。请在"会话"标签页中新建一个以继续。</string>
     <string name="managed_terminal_soon_title">实时终端</string>
-    <string name="managed_terminal_soon_body">实时查看此会话的输出。目前为只读 — 发送输入将在后续更新中推出。</string>
+    <string name="managed_terminal_soon_body">实时查看此会话的输出,并可直接输入 — 键盘和按键栏的内容会发送到 Mac。</string>
     <string name="managed_pending_note">正在等待 Helper 启动此会话。</string>
-    <string name="managed_terminal_readonly_note">离开此页面会断开串流;重新打开会重连(不重放历史)。</string>
+    <string name="managed_terminal_readonly_note">离开此页面会断开串流;重新打开会重连并恢复最近的输出。</string>
     <string name="managed_approval_title">待处理权限</string>
     <string name="managed_approval_high_risk">高风险</string>
     <string name="managed_approval_approve">批准</string>

@@ -256,9 +256,9 @@
     <string name="managed_cancel">Cancel session</string>
     <string name="managed_ended_body">This managed session is no longer active. Start a new one from the Sessions tab to keep working.</string>
     <string name="managed_terminal_soon_title">Live terminal</string>
-    <string name="managed_terminal_soon_body">Stream live output from this session. Read-only for now — sending input arrives in a later update.</string>
+    <string name="managed_terminal_soon_body">Stream live output and type straight into this session — keystrokes and the key bar send input to the Mac.</string>
     <string name="managed_pending_note">Waiting for the helper to start this session.</string>
-    <string name="managed_terminal_readonly_note">Leaving this screen disconnects the stream; reopening reconnects with no replay.</string>
+    <string name="managed_terminal_readonly_note">Leaving this screen disconnects the stream; reopening reconnects and recovers recent output.</string>
     <string name="managed_approval_title">Pending permission</string>
     <string name="managed_approval_high_risk">high risk</string>
     <string name="managed_approval_approve">Approve</string>

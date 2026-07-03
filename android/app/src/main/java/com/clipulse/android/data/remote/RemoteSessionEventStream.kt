@@ -88,9 +88,14 @@ class RemoteSessionEventStream(
         accessToken: String? = null,
         onChunk: (TerminalChunk) -> Unit,
         onDisconnect: (Throwable?) -> Unit,
+        // 2026-07-03 review: fired on a phx_reply `ok` for OUR join (or a later
+        // access_token push) so the controller can re-arm its one-shot auth
+        // retry — a join that SUCCEEDED but stayed silent (no output yet) must
+        // not leave the retry consumed.
+        onJoinOk: (() -> Unit)? = null,
     ): Cancellable {
         val sub = TerminalSubscription(
-            sessionId, isPrivate, accessToken, config, client, onChunk, onDisconnect,
+            sessionId, isPrivate, accessToken, config, client, onChunk, onDisconnect, onJoinOk,
         )
         sub.start()
         return sub
@@ -373,6 +378,7 @@ private class TerminalSubscription(
     private val client: OkHttpClient,
     private val onChunk: (RemoteSessionEventStream.TerminalChunk) -> Unit,
     private val onDisconnect: (Throwable?) -> Unit,
+    private val onJoinOk: (() -> Unit)? = null,
 ) : RemoteSessionEventStream.Cancellable {
 
     private val lock = Any()
@@ -442,13 +448,19 @@ private class TerminalSubscription(
     }
 
     private fun handle(text: String) {
-        // A phx_reply error on OUR join = a rejected PRIVATE join (read-RLS / bad
-        // or expired token). Surface it as a FATAL disconnect so the controller
-        // stops hammering a doomed rejoin (Codex P0-3).
-        val reply = RemoteSessionEventStream.decodeJoinReply(text, joinRef)
-        if (reply is RemoteSessionEventStream.JoinReply.Error) {
-            fireDisconnect(StreamException.JoinRejected(reply.reason))
-            return
+        // A phx_reply on OUR join. Error = rejected join (read-RLS / bad or
+        // expired token on the private path; transient rate-limit on the
+        // public one) → surfaced as JoinRejected so the controller reacts
+        // (private: one refresh-retry then fatal; public: normal backoff —
+        // Codex P0-3 + 2026-07-03 review). Ok = joined → re-arm the one-shot
+        // auth retry.
+        when (val reply = RemoteSessionEventStream.decodeJoinReply(text, joinRef)) {
+            is RemoteSessionEventStream.JoinReply.Error -> {
+                fireDisconnect(StreamException.JoinRejected(reply.reason))
+                return
+            }
+            is RemoteSessionEventStream.JoinReply.Ok -> onJoinOk?.invoke()
+            null -> Unit
         }
         val chunk = try {
             RemoteSessionEventStream.decodeBroadcastChunk(text, sessionId)

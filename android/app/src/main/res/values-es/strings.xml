@@ -250,9 +250,9 @@
     <string name="managed_cancel">Cancelar sesión</string>
     <string name="managed_ended_body">Esta sesión gestionada ya no está activa. Inicia una nueva desde la pestaña Sesiones para seguir trabajando.</string>
     <string name="managed_terminal_soon_title">Terminal en vivo</string>
-    <string name="managed_terminal_soon_body">Transmite la salida de esta sesión en vivo. Solo lectura por ahora: el envío de entrada llegará en una actualización posterior.</string>
+    <string name="managed_terminal_soon_body">Transmite la salida en vivo y escribe directamente en esta sesión: las pulsaciones y la barra de teclas envían la entrada al Mac.</string>
     <string name="managed_pending_note">Esperando a que el Helper inicie esta sesión.</string>
-    <string name="managed_terminal_readonly_note">Salir de esta pantalla desconecta la transmisión; al volver se reconecta sin reproducción.</string>
+    <string name="managed_terminal_readonly_note">Salir de esta pantalla desconecta la transmisión; al volver se reconecta y recupera la salida reciente.</string>
     <string name="managed_approval_title">Permiso pendiente</string>
     <string name="managed_approval_high_risk">riesgo alto</string>
     <string name="managed_approval_approve">Aprobar</string>
