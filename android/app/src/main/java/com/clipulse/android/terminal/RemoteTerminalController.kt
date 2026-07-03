@@ -125,6 +125,11 @@ class RemoteTerminalController(
                 }
             },
             onDisconnect = { err -> scope.launch { handleDisconnect(err) } },
+            // 2026-07-03 review: a join that SUCCEEDED but stayed silent (no
+            // output yet) must re-arm the one-shot auth retry — otherwise a
+            // later transient rejection on a quiet private session goes
+            // straight to fatal.
+            onJoinOk = { scope.launch { authRetryUsed = false } },
         )
         activeSessionId = sessionId
 
@@ -167,11 +172,22 @@ class RemoteTerminalController(
         tokenRefreshJob?.cancel(); tokenRefreshJob = null
 
         if (err is StreamException.JoinRejected) {
+            // 2026-07-03 review: a PUBLIC join carries no auth, so a phx_reply
+            // error there is transient by definition (rate limit / channel
+            // pool; post-cutover the 5 s session poll flips the session
+            // private and the (sessionId,isPrivate)-keyed panel rebuilds).
+            // Route it to the normal backoff — pre-S1 these errors were
+            // silently ignored and the reconnect machinery handled drops;
+            // going FATAL here was a regression.
+            if (!isPrivate || tokenProvider == null) {
+                scheduleReconnect()
+                return
+            }
             // Private join rejected (read-RLS / bad or expired token). Try ONE
             // forced-refresh rejoin (covers a stale JWT after a long background —
             // Gemini #3); a SECOND consecutive rejection is a real authz failure
             // → FATAL, surface it, stop reconnecting (Codex P0-3).
-            if (isPrivate && tokenProvider != null && !authRetryUsed) {
+            if (!authRetryUsed) {
                 authRetryUsed = true
                 subscribeIfNeeded(forceTokenRefresh = true)
             } else {
