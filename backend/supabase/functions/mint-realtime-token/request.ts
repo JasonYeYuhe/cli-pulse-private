@@ -62,24 +62,34 @@ export function parseMintBody(raw: unknown): ParseResult {
 
 export type AuthorizeOutcome =
   | { authorized: true; owner: string }
-  | { authorized: false; status: 401 | 403 };
+  | { authorized: false; status: 401 | 403 | 500 };
 
 /**
  * Map a `remote_helper_authorize_broadcast` RPC result to an outcome.
  *
  * The RPC RAISES (errcode 42501) on a bad helper_secret, a wrong device, a
  * non-owned session, or a non-private session — supabase-js surfaces that as a
- * non-null `error`. A clean call returns the owner uuid in `data`. Either
- * failure mode maps to 403 (the helper IS authenticated by the gateway anon
- * key, but is NOT authorized for this session). We deliberately do NOT
- * distinguish the four reject reasons to the caller — that would leak whether a
- * given device/session exists.
+ * non-null `error` whose `code` carries the SQLSTATE. A clean call returns the
+ * owner uuid in `data`. We deliberately do NOT distinguish the four reject
+ * reasons to the caller — that would leak whether a given device/session
+ * exists.
+ *
+ * 2026-07-03 review fix: ONLY the intentional 42501 RAISE is an authoritative
+ * denial (403). Any OTHER non-null error — DB connection loss, PostgREST 5xx,
+ * statement timeout, edge→DB fetch failure — is infra trouble and maps to 500.
+ * The shipped helper treats 403 as a 5-minute denial backoff + cached-token
+ * invalidation, so misreporting an infra blip as 403 blacked out a healthy
+ * private terminal; a 5xx keeps the helper on its transient-retry path (no
+ * denial cache).
  */
 export function classifyAuthorizeResult(
   data: unknown,
   error: unknown,
 ): AuthorizeOutcome {
-  if (error != null) return { authorized: false, status: 403 };
+  if (error != null) {
+    const code = (error as { code?: string } | null)?.code;
+    return { authorized: false, status: code === "42501" ? 403 : 500 };
+  }
   if (!isUuid(data)) return { authorized: false, status: 403 };
   return { authorized: true, owner: data };
 }

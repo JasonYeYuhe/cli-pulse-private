@@ -80,7 +80,12 @@ def _headers() -> dict[str, str]:
 
 
 def _get(path: str) -> dict:
-    return requests.get(BASE + path, headers=_headers(), timeout=30).json()
+    r = requests.get(BASE + path, headers=_headers(), timeout=30)
+    if r.status_code >= 300:
+        # Fail LOUDLY — a silent {} here made --list-builds print nothing and
+        # exit 0 on auth/API failures (2026-07-03 review).
+        sys.exit(f"ASC GET {path} failed {r.status_code}: {r.text[:400]}")
+    return r.json()
 
 
 def _post(path: str, body: dict):
@@ -165,6 +170,17 @@ def submit(platform_key: str, build_id: str, version: str, whatsnew: str) -> boo
                       "appStoreVersion": {"data": {"type": "appStoreVersions", "id": ver_id}}}}},
     )
     print(f"[{plat}] add item: {ir.status_code} {'' if ir.status_code < 300 else ir.text[:300]}")
+    if ir.status_code >= 300:
+        # ASC allows only ONE open reviewSubmission per platform — a dangling
+        # empty one would block every retry. Cancel it before bailing
+        # (2026-07-03 review).
+        cr2 = _patch(
+            f"/reviewSubmissions/{sub_id}",
+            {"data": {"type": "reviewSubmissions", "id": sub_id,
+                      "attributes": {"canceled": True}}},
+        )
+        print(f"[{plat}] add-item failed — canceled dangling submission {sub_id}: {cr2.status_code}")
+        return False
     fr = _patch(
         f"/reviewSubmissions/{sub_id}",
         {"data": {"type": "reviewSubmissions", "id": sub_id, "attributes": {"submitted": True}}},
@@ -179,7 +195,9 @@ def main() -> int:
     ap.add_argument("--list-builds", choices=PLATFORMS.keys(), help="list recent builds for a platform")
     ap.add_argument("--submit", choices=PLATFORMS.keys(), help="submit a build for review")
     ap.add_argument("--build", help="build id (from --list-builds)")
-    ap.add_argument("--version", default="1.37.0", help="marketing version string")
+    # No default on purpose: a hardcoded default silently attaches the next
+    # train's build to the WRONG version row (2026-07-03 review).
+    ap.add_argument("--version", help="marketing version string, e.g. 1.37.0")
     ap.add_argument("--whatsnew", help="path to a whatsNew text file")
     args = ap.parse_args()
 
@@ -189,6 +207,8 @@ def main() -> int:
     if args.submit:
         if not args.build:
             return ap.error("--submit requires --build <BUILD_ID>")
+        if not args.version:
+            return ap.error("--submit requires --version <X.Y.Z>")
         whatsnew = ""
         if args.whatsnew:
             whatsnew = open(args.whatsnew).read().strip()

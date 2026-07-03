@@ -93,6 +93,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
   );
   const outcome = classifyAuthorizeResult(data, error);
   if (!outcome.authorized) {
+    // 500 = infra trouble between the edge runtime and the DB (NOT a denial) —
+    // the helper retries transiently instead of entering its 403 denial backoff.
+    if (outcome.status === 500) {
+      console.error(
+        `mint-realtime-token: authorize errored (infra) session=${session_id}`,
+      );
+      return json(500, { error: "authorization temporarily unavailable" });
+    }
     console.warn(
       `mint-realtime-token: authorize denied session=${session_id} status=${outcome.status}`,
     );
