@@ -58,10 +58,29 @@ Deno.test("parseMintBody: rejects malformed inputs without echoing the secret", 
   }
 });
 
-Deno.test("classifyAuthorizeResult: error → 403", () => {
-  const o = classifyAuthorizeResult(null, { message: "unauthorized" });
+Deno.test("classifyAuthorizeResult: 42501 RAISE → 403 (authoritative denial)", () => {
+  const o = classifyAuthorizeResult(null, { message: "unauthorized", code: "42501" });
   assertEquals(o.authorized, false);
   if (!o.authorized) assertEquals(o.status, 403);
+});
+
+Deno.test("classifyAuthorizeResult: non-42501 / infra errors → 500 (transient, no helper denial backoff)", () => {
+  // DB connection loss, PostgREST 5xx, statement timeout, fetch failure — all
+  // surface as non-null errors WITHOUT the intentional 42501 SQLSTATE. They
+  // must NOT map to 403: the helper caches a 403 as a 5-minute denial and
+  // drops its still-valid token, blacking out a healthy private terminal.
+  for (
+    const err of [
+      { message: "unauthorized" }, // no code at all
+      { message: "canceling statement due to statement timeout", code: "57014" },
+      { message: "server error", code: "XX000" },
+      { message: "TypeError: fetch failed" },
+    ]
+  ) {
+    const o = classifyAuthorizeResult(null, err);
+    assertEquals(o.authorized, false);
+    if (!o.authorized) assertEquals(o.status, 500);
+  }
 });
 
 Deno.test("classifyAuthorizeResult: null/non-uuid data → 403", () => {
