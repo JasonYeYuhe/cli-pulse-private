@@ -1179,6 +1179,22 @@ class RemoteAgentManager:
                     logger.debug(
                         "broker session_stopped publish failed: %s", exc,
                     )
+            # R0 (2026-07-03 review): mirror the explicit-stop teardown — flush
+            # the final coalesced broadcast chunk, then purge the per-session
+            # token/denial/retry caches. Child-exit is the MOST COMMON end path
+            # (/exit, Ctrl-D, CLI crash); without this the RealtimeTokenClient
+            # dicts violated their "bounded to LIVE sessions" contract on the
+            # long-lived daemon.
+            if self._broadcast_publisher is not None:
+                try:
+                    self._broadcast_publisher.flush(session_id)
+                    forget = getattr(self._broadcast_publisher, "forget", None)
+                    if callable(forget):
+                        forget(session_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "broadcast flush on exit(%s) failed: %s", session_id, exc,
+                    )
             self._sessions.pop(session_id, None)
             exited += 1
         return exited

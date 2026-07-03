@@ -289,6 +289,41 @@ final class HelperConfigStoreTests: XCTestCase {
                        "remote_realtime_enabled must survive a setLocalControlEnabled write")
     }
 
+    func testSetLocalControlEnabledDoesNotRevertPostBootDiskEdits() throws {
+        // 2026-07-03 review (lost-update): the store caches the JSON at BOOT.
+        // The Python helper and ops hand-edits mutate the same file while the
+        // daemon runs; a later Sessions-toggle write used to persist the stale
+        // boot snapshot, silently reverting those edits (e.g. flipping the
+        // remote_realtime_enabled kill switch back ON). The write path must
+        // re-read disk and only change the key it owns.
+        let path = tmp.appendingPathComponent("cfg.json")
+        let seed: [String: Any] = [
+            "device_id": "d",
+            "helper_secret": "s",
+            "remote_realtime_enabled": true,
+            "local_control_enabled": false,
+        ]
+        try JSONSerialization.data(withJSONObject: seed).write(to: path)
+        let store = HelperConfigStore(path: path)  // boot snapshot taken HERE
+
+        // Post-boot external edits: ops kills the realtime mirror and the
+        // Python helper adds a new field.
+        var edited = seed
+        edited["remote_realtime_enabled"] = false
+        edited["r0_flip_migrated"] = true
+        try JSONSerialization.data(withJSONObject: edited).write(to: path)
+
+        store.setLocalControlEnabled(true)
+
+        let after = try JSONSerialization.jsonObject(with: try Data(contentsOf: path))
+            as? [String: Any] ?? [:]
+        XCTAssertEqual(after["local_control_enabled"] as? Bool, true)
+        XCTAssertEqual(after["remote_realtime_enabled"] as? Bool, false,
+                       "post-boot ops kill-switch edit must NOT be reverted by the toggle write")
+        XCTAssertEqual(after["r0_flip_migrated"] as? Bool, true,
+                       "post-boot Python-helper field must survive the toggle write")
+    }
+
     // MARK: - StoredConfig schema parity check
 
     func testStoredConfigSchemaMatchesAppEncoding() throws {
