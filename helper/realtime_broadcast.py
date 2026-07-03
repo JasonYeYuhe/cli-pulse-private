@@ -18,8 +18,10 @@ broadcast it (it stays on the legacy DB-event path). The token is refreshed
 PROACTIVELY before expiry (not reactively on 401), and a 401 that slips through
 requeues the chunk rather than dropping it.
 
-GATED OFF by default (`HelperConfig.remote_realtime_broadcast_enabled=False`).
-When off: zero broadcasts, zero edge-fn calls, byte-identical to today.
+Gate: `HelperConfig.remote_realtime_broadcast_enabled` — DEFAULT ON since
+helper 1.24.0 (S3 fleet flip); False is the ops kill switch. When off: zero
+broadcasts, zero edge-fn calls. Even when on, only sessions whose start payload
+marked them PRIVATE ever reach this module (the `_post_stdout_chunk` local gate).
 
 NEVER logs the token or the helper_secret.
 """

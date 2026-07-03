@@ -41,8 +41,11 @@ class _StubTransport(SessionTransport):
     def write_stdin(self, handle, data: bytes) -> int:  # pragma: no cover
         return len(data)
 
+    # Mutable so the exit-observation test can simulate the child dying.
+    alive: bool = True
+
     def is_alive(self, handle) -> bool:
-        return True
+        return self.alive
 
     def wait(self, handle, timeout=None):  # pragma: no cover
         return 0
@@ -65,19 +68,22 @@ class _StubHelperConfig:
 
 
 class _FakeBroadcastPublisher:
-    """Records every submit so tests can assert what (didn't) reach the sink."""
+    """Records every submit/flush/forget so tests can assert what (didn't)
+    reach the sink and that teardown purges per-session state."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, bytes]] = []
+        self.flushed: list[str] = []
+        self.forgotten: list[str] = []
 
     def submit(self, session_id: str, event: str, data: bytes) -> None:
         self.calls.append((session_id, event, bytes(data)))
 
-    def flush(self, session_id: str) -> None:  # pragma: no cover — teardown only
-        pass
+    def flush(self, session_id: str) -> None:
+        self.flushed.append(session_id)
 
-    def forget(self, session_id: str) -> None:  # pragma: no cover — teardown only
-        pass
+    def forget(self, session_id: str) -> None:
+        self.forgotten.append(session_id)
 
 
 SID = "11111111-1111-1111-1111-111111111111"
@@ -161,6 +167,22 @@ def test_dispatch_tail_snapshot_unknown_session_fails():
     _dispatch(manager, "tail_snapshot", session_id="99999999-9999-9999-9999-999999999999")
     assert pub.calls == []
     assert completed and completed[0]["p_status"] == "failed"
+
+
+# ── 2b. teardown purges broadcast state on the CHILD-EXIT path ─
+
+
+def test_child_exit_flushes_and_forgets_broadcast_state():
+    # 2026-07-03 review: child-exit (/exit, Ctrl-D, CLI crash) is the MOST
+    # COMMON session end, but only the explicit-stop path purged the
+    # publisher's per-session token/denial/retry caches — violating their
+    # "bounded to LIVE sessions" contract on the long-lived daemon.
+    manager, pub = _make_manager(realtime_private=True)
+    manager.transport.alive = False  # simulate the child dying on its own
+    manager._observe_exits()  # noqa: SLF001
+    assert SID in pub.flushed, "final coalesced chunk must be flushed on exit"
+    assert SID in pub.forgotten, "per-session broadcast caches must be purged on exit"
+    assert SID not in manager._sessions  # noqa: SLF001
 
 
 # ── 3. packaging + default ─────────────────────────────────────

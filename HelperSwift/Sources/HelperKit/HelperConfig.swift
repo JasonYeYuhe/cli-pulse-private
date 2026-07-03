@@ -228,6 +228,18 @@ public final class HelperConfigStore: @unchecked Sendable {
     /// sees a half-written file.
     public func setLocalControlEnabled(_ enabled: Bool) {
         lock.lock()
+        // 2026-07-03 review: re-read the on-disk JSON before mutating. The
+        // boot-time snapshot can be STALE — the Python helper saves this same
+        // file (pair, its own toggles), and ops hand-edit keys like
+        // `remote_realtime_enabled`. Writing the stale snapshot back would
+        // silently revert every change made since this daemon booted (a
+        // classic lost-update). Disk wins for all keys except the one we
+        // are flipping. (Inline read — `loadFromDisk()` takes the same
+        // non-reentrant lock.)
+        if let data = try? Data(contentsOf: path),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            raw = parsed
+        }
         raw["local_control_enabled"] = enabled
         let snapshot = raw
         lock.unlock()

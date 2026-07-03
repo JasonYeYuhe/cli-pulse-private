@@ -78,7 +78,17 @@ class HelperConfig:
     # `user_settings.realtime_private_enabled` — no broadcasts, no mint calls,
     # no HTTP for the 100% of sessions that are still public. Owners who need to
     # kill the path (Supabase quota brake) set it False in the config JSON.
+    #
+    # ⚠️ helper ≤1.23.0 PERSISTED its then-default False on every save_config
+    # (pair / Local Control toggle) via asdict — an incidental value, never a
+    # user choice. load_config() runs a ONE-TIME migration (r0_flip_migrated)
+    # that strips that stale key so the 1.24.0 default actually applies
+    # fleet-wide; any EXPLICIT post-migration False (the ops kill switch) is
+    # honored forever after. (2026-07-03 deep review.)
     remote_realtime_broadcast_enabled: bool = True
+    # Migration marker for the flip above. Fresh configs (paired on ≥1.24.0)
+    # are born migrated; pre-1.24 configs get stamped by load_config().
+    r0_flip_migrated: bool = True
 
 
 def now_iso() -> str:
@@ -109,22 +119,43 @@ def load_config() -> HelperConfig:
                 f"  rm {CONFIG_PATH}\n"
                 f"  python3 cli_pulse_helper.py pair --pairing-code <CODE>"
             )
+        # R0 one-time flip migration (helper 1.24.0 — 2026-07-03 deep review):
+        # helper ≤1.23.0 baked its then-default remote_realtime_broadcast_enabled
+        # =False into the JSON on ANY save (pair / Local Control toggle) — an
+        # incidental persist, never a user decision (the flag was dark). Left in
+        # place, that explicit False silently defeats the 1.24.0 default-ON
+        # fleet flip for exactly the terminal-user cohort. Strip the stale key
+        # ONCE and stamp the marker (persisted immediately, atomically) so every
+        # EXPLICIT post-migration False — the documented ops kill switch — is
+        # honored forever after. Idempotent + concurrent-safe (RLock + atomic
+        # replace; a racing process re-runs the same rewrite).
+        if not data.get("r0_flip_migrated"):
+            data.pop("remote_realtime_broadcast_enabled", None)
+            data["r0_flip_migrated"] = True
+            _write_config_data(data)
         # Accept only known fields
         known = {f.name for f in HelperConfig.__dataclass_fields__.values()}
         return HelperConfig(**{k: v for k, v in data.items() if k in known})
 
 
-def save_config(config: HelperConfig) -> None:
-    # v1.21 F3: atomic write via tmp file + replace, holding the lock so
-    # we never observe a half-written config from a concurrent load_config().
+def _write_config_data(data: dict) -> None:
+    """Atomically persist a raw config dict (tmp + replace + 0600). Callers
+    hold `_config_lock` (an RLock, so load_config's migration can call this
+    from inside its own lock)."""
     with _config_lock:
         tmp = CONFIG_PATH.with_suffix(CONFIG_PATH.suffix + ".tmp")
-        tmp.write_text(json.dumps(asdict(config), indent=2))
+        tmp.write_text(json.dumps(data, indent=2))
         tmp.chmod(0o600)
         tmp.replace(CONFIG_PATH)
         # Defensive re-chmod on the final path (some filesystems carry
         # the destination's mode across replace() rather than the source's).
         CONFIG_PATH.chmod(0o600)
+
+
+def save_config(config: HelperConfig) -> None:
+    # v1.21 F3: atomic write via tmp file + replace, holding the lock so
+    # we never observe a half-written config from a concurrent load_config().
+    _write_config_data(asdict(config))
 
 
 def set_local_control_enabled(enabled: bool) -> bool:
@@ -491,10 +522,12 @@ def daemon(args: argparse.Namespace) -> None:
             on_event=local_event_broker.publish,
         )
         import claude_oauth  # v-next P0-A: fresh-OAuth-token resolver for managed claude
-        # R0 (B2): construct the terminal-broadcast producer ONLY when the owner
-        # has flipped `remote_realtime_broadcast_enabled` (default OFF → None →
-        # zero broadcasts, zero edge-fn calls, byte-identical to today). Even
-        # on, only PRIVATE sessions broadcast (the mint edge fn denies public).
+        # R0 (B2/S3): construct the terminal-broadcast producer when
+        # `remote_realtime_broadcast_enabled` is on (DEFAULT ON since helper
+        # 1.24.0 — the fleet flip; False is the ops kill switch → None → zero
+        # broadcasts, zero edge-fn calls). Even on, only PRIVATE sessions
+        # broadcast: the local gate in `_post_stdout_chunk` skips public/unknown
+        # sessions entirely, and the mint edge fn denies public.
         broadcast_publisher = None
         if getattr(config_for_manager, "remote_realtime_broadcast_enabled", False):
             try:
