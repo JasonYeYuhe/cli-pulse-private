@@ -13,43 +13,76 @@ final class HelperPkgVerifierTests: XCTestCase {
     private let okURL =
         "https://github.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/v1.24.0/cli-pulse-helper-1.24.0-arm64.pkg"
 
-    // MARK: URL provenance allowlist
+    // MARK: URL provenance allowlist (exact canonical artifact for version+arch)
 
-    func test_validatePkgURL_acceptsOfficialReleasePrefix() {
-        XCTAssertNoThrow(try HelperPkgVerifier.validatePkgURL(okURL))
+    private func check(_ url: String, _ v: String = "1.24.0", _ a: String = "arm64") throws {
+        try HelperPkgVerifier.validatePkgURL(url, version: v, arch: a)
+    }
+
+    func test_validatePkgURL_acceptsExactOfficialArtifact() {
+        XCTAssertNoThrow(try check(okURL))
     }
 
     func test_validatePkgURL_rejectsHTTP() {
-        XCTAssertThrowsError(try HelperPkgVerifier.validatePkgURL(
-            "http://github.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/v1.24.0/x.pkg"
-        )) { XCTAssertEqual($0 as? HelperPkgVerifierError,
-                            .urlInsecureScheme("http://github.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/v1.24.0/x.pkg")) }
+        XCTAssertThrowsError(try check(
+            "http://github.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/v1.24.0/cli-pulse-helper-1.24.0-arm64.pkg"
+        )) { XCTAssertEqual($0 as? HelperPkgVerifierError, .urlInsecureScheme(
+            "http://github.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/v1.24.0/cli-pulse-helper-1.24.0-arm64.pkg")) }
     }
 
     func test_validatePkgURL_rejectsWrongHost() {
-        XCTAssertThrowsError(try HelperPkgVerifier.validatePkgURL(
-            "https://evil.example.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/v1.24.0/x.pkg"
+        XCTAssertThrowsError(try check(
+            "https://evil.example.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/v1.24.0/cli-pulse-helper-1.24.0-arm64.pkg"
         ))
     }
 
     func test_validatePkgURL_rejectsWrongRepoPath() {
-        // Right host, attacker repo — the SHA in a swapped manifest would match
-        // the attacker pkg, so ONLY the host+path prefix pin catches this.
-        XCTAssertThrowsError(try HelperPkgVerifier.validatePkgURL(
-            "https://github.com/attacker/evil-repo/releases/download/v1/x.pkg"
+        XCTAssertThrowsError(try check(
+            "https://github.com/attacker/evil-repo/releases/download/v1.24.0/cli-pulse-helper-1.24.0-arm64.pkg"
         ))
     }
 
     func test_validatePkgURL_rejectsAppDistribHost() {
-        // The app-updater host is NOT the helper host — must not cross-accept.
-        XCTAssertThrowsError(try HelperPkgVerifier.validatePkgURL(
-            "https://github.com/JasonYeYuhe/cli-pulse-distrib/releases/download/app-v1.34.0/x.pkg"
+        XCTAssertThrowsError(try check(
+            "https://github.com/JasonYeYuhe/cli-pulse-distrib/releases/download/v1.24.0/cli-pulse-helper-1.24.0-arm64.pkg"
         ))
     }
 
+    func test_validatePkgURL_rejectsDotSegmentTraversal() {
+        // deep-audit 2026-07-04 (P1): raw hasPrefix passed this — it has the
+        // allowed prefix but normalizes to github.com/apple/swift.
+        XCTAssertThrowsError(try check(
+            "https://github.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/../../../../apple/swift/releases/download/v1.24.0/cli-pulse-helper-1.24.0-arm64.pkg"
+        ))
+        // encoded dot-segments too
+        XCTAssertThrowsError(try check(
+            "https://github.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/%2e%2e/%2e%2e/apple/swift/v1.24.0/cli-pulse-helper-1.24.0-arm64.pkg"
+        ))
+    }
+
+    func test_validatePkgURL_rejectsUserinfoAndPort() {
+        XCTAssertThrowsError(try check(
+            "https://evil@github.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/v1.24.0/cli-pulse-helper-1.24.0-arm64.pkg"))
+        XCTAssertThrowsError(try check(
+            "https://github.com:8443/JasonYeYuhe/cli-pulse-helper-releases/releases/download/v1.24.0/cli-pulse-helper-1.24.0-arm64.pkg"))
+    }
+
+    func test_validatePkgURL_bindsVersionToArtifact() {
+        // The core Finding-1 fix: a manifest claiming version 999.0 but pointing
+        // at the real OLD v1.20.0 artifact is rejected (url != expected v999.0).
+        XCTAssertThrowsError(try check(
+            "https://github.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/v1.20.0/cli-pulse-helper-1.20.0-arm64.pkg",
+            "999.0", "arm64"))
+        // Right version, wrong arch in the URL is also rejected.
+        XCTAssertThrowsError(try check(okURL, "1.24.0", "x86_64"))
+        // Filename that doesn't match the canonical shape (tag ok, asset spoofed).
+        XCTAssertThrowsError(try check(
+            "https://github.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/v1.24.0/evil.pkg"))
+    }
+
     func test_validatePkgURL_rejectsGarbage() {
-        XCTAssertThrowsError(try HelperPkgVerifier.validatePkgURL("not a url"))
-        XCTAssertThrowsError(try HelperPkgVerifier.validatePkgURL(""))
+        XCTAssertThrowsError(try check("not a url"))
+        XCTAssertThrowsError(try check(""))
     }
 
     // MARK: size

@@ -87,17 +87,43 @@ public struct HelperPkgVerifier {
 
     // MARK: - Pure logic (no IO; unit-tested offline in default `swift test`)
 
-    /// Reject any .pkg url that is not https or not under the official
-    /// helper-release prefix. The manifest is unsigned, so this is what turns
-    /// the existing SHA-256 check from "integrity" into "authenticity".
-    public static func validatePkgURL(_ urlString: String) throws {
-        guard let comps = URLComponents(string: urlString), let scheme = comps.scheme else {
+    /// Reject any .pkg url that is not the EXACT official artifact for this
+    /// version+arch. The manifest is unsigned, so this is what turns the SHA-256
+    /// check from "integrity" into "authenticity".
+    ///
+    /// SECURITY: a bare `hasPrefix(allowedURLPrefix)` on the raw string is NOT
+    /// enough — a `.../download/../../../../apple/swift/…` path HAS the prefix
+    /// but Foundation / GitHub normalize it to a DIFFERENT repository (deep-audit
+    /// 2026-07-04 F8 P1). We parse the components, reject scheme/host/userinfo/
+    /// port/query/fragment/dot-segment tricks, then require the EXACT canonical
+    /// URL bound to the (already-validated numeric) `version` + (host-equal)
+    /// `arch`. Binding the URL to the version ALSO closes the version-spoof
+    /// downgrade (a manifest claiming `999.0` must point at a `v999.0` artifact
+    /// that doesn't exist) — the manifest can no longer declare one version while
+    /// pointing at a different, older signed package.
+    public static func validatePkgURL(_ urlString: String, version: String, arch: String) throws {
+        guard let comps = URLComponents(string: urlString),
+              let scheme = comps.scheme, let host = comps.host else {
             throw HelperPkgVerifierError.urlNotAllowed(urlString)
         }
         guard scheme.lowercased() == "https" else {
             throw HelperPkgVerifierError.urlInsecureScheme(urlString)
         }
-        guard urlString.hasPrefix(allowedURLPrefix) else {
+        guard host.lowercased() == "github.com",
+              comps.user == nil, comps.password == nil, comps.port == nil,
+              comps.query == nil, comps.fragment == nil else {
+            throw HelperPkgVerifierError.urlNotAllowed(urlString)
+        }
+        let encodedPath = comps.percentEncodedPath
+        guard !encodedPath.contains(".."), !encodedPath.contains("\\"),
+              encodedPath.range(of: "%2e", options: .caseInsensitive) == nil,   // encoded '.'
+              encodedPath.range(of: "%2f", options: .caseInsensitive) == nil,   // encoded '/'
+              encodedPath.range(of: "%5c", options: .caseInsensitive) == nil    // encoded '\'
+        else {
+            throw HelperPkgVerifierError.urlNotAllowed(urlString)
+        }
+        let expected = allowedURLPrefix + "v\(version)/cli-pulse-helper-\(version)-\(arch).pkg"
+        guard urlString == expected else {
             throw HelperPkgVerifierError.urlNotAllowed(urlString)
         }
     }

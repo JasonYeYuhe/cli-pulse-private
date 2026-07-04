@@ -109,12 +109,33 @@ public struct UpdateVerifier {
     // MARK: - Pure logic (no IO; unit-tested offline)
 
     /// Reject any manifest url that is not https or not under the official release prefix.
+    ///
+    /// SECURITY: a bare `hasPrefix` on the raw string passes a
+    /// `.../download/../../../../attacker/repo/…` path that HAS the prefix but
+    /// Foundation / GitHub normalize to a DIFFERENT repository (deep-audit
+    /// 2026-07-04 F8 P1). Parse host/userinfo/port/query/fragment and reject path
+    /// traversal before the prefix check. (The DMG's real version is still
+    /// separately pinned post-mount via assertVersionMatch.)
     public static func validateManifestURL(_ urlString: String) throws {
-        guard let comps = URLComponents(string: urlString), let scheme = comps.scheme else {
+        guard let comps = URLComponents(string: urlString),
+              let scheme = comps.scheme, let host = comps.host else {
             throw UpdateVerifierError.manifestURLNotAllowed(urlString)
         }
         guard scheme.lowercased() == "https" else {
             throw UpdateVerifierError.manifestInsecureScheme(urlString)
+        }
+        guard host.lowercased() == "github.com",
+              comps.user == nil, comps.password == nil, comps.port == nil,
+              comps.query == nil, comps.fragment == nil else {
+            throw UpdateVerifierError.manifestURLNotAllowed(urlString)
+        }
+        let encodedPath = comps.percentEncodedPath
+        guard !encodedPath.contains(".."), !encodedPath.contains("\\"),
+              encodedPath.range(of: "%2e", options: .caseInsensitive) == nil,   // encoded '.'
+              encodedPath.range(of: "%2f", options: .caseInsensitive) == nil,   // encoded '/'
+              encodedPath.range(of: "%5c", options: .caseInsensitive) == nil    // encoded '\'
+        else {
+            throw UpdateVerifierError.manifestURLNotAllowed(urlString)
         }
         // Prefix match on the full normalized string (host + path), case-sensitive path.
         guard urlString.hasPrefix(allowedURLPrefix) else {

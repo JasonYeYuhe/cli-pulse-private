@@ -39,6 +39,24 @@ final class UpdateVerifierTests: XCTestCase {
         ))
     }
 
+    func test_validateManifestURL_rejectsDotSegmentTraversal() {
+        // deep-audit 2026-07-04 (P1): raw hasPrefix passed this — it has the
+        // allowed prefix but normalizes to a different repository.
+        XCTAssertThrowsError(try UpdateVerifier.validateManifestURL(
+            "https://github.com/JasonYeYuhe/cli-pulse-distrib/releases/download/../../../../apple/swift/releases/download/app-v1.34.0/x.dmg"
+        ))
+        XCTAssertThrowsError(try UpdateVerifier.validateManifestURL(
+            "https://github.com/JasonYeYuhe/cli-pulse-distrib/releases/download/%2e%2e/%2e%2e/apple/swift/app-v1.34.0/x.dmg"
+        ))
+    }
+
+    func test_validateManifestURL_rejectsUserinfoAndPort() {
+        XCTAssertThrowsError(try UpdateVerifier.validateManifestURL(
+            "https://evil@github.com/JasonYeYuhe/cli-pulse-distrib/releases/download/app-v1.34.0/x.dmg"))
+        XCTAssertThrowsError(try UpdateVerifier.validateManifestURL(
+            "https://github.com:8443/JasonYeYuhe/cli-pulse-distrib/releases/download/app-v1.34.0/x.dmg"))
+    }
+
     func test_validateManifestURL_rejectsGarbage() {
         XCTAssertThrowsError(try UpdateVerifier.validateManifestURL("not a url"))
         XCTAssertThrowsError(try UpdateVerifier.validateManifestURL(""))

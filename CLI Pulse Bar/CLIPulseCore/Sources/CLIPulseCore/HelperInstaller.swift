@@ -243,16 +243,16 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
             let manifest = try await fetchManifest()
             try Self.assertArchitectureMatches(manifest)
             // F8 (deep-audit 2026-07-04): the manifest is unsigned, so before
-            // trusting anything it declares, pin the download to the official
-            // helper-release host and sanity-check the declared size. Then
-            // refuse a downgrade — an attacker-controlled latest.json must not
-            // be able to push an old, legitimately-signed but vulnerable helper
-            // over a newer install. Installed version is a best-effort hello
-            // probe (nil/empty on a fresh install → nothing to downgrade from).
-            try HelperPkgVerifier.validatePkgURL(manifest.url)
-            // Reject a non-numeric version BEFORE it flows into the on-disk
-            // filename (which pkgutil echoes back) or the downgrade compare.
+            // trusting anything it declares: (1) require a strict numeric version
+            // (feeds the pkgutil-echoed filename + the downgrade compare); (2) pin
+            // the download to the EXACT official artifact URL for this
+            // version+arch (this also binds the artifact to its declared version,
+            // so a spoofed-high version can't point at an old signed package);
+            // (3) sanity-check size; (4) refuse a downgrade (best-effort installed
+            // version via hello — nil/empty on a fresh install → nothing to
+            // downgrade from).
             try HelperPkgVerifier.validateVersion(manifest.version)
+            try HelperPkgVerifier.validatePkgURL(manifest.url, version: manifest.version, arch: manifest.arch)
             try HelperPkgVerifier.validateSize(manifest.sizeBytes)
             if let installed = await currentInstalledVersion(), !installed.isEmpty {
                 try HelperPkgVerifier.assertNotDowngrade(installed: installed, candidate: manifest.version)
