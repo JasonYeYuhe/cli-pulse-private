@@ -2,6 +2,7 @@
 
 /* ── Tabs ── */
 "tab.overview" = "Overview";
+"tab.machine" = "Machine";
 "tab.providers" = "Providers";
 "tab.sessions" = "Sessions";
 "tab.alerts" = "Alerts";
@@ -784,3 +785,30 @@
 "swarm.last_seen" = "last seen %@ ago";
 "swarm.oldest_blocked" = "blocked %@";
 "swarm.summary" = "%d swarms · %d agents · %d blocked";
+
+/* System Monitor — Machine tab */
+"machine.subtitle" = "Local machine health";
+"machine.cpu" = "CPU";
+"machine.memory" = "Memory";
+"machine.power" = "Power";
+"machine.cpu_temp" = "CPU Temp";
+"machine.gpu_temp" = "GPU Temp";
+"machine.fan" = "Fan";
+"machine.battery" = "Battery";
+"machine.charge" = "Charge";
+"machine.health" = "Health";
+"machine.adapter" = "Adapter";
+"machine.battery_temp" = "Batt Temp";
+"machine.cycles_fmt" = "%@ cycles";
+"machine.top_processes" = "Top Processes";
+"machine.no_processes" = "No process data";
+"machine.helper_unavailable" = "Helper not reachable — machine health needs the CLI Pulse helper running.";
+"machine.no_sensors_devid" = "Detailed sensors (temperature, fans, power) aren't available on this Mac.";
+"machine.mas_affordance" = "Detailed sensors (temperature, fans, power) require the direct-download (Developer ID) build. The App Store version can't read them due to sandbox restrictions.";
+"machine.thermal_nominal" = "Nominal";
+"machine.thermal_fair" = "Fair";
+"machine.thermal_serious" = "Serious";
+"machine.thermal_critical" = "Critical";
+"machine.state_charging" = "Charging";
+"machine.state_discharging" = "On battery";
+"machine.state_charged" = "Charged";

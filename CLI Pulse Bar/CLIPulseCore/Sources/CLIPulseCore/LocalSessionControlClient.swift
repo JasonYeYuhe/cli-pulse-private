@@ -548,6 +548,14 @@ public final class LocalSessionControlClient: SessionControlClient {
         return rows
     }
 
+    /// System Monitor S4: read-only machine-health snapshot from the helper
+    /// (per-process CPU/mem, battery health, native temps/fans/power). The helper
+    /// gathers everything the sandbox can't; the app just renders what it returns.
+    public func getMachineSnapshot() async throws -> MachineSnapshot {
+        let result = try await send(method: "get_machine_snapshot", params: [:])
+        return MachineSnapshot(dict: result)
+    }
+
     public func stopSession(sessionId: String) async throws {
         _ = try await send(
             method: "stop_session",
@@ -1117,6 +1125,110 @@ public final class LocalSessionControlClient: SessionControlClient {
                 }
             }
         }
+    }
+}
+
+// MARK: - Machine health snapshot (System Monitor S4)
+
+/// Decoded `get_machine_snapshot` reply. The helper gathers everything (the
+/// sandbox can't); nil fields mean "not readable on this device". `capability`
+/// is the honest per-device map the UI renders off (no battery card for a Mac
+/// mini, no fan gauge for a fanless Air, no temps/fans/power without the S3
+/// native binary).
+public struct MachineSnapshot: Sendable {
+    public struct Battery: Sendable {
+        public let hasBattery: Bool
+        public let chargePct: Int?
+        public let state: String?
+        public let cycleCount: Int?
+        public let healthPct: Double?
+        public let designCapacity: Int?
+        public let currentCapacity: Int?
+        public let batteryTempC: Double?
+        public let adapterWatts: Double?
+        public let thermalState: Int?
+    }
+    public struct ProcessInfo: Sendable, Identifiable {
+        public let pid: Int
+        public let name: String
+        public let cpuPercent: Double
+        public let rssMB: Double
+        public var id: Int { pid }
+    }
+
+    public let cpuPercent: Int
+    public let memoryPercent: Int
+    public let memoryUsedBytes: Int
+    public let memoryTotalBytes: Int
+    public let battery: Battery
+    public let topProcesses: [ProcessInfo]
+    public let capability: [String: Bool]
+    // Native sensors (nil when unavailable / no S3 binary).
+    public let cpuTempC: Double?
+    public let gpuTempC: Double?
+    public let cpuPowerW: Double?
+    public let gpuPowerW: Double?
+    public let anePowerW: Double?
+    public let systemPowerW: Double?
+    public let fanRpm: Int?
+    public let fanMaxRpm: Int?
+
+    public func can(_ key: String) -> Bool { capability[key] == true }
+
+    init(dict: [String: Any]) {
+        func i(_ v: Any?) -> Int? {
+            if let n = v as? NSNumber { return n.intValue }
+            if let d = v as? Double { return Int(d) }
+            if let x = v as? Int { return x }
+            return nil
+        }
+        func d(_ v: Any?) -> Double? {
+            if let n = v as? NSNumber { return n.doubleValue }
+            if let x = v as? Double { return x }
+            if let x = v as? Int { return Double(x) }
+            return nil
+        }
+        cpuPercent = i(dict["cpu_percent"]) ?? 0
+        memoryPercent = i(dict["memory_percent"]) ?? 0
+        memoryUsedBytes = i(dict["memory_used_bytes"]) ?? 0
+        memoryTotalBytes = i(dict["memory_total_bytes"]) ?? 0
+
+        let b = dict["battery"] as? [String: Any] ?? [:]
+        battery = Battery(
+            hasBattery: (b["has_battery"] as? Bool) ?? false,
+            chargePct: i(b["charge_pct"]),
+            state: b["state"] as? String,
+            cycleCount: i(b["cycle_count"]),
+            healthPct: d(b["health_pct"]),
+            designCapacity: i(b["design_capacity"]),
+            currentCapacity: i(b["current_capacity"]),
+            batteryTempC: d(b["battery_temp_c"]),
+            adapterWatts: d(b["adapter_watts"]),
+            thermalState: i(b["thermal_state"])
+        )
+
+        topProcesses = (dict["top_processes"] as? [[String: Any]] ?? []).compactMap { row in
+            guard let pid = i(row["pid"]), let name = row["name"] as? String else { return nil }
+            return ProcessInfo(pid: pid, name: name,
+                               cpuPercent: d(row["cpu_percent"]) ?? 0,
+                               rssMB: d(row["rss_mb"]) ?? 0)
+        }
+
+        if let capRaw = dict["capability"] as? [String: Any] {
+            capability = capRaw.compactMapValues { $0 as? Bool }
+        } else {
+            capability = [:]
+        }
+
+        let s = dict["sensors"] as? [String: Any] ?? [:]
+        cpuTempC = d(s["cpu_temp_c"])
+        gpuTempC = d(s["gpu_temp_c"])
+        cpuPowerW = d(s["cpu_power_w"])
+        gpuPowerW = d(s["gpu_power_w"])
+        anePowerW = d(s["ane_power_w"])
+        systemPowerW = d(s["system_power_w"])
+        fanRpm = i(s["fan_rpm"])
+        fanMaxRpm = i(s["fan_max_rpm"])
     }
 }
 #endif

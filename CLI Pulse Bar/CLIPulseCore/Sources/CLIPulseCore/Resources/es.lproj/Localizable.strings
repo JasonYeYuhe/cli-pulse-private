@@ -2,6 +2,7 @@
 
 /* ── Pestañas ── */
 "tab.overview" = "Resumen";
+"tab.machine" = "Máquina";
 "tab.providers" = "Proveedores";
 "tab.sessions" = "Sesiones";
 "tab.alerts" = "Alertas";
@@ -509,3 +510,30 @@
 
 /* Quota ring VoiceOver label (P6) — newly surfaced on the redesigned Quota page. */
 "widget.percent_left" = "%@ %d%% restante";
+
+/* System Monitor — Machine tab */
+"machine.subtitle" = "Estado de la máquina";
+"machine.cpu" = "CPU";
+"machine.memory" = "Memoria";
+"machine.power" = "Potencia";
+"machine.cpu_temp" = "Temp. CPU";
+"machine.gpu_temp" = "Temp. GPU";
+"machine.fan" = "Ventilador";
+"machine.battery" = "Batería";
+"machine.charge" = "Carga";
+"machine.health" = "Salud";
+"machine.adapter" = "Adaptador";
+"machine.battery_temp" = "Temp. batería";
+"machine.cycles_fmt" = "%@ ciclos";
+"machine.top_processes" = "Procesos top";
+"machine.no_processes" = "Sin datos de procesos";
+"machine.helper_unavailable" = "Helper no disponible: se requiere el helper de CLI Pulse en ejecución.";
+"machine.no_sensors_devid" = "Los sensores detallados (temperatura, ventiladores, potencia) no están disponibles en este Mac.";
+"machine.mas_affordance" = "Los sensores detallados (temperatura, ventiladores, potencia) requieren la versión de descarga directa (Developer ID). La versión de App Store no puede leerlos por el sandbox.";
+"machine.thermal_nominal" = "Normal";
+"machine.thermal_fair" = "Moderado";
+"machine.thermal_serious" = "Alto";
+"machine.thermal_critical" = "Crítico";
+"machine.state_charging" = "Cargando";
+"machine.state_discharging" = "En batería";
+"machine.state_charged" = "Cargada";
