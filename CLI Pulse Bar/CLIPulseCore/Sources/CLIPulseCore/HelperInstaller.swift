@@ -250,6 +250,9 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
             // over a newer install. Installed version is a best-effort hello
             // probe (nil/empty on a fresh install → nothing to downgrade from).
             try HelperPkgVerifier.validatePkgURL(manifest.url)
+            // Reject a non-numeric version BEFORE it flows into the on-disk
+            // filename (which pkgutil echoes back) or the downgrade compare.
+            try HelperPkgVerifier.validateVersion(manifest.version)
             try HelperPkgVerifier.validateSize(manifest.sizeBytes)
             if let installed = await currentInstalledVersion(), !installed.isEmpty {
                 try HelperPkgVerifier.assertNotDowngrade(installed: installed, candidate: manifest.version)

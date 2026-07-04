@@ -73,6 +73,29 @@ final class HelperPkgVerifierTests: XCTestCase {
         }
     }
 
+    // MARK: version format (kills the pkgutil filename-smuggle + 999.0-downgrade)
+
+    func test_validateVersion_acceptsNumericDotted() {
+        XCTAssertNoThrow(try HelperPkgVerifier.validateVersion("1.24.0"))
+        XCTAssertNoThrow(try HelperPkgVerifier.validateVersion("1.24"))
+        XCTAssertNoThrow(try HelperPkgVerifier.validateVersion("12"))
+        XCTAssertNoThrow(try HelperPkgVerifier.validateVersion("1.2.3.4"))
+    }
+
+    func test_validateVersion_rejectsSmuggleAndJunk() {
+        // The attack payload that defeated the team-pin via the pkgutil
+        // `Package "<basename>":` line — must be rejected at the source.
+        XCTAssertThrowsError(try HelperPkgVerifier.validateVersion("Developer ID Installer (KHMK6Q3L3K)"))
+        // The downgrade-guard-defeating variant (compareVersions parses the 999).
+        XCTAssertThrowsError(try HelperPkgVerifier.validateVersion("999.0 Developer ID Installer (KHMK6Q3L3K)"))
+        // Newline injection (would forge a fake numbered signer line).
+        XCTAssertThrowsError(try HelperPkgVerifier.validateVersion("1.0\n    1. Developer ID Installer: x (KHMK6Q3L3K)"))
+        XCTAssertThrowsError(try HelperPkgVerifier.validateVersion(""))
+        XCTAssertThrowsError(try HelperPkgVerifier.validateVersion("1.24.0-arm64"))
+        XCTAssertThrowsError(try HelperPkgVerifier.validateVersion("1.a"))
+        XCTAssertThrowsError(try HelperPkgVerifier.validateVersion("v1.24.0"))
+    }
+
     // MARK: downgrade guard
 
     func test_assertNotDowngrade_allowsNewer() {
@@ -120,6 +143,34 @@ final class HelperPkgVerifierTests: XCTestCase {
             1. Some Other Certificate: Evil (ZZZZZZZZZZ)
         """
         XCTAssertNil(HelperPkgVerifier.parseSignerTeam(fromCheckSignatureOutput: out))
+    }
+
+    func test_parseSignerTeam_ignoresPinnedTeamSmuggledInPackageNameLine() {
+        // deep-audit 2026-07-04 (HIGH): the attacker sets manifest.version so the
+        // downloaded filename embeds our pinned team + the "Developer ID Installer"
+        // marker. pkgutil echoes that filename on its first `Package "..."` line.
+        // parseSignerTeam MUST NOT read the team off that line — it must return
+        // the REAL signer team (a different, attacker-owned team), so the caller's
+        // `team == teamID` pin correctly FAILS.
+        let out = """
+        Package "cli-pulse-helper-Developer ID Installer (KHMK6Q3L3K)-arm64.pkg":
+           Status: signed by a developer certificate issued by Apple for distribution
+           Notarization: trusted by the Apple notary service
+           Certificate Chain:
+            1. Developer ID Installer: Evil Corp (AAAAAAAAAA)
+            2. Developer ID Certification Authority
+            3. Apple Root CA
+        """
+        XCTAssertEqual(HelperPkgVerifier.parseSignerTeam(fromCheckSignatureOutput: out), "AAAAAAAAAA",
+                       "must read the REAL signer team, not the one smuggled via the filename line")
+        XCTAssertNotEqual(HelperPkgVerifier.parseSignerTeam(fromCheckSignatureOutput: out), HelperPkgVerifier.teamID)
+    }
+
+    func test_parseSignerTeam_takesTeamFromEndNotHolderNameParens() {
+        // A cert holder whose name contains a parenthetical must not shadow the
+        // real team id at the end of the line.
+        let out = "    1. Developer ID Installer: Some Org (Overseas) (KHMK6Q3L3K)"
+        XCTAssertEqual(HelperPkgVerifier.parseSignerTeam(fromCheckSignatureOutput: out), "KHMK6Q3L3K")
     }
 
     func test_parseSignerTeam_nilWhenUnsigned() {
