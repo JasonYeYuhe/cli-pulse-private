@@ -695,16 +695,51 @@ public struct DeviceRecord: Codable, Identifiable, Sendable {
     /// a provider is ABSENT when unknown. Used to warn (mirroring the macOS picker)
     /// before starting an off-plan (billed) managed session on this device.
     public let providerPlanStatus: [String: String]
+    // v0.63 (System Monitor): machine-health sensors synced from this device's
+    // helper heartbeat. All nullable (NULL = not reported / not supported). The
+    // phone renders a read-only device-health summary; `sensors_capability` is the
+    // honest per-device map so it never claims a reading it doesn't have.
+    public let cpu_temp_c: Double?
+    public let gpu_temp_c: Double?
+    public let cpu_power_w: Double?
+    public let system_power_w: Double?
+    public let fan_rpm: Int?
+    public let fan_max_rpm: Int?
+    public let thermal_state: Int?
+    public let battery_charge_pct: Int?
+    public let battery_state: String?
+    public let battery_cycle_count: Int?
+    public let battery_health_pct: Double?
+    public let adapter_watts: Double?
+    public let sensors_capability: [String: Bool]
+    public let sensors_updated_at: String?
 
     public var deviceStatus: DeviceStatus? {
         DeviceStatus(rawValue: status)
     }
 
+    /// True when this device has reported ANY machine-health sensors — the phone
+    /// shows the device-health card only for these.
+    public var hasDeviceHealth: Bool {
+        sensors_updated_at != nil || !sensors_capability.isEmpty
+            || cpu_temp_c != nil || fan_rpm != nil || battery_health_pct != nil
+    }
+
+    /// Honest capability check (a fanless Air has no fans, a Mac mini no battery).
+    public func sensorCan(_ key: String) -> Bool { sensors_capability[key] == true }
+
     public init(
         id: String, name: String, type: String, system: String,
         status: String, last_sync_at: String?, helper_version: String,
         current_session_count: Int, cpu_usage: Int?, memory_usage: Int?,
-        providerPlanStatus: [String: String] = [:]
+        providerPlanStatus: [String: String] = [:],
+        cpu_temp_c: Double? = nil, gpu_temp_c: Double? = nil,
+        cpu_power_w: Double? = nil, system_power_w: Double? = nil,
+        fan_rpm: Int? = nil, fan_max_rpm: Int? = nil, thermal_state: Int? = nil,
+        battery_charge_pct: Int? = nil, battery_state: String? = nil,
+        battery_cycle_count: Int? = nil, battery_health_pct: Double? = nil,
+        adapter_watts: Double? = nil, sensors_capability: [String: Bool] = [:],
+        sensors_updated_at: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -717,15 +752,33 @@ public struct DeviceRecord: Codable, Identifiable, Sendable {
         self.cpu_usage = cpu_usage
         self.memory_usage = memory_usage
         self.providerPlanStatus = providerPlanStatus
+        self.cpu_temp_c = cpu_temp_c
+        self.gpu_temp_c = gpu_temp_c
+        self.cpu_power_w = cpu_power_w
+        self.system_power_w = system_power_w
+        self.fan_rpm = fan_rpm
+        self.fan_max_rpm = fan_max_rpm
+        self.thermal_state = thermal_state
+        self.battery_charge_pct = battery_charge_pct
+        self.battery_state = battery_state
+        self.battery_cycle_count = battery_cycle_count
+        self.battery_health_pct = battery_health_pct
+        self.adapter_watts = adapter_watts
+        self.sensors_capability = sensors_capability
+        self.sensors_updated_at = sensors_updated_at
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, type, system, status, last_sync_at, helper_version
         case current_session_count, cpu_usage, memory_usage, providerPlanStatus
+        case cpu_temp_c, gpu_temp_c, cpu_power_w, system_power_w
+        case fan_rpm, fan_max_rpm, thermal_state
+        case battery_charge_pct, battery_state, battery_cycle_count, battery_health_pct
+        case adapter_watts, sensors_capability, sensors_updated_at
     }
 
-    // Defensive decode: `providerPlanStatus` decodeIfPresent (default [:]) so any
-    // older/foreign persisted DeviceRecord JSON lacking the key still decodes.
+    // Defensive decode: every added field decodeIfPresent (default nil / [:]) so
+    // any older/foreign persisted DeviceRecord JSON lacking the key still decodes.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
@@ -739,6 +792,20 @@ public struct DeviceRecord: Codable, Identifiable, Sendable {
         cpu_usage = try c.decodeIfPresent(Int.self, forKey: .cpu_usage)
         memory_usage = try c.decodeIfPresent(Int.self, forKey: .memory_usage)
         providerPlanStatus = try c.decodeIfPresent([String: String].self, forKey: .providerPlanStatus) ?? [:]
+        cpu_temp_c = try c.decodeIfPresent(Double.self, forKey: .cpu_temp_c)
+        gpu_temp_c = try c.decodeIfPresent(Double.self, forKey: .gpu_temp_c)
+        cpu_power_w = try c.decodeIfPresent(Double.self, forKey: .cpu_power_w)
+        system_power_w = try c.decodeIfPresent(Double.self, forKey: .system_power_w)
+        fan_rpm = try c.decodeIfPresent(Int.self, forKey: .fan_rpm)
+        fan_max_rpm = try c.decodeIfPresent(Int.self, forKey: .fan_max_rpm)
+        thermal_state = try c.decodeIfPresent(Int.self, forKey: .thermal_state)
+        battery_charge_pct = try c.decodeIfPresent(Int.self, forKey: .battery_charge_pct)
+        battery_state = try c.decodeIfPresent(String.self, forKey: .battery_state)
+        battery_cycle_count = try c.decodeIfPresent(Int.self, forKey: .battery_cycle_count)
+        battery_health_pct = try c.decodeIfPresent(Double.self, forKey: .battery_health_pct)
+        adapter_watts = try c.decodeIfPresent(Double.self, forKey: .adapter_watts)
+        sensors_capability = try c.decodeIfPresent([String: Bool].self, forKey: .sensors_capability) ?? [:]
+        sensors_updated_at = try c.decodeIfPresent(String.self, forKey: .sensors_updated_at)
     }
 
     /// True when a managed session for `provider` on this device would run

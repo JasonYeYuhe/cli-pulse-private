@@ -537,3 +537,4 @@
 "machine.state_charging" = "충전 중";
 "machine.state_discharging" = "배터리 사용";
 "machine.state_charged" = "완충";
+"machine.device_health" = "기기 상태";

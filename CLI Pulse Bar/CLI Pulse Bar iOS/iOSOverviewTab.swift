@@ -73,6 +73,11 @@ struct iOSOverviewTab: View {
                         .padding(.horizontal)
                     }
 
+                    // System Monitor S5: read-only device-health summary for any
+                    // paired Mac that reports sensors. Independent of the cost
+                    // dashboard so it shows even before/without dashboard data.
+                    deviceHealthSection
+
                     if let dash = state.dashboard {
                         metricsGrid(dash)
 
@@ -167,6 +172,22 @@ struct iOSOverviewTab: View {
             iOSMetricCard(title: L10n.tab.alerts, value: "\(dash.unresolved_alerts)", icon: "bell.badge", color: dash.unresolved_alerts > 0 ? .orange : .gray)
         }
         .padding(.horizontal)
+    }
+
+    // MARK: - Device Health (System Monitor S5)
+
+    @ViewBuilder
+    private var deviceHealthSection: some View {
+        let healthy = state.devices.filter { $0.hasDeviceHealth }
+        if !healthy.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionHeader(title: L10n.machine.deviceHealth, icon: "waveform.path.ecg")
+                ForEach(healthy) { device in
+                    DeviceHealthCard(device: device)
+                }
+            }
+            .padding(.horizontal)
+        }
     }
 
     // MARK: - Cost Section

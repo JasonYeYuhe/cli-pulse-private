@@ -42,6 +42,7 @@ public enum L10n {
 
     public enum machine {
         public static var subtitle: String { tr("machine.subtitle") }
+        public static var deviceHealth: String { tr("machine.device_health") }
         public static var cpu: String { tr("machine.cpu") }
         public static var memory: String { tr("machine.memory") }
         public static var power: String { tr("machine.power") }

@@ -19,6 +19,7 @@ import com.clipulse.android.ui.components.LifecyclePollingEffect
 import com.clipulse.android.ui.navigation.LocalSnackbarHostState
 import com.clipulse.android.ui.theme.PulseSuccess
 import com.clipulse.android.ui.theme.PulseWarning
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -186,6 +187,85 @@ private fun DeviceCard(device: com.clipulse.android.data.model.DeviceRecord) {
                     }
                 }
             }
+
+            // v0.63 (System Monitor): read-only machine-health sensors synced from
+            // the Mac's helper. Capability-gated so we never show a reading the
+            // device can't report (no fan on a fanless Air, no battery on a mini).
+            if (device.hasDeviceHealth) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    device.thermalState?.let { ts ->
+                        Text(
+                            stringResource(thermalLabelRes(ts)),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Medium,
+                            color = thermalColor(ts),
+                        )
+                    }
+                    if (device.sensorCan("temps")) device.cpuTempC?.let {
+                        Text(
+                            stringResource(R.string.card_cpu_temp, it.roundToInt()),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    if (device.sensorCan("fans")) device.fanRpm?.let {
+                        Text(
+                            stringResource(R.string.card_fan_rpm, it),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    if (device.sensorCan("power")) device.systemPowerW?.let {
+                        Text(
+                            stringResource(R.string.card_power_w, it),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+                if (device.batteryChargePct != null || device.batteryHealthPct != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        device.batteryChargePct?.let {
+                            Text(
+                                stringResource(R.string.card_battery_charge, it),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                        device.batteryHealthPct?.let {
+                            Text(
+                                stringResource(R.string.card_battery_health, it.roundToInt()),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                        device.batteryCycleCount?.let {
+                            Text(
+                                stringResource(R.string.card_battery_cycles, it),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
+}
+
+private fun thermalLabelRes(state: Int): Int = when (state) {
+    0 -> R.string.thermal_nominal
+    1 -> R.string.thermal_fair
+    2 -> R.string.thermal_serious
+    else -> R.string.thermal_critical
+}
+
+private fun thermalColor(state: Int): Color = when (state) {
+    0 -> PulseSuccess
+    1 -> Color(0xFFEAB308)
+    2 -> PulseWarning
+    else -> Color(0xFFEF4444)
 }

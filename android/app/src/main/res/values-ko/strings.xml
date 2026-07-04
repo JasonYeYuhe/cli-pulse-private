@@ -257,4 +257,15 @@
     <string name="managed_approval_approve">승인</string>
     <string name="managed_approval_deny">거부</string>
     <string name="managed_approval_high_risk_note">높은 위험 요청은 Mac에서 승인해야 합니다.</string>
+    <!-- System Monitor v0.63 device health -->
+    <string name="card_cpu_temp">CPU %1$d°C</string>
+    <string name="card_fan_rpm">%1$d rpm</string>
+    <string name="card_power_w">%1$.1f W</string>
+    <string name="card_battery_charge">충전 %1$d%%</string>
+    <string name="card_battery_health">수명 %1$d%%</string>
+    <string name="card_battery_cycles">%1$d 회</string>
+    <string name="thermal_nominal">정상</string>
+    <string name="thermal_fair">보통</string>
+    <string name="thermal_serious">심각</string>
+    <string name="thermal_critical">위험</string>
 </resources>
