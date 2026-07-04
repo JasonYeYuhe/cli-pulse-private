@@ -47,7 +47,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 # SIGWINCH — claude/agy kept rendering at the old column count on every
 # in-app-terminal window resize. `PosixPtyTransport.resize` now signals the
 # child's process group with SIGWINCH after updating the winsize.
-HELPER_VERSION = "1.24.0"
+HELPER_VERSION = "1.25.0"
 
 logger = logging.getLogger("cli_pulse.collector")
 

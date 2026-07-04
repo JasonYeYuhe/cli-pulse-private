@@ -1407,6 +1407,8 @@ _SWIFT_CLIENT_METHODS = frozenset({
     "subscribe_events", "approve_action", "install_claude_hook",
     "get_pending_approvals", "get_local_control_status",
     "set_local_control_enabled",
+    # System Monitor S4: the macOS Machine tab's LocalSessionControlClient.
+    "get_machine_snapshot",
 })
 
 
