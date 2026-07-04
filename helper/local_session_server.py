@@ -416,10 +416,23 @@ class LocalSessionServer:
         prepare_socket_path(self._socket_path)
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listener.bind(str(self._socket_path))
+        # Create the socket file 0600 from the start via umask — bind() honors
+        # the process umask, so a bind-then-chmod would leave a brief window
+        # where the socket is group/other-accessible (only `hello` is
+        # unauthenticated, but even that's a needless local-attack window). The
+        # chmod stays as belt-and-suspenders. (audit hardening 2026-07-04)
+        _old_umask = os.umask(0o077)
+        try:
+            listener.bind(str(self._socket_path))
+        finally:
+            os.umask(_old_umask)
         os.chmod(self._socket_path, 0o600)
         listener.listen(LISTEN_BACKLOG)
-        listener.settimeout(0.5)  # so the accept loop notices stop_flag
+        # Only the LISTENER gets a timeout (so the accept loop polls stop_flag).
+        # Accepted conns do NOT inherit it in CPython — verified: accept() returns
+        # a socket with the global default timeout (None), so a slow/streaming
+        # client is never dropped by this. (Do not "fix" by adding conn.settimeout.)
+        listener.settimeout(0.5)
         self._listener = listener
         self._accept_thread = threading.Thread(
             target=self._accept_loop,
@@ -579,7 +592,7 @@ class LocalSessionServer:
             close_event = threading.Event()
             reader = threading.Thread(
                 target=self._stream_eof_reader,
-                args=(conn, close_event),
+                args=(conn, close_event, sub),
                 name="cli-pulse-uds-stream-eof",
                 daemon=True,
             )
@@ -613,21 +626,27 @@ class LocalSessionServer:
                 pass
 
     @staticmethod
-    def _stream_eof_reader(conn: socket.socket, close_event: threading.Event) -> None:
+    def _stream_eof_reader(conn: socket.socket, close_event: threading.Event,
+                           sub: "Subscription") -> None:
         """Background reader: blocks on recv() and signals on EOF.
         We only ever expect EOF from a streaming peer (clients never
         send another request after subscribe_events). Bytes received
         unexpectedly are logged and treated as a protocol error.
+
+        On teardown we ALSO `sub.close()` so the writer thread — which is
+        blocked in `sub.next(timeout=idle)` — wakes immediately (the close
+        sentinel makes `next()` return None) instead of lingering up to the
+        full idle timeout after the client disconnects. Without this, a client
+        rapidly opening/closing streams pins one idle helper thread per stream
+        for the whole idle window. close() is idempotent. (audit hardening.)
         """
         try:
             while not close_event.is_set():
                 try:
                     data = conn.recv(4096)
                 except (OSError, ValueError):
-                    close_event.set()
                     return
                 if not data:
-                    close_event.set()
                     return
                 # A misbehaving client wrote into a streaming
                 # connection — we don't decode but flag so the loop
@@ -635,6 +654,10 @@ class LocalSessionServer:
                 logger.debug("subscribe peer wrote %d unexpected bytes", len(data))
         finally:
             close_event.set()
+            try:
+                sub.close()
+            except Exception:  # noqa: BLE001 — teardown must never raise
+                pass
 
     def _dispatch(
         self,

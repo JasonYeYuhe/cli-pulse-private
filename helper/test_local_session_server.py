@@ -423,6 +423,18 @@ def test_hello_reports_machine_snapshot_capability_when_wired(short_sock_dir):
         server.stop()
 
 
+def test_socket_file_not_group_or_world_accessible(short_sock_dir):
+    """Audit hardening: the UDS file must be created without a group/other-
+    accessible window (umask-wrapped bind + chmod 0600)."""
+    import os as _os
+    server, _mgr, _state = _make_server(short_sock_dir)
+    try:
+        mode = _os.stat(server._socket_path).st_mode & 0o777
+        assert mode & 0o077 == 0, f"socket perms {oct(mode)} allow group/other access"
+    finally:
+        server.stop()
+
+
 def test_ping_now_requires_auth_codex_review(short_sock_dir):
     """Codex review fix from PR #15: `ping` previously bypassed auth.
     That gave any local process a free liveness probe of the helper.
