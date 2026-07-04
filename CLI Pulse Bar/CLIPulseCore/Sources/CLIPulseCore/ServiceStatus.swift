@@ -322,11 +322,16 @@ public struct ServiceStatusFetcher: Sendable {
     }
 
     /// GET the provider's `summary.json` and return its component list (in
-    /// Statuspage order, groups nested). Returns [] on no-known-page, network/
-    /// HTTP failure, or a body with no `components` — callers treat [] as
-    /// "nothing to expand" (graceful).
-    public func fetchComponents(_ provider: ProviderKind) async -> [ServiceStatusComponent] {
-        guard let url = ServiceStatusCatalog.summaryEndpoint(for: provider) else { return [] }
+    /// Statuspage order, groups nested).
+    ///
+    /// Returns `nil` on FAILURE (no-known-page, network/HTTP error, task
+    /// cancellation) so the caller can distinguish a retryable failure from an
+    /// empty page and NOT latch a permanent "no data". Returns `[]` only for a
+    /// genuine 200 body with no `components`. (A cancelled request surfaces as
+    /// `URLError(.cancelled)`, swallowed by `try?` → `nil` here; the SwiftUI
+    /// caller additionally re-checks `Task.isCancelled` before committing state.)
+    public func fetchComponents(_ provider: ProviderKind) async -> [ServiceStatusComponent]? {
+        guard let url = ServiceStatusCatalog.summaryEndpoint(for: provider) else { return nil }
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -334,7 +339,7 @@ public struct ServiceStatusFetcher: Sendable {
             let (data, response) = try? await session.data(for: request),
             let http = response as? HTTPURLResponse,
             (200..<300).contains(http.statusCode)
-        else { return [] }
+        else { return nil }
         return ServiceStatusParser.parseStatuspageComponents(data)
     }
 }

@@ -21,7 +21,7 @@ public struct ProviderStatusComponentsView: View {
     @State private var isExpanded = false
     @State private var expandedGroups: Set<String> = []
 
-    private enum Phase: Equatable { case idle, loading, loaded }
+    private enum Phase: Equatable { case idle, loading, loaded, failed }
 
     public init(provider: ProviderKind, fetcher: ServiceStatusFetcher = ServiceStatusFetcher()) {
         self.provider = provider
@@ -37,15 +37,35 @@ public struct ProviderStatusComponentsView: View {
                 if isExpanded { expandedContent }
             }
             // Fetch lazily: fires when isExpanded flips true (guarded so the
-            // on-appear false-state and any re-collapse don't refetch). `.task`
-            // runs in the view's MainActor context and auto-cancels on disappear.
-            .task(id: isExpanded) {
-                guard isExpanded, phase == .idle else { return }
-                phase = .loading
-                let fetched = await fetcher.fetchComponents(provider)
-                components = fetched
-                phase = .loaded
-            }
+            // on-appear false-state doesn't fetch, and a successful load is
+            // cached across re-expands). `.task` runs in the view's MainActor
+            // context and auto-cancels on disappear/collapse.
+            .task(id: isExpanded) { await load() }
+        }
+    }
+
+    /// Lazy load, guarded so a cancelled/collapsed fetch never latches state.
+    /// `.task(id: isExpanded)` cancels the in-flight request on collapse; the
+    /// cancelled continuation still resumes past the await, so we MUST re-check
+    /// cancellation + expansion before committing — otherwise a quick
+    /// expand→collapse would write `.loaded`/empty and, since `phase` never
+    /// returns to `.idle`, the re-expand guard would block any refetch forever
+    /// (permanent "No data" on a healthy page). See feedback_codex_review_late_
+    /// arrival_pattern. Failure (nil) → `.failed` (retryable); a real empty page
+    /// ([]) → `.loaded`.
+    private func load() async {
+        guard isExpanded, phase == .idle else { return }
+        phase = .loading
+        let fetched = await fetcher.fetchComponents(provider)
+        guard !Task.isCancelled, isExpanded else {
+            phase = .idle   // collapsed/cancelled mid-fetch → allow a fresh fetch on re-expand
+            return
+        }
+        if let fetched {
+            components = fetched
+            phase = .loaded
+        } else {
+            phase = .failed
         }
     }
 
@@ -86,6 +106,21 @@ public struct ProviderStatusComponentsView: View {
                         componentRow(component)
                     }
                 }
+            case .failed:
+                // A transient network/HTTP failure — retryable (reset to .idle
+                // and re-run the guarded load), never a permanent "No data".
+                Button {
+                    phase = .idle
+                    Task { await load() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise").font(.system(size: 9))
+                        Text(L10n.common.retry).font(.system(size: 10, weight: .medium))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
             }
             if let url = ServiceStatusCatalog.statusPageURL(for: provider) {
                 Link(destination: url) {

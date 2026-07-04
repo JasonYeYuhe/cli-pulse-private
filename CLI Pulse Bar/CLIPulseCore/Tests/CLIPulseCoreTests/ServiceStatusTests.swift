@@ -286,4 +286,12 @@ final class ServiceStatusTests: XCTestCase {
             "https://status.claude.com/api/v2/summary.json")
         XCTAssertNil(ServiceStatusCatalog.summaryEndpoint(for: .gemini))
     }
+
+    // fetchComponents returns nil (failure/no-page), NOT [], for a provider with
+    // no status page — the view relies on nil to mean "retryable failure" vs an
+    // empty ([]) page, so it never latches a permanent "No data".
+    func testFetchComponentsReturnsNilForUnmappedProvider() async {
+        let comps = await ServiceStatusFetcher().fetchComponents(.gemini)
+        XCTAssertNil(comps)
+    }
 }
