@@ -18,13 +18,18 @@ public enum IOReportPower {
 
         guard let s1U = IOReportCreateSamples(sub, subChannels, nil) else { return [:] }
         let s1 = s1U.takeRetainedValue()
+        let t0 = DispatchTime.now().uptimeNanoseconds   // monotonic; measured, not assumed
         usleep(sampleMs * 1000)   // real sleep — the whole point of a delta API
         guard let s2U = IOReportCreateSamples(sub, subChannels, nil) else { return [:] }
         let s2 = s2U.takeRetainedValue()
+        let t1 = DispatchTime.now().uptimeNanoseconds
         guard let deltaU = IOReportCreateSamplesDelta(s1, s2, nil) else { return [:] }
         let delta = deltaU.takeRetainedValue()
 
-        let dt = Double(sampleMs) / 1000.0
+        // Divide energy by the ACTUAL elapsed wall-clock between the two counter
+        // reads, not the requested sleep — a scheduler-delayed / App-Nap'd sleep
+        // would otherwise inflate every wattage (energy Δ ÷ too-small dt).
+        let dt = Double(t1 &- t0) / 1_000_000_000.0
         guard dt > 0, let items = (delta as NSDictionary)["IOReportChannels"] as? [AnyObject] else { return [:] }
 
         var out: [String: Double] = [:]

@@ -81,13 +81,16 @@ public final class SMC {
         info.data8 = Self.cmdReadKeyInfo
         guard let ki = call(&info), ki.keyInfo.dataSize > 0 else { return nil }
         let size = Int(ki.keyInfo.dataSize)
+        // Enforce the fixed 32-byte payload buffer BEFORE the read-bytes call —
+        // never hand a >32 dataSize across the kernel ABI boundary.
+        guard size <= 32 else { return nil }
         let type = Self.typeString(ki.keyInfo.dataType)
 
         var rd = SMCKeyData_t()
         rd.key = Self.fourCC(key)
         rd.keyInfo.dataSize = ki.keyInfo.dataSize
         rd.data8 = Self.cmdReadBytes
-        guard let out = call(&rd), size <= 32 else { return nil }
+        guard let out = call(&rd) else { return nil }
         var bytes = [UInt8](repeating: 0, count: 32)
         withUnsafeBytes(of: out.bytes) { raw in for i in 0..<32 { bytes[i] = raw[i] } }
         return (type, Array(bytes.prefix(size)))
