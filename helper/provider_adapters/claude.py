@@ -164,6 +164,25 @@ def _classify_risk(tool_name: str, tool_input: dict[str, Any]) -> str:
     return AdapterRisk.MEDIUM
 
 
+def _sanitize_url(value: str) -> str:
+    """Strip credentials from a URL before it goes into a remote-visible summary:
+    drop userinfo (``//user:pass@``), query, and fragment; keep scheme://host/path.
+    Non-URLs (e.g. a WebSearch query string) pass through unchanged — the caller
+    still runs _redact over the result. The key-name redactor alone misses
+    userinfo, ``?token=``, and OAuth ``?code=``, so this closes those. (audit F7.)"""
+    try:
+        from urllib.parse import urlsplit, urlunsplit
+        parts = urlsplit(value)
+        if not parts.scheme or not parts.netloc:
+            return value
+        host = parts.hostname or ""
+        if parts.port:
+            host = f"{host}:{parts.port}"
+        return urlunsplit((parts.scheme, host, parts.path, "", ""))
+    except Exception:  # noqa: BLE001 — a summary must never raise
+        return value
+
+
 def _summary_for(tool_name: str, tool_input: dict[str, Any]) -> str:
     """Build a short, single-line summary safe to show in remote UI."""
     if tool_name == "Bash":
@@ -175,7 +194,9 @@ def _summary_for(tool_name: str, tool_input: dict[str, Any]) -> str:
         basename = path.rsplit("/", 1)[-1] if path else ""
         return _truncate(f"{tool_name} {basename}", 256)
     if tool_name in ("WebFetch", "WebSearch"):
-        url = str(tool_input.get("url") or tool_input.get("query") or "")
+        # F7: sanitize URL creds + run the same redactor as the Bash path — a
+        # signed / credential-bearing URL must not leave the device in a summary.
+        url = _redact(_sanitize_url(str(tool_input.get("url") or tool_input.get("query") or "")))
         return _truncate(f"{tool_name} {url}", 256)
     # Generic fallback: tool name + a small set of redacted keys
     keys = sorted(k for k in tool_input.keys() if not k.startswith("_"))[:3]
@@ -206,7 +227,9 @@ class ClaudeAdapter(ProviderAdapter):
             if key.startswith("_"):
                 continue
             if isinstance(value, str):
-                redacted_input[key] = _truncate(_redact(value), 1024)
+                # F7: _sanitize_url first (strips URL userinfo/query/fragment the
+                # key-name redactor misses); non-URL strings pass through unchanged.
+                redacted_input[key] = _truncate(_redact(_sanitize_url(value)), 1024)
             elif isinstance(value, (int, float, bool)) or value is None:
                 redacted_input[key] = value
             elif isinstance(value, (list, dict)):

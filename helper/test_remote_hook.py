@@ -58,6 +58,30 @@ def test_claude_parses_bash_command_with_summary_and_redaction():
     assert parsed.cwd_hmac == "abc123"
 
 
+def test_claude_webfetch_strips_url_credentials_from_summary_and_payload():
+    """Audit F7: a signed / credential-bearing WebFetch URL must not leave the
+    device — neither in the remote-visible summary nor the uploaded payload
+    (the key-name redactor alone misses userinfo, ?token=, and OAuth ?code=)."""
+    adapter = ClaudeAdapter()
+    cases = [
+        ("https://api.example.com/d?access_token=sk-secret-abc123&x=1", "sk-secret-abc123"),
+        ("https://user:p4ssw0rd@host.example.com/path", "p4ssw0rd"),
+        ("https://cb.example.com/callback?code=oauth_secret_xyz", "oauth_secret_xyz"),
+    ]
+    for url, secret in cases:
+        parsed = adapter.parse_hook_input(
+            {"tool_name": "WebFetch", "tool_input": {"url": url},
+             "session_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479"},
+            cwd_hmac=None,
+        )
+        assert secret not in parsed.summary, (url, parsed.summary)
+        assert secret not in json.dumps(parsed.payload), (url, parsed.payload)
+    # A plain WebSearch query (not a URL) is preserved intact.
+    parsed = adapter.parse_hook_input(
+        {"tool_name": "WebSearch", "tool_input": {"query": "how to center a div"}}, cwd_hmac=None)
+    assert "center a div" in parsed.summary
+
+
 def test_claude_classifies_rm_rf_as_high_risk():
     adapter = ClaudeAdapter()
     parsed = adapter.parse_hook_input(
