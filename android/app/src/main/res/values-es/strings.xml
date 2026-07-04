@@ -258,4 +258,15 @@
     <string name="managed_approval_approve">Aprobar</string>
     <string name="managed_approval_deny">Rechazar</string>
     <string name="managed_approval_high_risk_note">Las solicitudes de alto riesgo deben aprobarse en el Mac.</string>
+    <!-- System Monitor v0.63 device health -->
+    <string name="card_cpu_temp">CPU %1$d°C</string>
+    <string name="card_fan_rpm">%1$d rpm</string>
+    <string name="card_power_w">%1$.1f W</string>
+    <string name="card_battery_charge">Batería %1$d%%</string>
+    <string name="card_battery_health">Salud %1$d%%</string>
+    <string name="card_battery_cycles">%1$d ciclos</string>
+    <string name="thermal_nominal">Normal</string>
+    <string name="thermal_fair">Moderado</string>
+    <string name="thermal_serious">Alto</string>
+    <string name="thermal_critical">Crítico</string>
 </resources>

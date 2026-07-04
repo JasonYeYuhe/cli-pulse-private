@@ -302,6 +302,20 @@ class SupabaseClient(
                 cpuUsage = r.optIntOrNull("cpu_usage"),
                 memoryUsage = r.optIntOrNull("memory_usage"),
                 providerPlanStatus = parseProviderPlanStatus(r.optJSONObject("provider_plan_status")),
+                cpuTempC = r.optDoubleOrNull("cpu_temp_c"),
+                gpuTempC = r.optDoubleOrNull("gpu_temp_c"),
+                cpuPowerW = r.optDoubleOrNull("cpu_power_w"),
+                systemPowerW = r.optDoubleOrNull("system_power_w"),
+                fanRpm = r.optIntOrNull("fan_rpm"),
+                fanMaxRpm = r.optIntOrNull("fan_max_rpm"),
+                thermalState = r.optIntOrNull("thermal_state"),
+                batteryChargePct = r.optIntOrNull("battery_charge_pct"),
+                batteryState = r.optStringOrNull("battery_state"),
+                batteryCycleCount = r.optIntOrNull("battery_cycle_count"),
+                batteryHealthPct = r.optDoubleOrNull("battery_health_pct"),
+                adapterWatts = r.optDoubleOrNull("adapter_watts"),
+                sensorsCapability = parseSensorsCapability(r.optJSONObject("sensors_capability")),
+                sensorsUpdatedAt = r.optStringOrNull("sensors_updated_at"),
             )
         }
     }
@@ -1176,6 +1190,26 @@ class SupabaseClient(
 
     private fun JSONObject.optIntOrNull(key: String): Int? =
         if (has(key) && !isNull(key)) optInt(key) else null
+
+    private fun JSONObject.optDoubleOrNull(key: String): Double? =
+        if (has(key) && !isNull(key)) optDouble(key).takeIf { !it.isNaN() } else null
+
+    private fun JSONObject.optStringOrNull(key: String): String? =
+        if (has(key) && !isNull(key)) optString(key).takeIf { it.isNotBlank() } else null
+
+    // v0.63: defensively parse the sensors_capability jsonb into a bool map,
+    // keeping ONLY boolean values (ignore arrays/scalars/bad values).
+    private fun parseSensorsCapability(obj: org.json.JSONObject?): Map<String, Boolean> {
+        if (obj == null) return emptyMap()
+        val out = LinkedHashMap<String, Boolean>()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            val v = obj.opt(k)
+            if (v is Boolean) out[k] = v
+        }
+        return out
+    }
 }
 
 sealed class ApiError : Exception() {

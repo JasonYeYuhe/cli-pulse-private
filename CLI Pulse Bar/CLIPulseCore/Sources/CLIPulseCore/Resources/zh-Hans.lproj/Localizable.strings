@@ -814,3 +814,4 @@
 "machine.state_charging" = "充电中";
 "machine.state_discharging" = "使用电池";
 "machine.state_charged" = "已充满";
+"machine.device_health" = "设备健康";

@@ -812,3 +812,4 @@
 "machine.state_charging" = "Charging";
 "machine.state_discharging" = "On battery";
 "machine.state_charged" = "Charged";
+"machine.device_health" = "Device Health";

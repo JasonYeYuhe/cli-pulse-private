@@ -348,6 +348,21 @@ public actor APIClient {
         let cpu_usage: Int?
         let memory_usage: Int?
         let provider_plan_status: [String: String]?  // v0.60
+        // v0.63 machine-health sensors (all nullable).
+        let cpu_temp_c: Double?
+        let gpu_temp_c: Double?
+        let cpu_power_w: Double?
+        let system_power_w: Double?
+        let fan_rpm: Int?
+        let fan_max_rpm: Int?
+        let thermal_state: Int?
+        let battery_charge_pct: Int?
+        let battery_state: String?
+        let battery_cycle_count: Int?
+        let battery_health_pct: Double?
+        let adapter_watts: Double?
+        let sensors_capability: [String: Bool]?
+        let sensors_updated_at: String?
     }
 
     private struct AlertRecordPayload: Decodable {
@@ -740,7 +755,21 @@ public actor APIClient {
                 current_session_count: 0,
                 cpu_usage: row.cpu_usage,
                 memory_usage: row.memory_usage,
-                providerPlanStatus: row.provider_plan_status ?? [:]
+                providerPlanStatus: row.provider_plan_status ?? [:],
+                cpu_temp_c: row.cpu_temp_c,
+                gpu_temp_c: row.gpu_temp_c,
+                cpu_power_w: row.cpu_power_w,
+                system_power_w: row.system_power_w,
+                fan_rpm: row.fan_rpm,
+                fan_max_rpm: row.fan_max_rpm,
+                thermal_state: row.thermal_state,
+                battery_charge_pct: row.battery_charge_pct,
+                battery_state: row.battery_state,
+                battery_cycle_count: row.battery_cycle_count,
+                battery_health_pct: row.battery_health_pct,
+                adapter_watts: row.adapter_watts,
+                sensors_capability: row.sensors_capability ?? [:],
+                sensors_updated_at: row.sensors_updated_at
             )
         }
     }

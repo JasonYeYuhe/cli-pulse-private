@@ -814,3 +814,4 @@
 "machine.state_charging" = "充電中";
 "machine.state_discharging" = "バッテリー駆動";
 "machine.state_charged" = "満充電";
+"machine.device_health" = "デバイスの状態";
