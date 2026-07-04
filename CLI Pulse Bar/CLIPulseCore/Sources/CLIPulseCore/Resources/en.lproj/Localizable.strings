@@ -813,3 +813,11 @@
 "machine.state_discharging" = "On battery";
 "machine.state_charged" = "Charged";
 "machine.device_health" = "Device Health";
+
+/* Provider service-status component list (status page) */
+"status.partial_outage" = "Partial Outage";
+"status.major_outage" = "Major Outage";
+"status.maintenance" = "Maintenance";
+"status.unknown" = "Unknown";
+"providers.service_status" = "Service Status";
+"providers.open_status_page" = "Open Status Page";

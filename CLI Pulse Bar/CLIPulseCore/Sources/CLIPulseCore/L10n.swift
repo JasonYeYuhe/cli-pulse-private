@@ -134,6 +134,8 @@ public enum L10n {
         public static var showAllHint: String { tr("providers.show_all_hint") }
         public static var searchPlaceholder: String { tr("providers.search_placeholder") }
         public static var noSearchMatch: String { tr("providers.no_search_match") }
+        public static var serviceStatus: String { tr("providers.service_status") }
+        public static var openStatusPage: String { tr("providers.open_status_page") }
         public static var thisWeek: String { tr("providers.this_week") }
         public static var quota: String { tr("providers.quota") }
         public static var status: String { tr("providers.status") }
@@ -530,6 +532,10 @@ public enum L10n {
         public static var down: String { tr("status.down") }
         public static var disabled: String { tr("status.disabled") }
         public static var ended: String { tr("status.ended") }
+        public static var partialOutage: String { tr("status.partial_outage") }
+        public static var majorOutage: String { tr("status.major_outage") }
+        public static var maintenance: String { tr("status.maintenance") }
+        public static var unknown: String { tr("status.unknown") }
 
         /// Map a server status string to its localized display text.
         public static func localized(_ raw: String) -> String {

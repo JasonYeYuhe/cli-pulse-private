@@ -815,3 +815,11 @@
 "machine.state_discharging" = "使用电池";
 "machine.state_charged" = "已充满";
 "machine.device_health" = "设备健康";
+
+/* Provider service-status component list (status page) */
+"status.partial_outage" = "部分中断";
+"status.major_outage" = "严重中断";
+"status.maintenance" = "维护中";
+"status.unknown" = "未知";
+"providers.service_status" = "服务状态";
+"providers.open_status_page" = "打开状态页";

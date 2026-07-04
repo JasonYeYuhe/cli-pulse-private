@@ -538,3 +538,11 @@
 "machine.state_discharging" = "En batería";
 "machine.state_charged" = "Cargada";
 "machine.device_health" = "Estado del dispositivo";
+
+/* Provider service-status component list (status page) */
+"status.partial_outage" = "Interrupción parcial";
+"status.major_outage" = "Interrupción grave";
+"status.maintenance" = "Mantenimiento";
+"status.unknown" = "Desconocido";
+"providers.service_status" = "Estado del servicio";
+"providers.open_status_page" = "Abrir página de estado";

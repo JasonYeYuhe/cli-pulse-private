@@ -214,4 +214,76 @@ final class ServiceStatusTests: XCTestCase {
             XCTAssertTrue(ServiceStatusCatalog.hasStatusPage(for: provider))
         }
     }
+
+    // MARK: - Component status mapping
+
+    func testComponentStatusMapping() {
+        XCTAssertEqual(ServiceStatusIndicator(statuspageComponentStatus: "operational"), .operational)
+        XCTAssertEqual(ServiceStatusIndicator(statuspageComponentStatus: "degraded_performance"), .minor)
+        XCTAssertEqual(ServiceStatusIndicator(statuspageComponentStatus: "partial_outage"), .major)
+        XCTAssertEqual(ServiceStatusIndicator(statuspageComponentStatus: "major_outage"), .critical)
+        XCTAssertEqual(ServiceStatusIndicator(statuspageComponentStatus: "full_outage"), .critical)
+        XCTAssertEqual(ServiceStatusIndicator(statuspageComponentStatus: "under_maintenance"), .maintenance)
+        XCTAssertEqual(ServiceStatusIndicator(statuspageComponentStatus: "  OPERATIONAL "), .operational)
+        XCTAssertEqual(ServiceStatusIndicator(statuspageComponentStatus: "weird"), .unknown)
+    }
+
+    // MARK: - Component parser (summary.json)
+
+    func testParsesFlatComponentsInPositionOrder() {
+        // Real Claude shape (flat components), out of order + one degraded.
+        let json = """
+        { "page": { "name": "Claude" },
+          "status": { "indicator": "none", "description": "All Systems Operational" },
+          "components": [
+            { "id": "c3", "name": "Claude API", "status": "operational", "position": 3, "group_id": null },
+            { "id": "c1", "name": "claude.ai", "status": "operational", "position": 1, "group_id": null },
+            { "id": "c2", "name": "Claude Console", "status": "degraded_performance", "position": 2, "group_id": null }
+          ] }
+        """
+        let comps = ServiceStatusParser.parseStatuspageComponents(data(json))
+        XCTAssertEqual(comps.map { $0.name }, ["claude.ai", "Claude Console", "Claude API"], "sorted by position")
+        XCTAssertEqual(comps[1].indicator, .minor)              // degraded_performance
+        XCTAssertEqual(comps[1].statusRaw, "degraded_performance")
+        XCTAssertTrue(comps.allSatisfy { !$0.isGroup })
+    }
+
+    func testParsesGroupedComponentsWorstOfChildren() {
+        // A group whose OWN status lags a partial_outage child → group takes the
+        // worst child's severity + wording; children nest under it in order.
+        let json = """
+        { "components": [
+            { "id": "g1", "name": "APIs", "status": "operational", "group": true, "position": 1, "group_id": null },
+            { "id": "b", "name": "Chat", "status": "partial_outage", "position": 2, "group_id": "g1" },
+            { "id": "a", "name": "Batch", "status": "operational", "position": 1, "group_id": "g1" },
+            { "id": "leaf", "name": "Website", "status": "operational", "position": 2, "group_id": null }
+          ] }
+        """
+        let comps = ServiceStatusParser.parseStatuspageComponents(data(json))
+        XCTAssertEqual(comps.map { $0.name }, ["APIs", "Website"])
+        let group = comps[0]
+        XCTAssertTrue(group.isGroup)
+        XCTAssertEqual(group.indicator, .major, "group takes worst child (partial_outage → major)")
+        XCTAssertEqual(group.statusRaw, "partial_outage")
+        XCTAssertEqual(group.children.map { $0.name }, ["Batch", "Chat"], "children sorted by position")
+        XCTAssertFalse(comps[1].isGroup)
+    }
+
+    func testParsesComponentsToleratesJunk() {
+        XCTAssertTrue(ServiceStatusParser.parseStatuspageComponents(data("{}")).isEmpty)
+        XCTAssertTrue(ServiceStatusParser.parseStatuspageComponents(data("not json")).isEmpty)
+        // entries missing required fields are skipped, not fatal
+        let json = """
+        { "components": [ { "name": "no id" }, { "id": "ok", "name": "Good", "status": "operational" } ] }
+        """
+        let comps = ServiceStatusParser.parseStatuspageComponents(data(json))
+        XCTAssertEqual(comps.map { $0.name }, ["Good"])
+    }
+
+    func testSummaryEndpoint() {
+        XCTAssertEqual(
+            ServiceStatusCatalog.summaryEndpoint(for: .claude)?.absoluteString,
+            "https://status.claude.com/api/v2/summary.json")
+        XCTAssertNil(ServiceStatusCatalog.summaryEndpoint(for: .gemini))
+    }
 }

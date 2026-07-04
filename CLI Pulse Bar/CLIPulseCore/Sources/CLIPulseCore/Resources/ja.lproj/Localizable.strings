@@ -815,3 +815,11 @@
 "machine.state_discharging" = "バッテリー駆動";
 "machine.state_charged" = "満充電";
 "machine.device_health" = "デバイスの状態";
+
+/* Provider service-status component list (status page) */
+"status.partial_outage" = "一部障害";
+"status.major_outage" = "重大障害";
+"status.maintenance" = "メンテナンス";
+"status.unknown" = "不明";
+"providers.service_status" = "サービス状態";
+"providers.open_status_page" = "ステータスページを開く";
