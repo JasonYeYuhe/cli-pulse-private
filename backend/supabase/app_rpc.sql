@@ -661,3 +661,22 @@ begin
   );
 end;
 $$ language plpgsql security definer set search_path = pg_catalog, public, extensions;
+
+-- Grant hygiene (audit F13): Supabase grants EXECUTE to anon at CREATE time, so
+-- SECURITY DEFINER RPCs meant only for signed-in users must explicitly revoke
+-- anon (same convention as migrate_v0.53 / v0.59.1). These 7 team RPCs already
+-- reject anon internally (`if v_user_id is null then raise 'Not authenticated'`),
+-- so this is defense-in-depth + clears the `anon_security_definer_function`
+-- advisor for a fresh restore. (Not applied as a prod migration: these functions
+-- are not currently deployed to the live DB — the team feature is unshipped.)
+revoke execute on function public.create_team(text) from public, anon;
+revoke execute on function public.team_details(uuid) from public, anon;
+revoke execute on function public.invite_member(uuid, text, text) from public, anon;
+revoke execute on function public.accept_invite(uuid) from public, anon;
+revoke execute on function public.remove_member(uuid, uuid) from public, anon;
+revoke execute on function public.update_member_role(uuid, uuid, text) from public, anon;
+revoke execute on function public.team_usage_summary(uuid) from public, anon;
+grant execute on function public.create_team(text), public.team_details(uuid),
+  public.invite_member(uuid, text, text), public.accept_invite(uuid),
+  public.remove_member(uuid, uuid), public.update_member_role(uuid, uuid, text),
+  public.team_usage_summary(uuid) to authenticated;

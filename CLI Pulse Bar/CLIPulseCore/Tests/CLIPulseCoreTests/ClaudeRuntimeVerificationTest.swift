@@ -16,7 +16,13 @@ import XCTest
 final class ClaudeRuntimeVerificationTest: XCTestCase {
 
     private func withSnapshotPreserved<T>(_ body: () async throws -> T) async rethrows -> T {
+        // audit F14: resolve() ALSO writes claude_account.json (and may touch the
+        // session-key cache) into the REAL app-group container, so preserving only
+        // the snapshot let offline tests clobber the developer's real account cache.
+        // Back up + restore all three sidecar caches.
         let paths = ClaudeHelperContract.snapshotCandidatePaths
+            + ClaudeHelperContract.accountInfoCandidatePaths
+            + ClaudeHelperContract.sessionKeyCandidatePaths
         var backups: [String: Data?] = [:]
         for path in paths {
             backups[path] = FileManager.default.contents(atPath: path)
