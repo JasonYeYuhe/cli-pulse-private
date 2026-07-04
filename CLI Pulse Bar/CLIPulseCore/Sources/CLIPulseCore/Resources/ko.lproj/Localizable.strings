@@ -538,3 +538,11 @@
 "machine.state_discharging" = "배터리 사용";
 "machine.state_charged" = "완충";
 "machine.device_health" = "기기 상태";
+
+/* Provider service-status component list (status page) */
+"status.partial_outage" = "부분 장애";
+"status.major_outage" = "심각한 장애";
+"status.maintenance" = "점검 중";
+"status.unknown" = "알 수 없음";
+"providers.service_status" = "서비스 상태";
+"providers.open_status_page" = "상태 페이지 열기";

@@ -233,6 +233,12 @@ struct iOSEnhancedProviderCard: View {
                 .labelsHidden()
             }
 
+            // Provider status page — expandable "Service Status" component list
+            // + "Open Status Page" link (nothing for providers without a page).
+            if let kind = ProviderKind(rawValue: provider.provider) {
+                ProviderStatusComponentsView(provider: kind)
+            }
+
             if config.isEnabled {
                 // Usage stats
                 HStack(spacing: 20) {

@@ -40,6 +40,21 @@ public enum ServiceStatusIndicator: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    /// Normalize a raw Statuspage v2 *component* `status` value. Components use a
+    /// wider vocabulary than the top-level `status.indicator`
+    /// (`operational`/`degraded_performance`/`partial_outage`/`major_outage`/
+    /// `under_maintenance`); collapse it onto the same severity ladder.
+    public init(statuspageComponentStatus raw: String) {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "operational": self = .operational
+        case "degraded_performance": self = .minor
+        case "partial_outage": self = .major
+        case "major_outage", "full_outage": self = .critical
+        case "under_maintenance": self = .maintenance
+        default: self = .unknown
+        }
+    }
+
     /// Higher = worse. `unknown` sorts below `operational` so it never wins a
     /// "most severe across providers" reduction. Used for ordering/aggregation.
     public var severity: Int {
@@ -100,6 +115,39 @@ public struct ServiceStatusSnapshot: Equatable, Sendable {
     }
 }
 
+// MARK: - Component
+
+/// One row in a provider's status page — a service component (e.g. "claude.ai",
+/// "Claude API") or a component GROUP (with children). Mirrors the Statuspage v2
+/// `components` array. `statusRaw` is the raw Statuspage status (kept so the UI
+/// can localize the exact wording, e.g. "Degraded Performance"); `indicator` is
+/// the normalized severity used for the colored dot. For a group, both reflect
+/// the WORST child (Statuspage doesn't always propagate child degradation to the
+/// group's own status).
+public struct ServiceStatusComponent: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public let indicator: ServiceStatusIndicator
+    public let statusRaw: String
+    public let children: [ServiceStatusComponent]
+
+    public init(
+        id: String,
+        name: String,
+        indicator: ServiceStatusIndicator,
+        statusRaw: String,
+        children: [ServiceStatusComponent] = []
+    ) {
+        self.id = id
+        self.name = name
+        self.indicator = indicator
+        self.statusRaw = statusRaw
+        self.children = children
+    }
+
+    public var isGroup: Bool { !children.isEmpty }
+}
+
 // MARK: - Parser
 
 public enum ServiceStatusParser {
@@ -125,6 +173,64 @@ public enum ServiceStatusParser {
             updatedAt: (page?["updated_at"] as? String).flatMap(sharedISO8601Parse),
             pageURL: (page?["url"] as? String).flatMap { URL(string: $0) }
         )
+    }
+
+    /// Parse the `components` array of a Statuspage v2 `summary.json` (or
+    /// `components.json`) body into a nested top-level→children tree, in
+    /// Statuspage `position` order. Component GROUPs (`group: true` / referenced
+    /// by a child's `group_id`) carry their children and take the WORST child's
+    /// severity + status wording. Tolerant: a body with no `components` array, or
+    /// entries missing id/name/status, yields [] / skips the entry rather than
+    /// throwing.
+    public static func parseStatuspageComponents(_ data: Data) -> [ServiceStatusComponent] {
+        guard
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let rawComponents = root["components"] as? [[String: Any]]
+        else { return [] }
+
+        struct RawComponent {
+            let id: String
+            let name: String
+            let status: String
+            let groupID: String?
+            let position: Int
+        }
+        let raws: [RawComponent] = rawComponents.compactMap { c in
+            guard
+                let id = c["id"] as? String,
+                let name = c["name"] as? String,
+                let status = c["status"] as? String
+            else { return nil }
+            return RawComponent(
+                id: id, name: name, status: status,
+                groupID: c["group_id"] as? String,
+                position: (c["position"] as? Int) ?? 0
+            )
+        }
+
+        let childrenByGroup = Dictionary(grouping: raws.filter { $0.groupID != nil }) { $0.groupID! }
+        let topLevel = raws.filter { $0.groupID == nil }.sorted { $0.position < $1.position }
+
+        return topLevel.map { parent -> ServiceStatusComponent in
+            let kids = (childrenByGroup[parent.id] ?? [])
+                .sorted { $0.position < $1.position }
+                .map { child in
+                    ServiceStatusComponent(
+                        id: child.id, name: child.name,
+                        indicator: ServiceStatusIndicator(statuspageComponentStatus: child.status),
+                        statusRaw: child.status
+                    )
+                }
+            // A group takes the worst child's severity + wording; a leaf takes its
+            // own. (Statuspage's own group `status` can lag a degraded child.)
+            let worstChild = kids.max { $0.indicator.severity < $1.indicator.severity }
+            let indicator = worstChild?.indicator ?? ServiceStatusIndicator(statuspageComponentStatus: parent.status)
+            let statusRaw = worstChild?.statusRaw ?? parent.status
+            return ServiceStatusComponent(
+                id: parent.id, name: parent.name,
+                indicator: indicator, statusRaw: statusRaw, children: kids
+            )
+        }
     }
 }
 
@@ -168,6 +274,14 @@ public enum ServiceStatusCatalog {
         }
     }
 
+    /// The Statuspage v2 `summary.json` endpoint (overall status + the full
+    /// `components` list in one GET), if known.
+    public static func summaryEndpoint(for provider: ProviderKind) -> URL? {
+        statusPageHost(for: provider).flatMap {
+            URL(string: "https://\($0)/api/v2/summary.json")
+        }
+    }
+
     /// Whether `provider` has a known service-status source.
     public static func hasStatusPage(for provider: ProviderKind) -> Bool {
         statusPageHost(for: provider) != nil
@@ -205,5 +319,22 @@ public struct ServiceStatusFetcher: Sendable {
             (200..<300).contains(http.statusCode)
         else { return nil }
         return ServiceStatusParser.parseStatuspageStatus(data, provider: provider)
+    }
+
+    /// GET the provider's `summary.json` and return its component list (in
+    /// Statuspage order, groups nested). Returns [] on no-known-page, network/
+    /// HTTP failure, or a body with no `components` — callers treat [] as
+    /// "nothing to expand" (graceful).
+    public func fetchComponents(_ provider: ProviderKind) async -> [ServiceStatusComponent] {
+        guard let url = ServiceStatusCatalog.summaryEndpoint(for: provider) else { return [] }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        guard
+            let (data, response) = try? await session.data(for: request),
+            let http = response as? HTTPURLResponse,
+            (200..<300).contains(http.statusCode)
+        else { return [] }
+        return ServiceStatusParser.parseStatuspageComponents(data)
     }
 }

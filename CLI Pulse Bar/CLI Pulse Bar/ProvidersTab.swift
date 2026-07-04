@@ -323,6 +323,14 @@ struct EnhancedProviderCard: View {
                 .animation(.easeInOut(duration: 0.15), value: config.isEnabled)
             }
 
+            // Provider status page — an expandable "Service Status" row listing
+            // this provider's service components (● name · Operational) + an
+            // "Open Status Page" link. Renders nothing for providers without a
+            // known status page; fetches only when expanded.
+            if let kind = ProviderKind(rawValue: provider.provider) {
+                ProviderStatusComponentsView(provider: kind)
+            }
+
             if config.isEnabled {
                 // Source + Plan row
                 HStack(spacing: 8) {
