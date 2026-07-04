@@ -633,6 +633,7 @@ public final class AppState: ObservableObject {
 
     public enum Tab: String, CaseIterable {
         case overview = "Overview"
+        case machine = "Machine"
         case providers = "Providers"
         case sessions = "Sessions"
         case swarm = "Swarm"
@@ -642,6 +643,7 @@ public final class AppState: ObservableObject {
         public var icon: String {
             switch self {
             case .overview: return "gauge.with.dots.needle.33percent"
+            case .machine: return "memorychip"
             case .providers: return "cpu"
             case .sessions: return "terminal"
             case .swarm: return "square.grid.3x3.fill"
@@ -653,6 +655,7 @@ public final class AppState: ObservableObject {
         public var label: String {
             switch self {
             case .overview: return L10n.tab.overview
+            case .machine: return L10n.tab.machine
             case .providers: return L10n.tab.providers
             case .sessions: return L10n.tab.sessions
             case .swarm: return L10n.tab.swarm

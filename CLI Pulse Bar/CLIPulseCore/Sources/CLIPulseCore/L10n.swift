@@ -30,11 +30,42 @@ public enum L10n {
 
     public enum tab {
         public static var overview: String { tr("tab.overview") }
+        public static var machine: String { tr("tab.machine") }
         public static var providers: String { tr("tab.providers") }
         public static var sessions: String { tr("tab.sessions") }
         public static var swarm: String { tr("tab.swarm") }
         public static var alerts: String { tr("tab.alerts") }
         public static var settings: String { tr("tab.settings") }
+    }
+
+    // MARK: - Machine (System Monitor)
+
+    public enum machine {
+        public static var subtitle: String { tr("machine.subtitle") }
+        public static var cpu: String { tr("machine.cpu") }
+        public static var memory: String { tr("machine.memory") }
+        public static var power: String { tr("machine.power") }
+        public static var cpuTemp: String { tr("machine.cpu_temp") }
+        public static var gpuTemp: String { tr("machine.gpu_temp") }
+        public static var fan: String { tr("machine.fan") }
+        public static var battery: String { tr("machine.battery") }
+        public static var charge: String { tr("machine.charge") }
+        public static var health: String { tr("machine.health") }
+        public static var adapter: String { tr("machine.adapter") }
+        public static var batteryTemp: String { tr("machine.battery_temp") }
+        public static func cyclesFmt(_ n: String) -> String { tr("machine.cycles_fmt", n) }
+        public static var topProcesses: String { tr("machine.top_processes") }
+        public static var noProcesses: String { tr("machine.no_processes") }
+        public static var helperUnavailable: String { tr("machine.helper_unavailable") }
+        public static var noSensorsDevid: String { tr("machine.no_sensors_devid") }
+        public static var masAffordance: String { tr("machine.mas_affordance") }
+        public static var thermalNominal: String { tr("machine.thermal_nominal") }
+        public static var thermalFair: String { tr("machine.thermal_fair") }
+        public static var thermalSerious: String { tr("machine.thermal_serious") }
+        public static var thermalCritical: String { tr("machine.thermal_critical") }
+        public static var stateCharging: String { tr("machine.state_charging") }
+        public static var stateDischarging: String { tr("machine.state_discharging") }
+        public static var stateCharged: String { tr("machine.state_charged") }
     }
 
     // MARK: - Dashboard

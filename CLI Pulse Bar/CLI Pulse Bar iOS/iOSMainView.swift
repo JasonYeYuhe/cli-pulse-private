@@ -255,6 +255,11 @@ struct iPadSplitView: View {
         switch selectedSection {
         case .overview:
             iOSOverviewTab()
+        case .machine:
+            // The Machine tab is macOS-only (reads the local Mac's helper over
+            // UDS). iOS has no machine tab/sidebar button, so this is unreachable
+            // — fall back to the dashboard to satisfy the exhaustive switch.
+            iOSOverviewTab()
         case .providers:
             iOSProvidersTab()
         case .sessions:

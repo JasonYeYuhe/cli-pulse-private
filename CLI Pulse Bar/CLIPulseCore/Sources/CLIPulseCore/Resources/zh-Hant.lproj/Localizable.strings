@@ -2,6 +2,7 @@
 
 /* ── 標籤頁 ── */
 "tab.overview" = "概覽";
+"tab.machine" = "機器";
 "tab.providers" = "服務商";
 "tab.sessions" = "會話";
 "tab.alerts" = "告警";
@@ -786,3 +787,30 @@
 "usage_pace.run_out_risk" = "≈ 耗盡風險 %@%%";
 "usage_pace.summary_with_right" = "節奏：%@ · %@";
 "usage_pace.summary_left_only" = "節奏：%@";
+
+/* System Monitor — Machine tab */
+"machine.subtitle" = "本機健康狀態";
+"machine.cpu" = "CPU";
+"machine.memory" = "記憶體";
+"machine.power" = "功耗";
+"machine.cpu_temp" = "CPU 溫度";
+"machine.gpu_temp" = "GPU 溫度";
+"machine.fan" = "風扇";
+"machine.battery" = "電池";
+"machine.charge" = "電量";
+"machine.health" = "健康度";
+"machine.adapter" = "變壓器";
+"machine.battery_temp" = "電池溫度";
+"machine.cycles_fmt" = "%@ 次循環";
+"machine.top_processes" = "高佔用程序";
+"machine.no_processes" = "暫無程序資料";
+"machine.helper_unavailable" = "無法連線助手 —— 機器監控需要 CLI Pulse 助手在執行。";
+"machine.no_sensors_devid" = "此 Mac 無法提供詳細感測器（溫度、風扇、功耗）。";
+"machine.mas_affordance" = "詳細感測器（溫度、風扇、功耗）需使用官網直裝版（Developer ID）。App Store 版本受沙盒限制無法讀取。";
+"machine.thermal_nominal" = "正常";
+"machine.thermal_fair" = "一般";
+"machine.thermal_serious" = "偏高";
+"machine.thermal_critical" = "嚴重";
+"machine.state_charging" = "充電中";
+"machine.state_discharging" = "使用電池";
+"machine.state_charged" = "已充滿";

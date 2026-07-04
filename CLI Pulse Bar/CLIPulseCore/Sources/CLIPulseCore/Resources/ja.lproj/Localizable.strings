@@ -2,6 +2,7 @@
 
 /* ── タブ ── */
 "tab.overview" = "概要";
+"tab.machine" = "マシン";
 "tab.providers" = "プロバイダー";
 "tab.sessions" = "セッション";
 "tab.alerts" = "アラート";
@@ -786,3 +787,30 @@
 "usage_pace.run_out_risk" = "≈ 枯渇リスク %@%%";
 "usage_pace.summary_with_right" = "ペース: %@ · %@";
 "usage_pace.summary_left_only" = "ペース: %@";
+
+/* System Monitor — Machine tab */
+"machine.subtitle" = "このMacの状態";
+"machine.cpu" = "CPU";
+"machine.memory" = "メモリ";
+"machine.power" = "電力";
+"machine.cpu_temp" = "CPU温度";
+"machine.gpu_temp" = "GPU温度";
+"machine.fan" = "ファン";
+"machine.battery" = "バッテリー";
+"machine.charge" = "充電";
+"machine.health" = "状態";
+"machine.adapter" = "アダプタ";
+"machine.battery_temp" = "バッテリー温度";
+"machine.cycles_fmt" = "%@ 回";
+"machine.top_processes" = "上位プロセス";
+"machine.no_processes" = "プロセスデータなし";
+"machine.helper_unavailable" = "ヘルパーに接続できません —— マシン監視には CLI Pulse ヘルパーが必要です。";
+"machine.no_sensors_devid" = "このMacでは詳細センサー（温度・ファン・電力）を利用できません。";
+"machine.mas_affordance" = "詳細センサー（温度・ファン・電力）は直接ダウンロード版（Developer ID）が必要です。App Store版はサンドボックス制限のため読み取れません。";
+"machine.thermal_nominal" = "正常";
+"machine.thermal_fair" = "注意";
+"machine.thermal_serious" = "警告";
+"machine.thermal_critical" = "重大";
+"machine.state_charging" = "充電中";
+"machine.state_discharging" = "バッテリー駆動";
+"machine.state_charged" = "満充電";

@@ -2,6 +2,7 @@
 
 /* ── 탭 ── */
 "tab.overview" = "개요";
+"tab.machine" = "머신";
 "tab.providers" = "공급자";
 "tab.sessions" = "세션";
 "tab.alerts" = "알림";
@@ -509,3 +510,30 @@
 
 /* Quota ring VoiceOver label (P6) — newly surfaced on the redesigned Quota page. */
 "widget.percent_left" = "%@ %d%% 남음";
+
+/* System Monitor — Machine tab */
+"machine.subtitle" = "이 Mac 상태";
+"machine.cpu" = "CPU";
+"machine.memory" = "메모리";
+"machine.power" = "전력";
+"machine.cpu_temp" = "CPU 온도";
+"machine.gpu_temp" = "GPU 온도";
+"machine.fan" = "팬";
+"machine.battery" = "배터리";
+"machine.charge" = "충전";
+"machine.health" = "수명";
+"machine.adapter" = "어댑터";
+"machine.battery_temp" = "배터리 온도";
+"machine.cycles_fmt" = "%@ 회";
+"machine.top_processes" = "상위 프로세스";
+"machine.no_processes" = "프로세스 데이터 없음";
+"machine.helper_unavailable" = "헬퍼에 연결할 수 없습니다 — 머신 모니터링에는 CLI Pulse 헬퍼가 필요합니다.";
+"machine.no_sensors_devid" = "이 Mac에서는 상세 센서(온도, 팬, 전력)를 사용할 수 없습니다.";
+"machine.mas_affordance" = "상세 센서(온도, 팬, 전력)는 직접 다운로드(Developer ID) 버전이 필요합니다. App Store 버전은 샌드박스 제한으로 읽을 수 없습니다.";
+"machine.thermal_nominal" = "정상";
+"machine.thermal_fair" = "보통";
+"machine.thermal_serious" = "심각";
+"machine.thermal_critical" = "위험";
+"machine.state_charging" = "충전 중";
+"machine.state_discharging" = "배터리 사용";
+"machine.state_charged" = "완충";

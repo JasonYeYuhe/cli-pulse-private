@@ -161,6 +161,7 @@ struct MenuBarView: View {
                         Group {
                             switch state.selectedTab {
                             case .overview:    OverviewTab()
+                            case .machine:     MachineHealthView()
                             case .providers:   ProvidersTab()
                             case .sessions:    SessionsTab()
                             case .swarm:       SwarmTab()
@@ -290,6 +291,8 @@ struct MenuBarView: View {
                 switch state.selectedTab {
                 case .overview:
                     OverviewTab()
+                case .machine:
+                    MachineHealthView()
                 case .providers:
                     ProvidersTab()
                 case .sessions:
