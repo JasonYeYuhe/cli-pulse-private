@@ -9,8 +9,8 @@
 // dedicated LEAST-PRIVILEGE Postgres role with ONLY realtime.messages INSERT and
 // ZERO access to app data, so a LEAKED token can only broadcast to its own
 // terminal topic (NOT act account-wide via PostgREST as a role=authenticated
-// token could). The `session_id` claim binds the token to the ONE session it
-// was minted for: the WRITE policy requires topic == pterm:<session_id>, closing
+// token could). The `r0_session_id` claim binds the token to the ONE session it
+// was minted for: the WRITE policy requires topic == pterm:<r0_session_id>, closing
 // cross-session-within-owner. `aud` stays 'authenticated' (audience, not role).
 //
 // ES256 signing reuses the proven Web-Crypto pattern from
@@ -70,8 +70,8 @@ export interface MintOptions {
   issuer: string;
   /** `sub` claim — the session owner's auth.users.id. */
   sub: string;
-  /** `session_id` claim — the ONE remote session this token may broadcast to.
-   *  The WRITE RLS policy (migrate_v0.65) binds topic == `pterm:<sessionId>`. */
+  /** `r0_session_id` claim value — the ONE remote session this token may
+   *  broadcast to. WRITE RLS binds topic == `pterm:<sessionId>` (lowercased). */
   sessionId: string;
   /** Unix seconds "now" (injectable for deterministic tests). */
   nowSeconds: number;
@@ -104,8 +104,10 @@ export async function mintRealtimeToken(
     role: "r0_broadcast",
     aud: "authenticated",
     // Binds this token to the single session it was minted for (WRITE policy
-    // requires topic == pterm:<session_id>).
-    session_id: opts.sessionId,
+    // requires topic == pterm:<r0_session_id>). NAMESPACED claim name so it can
+    // never collide with Supabase Auth's own reserved `session_id` claim, and
+    // lowercased so it matches the canonical `rs.id::text` in the policy.
+    r0_session_id: opts.sessionId.toLowerCase(),
     iat: opts.nowSeconds,
     exp,
   };

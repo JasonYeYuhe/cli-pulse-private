@@ -34,7 +34,7 @@
 -- ============================================================
 
 begin;
-select plan(16);
+select plan(20);
 
 -- Defensive: let this session SET ROLE into r0_broadcast regardless of the
 -- harness login role (rolled back). A superuser could already; this covers
@@ -77,7 +77,7 @@ returns boolean language plpgsql as $$
 declare ok boolean := true;
 begin
   perform set_config('request.jwt.claims',
-    json_build_object('sub', p_sub, 'role', 'r0_broadcast', 'session_id', p_session_id)::text, true);
+    json_build_object('sub', p_sub, 'role', 'r0_broadcast', 'r0_session_id', p_session_id)::text, true);
   perform set_config('realtime.topic', p_topic, true);
   begin
     set local role r0_broadcast;
@@ -118,6 +118,17 @@ select ok( has_function_privilege('authenticated', 'public.register_desktop_help
   'grant: authenticated CAN still execute register_desktop_helper (desktop app unaffected)');
 select ok( not has_function_privilege('anon', 'public.upsert_daily_usage(jsonb,uuid)', 'EXECUTE'),
   'grant: anon CANNOT execute upsert_daily_usage');
+
+-- The oracle's execution boundary: Supabase auto-grants anon/authenticated on a
+-- fresh public function, so the migration must revoke them (not just PUBLIC).
+select ok( not has_function_privilege('anon', 'public.r0_broadcast_topic_allowed(text)', 'EXECUTE'),
+  'grant: anon CANNOT execute the r0_broadcast_topic_allowed oracle');
+select ok( not has_function_privilege('authenticated', 'public.r0_broadcast_topic_allowed(text)', 'EXECUTE'),
+  'grant: authenticated CANNOT execute the r0_broadcast_topic_allowed oracle');
+select ok( has_function_privilege('r0_broadcast', 'public.r0_broadcast_topic_allowed(text)', 'EXECUTE'),
+  'grant: r0_broadcast CAN execute the oracle (WRITE policy needs it)');
+select ok( has_function_privilege('service_role', 'public.r0_broadcast_topic_allowed(text)', 'EXECUTE'),
+  'grant: service_role CAN execute the oracle');
 
 -- ============================================================
 -- (C) WRITE RLS via the r0_broadcast_topic_allowed oracle
