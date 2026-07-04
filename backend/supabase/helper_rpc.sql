@@ -159,6 +159,13 @@ begin
   -- v0.63: normalize the optional sensor metrics blob. NULL / non-object (old
   -- callers) => touch NOTHING (every sensor column coalesces to its existing value).
   v_has_metrics := (p_metrics is not null and jsonb_typeof(p_metrics) = 'object');
+  -- v0.64: bound the payload. This is SECURITY DEFINER and anon-reachable, so a
+  -- caller with a stolen device secret must not be able to make it parse/walk an
+  -- arbitrarily large jsonb. Oversized => ignore the whole metrics block (preserve
+  -- last-known), never error. Legit payloads are ~500 B; 8 KiB is generous.
+  if v_has_metrics and pg_column_size(p_metrics) > 8192 then
+    v_has_metrics := false;
+  end if;
   v_metrics := '{}'::jsonb;
   v_caps := null;
   v_batt_state := null;

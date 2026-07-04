@@ -26,6 +26,10 @@ public enum HIDTemps {
             let name = (IOHIDServiceClientCopyProperty(s, "Product" as CFString) as? String) ?? ""
             guard let ev = IOHIDServiceClientCopyEvent(s, eventTypeTemperature, 0, 0) else { continue }
             let t = IOHIDEventGetFloatValue(ev, field)
+            // IOHIDEventRef imports as an OpaquePointer (not ARC-managed), and
+            // Copy returns it +1 — balance that owning ref so repeated/in-process
+            // sampling can't leak. (CFRelease is unavailable to Swift.)
+            Unmanaged<AnyObject>.fromOpaque(UnsafeRawPointer(ev)).release()
             if t > 0, t < 150 { out.append((name, t)) }
         }
         return out

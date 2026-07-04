@@ -44,6 +44,10 @@ ARCH=""
 SKIP_NOTARIZE=0
 SKIP_SIGN=0
 DRY_RUN=0
+# System Monitor: for a real (signed) release the native clipulse-sensors binary
+# is REQUIRED — a .pkg silently missing it ships the S2 fallback (no temps/fans/
+# power) to users. Fail the build unless this opt-out is passed.
+ALLOW_NO_SENSORS=0
 OUTPUT_DIR=""
 
 # === Argument parsing ===
@@ -52,6 +56,7 @@ while [[ $# -gt 0 ]]; do
         --arch) ARCH="$2"; shift 2 ;;
         --skip-notarize) SKIP_NOTARIZE=1; shift ;;
         --skip-sign) SKIP_SIGN=1; SKIP_NOTARIZE=1; shift ;;
+        --allow-no-native-sensors) ALLOW_NO_SENSORS=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
         --help|-h)
@@ -247,12 +252,24 @@ run cp -R "$UNINSTALLER_APP" "$STAGING/"
 # === Step 3c: Build + embed clipulse-sensors (System Monitor S3) ===
 # The native Apple-Silicon sensor reader the helper invokes for die temps /
 # fan RPM / power. Installs next to cli_pulse_helper so sensor_bridge.py finds
-# it at ~/Library/CLI-Pulse-Helper/clipulse-sensors. Best-effort: if the Swift
-# toolchain is missing or the build fails, the helper degrades to S2 (battery +
-# thermal only) rather than failing the whole .pkg — but we WARN loudly.
+# it at ~/Library/CLI-Pulse-Helper/clipulse-sensors. For a REAL (signed) release
+# it is REQUIRED — a .pkg missing it silently ships the S2 fallback (no temps/
+# fans/power) to users. Missing it is fatal unless --skip-sign / --dry-run /
+# --allow-no-native-sensors. (Codex review 2026-07-04.)
 echo
 echo "--- Step 3c: Build + embed clipulse-sensors ---"
 SENSOR_PKG_DIR="$PROJECT_ROOT/SensorProbe"
+SENSOR_EMBEDDED=0
+# Fatal for a signed release (SKIP_SIGN=0) unless explicitly opted out; warn otherwise.
+_sensor_missing() {
+    local why="$1"
+    if [[ $SKIP_SIGN -eq 0 && $DRY_RUN -eq 0 && $ALLOW_NO_SENSORS -eq 0 ]]; then
+        echo "error: $why — refusing to ship a signed .pkg WITHOUT native sensors." >&2
+        echo "       Pass --allow-no-native-sensors to override (users get the S2 fallback)." >&2
+        exit 5
+    fi
+    echo "WARN: $why — shipping WITHOUT native sensors (S2 fallback)" >&2
+}
 if command -v swift >/dev/null 2>&1 && [[ -f "$SENSOR_PKG_DIR/Package.swift" ]]; then
     if [[ $DRY_RUN -eq 0 ]]; then
         if ( cd "$SENSOR_PKG_DIR" && swift build -c release --arch arm64 ); then
@@ -261,18 +278,19 @@ if command -v swift >/dev/null 2>&1 && [[ -f "$SENSOR_PKG_DIR/Package.swift" ]];
             if [[ -x "$SENSOR_BIN" ]]; then
                 run cp "$SENSOR_BIN" "$STAGING/clipulse-sensors"
                 chmod 755 "$STAGING/clipulse-sensors"
+                SENSOR_EMBEDDED=1
                 echo "embedded clipulse-sensors ($(du -h "$STAGING/clipulse-sensors" | cut -f1))"
             else
-                echo "WARN: swift build succeeded but clipulse-sensors not found — shipping WITHOUT native sensors (S2 fallback)" >&2
+                _sensor_missing "swift build succeeded but clipulse-sensors not found"
             fi
         else
-            echo "WARN: 'swift build' of SensorProbe failed — shipping WITHOUT native sensors (S2 fallback)" >&2
+            _sensor_missing "'swift build' of SensorProbe failed"
         fi
     else
         echo "+ (dry-run) swift build -c release SensorProbe + embed clipulse-sensors"
     fi
 else
-    echo "WARN: swift toolchain or SensorProbe/Package.swift missing — shipping WITHOUT native sensors (S2 fallback)" >&2
+    _sensor_missing "swift toolchain or SensorProbe/Package.swift missing"
 fi
 
 # === Step 4: Sign every Mach-O individually ===
@@ -294,6 +312,16 @@ if [[ $SKIP_SIGN -eq 0 ]]; then
             codesign --force --timestamp --options runtime \
                 --sign "$DEV_ID_APP" "$STAGING/clipulse-sensors"
             codesign --verify --strict --verbose=2 "$STAGING/clipulse-sensors"
+            # Smoke the SIGNED binary: it must actually LAUNCH and emit JSON.
+            # This is the build-time guard for the scariest ship risk — the private
+            # IOReport/IOHID symbols are resolved via `-undefined dynamic_lookup`,
+            # and hardened runtime + signing could in principle break that. If the
+            # signed binary can't run here it can't run on a user's Mac either.
+            if ! "$STAGING/clipulse-sensors" --sample-ms 100 | python3 -c "import sys,json; d=json.load(sys.stdin); assert isinstance(d.get('capability'), dict)"; then
+                echo "error: signed clipulse-sensors failed its JSON smoke (won't launch / bad output)." >&2
+                exit 6
+            fi
+            echo "signed clipulse-sensors passed JSON smoke"
         fi
         # Sign the entry executable LAST — WITH the app-group entitlement.
         # v1.30.2: without `com.apple.security.application-groups`, a launchd
