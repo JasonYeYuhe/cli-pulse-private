@@ -100,6 +100,31 @@ create table public.devices (
   -- Non-secret login-mode label; written by helper_heartbeat, read by clients to
   -- warn that a managed Codex session on this Mac would run billed-on-API.
   provider_plan_status jsonb not null default '{}'::jsonb,
+  -- v0.63: machine-health sensors (nullable; NULL = never reported). Written by
+  -- helper_heartbeat's p_metrics blob from the UNSANDBOXED helper (IOReport /
+  -- AppleSMC / IOHID / AppleSmartBattery / Power Sources / thermalState). Read by
+  -- desktop + phones for a read-only device-health summary. sensors_capability is
+  -- the honest per-device "what can this Mac report" map so phones don't show a
+  -- battery card for a Mac mini or a fan gauge for a fanless Air.
+  cpu_power_w real,
+  gpu_power_w real,
+  ane_power_w real,
+  system_power_w real,
+  cpu_temp_c real,
+  gpu_temp_c real,
+  battery_temp_c real,
+  fan_rpm integer,
+  fan_max_rpm integer,
+  thermal_state smallint,
+  battery_charge_pct smallint,
+  battery_state text,
+  battery_cycle_count integer,
+  battery_health_pct real,
+  battery_design_capacity integer,
+  battery_current_capacity integer,
+  adapter_watts real,
+  sensors_capability jsonb not null default '{}'::jsonb,
+  sensors_updated_at timestamptz,
   last_seen_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
