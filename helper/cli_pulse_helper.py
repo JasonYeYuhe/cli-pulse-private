@@ -334,7 +334,15 @@ def heartbeat(_: argparse.Namespace) -> None:
     # rather than clobbering. Never sync the per-process table (local-only).
     try:
         from machine_collector import heartbeat_metrics  # local import: fail-soft
-        metrics = heartbeat_metrics()
+        # S3: native sensors (die temps/fans/power) from the clipulse-sensors
+        # binary; None on any failure -> S2-level metrics (battery+thermal only).
+        try:
+            from sensor_bridge import read_sensors
+            sensors = read_sensors()
+        except Exception as exc:  # noqa: BLE001 — sensor read must never break the heartbeat
+            logger.debug("sensor_bridge.read_sensors() failed: %s", exc)
+            sensors = None
+        metrics = heartbeat_metrics(sensors=sensors)
         if metrics:
             params["p_metrics"] = metrics
     except Exception as exc:  # noqa: BLE001 — machine metrics must never break the heartbeat
@@ -722,11 +730,18 @@ def daemon(args: argparse.Namespace) -> None:
                 return []
 
         def _machine_snapshot_local() -> dict:
-            # System Monitor S2: rich LOCAL machine-health snapshot (per-process
-            # table + memory detail + battery/thermal + capability). Read-only;
-            # fail-soft so a broken sensor read never breaks the UDS reply.
+            # System Monitor S2/S3: rich LOCAL machine-health snapshot (per-process
+            # table + memory detail + battery/thermal + native temps/fans/power +
+            # capability). Read-only; fail-soft so a broken sensor read never
+            # breaks the UDS reply.
             from machine_collector import collect_machine_snapshot, machine_snapshot_dict
-            return machine_snapshot_dict(collect_machine_snapshot())
+            try:
+                from sensor_bridge import read_sensors
+                sensors = read_sensors()
+            except Exception as exc:  # noqa: BLE001 — degrade to S2 on any failure
+                logger.debug("sensor_bridge.read_sensors() failed: %s", exc)
+                sensors = None
+            return machine_snapshot_dict(collect_machine_snapshot(sensors=sensors))
 
         local_uds_server = LocalSessionServer(
             socket_path=default_socket_path(),
