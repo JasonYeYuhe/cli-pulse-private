@@ -206,6 +206,7 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
                  send_input_raw: object | None = None,
                  resize: object | None = None,
                  get_tail_snapshot: object | None = None,
+                 get_machine_snapshot: object | None = None,
                  ) -> tuple[LocalSessionServer, FakeManager, dict]:
     """Spin up a server bound to a tmp socket. Returns (server, manager,
     state-dict-for-toggle-introspection).
@@ -237,6 +238,7 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
         send_input_raw=send_input_raw,
         resize=resize,
         get_tail_snapshot=get_tail_snapshot,
+        get_machine_snapshot=get_machine_snapshot,
     )
     server.start()
     return server, mgr, state
@@ -260,6 +262,8 @@ def test_hello_returns_caps_without_auth(short_sock_dir):
             "send_input": True,
             "subscribe_events": False,
             "approvals": False,
+            # S2: _make_server omits get_machine_snapshot -> capability False.
+            "machine_snapshot": False,
         }
         # v1.15: provider_availability is a list of installed CLI
         # spawners. The exact contents depend on the host PATH (the
@@ -335,6 +339,86 @@ def test_hello_version_mismatch_returns_typed_error(short_sock_dir):
         })
         assert reply["ok"] is False
         assert reply["error"]["code"] == "version_mismatch"
+    finally:
+        server.stop()
+
+
+_FAKE_MACHINE_SNAPSHOT = {
+    "collected_at": "2026-07-04T00:00:00+00:00",
+    "cpu_percent": 26,
+    "memory_percent": 64,
+    "memory_used_bytes": 11_000_000_000,
+    "memory_total_bytes": 17_179_869_184,
+    "battery": {"has_battery": True, "charge_pct": 100, "state": "charged",
+                "cycle_count": 59, "health_pct": 95.0, "battery_temp_c": 31.0,
+                "adapter_watts": 65.0, "thermal_state": 0},
+    "top_processes": [{"pid": 429, "name": "WindowServer", "cpu_percent": 21.9, "rss_mb": 67.5}],
+    "capability": {"process_table": True, "battery": True, "thermal_state": True,
+                   "temps": False, "fans": False, "power": False},
+    "sensors": None,
+}
+
+
+def test_get_machine_snapshot_requires_auth(short_sock_dir):
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T",
+        get_machine_snapshot=lambda: dict(_FAKE_MACHINE_SNAPSHOT),
+    )
+    try:
+        # Missing token → unauthenticated (machine health is read-only but still
+        # authenticated — no free liveness/telemetry probe for any local process).
+        reply = _client_call(server._socket_path, {
+            "id": "m", "method": "get_machine_snapshot", "params": {},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "unauthenticated"
+    finally:
+        server.stop()
+
+
+def test_get_machine_snapshot_bypasses_control_gate(short_sock_dir):
+    # Monitoring works even when local session control is OFF — it's orthogonal.
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T", enabled=False,
+        get_machine_snapshot=lambda: dict(_FAKE_MACHINE_SNAPSHOT),
+    )
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "m", "method": "get_machine_snapshot",
+            "auth_token": "T", "params": {},
+        })
+        assert reply["ok"] is True
+        result = reply["result"]
+        assert result["battery"]["cycle_count"] == 59
+        assert result["capability"]["temps"] is False
+        assert result["top_processes"][0]["name"] == "WindowServer"
+    finally:
+        server.stop()
+
+
+def test_get_machine_snapshot_not_implemented_when_unwired(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir, token="T")  # no hook
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "m", "method": "get_machine_snapshot",
+            "auth_token": "T", "params": {},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "not_implemented"
+    finally:
+        server.stop()
+
+
+def test_hello_reports_machine_snapshot_capability_when_wired(short_sock_dir):
+    server, _mgr, _state = _make_server(
+        short_sock_dir, get_machine_snapshot=lambda: dict(_FAKE_MACHINE_SNAPSHOT),
+    )
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "hello",
+            "params": {"client_protocol_version": PROTOCOL_VERSION},
+        })
+        assert reply["result"]["capabilities"]["machine_snapshot"] is True
     finally:
         server.stop()
 

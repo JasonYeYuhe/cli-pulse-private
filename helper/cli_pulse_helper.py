@@ -327,6 +327,18 @@ def heartbeat(_: argparse.Namespace) -> None:
         params["p_provider_plan_status"] = provider_plan_statuses()
     except Exception as exc:  # noqa: BLE001 — plan status must never break the heartbeat
         logger.debug("provider_plan_statuses() failed; omitting from heartbeat: %s", exc)
+    # v0.63 (System Monitor S2): publish the machine-health metrics blob
+    # (battery health, thermal state, capability map; S3 adds native temps/fans/
+    # power). Same discipline as provider_plan_status — on a compute failure we
+    # OMIT p_metrics so the server's per-field coalesce preserves last-known
+    # rather than clobbering. Never sync the per-process table (local-only).
+    try:
+        from machine_collector import heartbeat_metrics  # local import: fail-soft
+        metrics = heartbeat_metrics()
+        if metrics:
+            params["p_metrics"] = metrics
+    except Exception as exc:  # noqa: BLE001 — machine metrics must never break the heartbeat
+        logger.debug("heartbeat_metrics() failed; omitting from heartbeat: %s", exc)
     supabase_rpc("helper_heartbeat", params)
     logger.debug("heartbeat sent")
 
@@ -709,6 +721,13 @@ def daemon(args: argparse.Namespace) -> None:
                 logger.warning("detected-session collector failed: %s", exc)
                 return []
 
+        def _machine_snapshot_local() -> dict:
+            # System Monitor S2: rich LOCAL machine-health snapshot (per-process
+            # table + memory detail + battery/thermal + capability). Read-only;
+            # fail-soft so a broken sensor read never breaks the UDS reply.
+            from machine_collector import collect_machine_snapshot, machine_snapshot_dict
+            return machine_snapshot_dict(collect_machine_snapshot())
+
         local_uds_server = LocalSessionServer(
             socket_path=default_socket_path(),
             get_auth_token=_get_token,
@@ -722,6 +741,7 @@ def daemon(args: argparse.Namespace) -> None:
             resize=_resize_local,
             get_tail_snapshot=_get_tail_snapshot_local,
             list_detected_sessions=_list_detected_local,
+            get_machine_snapshot=_machine_snapshot_local,
             # Iter 2B: broker drives subscribe_events; registry
             # backs approve_action / get_pending_approvals plus
             # the hook-side hook_create_approval / wait_decision
