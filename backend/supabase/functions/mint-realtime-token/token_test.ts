@@ -82,7 +82,9 @@ Deno.test("mintRealtimeToken: claims + verifiable ES256 signature", async () => 
   assertEquals(claims.role, "r0_broadcast");
   assertEquals(claims.aud, "authenticated");
   // Binds the token to a single session (WRITE policy: topic == pterm:<sid>).
-  assertEquals(claims.session_id, sessionId);
+  // Namespaced claim name (not the reserved `session_id`).
+  assertEquals(claims.r0_session_id, sessionId);
+  assertEquals(claims.session_id, undefined, "must NOT emit a reserved `session_id` claim");
   assertEquals(claims.iss, issuer);
   assertEquals(claims.iat, now);
   assertEquals(claims.exp, now + ttl);
@@ -112,6 +114,22 @@ Deno.test("mintRealtimeToken: claims + verifiable ES256 signature", async () => 
     forgedInput,
   );
   assert(!forgedOk, "signature over a tampered payload must fail to verify");
+});
+
+Deno.test("mintRealtimeToken: lowercases the r0_session_id claim (canonical uuid)", async () => {
+  const { pem } = await generatePkcs8Pem();
+  const { token } = await mintRealtimeToken({
+    privateKeyPem: pem,
+    kid: "k",
+    issuer: "i",
+    sub: "11111111-2222-4333-8444-555555555555",
+    sessionId: "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE", // uppercase input
+    nowSeconds: 1,
+    ttlSeconds: 3600,
+  });
+  const claims = decodeSegment(token.split(".")[1]);
+  assertEquals(claims.r0_session_id, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    "an uppercase session id must be lowercased so it matches rs.id::text in the RLS policy");
 });
 
 Deno.test("mintRealtimeToken: rejects empty sub / empty sessionId / non-positive ttl", async () => {

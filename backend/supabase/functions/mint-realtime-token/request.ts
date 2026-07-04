@@ -53,9 +53,14 @@ export function parseMintBody(raw: unknown): ParseResult {
   return {
     ok: true,
     body: {
-      device_id: o.device_id,
+      // Normalize the uuids to canonical lowercase. UUID_RE is case-insensitive
+      // and Postgres accepts an uppercase uuid, but the r0 WRITE policy compares
+      // the r0_session_id claim against `rs.id::text` (canonical lowercase) as a
+      // STRING — an uppercase claim would silently never authorize. Lowercasing
+      // here (and again at claim-build) keeps the whole path canonical.
+      device_id: o.device_id.toLowerCase(),
       helper_secret: o.helper_secret,
-      session_id: o.session_id,
+      session_id: o.session_id.toLowerCase(),
     },
   };
 }

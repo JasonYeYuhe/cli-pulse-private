@@ -31,7 +31,7 @@
 --     READ policy stays `to authenticated`), and cannot act as the owner via
 --     PostgREST.
 -- (2) Bind the token to the ONE session it was minted for: the WRITE policy now
---     additionally requires the topic to equal pterm:<the token's session_id
+--     additionally requires the topic to equal pterm:<the token's r0_session_id
 --     claim>. This closes cross-session-WITHIN-owner (a token minted for
 --     session A can no longer write to the owner's session B).
 -- (3) Close the residual escalation surface reachable via the PUBLIC pseudo-role
@@ -105,11 +105,11 @@ grant insert on realtime.messages to r0_broadcast;
 --      resolves remote_sessions as the definer.
 --
 --      Binds the token to the ONE session it was minted for: the topic must be
---      exactly pterm:<the token's session_id claim>, that session must belong
+--      exactly pterm:<the token's r0_session_id claim>, that session must belong
 --      to the token owner (auth.uid()=sub) and be realtime_private.
 --
 --      NEVER cast realtime.topic() (a ::uuid cast throws 22P02 on a malformed
---      topic → DoS). Compare constructed strings. Read the session_id claim the
+--      topic → DoS). Compare constructed strings. Read the r0_session_id claim the
 --      same robust way auth.uid() reads sub: nullif(...,'')::jsonb ->> key
 --      (empty/absent → NULL → no match → fail closed).
 -- ------------------------------------------------------------
@@ -124,11 +124,19 @@ as $function$
     select 1 from public.remote_sessions rs
     where rs.user_id = (select auth.uid())
       and rs.realtime_private is true
-      and rs.id::text = nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'session_id'
+      -- `r0_session_id` (NOT `session_id`): a namespaced custom claim, so it
+      -- can never collide with Supabase Auth's own reserved `session_id` claim.
+      -- The edge fn lowercases the value; rs.id::text is canonical lowercase.
+      and rs.id::text = nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'r0_session_id'
       and 'pterm:' || rs.id::text = p_topic
   );
 $function$;
-revoke all on function public.r0_broadcast_topic_allowed(text) from public;
+-- Revoke from anon + authenticated too, NOT just PUBLIC: Supabase auto-grants
+-- EXECUTE on every new public function to anon/authenticated/service_role (via
+-- default privileges), so `revoke … from public` alone leaves them able to call
+-- it (verified 2026-07-04). Same trap as migrate_v0.59.1. This restores the
+-- intended r0_broadcast+service_role-only boundary.
+revoke all on function public.r0_broadcast_topic_allowed(text) from public, anon, authenticated;
 grant execute on function public.r0_broadcast_topic_allowed(text) to r0_broadcast, service_role;
 
 -- (2b) Retarget the WRITE policy from `authenticated` to the least-privilege
