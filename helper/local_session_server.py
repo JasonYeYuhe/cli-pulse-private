@@ -131,6 +131,9 @@ SUPPORTED_METHODS = (
     "resize",
     # v-next P1-2: reattach repaint — tail of the per-session raw output ring.
     "get_tail_snapshot",
+    # System Monitor S2: read-only machine-health snapshot (per-process CPU/mem,
+    # battery health, thermal state; S3 adds native temps/fans/power).
+    "get_machine_snapshot",
     # Phase 3 Iter 2B: app-side streaming + structured approvals.
     "subscribe_events",
     "approve_action",
@@ -170,7 +173,11 @@ UNAUTHENTICATED_METHODS = frozenset({"hello"})
 # handshake / introspection methods + the toggle itself all bypass
 # this gate; the session-control methods do not.
 GATE_BYPASSED_METHODS = frozenset(
-    {"hello", "ping", "get_local_control_status", "set_local_control_enabled"}
+    {"hello", "ping", "get_local_control_status", "set_local_control_enabled",
+     # Machine-health monitoring is read-only and orthogonal to the remote
+     # session-control toggle (which gates spawning/driving sessions). It still
+     # requires the app auth_token — it just doesn't require local_control_enabled.
+     "get_machine_snapshot"}
 )
 
 
@@ -335,6 +342,7 @@ class LocalSessionServer:
         resize: Callable[[str, int, int], bool] | None = None,
         get_tail_snapshot: Callable[[str, int], dict | None] | None = None,
         list_detected_sessions: Callable[[], list[dict]] | None = None,
+        get_machine_snapshot: Callable[[], dict] | None = None,
         event_broker: EventBroker | None = None,
         approval_registry: ApprovalRegistry | None = None,
         subscribe_idle_timeout_s: float = 30.0,
@@ -379,6 +387,10 @@ class LocalSessionServer:
         # surface — see module docstring for the controllability
         # boundary. Optional so unit tests can omit it.
         self._list_detected_sessions = list_detected_sessions
+        # System Monitor S2: read-only machine-health snapshot (process table +
+        # battery/thermal + capability). None ⇒ the UDS method replies
+        # `not_implemented` (older wiring / unit tests that omit it).
+        self._get_machine_snapshot = get_machine_snapshot
         # Phase 3 Iter 2B: the broker drives `subscribe_events` and
         # the registry drives `approve_action` / `get_pending_approvals`
         # / `hook_*`. Both default to None so tests that exercise only
@@ -859,6 +871,9 @@ class LocalSessionServer:
                     # falls back to snapshot polling.
                     "subscribe_events": self._event_broker is not None,
                     "approvals": self._approval_registry is not None,
+                    # System Monitor S2: whether this helper can serve the
+                    # read-only machine-health snapshot over get_machine_snapshot.
+                    "machine_snapshot": self._get_machine_snapshot is not None,
                 },
                 # v1.15: array of installed providers (subset of
                 # ['claude','codex','gemini']). UI uses this to disable
@@ -1251,6 +1266,20 @@ class LocalSessionServer:
                 raise _RequestError("session_not_found",
                                     f"no managed session with id {session_id!r}")
             return result
+
+        if method == "get_machine_snapshot":
+            # System Monitor S2: read-only machine-health snapshot. Rich, LOCAL
+            # (per-process CPU/mem table + memory detail + battery/thermal +
+            # capability). Fail-soft inside the collector; a None hook means an
+            # older helper wiring / a unit-test harness that didn't inject it.
+            if self._get_machine_snapshot is None:
+                raise _RequestError("not_implemented",
+                                    "get_machine_snapshot unavailable on this helper")
+            try:
+                return self._get_machine_snapshot()
+            except Exception as exc:  # noqa: BLE001 — never leak a stack to the peer
+                logger.warning("get_machine_snapshot failed: %s", exc)
+                raise _RequestError("internal", "machine snapshot unavailable") from exc
 
         if method == "install_claude_hook":
             # Phase 4 helper-bundling: app asks helper to write the
