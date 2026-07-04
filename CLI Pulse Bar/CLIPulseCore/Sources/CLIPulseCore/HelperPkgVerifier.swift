@@ -36,6 +36,7 @@ private let helperPkgVerifierLog = Logger(
 public enum HelperPkgVerifierError: Error, LocalizedError, Equatable {
     case urlInsecureScheme(String)
     case urlNotAllowed(String)
+    case versionMalformed(String)
     case sizeOutOfRange(Int)
     case sizeMismatch(expected: Int, actual: Int)
     case downgradeBlocked(installed: String, candidate: String)
@@ -49,6 +50,7 @@ public enum HelperPkgVerifierError: Error, LocalizedError, Equatable {
         switch self {
         case .urlInsecureScheme(let s): detail = "download URL is not https (\(s))"
         case .urlNotAllowed(let s): detail = "download URL is not an official helper release (\(s))"
+        case .versionMalformed(let s): detail = "declared version is not a plain numeric version (\(s))"
         case .sizeOutOfRange(let n): detail = "declared size out of range (\(n))"
         case .sizeMismatch(let e, let a): detail = "size mismatch (expected \(e), got \(a))"
         case .downgradeBlocked(let i, let c): detail = "refusing a downgrade (installed \(i), offered \(c))"
@@ -61,9 +63,10 @@ public enum HelperPkgVerifierError: Error, LocalizedError, Equatable {
     }
 }
 
-/// Stateless verifier. The pure entry points (`validatePkgURL`, `validateSize`,
-/// `assertSizeMatch`, `assertNotDowngrade`, `parseSignerTeam`) are unit-tested
-/// offline in the default `swift test`; the subprocess IO path
+/// Stateless verifier. The pure entry points (`validatePkgURL`,
+/// `validateVersion`, `validateSize`, `assertSizeMatch`, `assertNotDowngrade`,
+/// `parseSignerTeam`) are unit-tested offline in the default `swift test`; the
+/// subprocess IO path
 /// (`verifyPkgSignatureAndNotarization`) is DEVID-only and covered by an
 /// env-gated integration test plus the published-artifact CI gate.
 public struct HelperPkgVerifier {
@@ -96,6 +99,23 @@ public struct HelperPkgVerifier {
         }
         guard urlString.hasPrefix(allowedURLPrefix) else {
             throw HelperPkgVerifierError.urlNotAllowed(urlString)
+        }
+    }
+
+    /// The manifest `version` is attacker-controlled (unsigned latest.json) and
+    /// flows into (a) the on-disk filename `cli-pulse-helper-<version>-<arch>.pkg`
+    /// which `pkgutil --check-signature` echoes back verbatim on its first line,
+    /// and (b) the downgrade comparison. A non-numeric version could therefore
+    /// smuggle a fake `Developer ID Installer … (TEAMID)` line into the pkgutil
+    /// output (defeating the team-pin) or a `999.0 …` prefix past the downgrade
+    /// guard. Require a strict, plain numeric dotted form — no spaces, letters,
+    /// parens, or newlines. (Defense-in-depth alongside the numbered-signer-line
+    /// gating in parseSignerTeam.)
+    public static func validateVersion(_ version: String) throws {
+        guard !version.isEmpty, version.count <= 32,
+              version.range(of: #"^[0-9]+(\.[0-9]+)*$"#, options: .regularExpression) != nil
+        else {
+            throw HelperPkgVerifierError.versionMalformed(version)
         }
     }
 
@@ -137,32 +157,47 @@ public struct HelperPkgVerifier {
     }
 
     /// Extract the 10-char Apple Team ID from a `pkgutil --check-signature`
-    /// dump. The signer line looks like:
-    ///   `1. Developer ID Installer: Jason … (KHMK6Q3L3K)`
-    /// We require BOTH the "Developer ID Installer" marker and a team id in
-    /// parens; returns the first team id found on a Developer-ID-Installer line,
-    /// or nil if the output carries no such signer. Pure so it's unit-tested
+    /// dump. A genuine signer line is a NUMBERED certificate-chain entry:
+    ///   `    1. Developer ID Installer: Jason … (KHMK6Q3L3K)`
+    ///
+    /// SECURITY: we must NOT match a bare `contains("Developer ID Installer")` —
+    /// pkgutil prints the package's basename verbatim on its very first line
+    /// (`Package "<basename>":`), and that basename is attacker-controlled
+    /// (built from the unsigned manifest's `version`). A `version` of
+    /// `Developer ID Installer (KHMK6Q3L3K)` would smuggle the pinned team out
+    /// of the filename line, letting any notarized 3rd-party-team .pkg pass the
+    /// team-pin (deep-audit 2026-07-04). So we ONLY trust a line matching the
+    /// numbered chain-entry shape `^<ws><digits>. Developer ID Installer:`, and
+    /// read the team from the END of that line. (validateVersion is the belt;
+    /// this is the suspenders — it also blocks a newline-injected fake line.)
+    /// Returns nil if no genuine signer line is present. Pure — unit-tested
     /// without a real .pkg.
     public static func parseSignerTeam(fromCheckSignatureOutput output: String) -> String? {
-        // Only trust a team id that sits on a "Developer ID Installer" line —
-        // an attacker's ad-hoc/other-cert chain must not satisfy the pin.
         for rawLine in output.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
             let line = String(rawLine)
-            guard line.contains("Developer ID Installer") else { continue }
-            if let team = firstTeamID(in: line) { return team }
+            guard line.range(of: #"^\s*[0-9]+\.\s+Developer ID Installer:"#,
+                             options: .regularExpression) != nil else { continue }
+            if let team = lastTeamID(in: line) { return team }
         }
         return nil
     }
 
-    /// First `(XXXXXXXXXX)` 10-char uppercase-alphanumeric Team ID in a string.
-    static func firstTeamID(in line: String) -> String? {
-        guard let open = line.range(of: "(") else { return nil }
-        let after = line[open.upperBound...]
-        guard let close = after.range(of: ")") else { return nil }
-        let candidate = String(after[..<close.lowerBound])
-        let isTeam = candidate.count == 10 &&
-            candidate.allSatisfy { ($0.isLetter && $0.isUppercase) || $0.isNumber }
-        return isTeam ? candidate : nil
+    /// The LAST `(XXXXXXXXXX)` 10-char uppercase-alphanumeric Team ID in a line.
+    /// A real signer line carries the team in parens at its END; taking the last
+    /// match avoids a parenthetical inside the certificate holder's name.
+    static func lastTeamID(in line: String) -> String? {
+        var result: String? = nil
+        var cursor = line.startIndex
+        while let open = line.range(of: "(", range: cursor..<line.endIndex) {
+            guard let close = line.range(of: ")", range: open.upperBound..<line.endIndex) else { break }
+            let candidate = String(line[open.upperBound..<close.lowerBound])
+            if candidate.count == 10,
+               candidate.allSatisfy({ ($0.isLetter && $0.isUppercase) || $0.isNumber }) {
+                result = candidate
+            }
+            cursor = close.upperBound
+        }
+        return result
     }
 
     // MARK: - Signature + notarization (DEVID build only; subprocess)
