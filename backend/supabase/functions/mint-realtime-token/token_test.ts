@@ -4,7 +4,8 @@
 // Proves the SIGN path end-to-end without network: generate an ES256 keypair,
 // sign a realtime token, then VERIFY the signature with the matching public
 // key and assert every claim the realtime.messages RLS policies depend on
-// (sub = owner, role/aud = authenticated, exp = iat + ttl).
+// (sub = owner, role = r0_broadcast (least-privilege, F1), aud = authenticated,
+// session_id = the bound session, exp = iat + ttl).
 
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert";
 import { base64url, mintRealtimeToken } from "./token.ts";
@@ -53,6 +54,7 @@ Deno.test("mintRealtimeToken: claims + verifiable ES256 signature", async () => 
   const now = 1_900_000_000;
   const ttl = 3600;
   const owner = "11111111-2222-4333-8444-555555555555";
+  const sessionId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
   const issuer = "https://r0.example.test/issuer";
 
   const { token, expiresAt } = await mintRealtimeToken({
@@ -60,6 +62,7 @@ Deno.test("mintRealtimeToken: claims + verifiable ES256 signature", async () => 
     kid: "r0-key-1",
     issuer,
     sub: owner,
+    sessionId,
     nowSeconds: now,
     ttlSeconds: ttl,
   });
@@ -74,8 +77,12 @@ Deno.test("mintRealtimeToken: claims + verifiable ES256 signature", async () => 
 
   const claims = decodeSegment(parts[1]);
   assertEquals(claims.sub, owner);
-  assertEquals(claims.role, "authenticated");
+  // F1: least-privilege realtime role, NOT 'authenticated' (which would grant
+  // account-wide PostgREST authority if the token leaked).
+  assertEquals(claims.role, "r0_broadcast");
   assertEquals(claims.aud, "authenticated");
+  // Binds the token to a single session (WRITE policy: topic == pterm:<sid>).
+  assertEquals(claims.session_id, sessionId);
   assertEquals(claims.iss, issuer);
   assertEquals(claims.iat, now);
   assertEquals(claims.exp, now + ttl);
@@ -107,26 +114,18 @@ Deno.test("mintRealtimeToken: claims + verifiable ES256 signature", async () => 
   assert(!forgedOk, "signature over a tampered payload must fail to verify");
 });
 
-Deno.test("mintRealtimeToken: rejects empty sub / non-positive ttl", async () => {
+Deno.test("mintRealtimeToken: rejects empty sub / empty sessionId / non-positive ttl", async () => {
   const { pem } = await generatePkcs8Pem();
-  await assertRejects(() =>
-    mintRealtimeToken({
-      privateKeyPem: pem,
-      kid: "k",
-      issuer: "i",
-      sub: "",
-      nowSeconds: 1,
-      ttlSeconds: 3600,
-    })
-  );
-  await assertRejects(() =>
-    mintRealtimeToken({
-      privateKeyPem: pem,
-      kid: "k",
-      issuer: "i",
-      sub: "11111111-2222-4333-8444-555555555555",
-      nowSeconds: 1,
-      ttlSeconds: 0,
-    })
-  );
+  const ok = {
+    privateKeyPem: pem,
+    kid: "k",
+    issuer: "i",
+    sub: "11111111-2222-4333-8444-555555555555",
+    sessionId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    nowSeconds: 1,
+    ttlSeconds: 3600,
+  };
+  await assertRejects(() => mintRealtimeToken({ ...ok, sub: "" }));
+  await assertRejects(() => mintRealtimeToken({ ...ok, sessionId: "" }));
+  await assertRejects(() => mintRealtimeToken({ ...ok, ttlSeconds: 0 }));
 });

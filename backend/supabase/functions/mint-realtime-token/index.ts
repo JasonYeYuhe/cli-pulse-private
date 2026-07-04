@@ -115,6 +115,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       kid,
       issuer,
       sub: outcome.owner,
+      // Bind the token to exactly the session it was authorized for (F1).
+      sessionId: session_id,
       nowSeconds,
       ttlSeconds,
     });
