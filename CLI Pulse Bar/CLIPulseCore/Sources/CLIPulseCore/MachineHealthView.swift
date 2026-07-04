@@ -11,7 +11,6 @@ import SwiftUI
 /// points to the direct-download build.
 public struct MachineHealthView: View {
     @State private var snapshot: MachineSnapshot?
-    @State private var loadFailed = false
     @State private var didLoadOnce = false
     private let client = LocalSessionControlClient()
     private let refreshInterval: UInt64 = 2_000_000_000  // 2 s
@@ -55,59 +54,60 @@ public struct MachineHealthView: View {
                     .foregroundStyle(.tertiary)
             }
             Spacer()
-            if let s = snapshot, s.can("thermal_state"), let ts = s.battery.thermalState {
-                thermalBadge(ts)
+            if let snap = snapshot, snap.can("thermal_state"), let tstate = snap.battery.thermalState {
+                thermalBadge(tstate)
             }
         }
     }
 
     // MARK: - Gauges
 
-    private func gauges(_ s: MachineSnapshot) -> some View {
+    private func gauges(_ snap: MachineSnapshot) -> some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
-            MetricCard(title: L10n.machine.cpu, value: "\(s.cpuPercent)%", icon: "cpu", color: PulseTheme.accent)
-            MetricCard(title: L10n.machine.memory, value: "\(s.memoryPercent)%",
-                       subtitle: memoryDetail(s), icon: "memorychip", color: PulseTheme.secondaryAccent)
-            if s.can("power"), let w = s.systemPowerW {
-                MetricCard(title: L10n.machine.power, value: String(format: "%.1f W", w),
-                           subtitle: powerDetail(s), icon: "bolt.fill", color: .yellow)
+            MetricCard(title: L10n.machine.cpu, value: "\(snap.cpuPercent)%", icon: "cpu", color: PulseTheme.accent)
+            MetricCard(title: L10n.machine.memory, value: "\(snap.memoryPercent)%",
+                       subtitle: memoryDetail(snap), icon: "memorychip", color: PulseTheme.secondaryAccent)
+            if snap.can("power"), let watts = snap.systemPowerW {
+                MetricCard(title: L10n.machine.power, value: String(format: "%.1f W", watts),
+                           subtitle: powerDetail(snap), icon: "bolt.fill", color: .yellow)
             }
-            if s.can("temps"), let t = s.cpuTempC {
-                MetricCard(title: L10n.machine.cpuTemp, value: String(format: "%.0f°C", t),
-                           icon: "thermometer.medium", color: tempColor(t))
+            if snap.can("temps"), let temp = snap.cpuTempC {
+                MetricCard(title: L10n.machine.cpuTemp, value: String(format: "%.0f°C", temp),
+                           icon: "thermometer.medium", color: tempColor(temp))
             }
-            if s.can("temps"), let t = s.gpuTempC {
-                MetricCard(title: L10n.machine.gpuTemp, value: String(format: "%.0f°C", t),
-                           icon: "thermometer.medium", color: tempColor(t))
+            if snap.can("temps"), let temp = snap.gpuTempC {
+                MetricCard(title: L10n.machine.gpuTemp, value: String(format: "%.0f°C", temp),
+                           icon: "thermometer.medium", color: tempColor(temp))
             }
-            if s.can("fans"), let rpm = s.fanRpm {
+            if snap.can("fans"), let rpm = snap.fanRpm {
                 MetricCard(title: L10n.machine.fan, value: "\(rpm)",
-                           subtitle: s.fanMaxRpm.map { "max \($0) rpm" }, icon: "fanblades.fill", color: .teal)
+                           subtitle: snap.fanMaxRpm.map { "max \($0) rpm" }, icon: "fanblades.fill", color: .teal)
             }
         }
     }
 
     // MARK: - Battery card
 
-    private func batteryCard(_ b: MachineSnapshot.Battery) -> some View {
+    private func batteryCard(_ batt: MachineSnapshot.Battery) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: L10n.machine.battery, icon: "battery.100")
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
-                if let c = b.chargePct {
-                    MetricCard(title: L10n.machine.charge, value: "\(c)%",
-                               subtitle: b.state.map(batteryStateLabel), icon: batteryIcon(b), color: batteryColor(b))
+                if let charge = batt.chargePct {
+                    MetricCard(title: L10n.machine.charge, value: "\(charge)%",
+                               subtitle: batt.state.map(batteryStateLabel),
+                               icon: batteryIcon(batt), color: batteryColor(batt))
                 }
-                if let h = b.healthPct {
-                    MetricCard(title: L10n.machine.health, value: String(format: "%.0f%%", h),
-                               subtitle: b.cycleCount.map { L10n.machine.cyclesFmt("\($0)") },
-                               icon: "cross.case.fill", color: h >= 80 ? .green : (h >= 60 ? .orange : .red))
+                if let health = batt.healthPct {
+                    MetricCard(title: L10n.machine.health, value: String(format: "%.0f%%", health),
+                               subtitle: batt.cycleCount.map { L10n.machine.cyclesFmt("\($0)") },
+                               icon: "cross.case.fill", color: health >= 80 ? .green : (health >= 60 ? .orange : .red))
                 }
-                if let w = b.adapterWatts, w > 0 {
-                    MetricCard(title: L10n.machine.adapter, value: String(format: "%.0f W", w),
+                if let watts = batt.adapterWatts, watts > 0 {
+                    MetricCard(title: L10n.machine.adapter, value: String(format: "%.0f W", watts),
                                icon: "powerplug.fill", color: .green)
-                } else if let t = b.batteryTempC {
-                    MetricCard(title: L10n.machine.batteryTemp, value: String(format: "%.0f°C", t),
-                               icon: "thermometer.medium", color: tempColor(t))
+                } else if let temp = batt.batteryTempC {
+                    MetricCard(title: L10n.machine.batteryTemp, value: String(format: "%.0f°C", temp),
+                               icon: "thermometer.medium", color: tempColor(temp))
                 }
             }
         }
@@ -116,8 +116,8 @@ public struct MachineHealthView: View {
     // MARK: - Sensors availability note (Developer-ID) / degrade
 
     @ViewBuilder
-    private func sensorsSection(_ s: MachineSnapshot) -> some View {
-        if !hasNativeSensors(s) && !MASSandboxGate.isSandboxed {
+    private func sensorsSection(_ snap: MachineSnapshot) -> some View {
+        if !hasNativeSensors(snap) && !MASSandboxGate.isSandboxed {
             // Unsandboxed build but no native sensors → the S3 binary is missing
             // or this Mac can't report them.
             infoNote(icon: "sensor.tag.radiowaves.forward",
@@ -127,29 +127,29 @@ public struct MachineHealthView: View {
 
     // MARK: - Processes
 
-    private func processesSection(_ s: MachineSnapshot) -> some View {
+    private func processesSection(_ snap: MachineSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             SectionHeader(title: L10n.machine.topProcesses, icon: "list.bullet")
-            if s.topProcesses.isEmpty {
+            if snap.topProcesses.isEmpty {
                 Text(L10n.machine.noProcesses)
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
                     .padding(.vertical, 6)
             } else {
                 VStack(spacing: 0) {
-                    ForEach(s.topProcesses.prefix(10)) { p in
+                    ForEach(snap.topProcesses.prefix(10)) { proc in
                         HStack(spacing: 8) {
-                            Text(p.name)
+                            Text(proc.name)
                                 .font(.system(size: 11))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             Spacer()
-                            Text(String(format: "%.0f MB", p.rssMB))
+                            Text(String(format: "%.0f MB", proc.rssMB))
                                 .font(.system(size: 10, design: .monospaced))
                                 .foregroundStyle(.secondary)
-                            Text(String(format: "%.1f%%", p.cpuPercent))
+                            Text(String(format: "%.1f%%", proc.cpuPercent))
                                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(p.cpuPercent >= 80 ? .orange : .primary)
+                                .foregroundStyle(proc.cpuPercent >= 80 ? .orange : .primary)
                                 .frame(width: 48, alignment: .trailing)
                         }
                         .padding(.vertical, 3)
@@ -197,8 +197,8 @@ public struct MachineHealthView: View {
     }
 
     private func thermalBadge(_ state: Int) -> some View {
-        let (label, color) = thermalInfo(state)
-        return StatusBadge(text: label, color: color)
+        let info = thermalInfo(state)
+        return StatusBadge(text: info.label, color: info.color)
     }
 
     // MARK: - Refresh
@@ -209,12 +209,10 @@ public struct MachineHealthView: View {
                 let snap = try await client.getMachineSnapshot()
                 await MainActor.run {
                     snapshot = snap
-                    loadFailed = false
                     didLoadOnce = true
                 }
             } catch {
                 await MainActor.run {
-                    loadFailed = true
                     didLoadOnce = true
                     if snapshot != nil { snapshot = nil }  // helper went away
                 }
@@ -225,32 +223,32 @@ public struct MachineHealthView: View {
 
     // MARK: - Helpers
 
-    private func hasNativeSensors(_ s: MachineSnapshot) -> Bool {
-        s.can("temps") || s.can("fans") || s.can("power")
+    private func hasNativeSensors(_ snap: MachineSnapshot) -> Bool {
+        snap.can("temps") || snap.can("fans") || snap.can("power")
     }
 
-    private func memoryDetail(_ s: MachineSnapshot) -> String? {
-        guard s.memoryTotalBytes > 0 else { return nil }
-        let gb = 1_073_741_824.0
-        return String(format: "%.1f / %.1f GB", Double(s.memoryUsedBytes) / gb, Double(s.memoryTotalBytes) / gb)
+    private func memoryDetail(_ snap: MachineSnapshot) -> String? {
+        guard snap.memoryTotalBytes > 0 else { return nil }
+        let gib = 1_073_741_824.0
+        return String(format: "%.1f / %.1f GB", Double(snap.memoryUsedBytes) / gib, Double(snap.memoryTotalBytes) / gib)
     }
 
-    private func powerDetail(_ s: MachineSnapshot) -> String? {
-        guard let cpu = s.cpuPowerW else { return nil }
-        if let gpu = s.gpuPowerW {
+    private func powerDetail(_ snap: MachineSnapshot) -> String? {
+        guard let cpu = snap.cpuPowerW else { return nil }
+        if let gpu = snap.gpuPowerW {
             return String(format: "CPU %.1f · GPU %.1f", cpu, gpu)
         }
         return String(format: "CPU %.1f W", cpu)
     }
 
-    private func tempColor(_ c: Double) -> Color {
-        if c >= 90 { return .red }
-        if c >= 78 { return .orange }
-        if c >= 62 { return .yellow }
+    private func tempColor(_ celsius: Double) -> Color {
+        if celsius >= 90 { return .red }
+        if celsius >= 78 { return .orange }
+        if celsius >= 62 { return .yellow }
         return .green
     }
 
-    private func thermalInfo(_ state: Int) -> (String, Color) {
+    private func thermalInfo(_ state: Int) -> (label: String, color: Color) {
         switch state {
         case 0: return (L10n.machine.thermalNominal, .green)
         case 1: return (L10n.machine.thermalFair, .yellow)
@@ -259,29 +257,29 @@ public struct MachineHealthView: View {
         }
     }
 
-    private func batteryStateLabel(_ s: String) -> String {
-        switch s {
+    private func batteryStateLabel(_ state: String) -> String {
+        switch state {
         case "charging": return L10n.machine.stateCharging
         case "discharging": return L10n.machine.stateDischarging
         case "charged": return L10n.machine.stateCharged
-        default: return s
+        default: return state
         }
     }
 
-    private func batteryIcon(_ b: MachineSnapshot.Battery) -> String {
-        if b.state == "charging" { return "battery.100.bolt" }
-        guard let c = b.chargePct else { return "battery.50" }
-        if c >= 90 { return "battery.100" }
-        if c >= 60 { return "battery.75" }
-        if c >= 35 { return "battery.50" }
-        if c >= 15 { return "battery.25" }
+    private func batteryIcon(_ batt: MachineSnapshot.Battery) -> String {
+        if batt.state == "charging" { return "battery.100.bolt" }
+        guard let charge = batt.chargePct else { return "battery.50" }
+        if charge >= 90 { return "battery.100" }
+        if charge >= 60 { return "battery.75" }
+        if charge >= 35 { return "battery.50" }
+        if charge >= 15 { return "battery.25" }
         return "battery.0"
     }
 
-    private func batteryColor(_ b: MachineSnapshot.Battery) -> Color {
-        if b.state == "charging" || b.state == "charged" { return .green }
-        guard let c = b.chargePct else { return .gray }
-        return c >= 30 ? .green : (c >= 15 ? .orange : .red)
+    private func batteryColor(_ batt: MachineSnapshot.Battery) -> Color {
+        if batt.state == "charging" || batt.state == "charged" { return .green }
+        guard let charge = batt.chargePct else { return .gray }
+        return charge >= 30 ? .green : (charge >= 15 ? .orange : .red)
     }
 }
 #endif
