@@ -1,12 +1,17 @@
 // R0 realtime-token signing — pure crypto, no network, no Deno.serve.
 // Imported by index.ts (the handler) and token_test.ts (CI deno test).
 //
-// Signs a short-lived ES256 JWT that Supabase Realtime/PostgREST will trust
-// AS LONG AS the dedicated R0 keypair's public JWKS is registered as a
-// Third-Party Auth trusted issuer (owner runbook). The JWT's `sub` is the
-// session owner's auth.users.id, so `auth.uid()` resolves to the owner in the
-// realtime.messages RLS policies (migrate_v0.56), and `role` = 'authenticated'
-// maps the issuer's role for RLS `to authenticated`.
+// Signs a short-lived ES256 JWT that Supabase Realtime will trust AS LONG AS
+// the dedicated R0 keypair's public JWKS is registered as a Third-Party Auth
+// trusted issuer (owner runbook). The JWT's `sub` is the session owner's
+// auth.users.id, so `auth.uid()` resolves to the owner inside the
+// realtime.messages RLS policy. `role` = 'r0_broadcast' (migrate_v0.65, F1) — a
+// dedicated LEAST-PRIVILEGE Postgres role with ONLY realtime.messages INSERT and
+// ZERO access to app data, so a LEAKED token can only broadcast to its own
+// terminal topic (NOT act account-wide via PostgREST as a role=authenticated
+// token could). The `session_id` claim binds the token to the ONE session it
+// was minted for: the WRITE policy requires topic == pterm:<session_id>, closing
+// cross-session-within-owner. `aud` stays 'authenticated' (audience, not role).
 //
 // ES256 signing reuses the proven Web-Crypto pattern from
 // send-approval-push/index.ts (signAPNsJWT): import the PKCS8 private key,
@@ -65,6 +70,9 @@ export interface MintOptions {
   issuer: string;
   /** `sub` claim — the session owner's auth.users.id. */
   sub: string;
+  /** `session_id` claim — the ONE remote session this token may broadcast to.
+   *  The WRITE RLS policy (migrate_v0.65) binds topic == `pterm:<sessionId>`. */
+  sessionId: string;
   /** Unix seconds "now" (injectable for deterministic tests). */
   nowSeconds: number;
   /** Token lifetime in seconds (≈3600). */
@@ -80,6 +88,7 @@ export async function mintRealtimeToken(
   opts: MintOptions,
 ): Promise<{ token: string; expiresAt: number }> {
   if (!opts.sub) throw new Error("missing sub");
+  if (!opts.sessionId) throw new Error("missing sessionId");
   if (!opts.issuer) throw new Error("missing issuer");
   if (!opts.kid) throw new Error("missing kid");
   if (!(opts.ttlSeconds > 0)) throw new Error("ttlSeconds must be > 0");
@@ -91,8 +100,12 @@ export async function mintRealtimeToken(
   const claims = {
     iss: opts.issuer,
     sub: opts.sub,
-    role: "authenticated",
+    // F1 (migrate_v0.65): least-privilege realtime role (NOT 'authenticated').
+    role: "r0_broadcast",
     aud: "authenticated",
+    // Binds this token to the single session it was minted for (WRITE policy
+    // requires topic == pterm:<session_id>).
+    session_id: opts.sessionId,
     iat: opts.nowSeconds,
     exp,
   };
