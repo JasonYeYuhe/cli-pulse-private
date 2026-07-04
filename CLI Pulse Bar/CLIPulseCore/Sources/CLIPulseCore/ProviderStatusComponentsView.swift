@@ -20,8 +20,18 @@ public struct ProviderStatusComponentsView: View {
     @State private var phase: Phase = .idle
     @State private var isExpanded = false
     @State private var expandedGroups: Set<String> = []
+    /// Monotonic request id — only the LATEST load may commit state, so a
+    /// superseded (rapid re-expand) or cancelled (collapse) result is dropped.
+    @State private var loadGeneration = 0
+    /// When the currently-shown component list was fetched, for the stale-TTL.
+    @State private var loadedAt: Date?
 
     private enum Phase: Equatable { case idle, loading, loaded, failed }
+
+    /// Re-fetch on (re)expand only after this long — a cached load stays put
+    /// within the window, but an outage that starts after a card was loaded
+    /// while healthy is picked up on the next expand past the TTL.
+    private static let staleTTL: TimeInterval = 90
 
     public init(provider: ProviderKind, fetcher: ServiceStatusFetcher = ServiceStatusFetcher()) {
         self.provider = provider
@@ -44,26 +54,33 @@ public struct ProviderStatusComponentsView: View {
         }
     }
 
-    /// Lazy load, guarded so a cancelled/collapsed fetch never latches state.
-    /// `.task(id: isExpanded)` cancels the in-flight request on collapse; the
-    /// cancelled continuation still resumes past the await, so we MUST re-check
-    /// cancellation + expansion before committing — otherwise a quick
-    /// expand→collapse would write `.loaded`/empty and, since `phase` never
-    /// returns to `.idle`, the re-expand guard would block any refetch forever
-    /// (permanent "No data" on a healthy page). See feedback_codex_review_late_
-    /// arrival_pattern. Failure (nil) → `.failed` (retryable); a real empty page
-    /// ([]) → `.loaded`.
+    /// Lazy load via a monotonic generation token so a stale result NEVER
+    /// mutates current state — closing the two failure modes:
+    ///   * expand→collapse mid-fetch: the cancelled continuation still resumes
+    ///     past the await, but its generation is stale → it commits nothing (so
+    ///     it can't latch a permanent "No data"), and
+    ///   * expand→collapse→expand fast: the re-expand starts a NEW generation
+    ///     and fetch; the earlier fetch's late result is dropped, so we never
+    ///     wedge on a superseded `.loading` spinner.
+    /// Failure (nil) → `.failed` (retryable via the Retry button); a genuine
+    /// empty page ([]) → `.loaded`. A successful load is cached for `staleTTL`.
+    /// See feedback_codex_review_late_arrival_pattern.
     private func load() async {
-        guard isExpanded, phase == .idle else { return }
-        phase = .loading
-        let fetched = await fetcher.fetchComponents(provider)
-        guard !Task.isCancelled, isExpanded else {
-            phase = .idle   // collapsed/cancelled mid-fetch → allow a fresh fetch on re-expand
+        guard isExpanded else { return }
+        // Serve a still-fresh cache without refetching; otherwise (idle / failed
+        // / stale-loaded) fetch.
+        if phase == .loaded, let loadedAt, Date().timeIntervalSince(loadedAt) < Self.staleTTL {
             return
         }
+        loadGeneration &+= 1
+        let generation = loadGeneration
+        phase = .loading
+        let fetched = await fetcher.fetchComponents(provider)
+        guard generation == loadGeneration, isExpanded, !Task.isCancelled else { return }
         if let fetched {
             components = fetched
             phase = .loaded
+            loadedAt = Date()
         } else {
             phase = .failed
         }
@@ -110,7 +127,6 @@ public struct ProviderStatusComponentsView: View {
                 // A transient network/HTTP failure — retryable (reset to .idle
                 // and re-run the guarded load), never a permanent "No data".
                 Button {
-                    phase = .idle
                     Task { await load() }
                 } label: {
                     HStack(spacing: 4) {

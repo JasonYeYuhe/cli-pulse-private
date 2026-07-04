@@ -280,6 +280,83 @@ final class ServiceStatusTests: XCTestCase {
         XCTAssertEqual(comps.map { $0.name }, ["Good"])
     }
 
+    func testGroupReflectsItsOwnOutageEvenWhenChildrenHealthy() {
+        // Codex F1: a group whose OWN status is an outage must NOT be masked
+        // green by operational children.
+        let json = """
+        { "components": [
+            { "id": "g", "name": "Platform", "status": "major_outage", "group": true, "position": 1, "group_id": null },
+            { "id": "c", "name": "Sub", "status": "operational", "position": 1, "group_id": "g" }
+          ] }
+        """
+        let comps = ServiceStatusParser.parseStatuspageComponents(data(json))
+        XCTAssertEqual(comps.count, 1)
+        XCTAssertEqual(comps[0].indicator, .critical, "group keeps its own major_outage")
+        XCTAssertEqual(comps[0].statusRaw, "major_outage")
+    }
+
+    func testOrphanGroupIdIsPromotedToRootNotDropped() {
+        // Codex F2: a component whose group_id references no known component must
+        // still appear (promoted to a root), never silently dropped.
+        let json = """
+        { "components": [
+            { "id": "a", "name": "Website", "status": "operational", "position": 1, "group_id": null },
+            { "id": "b", "name": "Orphan", "status": "partial_outage", "position": 2, "group_id": "does-not-exist" }
+          ] }
+        """
+        let comps = ServiceStatusParser.parseStatuspageComponents(data(json))
+        XCTAssertEqual(Set(comps.map { $0.name }), ["Website", "Orphan"])
+        XCTAssertEqual(comps.first { $0.name == "Orphan" }?.indicator, .major)
+    }
+
+    func testNestedGroupsPreservedAndAggregateUpward() {
+        // Codex F2: a 2-level nest must keep the grandchild AND propagate its
+        // outage up to the top group.
+        let json = """
+        { "components": [
+            { "id": "top", "name": "Top", "status": "operational", "group": true, "position": 1, "group_id": null },
+            { "id": "mid", "name": "Mid", "status": "operational", "group": true, "position": 1, "group_id": "top" },
+            { "id": "leaf", "name": "Leaf", "status": "partial_outage", "position": 1, "group_id": "mid" }
+          ] }
+        """
+        let comps = ServiceStatusParser.parseStatuspageComponents(data(json))
+        XCTAssertEqual(comps.count, 1)
+        let top = comps[0]
+        XCTAssertEqual(top.indicator, .major, "top aggregates the grandchild's partial_outage")
+        let mid = top.children.first
+        XCTAssertEqual(mid?.name, "Mid")
+        XCTAssertEqual(mid?.children.first?.name, "Leaf")
+    }
+
+    func testTolerantOfNonObjectElementsAndDuplicateIDs() {
+        // Codex F6: a null/scalar element must not discard the array; duplicate
+        // ids must be de-duplicated (SwiftUI ForEach needs unique ids).
+        let json = """
+        { "components": [
+            null, "garbage", 42,
+            { "id": "x", "name": "First", "status": "operational", "position": 2 },
+            { "id": "x", "name": "DupSameId", "status": "major_outage", "position": 1 },
+            { "id": "y", "name": "Second", "status": "operational", "position": 1 }
+          ] }
+        """
+        let comps = ServiceStatusParser.parseStatuspageComponents(data(json))
+        XCTAssertEqual(comps.map { $0.id }.sorted(), ["x", "y"], "dup id 'x' kept once")
+        XCTAssertEqual(comps.first { $0.id == "x" }?.name, "First", "first occurrence wins")
+        XCTAssertEqual(Set(comps.map { $0.id }).count, comps.count, "ids unique")
+    }
+
+    func testEqualPositionsKeepStableOriginalOrder() {
+        let json = """
+        { "components": [
+            { "id": "a", "name": "Alpha", "status": "operational", "position": 1 },
+            { "id": "b", "name": "Bravo", "status": "operational", "position": 1 },
+            { "id": "c", "name": "Charlie", "status": "operational", "position": 1 }
+          ] }
+        """
+        let comps = ServiceStatusParser.parseStatuspageComponents(data(json))
+        XCTAssertEqual(comps.map { $0.name }, ["Alpha", "Bravo", "Charlie"], "stable original order on position ties")
+    }
+
     func testSummaryEndpoint() {
         XCTAssertEqual(
             ServiceStatusCatalog.summaryEndpoint(for: .claude)?.absoluteString,

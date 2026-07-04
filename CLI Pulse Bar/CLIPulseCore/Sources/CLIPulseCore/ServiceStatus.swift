@@ -175,17 +175,28 @@ public enum ServiceStatusParser {
         )
     }
 
+    /// Hard caps on a (provider-controlled) `components` array so a huge or
+    /// malicious body can't blow up memory / the render. Real pages have <50.
+    static let maxComponents = 500
+    static let maxComponentDepth = 4
+    static let maxComponentNameLength = 256
+
     /// Parse the `components` array of a Statuspage v2 `summary.json` (or
-    /// `components.json`) body into a nested top-level→children tree, in
-    /// Statuspage `position` order. Component GROUPs (`group: true` / referenced
-    /// by a child's `group_id`) carry their children and take the WORST child's
-    /// severity + status wording. Tolerant: a body with no `components` array, or
-    /// entries missing id/name/status, yields [] / skips the entry rather than
-    /// throwing.
+    /// `components.json`) body into a nested tree, in Statuspage `position` order
+    /// (ties broken by original array order). A node's severity + status wording
+    /// is the WORST of ITS OWN status and all its descendants — so a group whose
+    /// own `status` is an outage is never masked green by healthy children, and a
+    /// degraded child is never masked green by a healthy group.
+    ///
+    /// Robust against provider-controlled junk: parses element-by-element (one
+    /// non-object element doesn't discard the rest), promotes ORPHANED group_ids
+    /// (referencing no known component) to roots so nothing is silently dropped,
+    /// nests recursively with a depth + visited-set (cycle) guard, dedups ids,
+    /// truncates names, and caps the total component count.
     public static func parseStatuspageComponents(_ data: Data) -> [ServiceStatusComponent] {
         guard
             let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let rawComponents = root["components"] as? [[String: Any]]
+            let rawArray = root["components"] as? [Any]
         else { return [] }
 
         struct RawComponent {
@@ -194,43 +205,63 @@ public enum ServiceStatusParser {
             let status: String
             let groupID: String?
             let position: Int
+            let order: Int   // original array index — stable tie-break for equal positions
         }
-        let raws: [RawComponent] = rawComponents.compactMap { c in
+
+        var seenIDs = Set<String>()
+        var raws: [RawComponent] = []
+        for (idx, element) in rawArray.enumerated() {
             guard
+                let c = element as? [String: Any],
                 let id = c["id"] as? String,
                 let name = c["name"] as? String,
-                let status = c["status"] as? String
-            else { return nil }
-            return RawComponent(
-                id: id, name: name, status: status,
+                let status = c["status"] as? String,
+                !seenIDs.contains(id)   // dedup by id (keep first) — SwiftUI ForEach needs unique ids
+            else { continue }
+            seenIDs.insert(id)
+            raws.append(RawComponent(
+                id: id,
+                name: String(name.prefix(maxComponentNameLength)),
+                status: status,
                 groupID: c["group_id"] as? String,
-                position: (c["position"] as? Int) ?? 0
-            )
+                position: (c["position"] as? Int) ?? Int.max,   // missing/invalid → last
+                order: idx
+            ))
+            if raws.count >= maxComponents { break }
         }
 
+        let ids = Set(raws.map { $0.id })
         let childrenByGroup = Dictionary(grouping: raws.filter { $0.groupID != nil }) { $0.groupID! }
-        let topLevel = raws.filter { $0.groupID == nil }.sorted { $0.position < $1.position }
+        func sortSiblings(_ list: [RawComponent]) -> [RawComponent] {
+            list.sorted { ($0.position, $0.order) < ($1.position, $1.order) }
+        }
 
-        return topLevel.map { parent -> ServiceStatusComponent in
-            let kids = (childrenByGroup[parent.id] ?? [])
-                .sorted { $0.position < $1.position }
-                .map { child in
-                    ServiceStatusComponent(
-                        id: child.id, name: child.name,
-                        indicator: ServiceStatusIndicator(statuspageComponentStatus: child.status),
-                        statusRaw: child.status
-                    )
-                }
-            // A group takes the worst child's severity + wording; a leaf takes its
-            // own. (Statuspage's own group `status` can lag a degraded child.)
-            let worstChild = kids.max { $0.indicator.severity < $1.indicator.severity }
-            let indicator = worstChild?.indicator ?? ServiceStatusIndicator(statuspageComponentStatus: parent.status)
-            let statusRaw = worstChild?.statusRaw ?? parent.status
+        func build(_ raw: RawComponent, visited: Set<String>, depth: Int) -> ServiceStatusComponent {
+            var visited = visited
+            visited.insert(raw.id)
+            let kids: [ServiceStatusComponent] = depth >= maxComponentDepth
+                ? []
+                : sortSiblings(childrenByGroup[raw.id] ?? [])
+                    .filter { !visited.contains($0.id) }   // cycle guard
+                    .map { build($0, visited: visited, depth: depth + 1) }
+            // Worst of OWN status + all children (each child already reflects its
+            // own subtree's worst).
+            var indicator = ServiceStatusIndicator(statuspageComponentStatus: raw.status)
+            var statusRaw = raw.status
+            for kid in kids where kid.indicator.severity > indicator.severity {
+                indicator = kid.indicator
+                statusRaw = kid.statusRaw
+            }
             return ServiceStatusComponent(
-                id: parent.id, name: parent.name,
+                id: raw.id, name: raw.name,
                 indicator: indicator, statusRaw: statusRaw, children: kids
             )
         }
+
+        // Roots: no group_id, OR an ORPHAN group_id referencing no known
+        // component (promote so it's never dropped).
+        let roots = sortSiblings(raws.filter { $0.groupID == nil || !ids.contains($0.groupID!) })
+        return roots.map { build($0, visited: [], depth: 0) }
     }
 }
 
@@ -338,7 +369,13 @@ public struct ServiceStatusFetcher: Sendable {
         guard
             let (data, response) = try? await session.data(for: request),
             let http = response as? HTTPURLResponse,
-            (200..<300).contains(http.statusCode)
+            (200..<300).contains(http.statusCode),
+            // Reject a pathologically large body before parsing/rendering. Real
+            // summary.json is tens of KB; 4 MB is generous headroom. (A leaner
+            // download-time byte ceiling would need a URLSession delegate; these
+            // are trusted first-party status hosts over https, so a post-download
+            // guard + the parser's component/name caps are proportionate.)
+            data.count <= 4_000_000
         else { return nil }
         return ServiceStatusParser.parseStatuspageComponents(data)
     }
