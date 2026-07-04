@@ -18,6 +18,7 @@ on:
       - '!CLI Pulse Bar/codexbar/**'
       - '!CLI Pulse Bar/**/*.md'
       - 'HelperSwift/**'
+      - 'SensorProbe/**'
       - 'scripts/build_signed_app.sh'
       - 'scripts/embed_helper_in_archive.sh'
       - 'scripts/PHASE4D_XCODE_SETUP.md'
@@ -33,6 +34,7 @@ on:
       - '!CLI Pulse Bar/codexbar/**'
       - '!CLI Pulse Bar/**/*.md'
       - 'HelperSwift/**'
+      - 'SensorProbe/**'
       - 'scripts/build_signed_app.sh'
       - 'scripts/embed_helper_in_archive.sh'
       - 'scripts/PHASE4D_XCODE_SETUP.md'
@@ -192,6 +194,28 @@ jobs:
       - name: Swift test (HelperSwift)
         working-directory: HelperSwift
         run: swift test
+
+  test-sensorprobe:
+    # System Monitor S3: native Apple-Silicon sensor reader (clipulse-sensors).
+    # Pure decoder/aggregation tests (SMC FourCC + value decode, IOReport
+    # energy→W, temp classification). The private IOReport/IOHID symbols resolve
+    # at runtime via -undefined dynamic_lookup; the live sensor numbers are
+    # device-verified on real Apple Silicon, not in CI.
+    name: SensorProbe Package tests
+    needs: decide
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Show Xcode
+        run: xcodebuild -version
+
+      - name: Swift build (release) + test (SensorProbe)
+        working-directory: SensorProbe
+        run: |
+          swift build -c release
+          swift test
 
   build-signed-app:
     # Phase 4D P1.D (Codex review): a green CI build only proves

@@ -244,6 +244,37 @@ if [[ $DRY_RUN -eq 0 ]] && [[ ! -d "$UNINSTALLER_APP" ]]; then
 fi
 run cp -R "$UNINSTALLER_APP" "$STAGING/"
 
+# === Step 3c: Build + embed clipulse-sensors (System Monitor S3) ===
+# The native Apple-Silicon sensor reader the helper invokes for die temps /
+# fan RPM / power. Installs next to cli_pulse_helper so sensor_bridge.py finds
+# it at ~/Library/CLI-Pulse-Helper/clipulse-sensors. Best-effort: if the Swift
+# toolchain is missing or the build fails, the helper degrades to S2 (battery +
+# thermal only) rather than failing the whole .pkg — but we WARN loudly.
+echo
+echo "--- Step 3c: Build + embed clipulse-sensors ---"
+SENSOR_PKG_DIR="$PROJECT_ROOT/SensorProbe"
+if command -v swift >/dev/null 2>&1 && [[ -f "$SENSOR_PKG_DIR/Package.swift" ]]; then
+    if [[ $DRY_RUN -eq 0 ]]; then
+        if ( cd "$SENSOR_PKG_DIR" && swift build -c release --arch arm64 ); then
+            SENSOR_BIN="$SENSOR_PKG_DIR/.build/release/clipulse-sensors"
+            [[ -x "$SENSOR_BIN" ]] || SENSOR_BIN="$SENSOR_PKG_DIR/.build/arm64-apple-macosx/release/clipulse-sensors"
+            if [[ -x "$SENSOR_BIN" ]]; then
+                run cp "$SENSOR_BIN" "$STAGING/clipulse-sensors"
+                chmod 755 "$STAGING/clipulse-sensors"
+                echo "embedded clipulse-sensors ($(du -h "$STAGING/clipulse-sensors" | cut -f1))"
+            else
+                echo "WARN: swift build succeeded but clipulse-sensors not found — shipping WITHOUT native sensors (S2 fallback)" >&2
+            fi
+        else
+            echo "WARN: 'swift build' of SensorProbe failed — shipping WITHOUT native sensors (S2 fallback)" >&2
+        fi
+    else
+        echo "+ (dry-run) swift build -c release SensorProbe + embed clipulse-sensors"
+    fi
+else
+    echo "WARN: swift toolchain or SensorProbe/Package.swift missing — shipping WITHOUT native sensors (S2 fallback)" >&2
+fi
+
 # === Step 4: Sign every Mach-O individually ===
 if [[ $SKIP_SIGN -eq 0 ]]; then
     echo
@@ -256,6 +287,14 @@ if [[ $SKIP_SIGN -eq 0 ]]; then
         find "$STAGING" -type f \( -name '*.so' -o -name '*.dylib' \) -print0 \
             | xargs -0 -I{} codesign --force --timestamp --options runtime \
                 --sign "$DEV_ID_APP" {}
+        # S3: sign the native sensor reader (hardened runtime, NO entitlements —
+        # a bare Mach-O with a restricted entitlement but no embedded profile is
+        # AMFI-killed; it needs none, so empty). See feedback_devid_keychain_needs_profile.
+        if [[ -f "$STAGING/clipulse-sensors" ]]; then
+            codesign --force --timestamp --options runtime \
+                --sign "$DEV_ID_APP" "$STAGING/clipulse-sensors"
+            codesign --verify --strict --verbose=2 "$STAGING/clipulse-sensors"
+        fi
         # Sign the entry executable LAST — WITH the app-group entitlement.
         # v1.30.2: without `com.apple.security.application-groups`, a launchd
         # agent that touches the sandboxed app's group container hangs
