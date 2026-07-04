@@ -242,6 +242,18 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
         do {
             let manifest = try await fetchManifest()
             try Self.assertArchitectureMatches(manifest)
+            // F8 (deep-audit 2026-07-04): the manifest is unsigned, so before
+            // trusting anything it declares, pin the download to the official
+            // helper-release host and sanity-check the declared size. Then
+            // refuse a downgrade — an attacker-controlled latest.json must not
+            // be able to push an old, legitimately-signed but vulnerable helper
+            // over a newer install. Installed version is a best-effort hello
+            // probe (nil/empty on a fresh install → nothing to downgrade from).
+            try HelperPkgVerifier.validatePkgURL(manifest.url)
+            try HelperPkgVerifier.validateSize(manifest.sizeBytes)
+            if let installed = await currentInstalledVersion(), !installed.isEmpty {
+                try HelperPkgVerifier.assertNotDowngrade(installed: installed, candidate: manifest.version)
+            }
             let pkgURL = try await downloadPkg(manifest: manifest)
             state = .installing
             // Hand the .pkg to system Installer.app. From a sandboxed
@@ -471,6 +483,18 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
         try? FileManager.default.removeItem(at: finalURL)
         try FileManager.default.moveItem(at: tempURL, to: finalURL)
 
+        // F8: exact byte-size match vs the manifest (cheap first line of defense
+        // before the SHA + signature work). A truncated / swapped payload trips
+        // here.
+        let attrs = try? FileManager.default.attributesOfItem(atPath: finalURL.path)
+        let actualSize = (attrs?[.size] as? NSNumber)?.intValue ?? -1
+        do {
+            try HelperPkgVerifier.assertSizeMatch(expected: manifest.sizeBytes, actual: actualSize)
+        } catch {
+            try? FileManager.default.removeItem(at: finalURL)
+            throw error
+        }
+
         // Verify SHA-256 of the downloaded pkg against the manifest. v1.21 D4:
         // hashed off-main via Task.detached so the install-progress UI stays
         // responsive while a 30-80 MB pkg is being fingerprinted.
@@ -485,7 +509,30 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
                 userInfo: [NSLocalizedDescriptionKey: "Pkg SHA-256 mismatch (expected \(manifest.sha256), got \(actualSHA))"]
             )
         }
+
+        // F8: Developer ID Installer team-pin + notarization on the downloaded
+        // .pkg. DEVID build only — the sandboxed MAS build cannot exec spctl/
+        // pkgutil; there, Installer.app's own Gatekeeper install-assessment is
+        // the backstop, and the URL/size/downgrade guards above still apply.
+        #if DEVID_BUILD
+        do {
+            try HelperPkgVerifier.verifyPkgSignatureAndNotarization(finalURL)
+        } catch {
+            try? FileManager.default.removeItem(at: finalURL)
+            throw error
+        }
+        #endif
         return finalURL
+    }
+
+    /// Best-effort currently-installed helper version via a fresh `hello`
+    /// probe, for the F8 downgrade guard. Returns nil when the helper isn't
+    /// reachable (fresh install) or predates the version field — the caller
+    /// then skips the downgrade check rather than blocking a legitimate first
+    /// install.
+    private func currentInstalledVersion() async -> String? {
+        guard let hello = try? await helloClient().hello() else { return nil }
+        return hello.helperVersion
     }
 
     @MainActor
