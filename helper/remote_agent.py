@@ -840,6 +840,27 @@ class RemoteAgentManager:
         one tick. CPython dict truthiness is a single atomic read."""
         return bool(self._sessions)
 
+    def managed_child_pids(self) -> set[int]:
+        """Best-effort set of live child pids for currently-managed sessions
+        (v1.38.1). The Machine tab's suspend guard consults this so a user
+        can't freeze a managed session they're driving from the app.
+
+        Read WITHOUT the executor (a benign stale read at most misses a
+        just-spawned/just-reaped pid — the guard is belt-and-suspenders, and
+        the real IPC-deadlock hazard is already bounded by per-session PTY read
+        threads). NOTE: this returns the helper's DIRECT child pid per session;
+        a grandchild (e.g. `claude` under a shell wrapper) is not covered, so
+        this is defense-in-depth, not a hard guarantee. Never raises."""
+        pids: set[int] = set()
+        for sess in list(self._sessions.values()):
+            try:
+                pid = self._extract_pid(sess.handle)
+            except Exception:  # noqa: BLE001 — one bad handle must not break the set
+                pid = None
+            if isinstance(pid, int) and pid > 0:
+                pids.add(pid)
+        return pids
+
     def stop_all_sessions(self, reason: str = "control_disabled") -> int:
         return self._dispatch(self._stop_all_sessions_impl, reason)
 

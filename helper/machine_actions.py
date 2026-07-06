@@ -1,24 +1,40 @@
-"""Guarded same-UID process actions for the Machine tab (M1).
+"""Guarded same-UID process actions for the Machine tab (M1 + v1.38.1).
 
 NO root. The unsandboxed user LaunchAgent helper already runs as the user
-and may `kill(2)` its own same-UID processes; this module adds the
-guardrails the bare syscall lacks:
+and may `kill(2)` / `SIGSTOP` / `SIGCONT` its own same-UID processes; this
+module adds the guardrails the bare syscalls lack:
 
   * a **same-UID owner check** — root / other-user pids are refused (that
     needs the future M2 root helper, deliberately out of scope here);
   * a **deny-list of critical targets** — pid ≤ 1, `kernel_task`,
     `launchd`, `WindowServer`, `loginwindow`, and the helper itself;
-  * a **SIGTERM → grace window → SIGKILL** escalation;
-  * a **sliding-window rate limit** so a flood is rejected.
+  * for **suspend**, an additional belt-and-suspenders deny of the
+    helper's own managed-session child pids so a user can't freeze a
+    session they are driving from the app;
+  * a **SIGTERM → grace window → SIGKILL** escalation (kill only —
+    suspend/resume are immediate, no escalation);
+  * a **sliding-window rate limit** so a flood is rejected. The limiter is
+    SHARED across kill + suspend + resume (one budget throttles a flood
+    across every verb).
+
+The two public entry points — `kill_process` (M1) and `signal_process`
+(v1.38.1 Suspend/Resume) — run the SAME validate → same-UID → deny-list →
+rate-limit prologue (`_authorize`), so the guards can't drift between the
+destructive and the reversible verb.
 
 Everything that touches the OS is injected (`proc_info` / `signal_fn` /
-`alive_fn` / `clock` / `sleep_fn`) so the whole guard matrix is
-unit-testable without spawning real processes.
+`alive_fn` / `clock` / `sleep_fn` / `managed_pids_fn`) so the whole guard
+matrix is unit-testable without spawning real processes.
 
-`kill_process` NEVER raises for an *operational* refusal — it returns a
-structured `{terminated, escalated, error, code}` dict. The UDS server
+Neither entry point raises for an *operational* refusal — each returns a
+structured dict (`{terminated, escalated, error, code}` for kill,
+`{signaled, action, error, code}` for signal). The UDS server
 (`local_session_server`) maps a non-None `code` to a wire-level error
 that the Swift `SessionControlErrorMapping` turns into a user message.
+
+Idempotence (suspend/resume): SIGCONT on an already-running process and
+SIGSTOP on an already-stopped process are harmless kernel no-ops, so
+`signal_process` reports ok without needing to read state first.
 
 Security note (TOCTOU): the owner-uid + comm are re-read from `ps` at the
 moment of the kill, NOT trusted from the (possibly stale) snapshot the UI
@@ -36,7 +52,7 @@ import os
 import signal
 import subprocess
 import threading
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 
 logger = logging.getLogger("cli_pulse.machine_actions")
 
@@ -145,6 +161,16 @@ def _result(*, terminated: bool = False, escalated: bool = False,
             "error": error, "code": code}
 
 
+def _signal_result(*, action: str, signaled: bool = False,
+                   error: Optional[str] = None, code: Optional[str] = None) -> dict:
+    """Result of `signal_process`. `signaled` is True when the SIGSTOP/SIGCONT
+    was delivered (or the pid was already in the requested state — a harmless
+    idempotent no-op). On refusal `error`/`code` are set and `signaled` False.
+    Mirrors `_result` so the UDS handler maps `code` the same way for both
+    verbs."""
+    return {"signaled": signaled, "action": action, "error": error, "code": code}
+
+
 class MachineActions:
     """Stateful (rate-limit window) process-action guard. Construct once
     per helper; `kill_process` is safe to call from multiple connection
@@ -167,6 +193,7 @@ class MachineActions:
         rate_limit: int = 5,
         rate_window_s: float = 10.0,
         protected_comm: frozenset[str] = _PROTECTED_COMM,
+        managed_pids_fn: Optional[Callable[[], "Iterable[int]"]] = None,
     ) -> None:
         import time as _time  # local so a monkeypatched module-level time
         self._getuid = getuid
@@ -175,6 +202,12 @@ class MachineActions:
         self._proc_info = proc_info or _ps_proc_info
         self._signal = signal_fn
         self._alive = alive_fn or (lambda pid: _default_alive(pid, signal_fn))
+        # Belt-and-suspenders (v1.38.1): the helper's own managed-session child
+        # pids. `suspend` refuses these so a user can't freeze a session they're
+        # driving from the app. None ⇒ feature off (unit tests, unpaired helper).
+        # Best-effort + fail-soft: a raising callable is treated as "no managed
+        # pids" so it can never break a legitimate action.
+        self._managed_pids_fn = managed_pids_fn
         self._clock = clock or _time.monotonic
         self._sleep = sleep_fn or _time.sleep
         self._grace_s = grace_s
@@ -192,46 +225,125 @@ class MachineActions:
         """Validate + terminate `pid` (same-UID only). Returns
         `{terminated, escalated, error, code}`; `error`/`code` are None on
         success. Never raises for an operational refusal."""
+        error, code, comm = self._authorize(pid)
+        if error is not None:
+            return _result(error=error, code=code)
+        logger.info("kill_process pid=%s comm=%r → SIGTERM", pid, comm)
+        return self._terminate(pid)
+
+    def signal_process(self, pid: int, action: str) -> dict:
+        """Suspend (`SIGSTOP`) or resume (`SIGCONT`) a same-UID process.
+
+        Runs the SAME guard prologue as `kill_process` (validate → same-UID →
+        deny-list → shared rate limit), then delivers the signal IMMEDIATELY —
+        no SIGTERM→grace→SIGKILL escalation (that's the kill path). Returns
+        `{signaled, action, error, code}`; never raises for an operational
+        refusal.
+
+        `action` must be "suspend" or "resume". Idempotent: SIGCONT on a
+        running process / SIGSTOP on a stopped one is a harmless kernel no-op
+        that reports `signaled=True`. `ProcessLookupError` (the pid vanished
+        between the ps read and the signal) maps to `process_not_found`;
+        `PermissionError` (same-UID but SIP/entitlement-protected) maps to
+        `process_protected` — mirrors the M1 EPERM-is-protected fix."""
+        if action not in ("suspend", "resume"):
+            return _signal_result(action=action,
+                                  error=f"unknown action {action!r}",
+                                  code=CODE_INTERNAL)
+        error, code, comm = self._authorize(pid, suspend=(action == "suspend"))
+        if error is not None:
+            return _signal_result(action=action, error=error, code=code)
+        sig = signal.SIGSTOP if action == "suspend" else signal.SIGCONT
+        logger.info("signal_process pid=%s comm=%r action=%s", pid, comm, action)
+        try:
+            self._signal(pid, sig)
+        except ProcessLookupError:
+            # Unlike kill (where a vanished pid is a successful termination),
+            # a vanished suspend/resume target is "not found" — the user's
+            # intended target no longer exists to act on.
+            return _signal_result(action=action, error="no such process",
+                                  code=CODE_NOT_FOUND)
+        except PermissionError:
+            # Same-UID was proven in _authorize, so EPERM here means a
+            # kernel/SIP-protected process, NOT another user's — surface as
+            # protected (never the false "belongs to another user").
+            return _signal_result(
+                action=action,
+                error="the system does not permit signalling this process",
+                code=CODE_PROTECTED)
+        except OSError as exc:
+            return _signal_result(action=action, error=f"{action} failed: {exc}",
+                                  code=CODE_INTERNAL)
+        return _signal_result(action=action, signaled=True)
+
+    # ── internal ────────────────────────────────────────────
+
+    def _authorize(self, pid: int, *, suspend: bool = False
+                   ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """Shared guard prologue for kill + suspend + resume. Returns
+        `(error, code, comm)`: on refusal `error`/`code` are set and `comm`
+        is None; on success all-clear `error`/`code` are None and `comm` is
+        the validated process comm.
+
+        A rate-limit token is consumed ONLY on a fully-authorized call — the
+        last step, exactly like the original M1 ordering — so a refused action
+        (protected / other-user / missing) never spends budget. The limiter is
+        shared across every verb (one flood budget).
+
+        `suspend=True` adds the belt-and-suspenders managed-session deny-list.
+        """
         # 1. type / range. pid ≤ 1 is the init/kernel band → protected.
         if not isinstance(pid, int) or isinstance(pid, bool):
-            return _result(error="pid must be an integer", code=CODE_PROTECTED)
+            return "pid must be an integer", CODE_PROTECTED, None
         if pid <= 1:
-            return _result(error="pid ≤ 1 is protected", code=CODE_PROTECTED)
+            return "pid ≤ 1 is protected", CODE_PROTECTED, None
 
         # 2. never signal the helper itself (running daemon) or its parent
         #    (launchd). Cheap, and independent of the ps lookup below.
         if pid == self._getpid() or pid == self._getppid():
-            return _result(error="refusing to kill the helper itself",
-                           code=CODE_PROTECTED)
+            return "refusing to signal the helper itself", CODE_PROTECTED, None
 
-        # 3. authoritative owner + comm at kill-time (TOCTOU-tight — see
+        # 3. authoritative owner + comm at signal-time (TOCTOU-tight — see
         #    module docstring). A None here means the pid vanished.
         info = self._proc_info(pid)
         if info is None:
-            return _result(error="no such process", code=CODE_NOT_FOUND)
+            return "no such process", CODE_NOT_FOUND, None
         owner_uid, comm = info
 
         # 4. same-UID only. Root / other-user pids need the M2 root helper.
         if owner_uid != self._getuid():
-            return _result(
-                error="process is owned by another user (same-UID only)",
-                code=CODE_NOT_PERMITTED,
-            )
+            return ("process is owned by another user (same-UID only)",
+                    CODE_NOT_PERMITTED, None)
 
         # 5. protected comm deny-list (defense-in-depth over the uid check).
         if _basename(comm).lower() in self._protected_comm:
-            return _result(error=f"{comm!r} is a protected system process",
-                           code=CODE_PROTECTED)
+            return f"{comm!r} is a protected system process", CODE_PROTECTED, None
 
-        # 6. rate limit — reject a flood before we start signalling.
+        # 6. suspend-only: never freeze a CLI Pulse managed session the user is
+        #    driving from the app (belt-and-suspenders; the real IPC-deadlock
+        #    hazard is already bounded by per-session PTY read threads).
+        if suspend and self._is_managed_child(pid):
+            return ("refusing to suspend a CLI Pulse managed session",
+                    CODE_PROTECTED, None)
+
+        # 7. rate limit — reject a flood before we start signalling. Shared
+        #    budget across kill + suspend + resume.
         if not self._allow_rate():
-            return _result(error="too many process actions; slow down",
-                           code=CODE_RATE_LIMITED)
+            return "too many process actions; slow down", CODE_RATE_LIMITED, None
 
-        logger.info("kill_process pid=%s comm=%r → SIGTERM", pid, comm)
-        return self._terminate(pid)
+        return None, None, comm
 
-    # ── internal ────────────────────────────────────────────
+    def _is_managed_child(self, pid: int) -> bool:
+        """True iff `pid` is one of the helper's own managed-session child
+        pids. Fail-soft: a missing or raising `managed_pids_fn` is treated as
+        "not managed" so it can never wrongly refuse a legitimate suspend."""
+        if self._managed_pids_fn is None:
+            return False
+        try:
+            return pid in set(self._managed_pids_fn())
+        except Exception:  # noqa: BLE001 — a broken accessor must not block actions
+            logger.debug("managed_pids_fn raised; treating pid %s as unmanaged", pid)
+            return False
 
     def _allow_rate(self) -> bool:
         now = self._clock()

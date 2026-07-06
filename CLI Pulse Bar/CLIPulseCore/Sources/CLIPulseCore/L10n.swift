@@ -82,6 +82,23 @@ public enum L10n {
         public static var killErrGeneric: String { tr("machine.kill_err_generic") }
         public static var controlsToggle: String { tr("machine.controls_toggle") }
         public static var controlsHint: String { tr("machine.controls_hint") }
+        // Machine controls v1.38.1 (Suspend/Resume).
+        public static var suspend: String { tr("machine.suspend") }
+        public static var resume: String { tr("machine.resume") }
+        public static var pausedBadge: String { tr("machine.paused_badge") }
+        public static var suspendConfirmTitle: String { tr("machine.suspend_confirm_title") }
+        public static func suspendConfirmMessage(_ name: String, _ pid: String) -> String {
+            tr("machine.suspend_confirm_message", name, pid)
+        }
+        public static var suspendConfirmButton: String { tr("machine.suspend_confirm_button") }
+        public static var suspendErrProtected: String { tr("machine.suspend_err_protected") }
+        public static var suspendErrNotPermitted: String { tr("machine.suspend_err_not_permitted") }
+        public static var suspendErrNotFound: String { tr("machine.suspend_err_not_found") }
+        public static var suspendErrRateLimited: String { tr("machine.suspend_err_rate_limited") }
+        public static var suspendErrGeneric: String { tr("machine.suspend_err_generic") }
+        // Process-list usability v1.38.1 (B2 — sort/expand).
+        public static func showMore(_ n: String) -> String { tr("machine.show_more", n) }
+        public static var showLess: String { tr("machine.show_less") }
     }
 
     // MARK: - Dashboard

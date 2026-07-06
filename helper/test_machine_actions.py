@@ -271,6 +271,194 @@ class TestKillGuardMatrix(unittest.TestCase):
         self.assertEqual(a.kill_process(True)["code"], CODE_PROTECTED)    # bool is not a pid
 
 
+class TestSignalGuardMatrix(unittest.TestCase):
+    """suspend/resume (SIGSTOP/SIGCONT) run the SAME guard prologue as kill —
+    same-UID / pid≤1 / deny-list / self / other-UID / rate-limit — but signal
+    immediately (no escalation). ProcessLookupError → not_found (unlike kill,
+    where a vanished pid is a success); PermissionError → protected."""
+
+    def test_same_uid_suspend_sends_sigstop(self):
+        fos = FakeOS()
+        fos.add(1234, FakeProc(501, "python3"))
+        res = _actions(fos, FakeClock()).signal_process(1234, "suspend")
+        self.assertTrue(res["signaled"])
+        self.assertEqual(res["action"], "suspend")
+        self.assertIsNone(res["code"])
+        self.assertEqual(fos.table[1234].signals, [signal.SIGSTOP])
+
+    def test_same_uid_resume_sends_sigcont(self):
+        fos = FakeOS()
+        fos.add(1234, FakeProc(501, "python3"))
+        res = _actions(fos, FakeClock()).signal_process(1234, "resume")
+        self.assertTrue(res["signaled"])
+        self.assertEqual(fos.table[1234].signals, [signal.SIGCONT])
+
+    def test_unknown_action_rejected(self):
+        fos = FakeOS()
+        fos.add(1234, FakeProc(501, "python3"))
+        res = _actions(fos, FakeClock()).signal_process(1234, "wobble")
+        self.assertFalse(res["signaled"])
+        self.assertIsNotNone(res["error"])
+        self.assertEqual(fos.table[1234].signals, [])  # never signalled
+
+    def test_pid_one_protected(self):
+        res = _actions(FakeOS(), FakeClock()).signal_process(1, "suspend")
+        self.assertEqual(res["code"], CODE_PROTECTED)
+        self.assertFalse(res["signaled"])
+
+    def test_kernel_task_protected_by_name(self):
+        fos = FakeOS()
+        fos.add(500, FakeProc(501, "kernel_task"))
+        res = _actions(fos, FakeClock()).signal_process(500, "suspend")
+        self.assertEqual(res["code"], CODE_PROTECTED)
+        self.assertEqual(fos.table[500].signals, [])
+
+    def test_self_protected(self):
+        fos = FakeOS(my_pid=9999)
+        fos.add(9999, FakeProc(501, "cli_pulse_helper"))
+        res = _actions(fos, FakeClock()).signal_process(9999, "suspend")
+        self.assertEqual(res["code"], CODE_PROTECTED)
+        self.assertEqual(fos.table[9999].signals, [])
+
+    def test_other_uid_refused(self):
+        fos = FakeOS(my_uid=501)
+        fos.add(2000, FakeProc(0, "some_root_daemon"))
+        res = _actions(fos, FakeClock()).signal_process(2000, "resume")
+        self.assertEqual(res["code"], CODE_NOT_PERMITTED)
+        self.assertEqual(fos.table[2000].signals, [])
+
+    def test_missing_pid_is_not_found(self):
+        res = _actions(FakeOS(), FakeClock()).signal_process(31337, "suspend")
+        self.assertEqual(res["code"], CODE_NOT_FOUND)
+
+    def test_vanished_at_signal_is_not_found(self):
+        # proc_info says alive, but the process exits before the signal lands.
+        # Unlike kill (success), suspend/resume of a vanished pid → not_found.
+        fos = FakeOS()
+        fos.add(1234, FakeProc(501, "gone"))
+
+        def racing_signal(pid, sig):
+            raise ProcessLookupError(pid)
+
+        a = MachineActions(
+            getuid=lambda: 501, getpid=lambda: 1, getppid=lambda: 1,
+            proc_info=fos.proc_info, signal_fn=racing_signal,
+            alive_fn=fos.alive, clock=FakeClock().now, sleep_fn=lambda _dt: None,
+        )
+        res = a.signal_process(1234, "suspend")
+        self.assertEqual(res["code"], CODE_NOT_FOUND)
+        self.assertFalse(res["signaled"])
+
+    def test_eperm_is_protected_not_other_user(self):
+        # Same-UID SIP-protected process refuses the signal with EPERM → must
+        # surface as protected, NOT the false "belongs to another user".
+        fos = FakeOS()
+        fos.add(1234, FakeProc(501, "ScreenTimeAgent"))
+
+        def eperm_signal(pid, sig):
+            raise PermissionError(1, "Operation not permitted")
+
+        a = MachineActions(
+            getuid=lambda: 501, getpid=lambda: 1, getppid=lambda: 1,
+            proc_info=fos.proc_info, signal_fn=eperm_signal,
+            alive_fn=fos.alive, clock=FakeClock().now, sleep_fn=lambda _dt: None,
+        )
+        res = a.signal_process(1234, "suspend")
+        self.assertEqual(res["code"], CODE_PROTECTED)
+        self.assertFalse(res["signaled"])
+
+    def test_idempotent_double_suspend_is_ok(self):
+        # SIGSTOP on an already-stopped process is a harmless no-op — the guard
+        # doesn't read state, and a second SIGSTOP just reports ok again.
+        fos = FakeOS()
+        fos.add(1234, FakeProc(501, "python3"))
+        a = _actions(fos, FakeClock(), rate_limit=10)
+        self.assertTrue(a.signal_process(1234, "suspend")["signaled"])
+        self.assertTrue(a.signal_process(1234, "suspend")["signaled"])
+        self.assertEqual(fos.table[1234].signals, [signal.SIGSTOP, signal.SIGSTOP])
+
+    def test_non_int_pid_protected(self):
+        a = _actions(FakeOS(), FakeClock())
+        self.assertEqual(a.signal_process("1234", "suspend")["code"], CODE_PROTECTED)  # type: ignore[arg-type]
+        self.assertEqual(a.signal_process(True, "suspend")["code"], CODE_PROTECTED)
+
+
+class TestSharedRateLimit(unittest.TestCase):
+    """One rate budget across kill + suspend + resume (a flood across verbs is
+    throttled as a whole)."""
+
+    def test_flood_across_verbs_is_rejected(self):
+        fos = FakeOS()
+        clock = FakeClock()
+        for pid in (10, 11, 12):
+            fos.add(pid, FakeProc(501, f"p{pid}", dies_after_signal=signal.SIGTERM))
+        a = _actions(fos, clock, rate_limit=2, rate_window_s=100.0)
+        # One kill + one suspend consume the whole budget of 2…
+        self.assertIsNone(a.kill_process(10)["code"])
+        self.assertIsNone(a.signal_process(11, "suspend")["code"])
+        # …so the third action (a resume) is rate-limited, whatever the verb.
+        third = a.signal_process(12, "resume")
+        self.assertEqual(third["code"], CODE_RATE_LIMITED)
+        self.assertEqual(fos.table[12].signals, [])   # never signalled
+
+    def test_refused_action_does_not_spend_budget(self):
+        # A protected/other-uid refusal must not consume a rate token (matches
+        # M1 ordering: rate is the LAST guard step).
+        fos = FakeOS(my_uid=501)
+        fos.add(10, FakeProc(501, "mine", dies_after_signal=signal.SIGTERM))
+        fos.add(20, FakeProc(0, "root_daemon"))     # other-uid → refused pre-rate
+        a = _actions(fos, FakeClock(), rate_limit=1, rate_window_s=100.0)
+        self.assertEqual(a.signal_process(20, "suspend")["code"], CODE_NOT_PERMITTED)
+        # The refusal above didn't spend the single token, so this one is allowed.
+        self.assertIsNone(a.signal_process(10, "suspend")["code"])
+
+
+class TestManagedChildDenyForSuspend(unittest.TestCase):
+    """Belt-and-suspenders: `suspend` refuses the helper's own managed-session
+    child pids (so a user can't freeze a session they're driving). Resume and
+    kill are unaffected (resuming a session you froze elsewhere is fine)."""
+
+    def _actions_with_managed(self, fos, clock, managed):
+        return MachineActions(
+            getuid=lambda: fos.my_uid, getpid=lambda: fos.my_pid,
+            getppid=lambda: fos.my_ppid, proc_info=fos.proc_info,
+            signal_fn=fos.signal, alive_fn=fos.alive,
+            clock=clock.now, sleep_fn=clock.sleep,
+            managed_pids_fn=lambda: managed,
+        )
+
+    def test_suspend_managed_child_refused(self):
+        fos = FakeOS()
+        fos.add(1234, FakeProc(501, "claude"))
+        a = self._actions_with_managed(fos, FakeClock(), {1234})
+        res = a.signal_process(1234, "suspend")
+        self.assertEqual(res["code"], CODE_PROTECTED)
+        self.assertEqual(fos.table[1234].signals, [])   # never frozen
+
+    def test_resume_managed_child_allowed(self):
+        # Resume is exempt — un-freezing a managed session is safe/desirable.
+        fos = FakeOS()
+        fos.add(1234, FakeProc(501, "claude"))
+        a = self._actions_with_managed(fos, FakeClock(), {1234})
+        self.assertTrue(a.signal_process(1234, "resume")["signaled"])
+
+    def test_managed_pids_fn_raising_is_soft(self):
+        # A broken accessor must NOT block a legitimate suspend.
+        fos = FakeOS()
+        fos.add(1234, FakeProc(501, "python3"))
+
+        def boom():
+            raise RuntimeError("manager exploded")
+
+        a = MachineActions(
+            getuid=lambda: 501, getpid=lambda: 9999, getppid=lambda: 1,
+            proc_info=fos.proc_info, signal_fn=fos.signal, alive_fn=fos.alive,
+            clock=FakeClock().now, sleep_fn=lambda _dt: None,
+            managed_pids_fn=boom,
+        )
+        self.assertTrue(a.signal_process(1234, "suspend")["signaled"])
+
+
 class TestRateLimit(unittest.TestCase):
     def test_flood_is_rejected(self):
         fos = FakeOS()

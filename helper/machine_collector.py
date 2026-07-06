@@ -44,6 +44,12 @@ class ProcessInfo:
     # killed without the future root helper). NEVER synced — the whole
     # per-process table stays local (see module docstring).
     uid: int = -1
+    # Process state (v1.38.1 Suspend/Resume): "running" | "stopped" | "other".
+    # Derived from the BSD `ps` STAT column (T→stopped, Z→other, else running).
+    # The Mac app uses it to choose Suspend vs Resume + render a "Paused" badge.
+    # Defaults to "running" so an OLD helper (no state column) and any
+    # unparseable row degrade to the safe, actionable value. NEVER synced.
+    state: str = "running"
 
 
 @dataclass
@@ -80,24 +86,47 @@ class MachineSnapshot:
 # ── pure parsers (unit-tested with fixtures; no subprocess) ─────────
 
 
-def parse_top_processes(ps_stdout: str, limit: int = 12) -> list[ProcessInfo]:
-    """Parse `ps -Aceo pid,uid,pcpu,rss,comm -r` output (already sorted CPU desc).
+def _normalize_state(raw: str) -> str:
+    """Map a BSD `ps` STAT column to "running" | "stopped" | "other".
 
-    RSS is in KiB; `comm` may contain spaces ("Google Chrome Helper (Renderer)")
-    so it is the trailing free-form field. A header row and any malformed row are
-    skipped. Returns at most `limit` rows. The `uid` column lets the Mac app gate
-    the M1 "End Process" affordance to same-UID rows.
+    Only the FIRST char is the primary state code; the rest are modifiers
+    (e.g. "Ss", "S+", "R<", "TN", "SNs", "Us") and the whole token never
+    contains a space (confirmed on macOS), so it splits cleanly as one field.
+      * 'T' → stopped   (SIGSTOP'd or traced — the Suspend/Resume target)
+      * 'Z' → other     (zombie/defunct — not actionable; no Suspend/Resume)
+      * everything else (R/S/I/U/…) → running
+    """
+    if not raw:
+        return "running"
+    c = raw[0]
+    if c == "T":
+        return "stopped"
+    if c == "Z":
+        return "other"
+    return "running"
+
+
+def parse_top_processes(ps_stdout: str, limit: Optional[int] = 12) -> list[ProcessInfo]:
+    """Parse `ps -Aceo pid,uid,pcpu,rss,state,comm` output (order preserved).
+
+    Six columns now (v1.38.1 adds `state` before `comm`): the BSD STAT column
+    is a single space-free token, so `split(None, 5)` isolates it and keeps the
+    trailing free-form `comm` (which may contain spaces, e.g. "Google Chrome
+    Helper (Renderer)"). A header row and any malformed row are skipped. Returns
+    at most `limit` rows (all rows when `limit is None`). The `uid` column gates
+    the "End Process" / Suspend affordances to same-UID rows; `state` chooses
+    Suspend vs Resume.
     """
     rows: list[ProcessInfo] = []
     for line in ps_stdout.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
-        parts = stripped.split(None, 4)
-        if len(parts) < 5:
+        parts = stripped.split(None, 5)
+        if len(parts) < 6:
             continue
-        pid_s, uid_s, cpu_s, rss_s, comm = parts
-        if not pid_s.isdigit():   # header row ("PID UID %CPU RSS COMM") or junk
+        pid_s, uid_s, cpu_s, rss_s, state_s, comm = parts
+        if not pid_s.isdigit():   # header row ("PID UID %CPU RSS STAT COMM") or junk
             continue
         try:
             rows.append(ProcessInfo(
@@ -106,12 +135,68 @@ def parse_top_processes(ps_stdout: str, limit: int = 12) -> list[ProcessInfo]:
                 cpu_percent=round(float(cpu_s), 1),
                 rss_mb=round(int(rss_s) / 1024.0, 1),
                 uid=int(uid_s) if uid_s.isdigit() else -1,
+                state=_normalize_state(state_s),
             ))
         except (ValueError, TypeError):
             continue
-        if len(rows) >= limit:
+        if limit is not None and len(rows) >= limit:
             break
     return rows
+
+
+# Default size of each ranked slice (top-N-by-CPU and top-N-by-mem) unioned
+# into the Machine tab's process list. ~25 each so a memory sort is faithful
+# (a real mem ranking, not just a re-sort of the top-CPU set) and the app's
+# "Show more" reveals a meaningful set beyond its default top-10.
+_PROCESS_UNION_N = 25
+
+
+def build_process_list(
+    r_stdout: str,
+    m_stdout: str,
+    *,
+    current_uid: int,
+    top_n: int = _PROCESS_UNION_N,
+) -> list[ProcessInfo]:
+    """Merge the CPU-sorted (`ps … -r`) and memory-sorted (`ps … -m`) process
+    lists into ONE deduped table for the Machine tab (v1.38.1 B2), and
+    force-include every same-UID *stopped* process (B1 vanishing-process fix).
+
+    Why a union: a client-side "sort by memory" is only faithful if the helper
+    actually returned the memory-heavy processes — top-CPU alone would miss a
+    quiet-but-huge process. So we take top-`top_n`-by-CPU ∪ top-`top_n`-by-mem,
+    deduped by pid.
+
+    Why force-include stopped same-UID procs: a suspended process immediately
+    drops to ~0% CPU and (unless it's memory-heavy) falls out of BOTH ranked
+    slices on the next 2 s refresh — the row would vanish and the user could no
+    longer Resume it. We scan the SAME full `-r` output (no extra `ps`) for
+    same-UID rows in state 'stopped' and pin them in. A paused process therefore
+    never drops off the list while stopped.
+
+    Result is sorted CPU-desc so an OLD app (pre-B2, no client-side sort) still
+    renders a sensible top-N-by-CPU from `.prefix(10)`.
+    """
+    cpu_rows = parse_top_processes(r_stdout, limit=None)   # full -r scan, CPU desc
+    mem_rows = parse_top_processes(m_stdout, limit=top_n)  # top-N by memory
+    seen: set[int] = set()
+    union: list[ProcessInfo] = []
+
+    def _add(p: ProcessInfo) -> None:
+        if p.pid not in seen:
+            seen.add(p.pid)
+            union.append(p)
+
+    for p in cpu_rows[:top_n]:      # top-N by CPU
+        _add(p)
+    for p in mem_rows:              # top-N by memory
+        _add(p)
+    for p in cpu_rows:              # force-union: every same-UID stopped proc
+        if p.state == "stopped" and p.uid == current_uid:
+            _add(p)
+
+    union.sort(key=lambda p: p.cpu_percent, reverse=True)
+    return union
 
 
 def _as_int(value) -> Optional[int]:
@@ -291,11 +376,23 @@ def _run(argv: list[str], *, timeout: float = 5.0, binary: bool = False):
         return None
 
 
-def collect_top_processes(limit: int = 12) -> list[ProcessInfo]:
-    out = _run(["ps", "-Aceo", "pid,uid,pcpu,rss,comm", "-r"], timeout=10.0)
-    if not out:
+_PS_COLUMNS = "pid,uid,pcpu,rss,state,comm"
+
+
+def collect_top_processes(limit: int = _PROCESS_UNION_N) -> list[ProcessInfo]:
+    """Union of top-`limit`-by-CPU (`ps … -r`) and top-`limit`-by-mem
+    (`ps … -m`), plus every same-UID stopped process (see `build_process_list`).
+    Two cheap `ps` calls; returns [] only if BOTH fail."""
+    r_out = _run(["ps", "-Aceo", _PS_COLUMNS, "-r"], timeout=10.0)
+    m_out = _run(["ps", "-Aceo", _PS_COLUMNS, "-m"], timeout=10.0)
+    if not r_out and not m_out:
         return []
-    return parse_top_processes(out, limit=limit)
+    try:
+        current_uid = os.getuid()
+    except (AttributeError, OSError):   # non-POSIX / restricted — no same-UID pin
+        current_uid = -1
+    return build_process_list(r_out or "", m_out or "",
+                              current_uid=current_uid, top_n=limit)
 
 
 def collect_battery_thermal() -> BatteryThermal:
@@ -375,17 +472,19 @@ def local_control_capability() -> dict[str, bool]:
     heartbeat synced to `devices`).
 
     M1: the unsandboxed user LaunchAgent can always kill(2) its own same-UID
-    processes, so `kill_process` is true here. It's meaningless in the cloud /
-    mobile view (you can't kill a process remotely), so it stays out of the
-    synced blob. The key is absent on pre-M1 helpers, so a new Mac app talking
-    to an old helper naturally sees no kill capability and hides the affordance.
-    The app ADDITIONALLY gates on #if DEVID_BUILD + a Settings toggle + a
-    same-UID row + an inline confirm.
+    processes, so `kill_process` is true here. v1.38.1 adds `suspend_process`
+    (SIGSTOP/SIGCONT — the same same-UID, no-root privilege posture). Both are
+    meaningless in the cloud / mobile view (you can't signal a process
+    remotely), so they stay out of the synced blob. A key is absent on older
+    helpers, so a new Mac app talking to an old helper naturally sees no
+    capability and hides the affordance. The app ADDITIONALLY gates on
+    #if DEVID_BUILD + a Settings toggle + a same-UID row + an inline confirm.
     """
-    return {"kill_process": True}
+    return {"kill_process": True, "suspend_process": True}
 
 
-def collect_machine_snapshot(limit: int = 12, sensors: Optional[dict] = None) -> MachineSnapshot:
+def collect_machine_snapshot(limit: int = _PROCESS_UNION_N,
+                             sensors: Optional[dict] = None) -> MachineSnapshot:
     """Full LOCAL snapshot for the UDS `get_machine_snapshot` method."""
     battery = collect_battery_thermal()
     mem_pct, used_bytes, total_bytes = collect_memory()
@@ -427,7 +526,7 @@ def machine_snapshot_dict(snap: MachineSnapshot) -> dict:
         },
         "top_processes": [
             {"pid": p.pid, "name": p.name, "cpu_percent": p.cpu_percent,
-             "rss_mb": p.rss_mb, "uid": p.uid}
+             "rss_mb": p.rss_mb, "uid": p.uid, "state": p.state}
             for p in snap.top_processes
         ],
         "capability": snap.capability,

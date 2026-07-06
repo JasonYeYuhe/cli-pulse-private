@@ -1,0 +1,11 @@
+New in this version:
+
+• Machine tab — pause and resume your own processes, not just end them. Suspend a runaway process to investigate, then pick it back up — no need to kill it. Paused processes stay in the list marked "Paused" so you can always resume them. (Direct-download / Developer ID build only, and off by default — turn on "Machine controls" in Settings.)
+
+• Process list — sort the top processes by CPU or by memory, and expand beyond the top 10 to see more of what's running.
+
+• Reliability improvements and small fixes.
+
+—
+
+Note for direct-download (Developer ID) users: the process pause/resume and end-process actions live in the CLI Pulse Companion helper. Install the updated helper package (1.26.0) to get them; the App Store build shows the read-only monitor and the new sort/expand controls.

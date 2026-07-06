@@ -15,14 +15,24 @@ public struct MachineHealthView: View {
     private let client = LocalSessionControlClient()
     private let refreshInterval: UInt64 = 2_000_000_000  // 2 s
 
-    // Machine controls M1 (DEVID-only). Off by default; gates the inline
-    // "End Process" affordance. Shares one UserDefaults key with the Settings
-    // toggle so there's no drift.
+    // Process-list usability (v1.38.1 B2 — ALL builds, read-only, no gating):
+    // sort the returned union by CPU or memory, and expand past the default 10.
+    @State private var sortKey: ProcessSortKey = .cpu
+    @State private var showAllProcesses = false
+
+    // Machine controls M1 + v1.38.1 (DEVID-only). Off by default; gates the
+    // inline End Process / Suspend / Resume affordances. Shares one UserDefaults
+    // key with the Settings toggle so there's no drift.
     #if DEVID_BUILD
     @AppStorage("cli_pulse_machine_controls_enabled") private var machineControlsEnabled = false
-    @State private var pendingKillPid: Int?     // row currently showing the inline confirm
+    @State private var pendingKillPid: Int?     // row currently showing the End-Process confirm
     @State private var killingPid: Int?         // kill RPC in flight
-    @State private var killError: String?       // last refusal / failure message
+    // v1.38.1 Suspend/Resume — DEDICATED state (never reuse pendingKillPid, or
+    // clicking Suspend would surface the End-Process card). One in-flight guard
+    // is shared across kill+suspend via `anyActionInFlight`.
+    @State private var pendingSuspendPid: Int?  // row currently showing the Suspend confirm
+    @State private var suspendingPid: Int?      // suspend/resume RPC in flight
+    @State private var killError: String?       // last refusal / failure message (any control)
     #endif
 
     public init() {}
@@ -137,23 +147,70 @@ public struct MachineHealthView: View {
 
     // MARK: - Processes
 
+    // Sort key for the process list (v1.38.1 B2). The helper returns a union of
+    // top-N-by-CPU and top-N-by-memory (plus any paused same-UID procs), so both
+    // sorts are faithful rather than a re-sort of one ranked slice. Against an
+    // OLD ≤1.25.0 helper the union degrades to ~12 CPU-only rows and a memory
+    // sort just re-orders those — documented, acceptable.
+    enum ProcessSortKey: Hashable { case cpu, memory }
+
+    private func sortedProcesses(_ snap: MachineSnapshot) -> [MachineSnapshot.ProcessInfo] {
+        snap.topProcesses.sorted { a, b in
+            switch sortKey {
+            case .cpu:
+                if a.cpuPercent != b.cpuPercent { return a.cpuPercent > b.cpuPercent }
+                return a.rssMB > b.rssMB                       // tiebreak
+            case .memory:
+                if a.rssMB != b.rssMB { return a.rssMB > b.rssMB }
+                return a.cpuPercent > b.cpuPercent             // tiebreak
+            }
+        }
+    }
+
     private func processesSection(_ snap: MachineSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            SectionHeader(title: L10n.machine.topProcesses, icon: "list.bullet")
+        let procs = sortedProcesses(snap)
+        let shown = showAllProcesses ? procs : Array(procs.prefix(10))
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                SectionHeader(title: L10n.machine.topProcesses, icon: "list.bullet")
+                if !procs.isEmpty {
+                    Picker("", selection: $sortKey) {
+                        Text(L10n.machine.cpu).tag(ProcessSortKey.cpu)
+                        Text(L10n.machine.memory).tag(ProcessSortKey.memory)
+                    }
+                    .pickerStyle(.segmented)
+                    .controlSize(.mini)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
             #if DEVID_BUILD
             if let killError { killErrorNote(killError) }
             #endif
-            if snap.topProcesses.isEmpty {
+            if procs.isEmpty {
                 Text(L10n.machine.noProcesses)
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
                     .padding(.vertical, 6)
             } else {
                 VStack(spacing: 0) {
-                    ForEach(snap.topProcesses.prefix(10)) { proc in
+                    ForEach(shown) { proc in
                         processRow(proc, snap: snap)
                         Divider().opacity(0.4)
                     }
+                }
+                if procs.count > 10 {
+                    Button {
+                        showAllProcesses.toggle()
+                    } label: {
+                        Text(showAllProcesses
+                             ? L10n.machine.showLess
+                             : L10n.machine.showMore("\(procs.count - 10)"))
+                            .font(.system(size: 10))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(PulseTheme.accent)
+                    .padding(.top, 4)
                 }
             }
         }
@@ -167,6 +224,14 @@ public struct MachineHealthView: View {
                     .font(.system(size: 11))
                     .lineLimit(1)
                     .truncationMode(.middle)
+                #if DEVID_BUILD
+                // "Paused" badge on a suspended same-UID row so the user knows
+                // why its CPU reads 0% and that it can be resumed. Gated on the
+                // suspend/resume capability (Resume is what acts on it).
+                if proc.isStopped, canOfferSuspend(proc, snap: snap) {
+                    StatusBadge(text: L10n.machine.pausedBadge, color: .orange)
+                }
+                #endif
                 Spacer()
                 Text(String(format: "%.0f MB", proc.rssMB))
                     .font(.system(size: 10, design: .monospaced))
@@ -176,30 +241,31 @@ public struct MachineHealthView: View {
                     .foregroundStyle(proc.cpuPercent >= 80 ? .orange : .primary)
                     .frame(width: 48, alignment: .trailing)
                 #if DEVID_BUILD
-                if canOfferKill(proc, snap: snap) {
-                    Button {
-                        killError = nil
-                        pendingKillPid = (pendingKillPid == proc.pid) ? nil : proc.pid
-                    } label: {
-                        Image(systemName: "xmark.circle")
-                            .font(.system(size: 11))
-                            .foregroundStyle(pendingKillPid == proc.pid ? .red : .secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help(L10n.machine.endProcess)
-                    .disabled(killingPid != nil)
+                // End Process gates on kill_process; Suspend/Resume on the
+                // DISTINCT suspend_process capability. In practice they ship
+                // together (helper 1.26.0), but gating each on its own key means
+                // a helper advertising only one shows only the control it can do.
+                let offerKill = canOfferKill(proc, snap: snap)
+                let offerSuspend = canOfferSuspend(proc, snap: snap)
+                if offerKill || offerSuspend {
+                    machineControlButtons(proc, offerKill: offerKill, offerSuspend: offerSuspend)
                 }
                 #endif
             }
             .padding(.vertical, 3)
             #if DEVID_BUILD
-            // Re-gate the open confirm card on the SAME predicate as the button
-            // (not just pendingKillPid) so it disappears the instant the Settings
-            // toggle is turned off, the capability drops, or the row's owner uid
-            // changes — otherwise a stale card would keep a live destructive
-            // button after the gate would have hidden it.
+            // Re-gate BOTH open confirm cards on the SAME predicate as the
+            // buttons that opened them (not just the pending pid) so a card
+            // disappears the instant the toggle/capability/owner changes — the
+            // suspend card ALSO requires proc.isRunning (matching the Suspend
+            // button), so it can't linger next to a Resume button if the process
+            // is stopped externally mid-confirm. The two cards are mutually
+            // exclusive (opening one closes the other), so at most one shows.
             if pendingKillPid == proc.pid, canOfferKill(proc, snap: snap) {
                 killConfirmCard(proc)
+            }
+            if pendingSuspendPid == proc.pid, canOfferSuspend(proc, snap: snap), proc.isRunning {
+                suspendConfirmCard(proc)
             }
             #endif
         }
@@ -215,6 +281,77 @@ public struct MachineHealthView: View {
             processUID: proc.uid,
             currentUID: Int(getuid())
         )
+    }
+
+    /// v1.38.1: gates Suspend/Resume on the DISTINCT `suspend_process`
+    /// capability so they're hidden against a helper that can kill but not
+    /// signal (rather than offering a control that fails with not_implemented).
+    private func canOfferSuspend(_ proc: MachineSnapshot.ProcessInfo, snap: MachineSnapshot) -> Bool {
+        MachineControlGate.canOfferSuspend(
+            machineControlsEnabled: machineControlsEnabled,
+            capabilitySuspendProcess: snap.can("suspend_process"),
+            processUID: proc.uid,
+            currentUID: Int(getuid())
+        )
+    }
+
+    /// One in-flight guard shared across kill + suspend + resume: no two
+    /// destructive/reversible RPCs run at once, and it disables every action
+    /// button while any one is pending (M1 double-fire fix, extended).
+    private var anyActionInFlight: Bool { killingPid != nil || suspendingPid != nil }
+
+    /// Suspend / Resume / End buttons for a same-UID row. `offerSuspend` gates
+    /// Suspend/Resume (which are mutually exclusive by state); `offerKill` gates
+    /// End. "other" (zombie) rows show neither Suspend nor Resume — nothing to
+    /// signal. A row may show only End (kill-capable helper without suspend).
+    @ViewBuilder
+    private func machineControlButtons(_ proc: MachineSnapshot.ProcessInfo,
+                                       offerKill: Bool, offerSuspend: Bool) -> some View {
+        if offerSuspend, proc.isStopped {
+            // Resume is benign → immediate, no confirm card.
+            Button {
+                guard !anyActionInFlight else { return }   // synchronous double-fire guard
+                killError = nil
+                suspendingPid = proc.pid
+                Task { await performResume(proc) }
+            } label: {
+                Image(systemName: "play.circle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(suspendingPid == proc.pid ? PulseTheme.accent : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help(L10n.machine.resume)
+            .disabled(anyActionInFlight)
+        } else if offerSuspend, proc.isRunning {
+            // Suspend can freeze dependent processes → inline confirm card.
+            Button {
+                killError = nil
+                pendingKillPid = nil                                       // mutual exclusivity
+                pendingSuspendPid = (pendingSuspendPid == proc.pid) ? nil : proc.pid
+            } label: {
+                Image(systemName: "pause.circle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(pendingSuspendPid == proc.pid ? PulseTheme.accent : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help(L10n.machine.suspend)
+            .disabled(anyActionInFlight)
+        }
+        // End Process — available on any same-UID row when kill is supported.
+        if offerKill {
+            Button {
+                killError = nil
+                pendingSuspendPid = nil                                    // mutual exclusivity
+                pendingKillPid = (pendingKillPid == proc.pid) ? nil : proc.pid
+            } label: {
+                Image(systemName: "xmark.circle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(pendingKillPid == proc.pid ? .red : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help(L10n.machine.endProcess)
+            .disabled(anyActionInFlight)
+        }
     }
 
     @ViewBuilder
@@ -236,7 +373,7 @@ public struct MachineHealthView: View {
                     // action runs on the main actor) — performKill sets it only
                     // after its first `await`, so without this a rapid double-tap
                     // would spawn two kill RPCs before `.disabled` engages.
-                    guard killingPid == nil else { return }
+                    guard !anyActionInFlight else { return }
                     killingPid = proc.pid
                     Task { await performKill(proc) }
                 } label: {
@@ -252,6 +389,48 @@ public struct MachineHealthView: View {
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.red.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.vertical, 4)
+    }
+
+    /// v1.38.1: inline confirm for the (reversible) Suspend. Warns that pausing
+    /// can freeze the app / occasionally the whole system until resumed, and
+    /// that the process stays listed as "Paused". Non-destructive styling
+    /// (yellow, not red) — it's reversible, unlike End Process.
+    @ViewBuilder
+    private func suspendConfirmCard(_ proc: MachineSnapshot.ProcessInfo) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(L10n.machine.suspendConfirmTitle)
+                .font(.system(size: 11, weight: .semibold))
+            Text(L10n.machine.suspendConfirmMessage(proc.name, "\(proc.pid)"))
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Spacer()
+                Button(L10n.common.cancel) { pendingSuspendPid = nil }
+                    .controlSize(.small)
+                    .disabled(suspendingPid == proc.pid)
+                Button {
+                    // Synchronous in-flight guard — mirrors the End-Process card
+                    // (performSuspend sets suspendingPid only after its first
+                    // await, so a rapid double-tap would otherwise double-fire).
+                    guard !anyActionInFlight else { return }
+                    suspendingPid = proc.pid
+                    Task { await performSuspend(proc) }
+                } label: {
+                    HStack(spacing: 4) {
+                        if suspendingPid == proc.pid { ProgressView().controlSize(.mini) }
+                        Text(L10n.machine.suspendConfirmButton)
+                    }
+                }
+                .controlSize(.small)
+                .disabled(suspendingPid == proc.pid)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .padding(.vertical, 4)
     }
@@ -318,6 +497,57 @@ public struct MachineHealthView: View {
         case .processNotFound:     return L10n.machine.killErrNotFound
         case .rateLimited:         return L10n.machine.killErrRateLimited
         default:                   return L10n.machine.killErrGeneric
+        }
+    }
+
+    private func performSuspend(_ proc: MachineSnapshot.ProcessInfo) async {
+        // `suspendingPid` was set synchronously by the confirm button.
+        await MainActor.run { killError = nil }
+        do {
+            try await client.suspendProcess(pid: proc.pid)
+            await MainActor.run {
+                suspendingPid = nil
+                pendingSuspendPid = nil
+            }
+            // Refresh so the row re-renders as "Paused" without waiting for the
+            // 2 s poll. The vanishing-process fix keeps the stopped row present.
+            if let fresh = try? await client.getMachineSnapshot() {
+                await MainActor.run { snapshot = fresh }
+            }
+        } catch {
+            await MainActor.run {
+                suspendingPid = nil
+                pendingSuspendPid = nil
+                killError = suspendErrorMessage(error)
+            }
+        }
+    }
+
+    private func performResume(_ proc: MachineSnapshot.ProcessInfo) async {
+        // `suspendingPid` was set synchronously by the Resume button.
+        await MainActor.run { killError = nil }
+        do {
+            try await client.resumeProcess(pid: proc.pid)
+            await MainActor.run { suspendingPid = nil }
+            if let fresh = try? await client.getMachineSnapshot() {
+                await MainActor.run { snapshot = fresh }
+            }
+        } catch {
+            await MainActor.run {
+                suspendingPid = nil
+                killError = suspendErrorMessage(error)
+            }
+        }
+    }
+
+    private func suspendErrorMessage(_ error: Error) -> String {
+        guard let sce = error as? SessionControlError else { return L10n.machine.suspendErrGeneric }
+        switch sce {
+        case .processProtected:    return L10n.machine.suspendErrProtected
+        case .processNotPermitted: return L10n.machine.suspendErrNotPermitted
+        case .processNotFound:     return L10n.machine.suspendErrNotFound
+        case .rateLimited:         return L10n.machine.suspendErrRateLimited
+        default:                   return L10n.machine.suspendErrGeneric
         }
     }
     #endif

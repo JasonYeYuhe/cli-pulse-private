@@ -824,6 +824,19 @@
 "machine.kill_err_generic" = "Couldn't end the process.";
 "machine.controls_toggle" = "Machine controls";
 "machine.controls_hint" = "Let the Machine tab end your own processes. Off by default; every action asks for confirmation. Direct-download (Developer ID) build only.";
+"machine.suspend" = "Suspend";
+"machine.resume" = "Resume";
+"machine.paused_badge" = "Paused";
+"machine.suspend_confirm_title" = "Pause this process?";
+"machine.suspend_confirm_message" = "Send a pause signal to %1$@ (pid %2$@). The app freezes until you resume it — some apps, and occasionally the whole system, may briefly stop responding or beach-ball while paused. It stays in the list marked “Paused” so you can resume it anytime.";
+"machine.suspend_confirm_button" = "Pause";
+"machine.suspend_err_protected" = "That process is protected by the system and can't be paused.";
+"machine.suspend_err_not_permitted" = "That process belongs to another user — only your own processes can be paused.";
+"machine.suspend_err_not_found" = "That process is no longer running.";
+"machine.suspend_err_rate_limited" = "Too many actions — wait a moment and try again.";
+"machine.suspend_err_generic" = "Couldn't pause or resume the process.";
+"machine.show_more" = "Show %@ more";
+"machine.show_less" = "Show less";
 "machine.device_health" = "Device Health";
 
 /* Provider service-status component list (status page) */
