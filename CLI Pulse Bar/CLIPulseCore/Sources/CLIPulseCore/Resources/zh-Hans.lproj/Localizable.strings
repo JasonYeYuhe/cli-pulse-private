@@ -826,6 +826,19 @@
 "machine.kill_err_generic" = "无法结束该进程。";
 "machine.controls_toggle" = "机器控制";
 "machine.controls_hint" = "允许在“机器”标签页中结束你自己的进程。默认关闭；每次操作都会请求确认。仅限直接下载（Developer ID）版本。";
+"machine.suspend" = "暂停";
+"machine.resume" = "恢复";
+"machine.paused_badge" = "已暂停";
+"machine.suspend_confirm_title" = "暂停此进程？";
+"machine.suspend_confirm_message" = "向 %1$@（pid %2$@）发送暂停信号。恢复之前该应用会一直冻结；暂停期间某些应用（偶尔是整个系统）可能会短暂无响应或出现彩虹圈。它会以“已暂停”保留在列表中，你可以随时恢复。";
+"machine.suspend_confirm_button" = "暂停";
+"machine.suspend_err_protected" = "该进程受系统保护，无法暂停。";
+"machine.suspend_err_not_permitted" = "该进程属于其他用户——你只能暂停自己的进程。";
+"machine.suspend_err_not_found" = "该进程已不再运行。";
+"machine.suspend_err_rate_limited" = "操作过于频繁——请稍候再试。";
+"machine.suspend_err_generic" = "无法暂停或恢复该进程。";
+"machine.show_more" = "再显示 %@ 个";
+"machine.show_less" = "收起";
 "machine.device_health" = "设备健康";
 
 /* Provider service-status component list (status page) */

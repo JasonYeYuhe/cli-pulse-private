@@ -750,16 +750,37 @@ def daemon(args: argparse.Namespace) -> None:
         # replies `not_implemented`).
         try:
             from machine_actions import MachineActions
-            _machine_actions = MachineActions()
+
+            def _managed_child_pids() -> set[int]:
+                # v1.38.1 belt-and-suspenders: the helper's own managed-session
+                # child pids, so `suspend` refuses to freeze a session the user
+                # is driving. Fail-soft — a None/raising manager yields an empty
+                # set (feature simply off), never blocking a legitimate action.
+                if remote_agent_manager is None:
+                    return set()
+                try:
+                    return remote_agent_manager.managed_child_pids()
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("managed_child_pids() failed: %s", exc)
+                    return set()
+
+            _machine_actions = MachineActions(managed_pids_fn=_managed_child_pids)
 
             def _kill_process_local(pid: int) -> dict:
                 # SAME-UID only, NO root. The guard (same-UID / deny-list /
                 # SIGTERM→grace→SIGKILL / rate-limit) is entirely inside
                 # MachineActions; this hook is a thin bridge to the UDS server.
                 return _machine_actions.kill_process(pid)
+
+            def _signal_process_local(pid: int, action: str) -> dict:
+                # v1.38.1 Suspend/Resume — SAME-UID only, NO root. SIGSTOP/
+                # SIGCONT through the SAME guard as kill (plus a managed-session
+                # deny for suspend); MachineActions owns the whole matrix.
+                return _machine_actions.signal_process(pid, action)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("machine_actions unavailable — kill_process disabled: %s", exc)
+            logger.warning("machine_actions unavailable — process actions disabled: %s", exc)
             _kill_process_local = None  # type: ignore[assignment]
+            _signal_process_local = None  # type: ignore[assignment]
 
         local_uds_server = LocalSessionServer(
             socket_path=default_socket_path(),
@@ -776,6 +797,7 @@ def daemon(args: argparse.Namespace) -> None:
             list_detected_sessions=_list_detected_local,
             get_machine_snapshot=_machine_snapshot_local,
             kill_process=_kill_process_local,
+            signal_process=_signal_process_local,
             # Iter 2B: broker drives subscribe_events; registry
             # backs approve_action / get_pending_approvals plus
             # the hook-side hook_create_approval / wait_decision

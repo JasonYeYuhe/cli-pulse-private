@@ -826,6 +826,19 @@
 "machine.kill_err_generic" = "無法結束該程序。";
 "machine.controls_toggle" = "機器控制";
 "machine.controls_hint" = "允許在「機器」標籤頁中結束你自己的程序。預設關閉；每次操作都會要求確認。僅限直接下載（Developer ID）版本。";
+"machine.suspend" = "暫停";
+"machine.resume" = "恢復";
+"machine.paused_badge" = "已暫停";
+"machine.suspend_confirm_title" = "暫停此程序？";
+"machine.suspend_confirm_message" = "向 %1$@（pid %2$@）傳送暫停訊號。恢復之前該 App 會一直凍結；暫停期間某些 App（偶爾是整個系統）可能會短暫無回應或出現彩虹圈。它會以「已暫停」保留在清單中，你可以隨時恢復。";
+"machine.suspend_confirm_button" = "暫停";
+"machine.suspend_err_protected" = "該程序受系統保護，無法暫停。";
+"machine.suspend_err_not_permitted" = "該程序屬於其他使用者——你只能暫停自己的程序。";
+"machine.suspend_err_not_found" = "該程序已不再執行。";
+"machine.suspend_err_rate_limited" = "操作過於頻繁——請稍候再試。";
+"machine.suspend_err_generic" = "無法暫停或恢復該程序。";
+"machine.show_more" = "再顯示 %@ 個";
+"machine.show_less" = "收合";
 "machine.device_health" = "裝置健康";
 
 /* Provider service-status component list (status page) */

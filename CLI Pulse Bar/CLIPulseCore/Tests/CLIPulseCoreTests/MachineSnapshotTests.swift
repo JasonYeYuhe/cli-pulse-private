@@ -60,6 +60,42 @@ final class MachineSnapshotTests: XCTestCase {
         XCTAssertTrue(s.can("power"))
     }
 
+    func testProcessStateDecodeAndHelpers() {
+        // v1.38.1: state present → decoded; absent → "running" fallback (an OLD
+        // ≤1.25.0 helper sends no state column). isStopped / isRunning drive the
+        // Suspend-vs-Resume choice and the "Paused" badge.
+        let s = MachineSnapshot(dict: [
+            "cpu_percent": 5, "memory_percent": 20,
+            "battery": ["has_battery": false] as [String: Any],
+            "top_processes": [
+                ["pid": 100, "name": "running_proc", "cpu_percent": 1.0, "rss_mb": 1.0,
+                 "uid": 501, "state": "running"] as [String: Any],
+                ["pid": 200, "name": "paused_proc", "cpu_percent": 0.0, "rss_mb": 2.0,
+                 "uid": 501, "state": "stopped"] as [String: Any],
+                ["pid": 300, "name": "zombie_proc", "cpu_percent": 0.0, "rss_mb": 0.0,
+                 "uid": 501, "state": "other"] as [String: Any],
+                // state omitted → defaults to "running".
+                ["pid": 400, "name": "legacy_proc", "cpu_percent": 3.0, "rss_mb": 4.0,
+                 "uid": 501] as [String: Any],
+            ],
+            "capability": ["kill_process": true, "suspend_process": true],
+        ])
+        let byPid = Dictionary(uniqueKeysWithValues: s.topProcesses.map { ($0.pid, $0) })
+        XCTAssertEqual(byPid[100]?.state, "running")
+        XCTAssertTrue(byPid[100]!.isRunning)
+        XCTAssertFalse(byPid[100]!.isStopped)
+        XCTAssertEqual(byPid[200]?.state, "stopped")
+        XCTAssertTrue(byPid[200]!.isStopped)
+        XCTAssertFalse(byPid[200]!.isRunning)
+        // A zombie ("other") is neither running nor stopped → no Suspend/Resume.
+        XCTAssertFalse(byPid[300]!.isRunning)
+        XCTAssertFalse(byPid[300]!.isStopped)
+        // Missing state degrades to "running" (offers Suspend, never a stuck row).
+        XCTAssertEqual(byPid[400]?.state, "running")
+        XCTAssertTrue(byPid[400]!.isRunning)
+        XCTAssertTrue(s.can("suspend_process"))
+    }
+
     func testDesktopNoBatteryNoSensors() {
         // Mac mini: no battery node, S2-only helper (no native sensors).
         let s = MachineSnapshot(dict: [

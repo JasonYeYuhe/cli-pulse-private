@@ -826,6 +826,19 @@
 "machine.kill_err_generic" = "プロセスを終了できませんでした。";
 "machine.controls_toggle" = "マシン制御";
 "machine.controls_hint" = "「マシン」タブから自分のプロセスを終了できるようにします。デフォルトはオフで、操作ごとに確認します。直接ダウンロード（Developer ID）版のみ。";
+"machine.suspend" = "一時停止";
+"machine.resume" = "再開";
+"machine.paused_badge" = "一時停止中";
+"machine.suspend_confirm_title" = "このプロセスを一時停止しますか？";
+"machine.suspend_confirm_message" = "%1$@（pid %2$@）に一時停止シグナルを送信します。再開するまでアプリは停止します。一時停止中は一部のアプリ（まれにシステム全体）が一時的に応答しなくなったり、レインボーカーソルが表示されたりすることがあります。「一時停止中」としてリストに残るので、いつでも再開できます。";
+"machine.suspend_confirm_button" = "一時停止";
+"machine.suspend_err_protected" = "そのプロセスはシステムに保護されており、一時停止できません。";
+"machine.suspend_err_not_permitted" = "そのプロセスは別のユーザーのものです。自分のプロセスのみ一時停止できます。";
+"machine.suspend_err_not_found" = "そのプロセスはすでに実行されていません。";
+"machine.suspend_err_rate_limited" = "操作が多すぎます。少し待ってからもう一度お試しください。";
+"machine.suspend_err_generic" = "プロセスを一時停止／再開できませんでした。";
+"machine.show_more" = "他 %@ 件を表示";
+"machine.show_less" = "表示を減らす";
 "machine.device_health" = "デバイスの状態";
 
 /* Provider service-status component list (status page) */

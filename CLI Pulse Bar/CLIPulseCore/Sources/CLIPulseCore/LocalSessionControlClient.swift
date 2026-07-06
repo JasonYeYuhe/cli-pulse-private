@@ -585,6 +585,25 @@ public final class LocalSessionControlClient: SessionControlClient {
         )
     }
 
+    /// Machine controls v1.38.1: pause a SAME-UID process (`SIGSTOP`). Immediate
+    /// (no escalation), reversible with `resumeProcess`. Same guard as
+    /// `killProcess` — a refusal throws the same typed `SessionControlError`
+    /// (`.processNotFound` / `.processProtected` / `.processNotPermitted` /
+    /// `.rateLimited`). Both suspend and resume ride ONE wire verb
+    /// (`signal_process` + an `action` param). NO root — same-UID only.
+    public func suspendProcess(pid: Int) async throws {
+        _ = try await send(method: "signal_process",
+                           params: ["pid": pid, "action": "suspend"])
+    }
+
+    /// Machine controls v1.38.1: resume a paused SAME-UID process (`SIGCONT`).
+    /// Benign + immediate (no confirm on the app side). Same refusal surface as
+    /// `suspendProcess`.
+    public func resumeProcess(pid: Int) async throws {
+        _ = try await send(method: "signal_process",
+                           params: ["pid": pid, "action": "resume"])
+    }
+
     public func stopSession(sessionId: String) async throws {
         _ = try await send(
             method: "stop_session",
@@ -1186,7 +1205,18 @@ public struct MachineSnapshot: Sendable {
         /// equals the current user (a root/other-user pid can't be killed
         /// without the future root helper). -1 when the helper couldn't read it.
         public let uid: Int
+        /// Process state (v1.38.1): "running" | "stopped" | "other". Chooses
+        /// Suspend vs Resume and drives the "Paused" badge. Defaults to
+        /// "running" when the helper omits it (an OLD ≤1.25.0 helper has no
+        /// state column) so the affordance degrades to Suspend, never a
+        /// stuck/blank control.
+        public let state: String
         public var id: Int { pid }
+        /// v1.38.1: a same-UID paused process the user can Resume.
+        public var isStopped: Bool { state == "stopped" }
+        /// v1.38.1: a running process the user can Suspend (excludes zombies /
+        /// "other" so a defunct row offers neither Suspend nor Resume).
+        public var isRunning: Bool { state == "running" }
     }
 
     public let cpuPercent: Int
@@ -1245,7 +1275,10 @@ public struct MachineSnapshot: Sendable {
             return ProcessInfo(pid: pid, name: name,
                                cpuPercent: d(row["cpu_percent"]) ?? 0,
                                rssMB: d(row["rss_mb"]) ?? 0,
-                               uid: i(row["uid"]) ?? -1)
+                               uid: i(row["uid"]) ?? -1,
+                               // v1.38.1: default "running" tolerates an OLD helper
+                               // (≤1.25.0 sends no state) — degrades to Suspend.
+                               state: (row["state"] as? String) ?? "running")
         }
 
         if let capRaw = dict["capability"] as? [String: Any] {

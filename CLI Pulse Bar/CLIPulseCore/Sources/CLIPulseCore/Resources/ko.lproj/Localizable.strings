@@ -549,6 +549,19 @@
 "machine.kill_err_generic" = "프로세스를 종료하지 못했습니다.";
 "machine.controls_toggle" = "머신 제어";
 "machine.controls_hint" = "'머신' 탭에서 본인의 프로세스를 종료할 수 있게 합니다. 기본값은 꺼짐이며, 각 작업마다 확인을 요청합니다. 다이렉트 다운로드(Developer ID) 빌드 전용.";
+"machine.suspend" = "일시정지";
+"machine.resume" = "재개";
+"machine.paused_badge" = "일시정지됨";
+"machine.suspend_confirm_title" = "이 프로세스를 일시정지할까요?";
+"machine.suspend_confirm_message" = "%1$@(pid %2$@)에 일시정지 신호를 보냅니다. 재개하기 전까지 앱이 멈춥니다. 일시정지 중에는 일부 앱(드물게 시스템 전체)이 잠시 응답하지 않거나 무지개 커서가 나타날 수 있습니다. 목록에 '일시정지됨'으로 남아 언제든 재개할 수 있습니다.";
+"machine.suspend_confirm_button" = "일시정지";
+"machine.suspend_err_protected" = "그 프로세스는 시스템에서 보호되어 일시정지할 수 없습니다.";
+"machine.suspend_err_not_permitted" = "그 프로세스는 다른 사용자의 것입니다 — 본인의 프로세스만 일시정지할 수 있습니다.";
+"machine.suspend_err_not_found" = "그 프로세스는 더 이상 실행 중이 아닙니다.";
+"machine.suspend_err_rate_limited" = "작업이 너무 많습니다 — 잠시 후 다시 시도하세요.";
+"machine.suspend_err_generic" = "프로세스를 일시정지하거나 재개하지 못했습니다.";
+"machine.show_more" = "%@개 더 보기";
+"machine.show_less" = "간략히 보기";
 "machine.device_health" = "기기 상태";
 
 /* Provider service-status component list (status page) */

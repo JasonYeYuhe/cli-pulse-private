@@ -549,6 +549,19 @@
 "machine.kill_err_generic" = "No se pudo finalizar el proceso.";
 "machine.controls_toggle" = "Controles de la máquina";
 "machine.controls_hint" = "Permite finalizar tus propios procesos desde la pestaña Máquina. Desactivado por defecto; cada acción pide confirmación. Solo en la versión de descarga directa (Developer ID).";
+"machine.suspend" = "Suspender";
+"machine.resume" = "Reanudar";
+"machine.paused_badge" = "En pausa";
+"machine.suspend_confirm_title" = "¿Pausar este proceso?";
+"machine.suspend_confirm_message" = "Enviar una señal de pausa a %1$@ (pid %2$@). La app se congelará hasta que la reanudes; algunas apps, y a veces todo el sistema, pueden dejar de responder momentáneamente o mostrar la rueda de color mientras está en pausa. Permanece en la lista como «En pausa» para que puedas reanudarla cuando quieras.";
+"machine.suspend_confirm_button" = "Pausar";
+"machine.suspend_err_protected" = "Ese proceso está protegido por el sistema y no se puede pausar.";
+"machine.suspend_err_not_permitted" = "Ese proceso pertenece a otro usuario: solo puedes pausar tus propios procesos.";
+"machine.suspend_err_not_found" = "Ese proceso ya no se está ejecutando.";
+"machine.suspend_err_rate_limited" = "Demasiadas acciones: espera un momento e inténtalo de nuevo.";
+"machine.suspend_err_generic" = "No se pudo pausar o reanudar el proceso.";
+"machine.show_more" = "Mostrar %@ más";
+"machine.show_less" = "Mostrar menos";
 "machine.device_health" = "Estado del dispositivo";
 
 /* Provider service-status component list (status page) */

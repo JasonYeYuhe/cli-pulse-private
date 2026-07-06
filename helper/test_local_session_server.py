@@ -208,6 +208,7 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
                  get_tail_snapshot: object | None = None,
                  get_machine_snapshot: object | None = None,
                  kill_process: object | None = None,
+                 signal_process: object | None = None,
                  ) -> tuple[LocalSessionServer, FakeManager, dict]:
     """Spin up a server bound to a tmp socket. Returns (server, manager,
     state-dict-for-toggle-introspection).
@@ -241,6 +242,7 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
         get_tail_snapshot=get_tail_snapshot,
         get_machine_snapshot=get_machine_snapshot,
         kill_process=kill_process,
+        signal_process=signal_process,
     )
     server.start()
     return server, mgr, state
@@ -354,7 +356,8 @@ _FAKE_MACHINE_SNAPSHOT = {
     "battery": {"has_battery": True, "charge_pct": 100, "state": "charged",
                 "cycle_count": 59, "health_pct": 95.0, "battery_temp_c": 31.0,
                 "adapter_watts": 65.0, "thermal_state": 0},
-    "top_processes": [{"pid": 429, "name": "WindowServer", "cpu_percent": 21.9, "rss_mb": 67.5}],
+    "top_processes": [{"pid": 429, "name": "WindowServer", "cpu_percent": 21.9,
+                       "rss_mb": 67.5, "uid": 0, "state": "running"}],
     "capability": {"process_table": True, "battery": True, "thermal_state": True,
                    "temps": False, "fans": False, "power": False},
     "sensors": None,
@@ -532,6 +535,141 @@ def test_kill_process_hook_exception_is_internal(short_sock_dir):
         assert reply["ok"] is False
         assert reply["error"]["code"] == "internal"
         # No stack / path leaked to the peer.
+        assert "secret" not in reply["error"]["message"]
+    finally:
+        server.stop()
+
+
+# ── Machine controls v1.38.1: signal_process (suspend/resume) wire surface ──
+
+
+def test_signal_process_requires_auth(short_sock_dir):
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T",
+        signal_process=lambda pid, action: {"signaled": True, "action": action,
+                                            "error": None, "code": None},
+    )
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "s", "method": "signal_process",
+            "params": {"pid": 1234, "action": "suspend"},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "unauthenticated"
+    finally:
+        server.stop()
+
+
+def test_signal_process_bypasses_control_gate(short_sock_dir):
+    # Orthogonal to session control — suspend/resume works even when
+    # local_control_enabled is off (gate is the app-side toggle + confirm).
+    calls: list[tuple[int, str]] = []
+
+    def _sig(pid: int, action: str) -> dict:
+        calls.append((pid, action))
+        return {"signaled": True, "action": action, "error": None, "code": None}
+
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T", enabled=False, signal_process=_sig,
+    )
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "s", "method": "signal_process", "auth_token": "T",
+            "params": {"pid": 4321, "action": "resume"},
+        })
+        assert reply["ok"] is True, reply
+        assert reply["result"] == {"signaled": True, "action": "resume"}
+        assert calls == [(4321, "resume")]
+    finally:
+        server.stop()
+
+
+def test_signal_process_not_implemented_when_unwired(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir, token="T")  # no hook
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "s", "method": "signal_process", "auth_token": "T",
+            "params": {"pid": 1234, "action": "suspend"},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "not_implemented"
+    finally:
+        server.stop()
+
+
+def test_signal_process_bad_pid_rejected(short_sock_dir):
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T",
+        signal_process=lambda pid, action: {"signaled": True, "action": action,
+                                            "error": None, "code": None},
+    )
+    try:
+        for bad in ("1234", None, 1.5, True):
+            reply = _client_call(server._socket_path, {
+                "id": "s", "method": "signal_process", "auth_token": "T",
+                "params": {"pid": bad, "action": "suspend"},
+            })
+            assert reply["ok"] is False, f"pid={bad!r}"
+            assert reply["error"]["code"] == "bad_request", f"pid={bad!r}"
+    finally:
+        server.stop()
+
+
+def test_signal_process_bad_action_rejected(short_sock_dir):
+    # A missing/unknown action must be rejected at the wire BEFORE the hook —
+    # the guard's own unknown-action path is a defense-in-depth second line.
+    called = []
+
+    def _sig(pid: int, action: str) -> dict:
+        called.append(action)
+        return {"signaled": True, "action": action, "error": None, "code": None}
+
+    server, _mgr, _state = _make_server(short_sock_dir, token="T", signal_process=_sig)
+    try:
+        for bad in ("pause", "", None, 3):
+            reply = _client_call(server._socket_path, {
+                "id": "s", "method": "signal_process", "auth_token": "T",
+                "params": {"pid": 1234, "action": bad},
+            })
+            assert reply["ok"] is False, f"action={bad!r}"
+            assert reply["error"]["code"] == "bad_request", f"action={bad!r}"
+        assert called == []   # hook never reached for a bad action
+    finally:
+        server.stop()
+
+
+def test_signal_process_refusal_code_forwarded(short_sock_dir):
+    # A machine_actions refusal (non-None code) becomes the wire error.code
+    # verbatim so the Swift SessionControlErrorMapping can surface it.
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T",
+        signal_process=lambda pid, action: {"signaled": False, "action": action,
+                                            "error": "protected",
+                                            "code": "process_protected"},
+    )
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "s", "method": "signal_process", "auth_token": "T",
+            "params": {"pid": 500, "action": "suspend"},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "process_protected"
+    finally:
+        server.stop()
+
+
+def test_signal_process_hook_exception_is_internal(short_sock_dir):
+    def _boom(pid: int, action: str) -> dict:
+        raise RuntimeError("kaboom with a /Users/secret/path leak")
+
+    server, _mgr, _state = _make_server(short_sock_dir, token="T", signal_process=_boom)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "s", "method": "signal_process", "auth_token": "T",
+            "params": {"pid": 1234, "action": "suspend"},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "internal"
         assert "secret" not in reply["error"]["message"]
     finally:
         server.stop()
@@ -1537,6 +1675,10 @@ _SWIFT_CLIENT_METHODS = frozenset({
     "get_machine_snapshot",
     # Machine controls M1: terminate a same-UID process from the Machine tab.
     "kill_process",
+    # Machine controls v1.38.1: suspend/resume a same-UID process (one verb,
+    # `action` param). The Swift client's suspendProcess + resumeProcess both
+    # send this single method literal.
+    "signal_process",
 })
 
 

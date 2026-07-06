@@ -51,9 +51,10 @@ each one to a typed error case):
     "process_protected"   kill_process target is pid ≤ 1, a critical
                           system process (kernel_task/launchd/…), or the
                           helper itself
-    "process_not_permitted" kill_process target is owned by another user
-                          / root (same-UID only in M1)
+    "process_not_permitted" kill_process / signal_process target is owned by
+                          another user / root (same-UID only)
     "rate_limited"        too many process actions in the rate window
+                          (shared budget across kill + suspend + resume)
 
 Auth posture
 ============
@@ -147,6 +148,11 @@ SUPPORTED_METHODS = (
     # guard matrix lives in machine_actions.py. App-side: DEVID + Settings
     # toggle + inline confirm.
     "kill_process",
+    # Machine controls v1.38.1: suspend/resume a same-UID process (SIGSTOP/
+    # SIGCONT via one verb with an `action` param). Same no-root, same-UID
+    # guard as kill_process; reuses the M1 refusal codes. App-side gate is
+    # identical (DEVID + Settings toggle + inline confirm on the Suspend).
+    "signal_process",
     # Phase 3 Iter 2B: app-side streaming + structured approvals.
     "subscribe_events",
     "approve_action",
@@ -196,7 +202,10 @@ GATE_BYPASSED_METHODS = frozenset(
      # user-facing gate is the app's "Machine controls" Settings toggle + the
      # per-action confirm sheet. A same-UID kill grants the caller (same user)
      # nothing it couldn't already do itself, so there's no privilege to gate.
-     "kill_process"}
+     "kill_process",
+     # v1.38.1 suspend/resume — same rationale as kill_process (Machine tab,
+     # same-UID, no new privilege).
+     "signal_process"}
 )
 
 
@@ -363,6 +372,7 @@ class LocalSessionServer:
         list_detected_sessions: Callable[[], list[dict]] | None = None,
         get_machine_snapshot: Callable[[], dict] | None = None,
         kill_process: Callable[[int], dict] | None = None,
+        signal_process: Callable[[int, str], dict] | None = None,
         event_broker: EventBroker | None = None,
         approval_registry: ApprovalRegistry | None = None,
         subscribe_idle_timeout_s: float = 30.0,
@@ -415,6 +425,10 @@ class LocalSessionServer:
         # pid, returns {terminated, escalated, error, code}. None ⇒ the UDS
         # method replies `not_implemented` (older wiring / unit tests).
         self._kill_process = kill_process
+        # Machine controls v1.38.1: guarded same-UID suspend/resume. Takes
+        # (pid, action) where action ∈ {"suspend","resume"} and returns
+        # {signaled, action, error, code}. None ⇒ `not_implemented`.
+        self._signal_process = signal_process
         # Phase 3 Iter 2B: the broker drives `subscribe_events` and
         # the registry drives `approve_action` / `get_pending_approvals`
         # / `hook_*`. Both default to None so tests that exercise only
@@ -1358,6 +1372,37 @@ class LocalSessionServer:
             return {
                 "terminated": bool(result.get("terminated")),
                 "escalated": bool(result.get("escalated")),
+            }
+
+        if method == "signal_process":
+            # Machine controls v1.38.1: suspend (SIGSTOP) / resume (SIGCONT) a
+            # SAME-UID process. Same guard matrix + refusal codes as kill_process
+            # (in machine_actions.py); here we validate the pid + action, forward,
+            # and map an operational refusal (a non-None `code`) to the wire error
+            # the Swift client understands. A success returns {signaled, action}.
+            if self._signal_process is None:
+                raise _RequestError("not_implemented",
+                                    "signal_process unavailable on this helper")
+            pid = params.get("pid")
+            action = params.get("action")
+            if not isinstance(pid, int) or isinstance(pid, bool):
+                raise _RequestError("bad_request", "'pid' must be an integer")
+            if action not in ("suspend", "resume"):
+                raise _RequestError("bad_request",
+                                    "'action' must be 'suspend' or 'resume'")
+            try:
+                result = self._signal_process(pid, action)
+            except Exception as exc:  # noqa: BLE001 — never leak a stack to the peer
+                logger.warning("signal_process(%s, %s) raised: %s", pid, action, exc)
+                raise _RequestError("internal", "signal_process failed") from exc
+            if not isinstance(result, dict):
+                raise _RequestError("internal", "signal_process returned no result")
+            err = result.get("error")
+            if err:
+                raise _RequestError(str(result.get("code") or "internal"), str(err))
+            return {
+                "signaled": bool(result.get("signaled")),
+                "action": action,
             }
 
         if method == "install_claude_hook":
