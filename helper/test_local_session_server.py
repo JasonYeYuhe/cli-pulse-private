@@ -207,6 +207,7 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
                  resize: object | None = None,
                  get_tail_snapshot: object | None = None,
                  get_machine_snapshot: object | None = None,
+                 kill_process: object | None = None,
                  ) -> tuple[LocalSessionServer, FakeManager, dict]:
     """Spin up a server bound to a tmp socket. Returns (server, manager,
     state-dict-for-toggle-introspection).
@@ -239,6 +240,7 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
         resize=resize,
         get_tail_snapshot=get_tail_snapshot,
         get_machine_snapshot=get_machine_snapshot,
+        kill_process=kill_process,
     )
     server.start()
     return server, mgr, state
@@ -419,6 +421,118 @@ def test_hello_reports_machine_snapshot_capability_when_wired(short_sock_dir):
             "params": {"client_protocol_version": PROTOCOL_VERSION},
         })
         assert reply["result"]["capabilities"]["machine_snapshot"] is True
+    finally:
+        server.stop()
+
+
+# ── Machine controls M1: kill_process wire surface ───────────────────
+
+
+def test_kill_process_requires_auth(short_sock_dir):
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T",
+        kill_process=lambda pid: {"terminated": True, "escalated": False,
+                                  "error": None, "code": None},
+    )
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "k", "method": "kill_process", "params": {"pid": 1234},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "unauthenticated"
+    finally:
+        server.stop()
+
+
+def test_kill_process_bypasses_control_gate(short_sock_dir):
+    # Machine controls are orthogonal to session control — a kill works even
+    # when local_control_enabled is off (gate is the app-side toggle + confirm).
+    calls: list[int] = []
+
+    def _kill(pid: int) -> dict:
+        calls.append(pid)
+        return {"terminated": True, "escalated": True, "error": None, "code": None}
+
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T", enabled=False, kill_process=_kill,
+    )
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "k", "method": "kill_process", "auth_token": "T",
+            "params": {"pid": 4321},
+        })
+        assert reply["ok"] is True, reply
+        assert reply["result"] == {"terminated": True, "escalated": True}
+        assert calls == [4321]
+    finally:
+        server.stop()
+
+
+def test_kill_process_not_implemented_when_unwired(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir, token="T")  # no hook
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "k", "method": "kill_process", "auth_token": "T",
+            "params": {"pid": 1234},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "not_implemented"
+    finally:
+        server.stop()
+
+
+def test_kill_process_bad_pid_rejected(short_sock_dir):
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T",
+        kill_process=lambda pid: {"terminated": True, "escalated": False,
+                                  "error": None, "code": None},
+    )
+    try:
+        for bad in ("1234", None, 1.5, True):
+            reply = _client_call(server._socket_path, {
+                "id": "k", "method": "kill_process", "auth_token": "T",
+                "params": {"pid": bad},
+            })
+            assert reply["ok"] is False, f"pid={bad!r}"
+            assert reply["error"]["code"] == "bad_request", f"pid={bad!r}"
+    finally:
+        server.stop()
+
+
+def test_kill_process_refusal_code_forwarded(short_sock_dir):
+    # A machine_actions refusal (non-None code) becomes the wire error.code
+    # verbatim so the Swift SessionControlErrorMapping can surface it.
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T",
+        kill_process=lambda pid: {"terminated": False, "escalated": False,
+                                  "error": "owned by another user",
+                                  "code": "process_not_permitted"},
+    )
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "k", "method": "kill_process", "auth_token": "T",
+            "params": {"pid": 2000},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "process_not_permitted"
+    finally:
+        server.stop()
+
+
+def test_kill_process_hook_exception_is_internal(short_sock_dir):
+    def _boom(pid: int) -> dict:
+        raise RuntimeError("kaboom with a /Users/secret/path leak")
+
+    server, _mgr, _state = _make_server(short_sock_dir, token="T", kill_process=_boom)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "k", "method": "kill_process", "auth_token": "T",
+            "params": {"pid": 1234},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "internal"
+        # No stack / path leaked to the peer.
+        assert "secret" not in reply["error"]["message"]
     finally:
         server.stop()
 
@@ -1421,6 +1535,8 @@ _SWIFT_CLIENT_METHODS = frozenset({
     "set_local_control_enabled",
     # System Monitor S4: the macOS Machine tab's LocalSessionControlClient.
     "get_machine_snapshot",
+    # Machine controls M1: terminate a same-UID process from the Machine tab.
+    "kill_process",
 })
 
 

@@ -537,6 +537,18 @@
 "machine.state_charging" = "Cargando";
 "machine.state_discharging" = "En batería";
 "machine.state_charged" = "Cargada";
+"machine.end_process" = "Finalizar proceso…";
+"machine.kill_confirm_title" = "¿Finalizar este proceso?";
+"machine.kill_confirm_message" = "Se enviará una señal de cierre a %1$@ (PID %2$@). Si no se detiene en 2 segundos, se forzará su cierre. El trabajo sin guardar podría perderse.";
+"machine.kill_confirm_button" = "Finalizar proceso";
+"machine.kill_err_protected" = "Ese proceso está protegido por el sistema y no puede finalizarse aquí.";
+"machine.kill_err_not_permitted" = "Ese proceso pertenece a otro usuario: solo puedes finalizar tus propios procesos.";
+"machine.kill_err_not_found" = "Ese proceso ya no se está ejecutando.";
+"machine.kill_err_rate_limited" = "Demasiadas acciones: espera un momento e inténtalo de nuevo.";
+"machine.kill_err_not_confirmed" = "Se envió la señal al proceso, pero puede que aún se esté cerrando.";
+"machine.kill_err_generic" = "No se pudo finalizar el proceso.";
+"machine.controls_toggle" = "Controles de la máquina";
+"machine.controls_hint" = "Permite finalizar tus propios procesos desde la pestaña Máquina. Desactivado por defecto; cada acción pide confirmación. Solo en la versión de descarga directa (Developer ID).";
 "machine.device_health" = "Estado del dispositivo";
 
 /* Provider service-status component list (status page) */

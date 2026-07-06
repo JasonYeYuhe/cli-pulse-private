@@ -221,6 +221,28 @@ struct AdvancedSection: View {
 
             remoteControlDiagnostics
 
+            // Machine controls M1 (DEVID-only). Off by default. Purely local:
+            // gates the Machine tab's "End Process" affordance for the user's
+            // OWN processes — no root, no server round-trip, and every action
+            // still asks for an inline confirmation. Hidden on MAS (the
+            // affordance is #if DEVID_BUILD and the App Sandbox forbids it).
+            #if DEVID_BUILD
+            Toggle(isOn: Binding(
+                get: { state.machineControlsEnabled },
+                set: { state.machineControlsEnabled = $0 }
+            )) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(L10n.machine.controlsToggle)
+                        .font(.system(size: 11))
+                    Text(L10n.machine.controlsHint)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            #endif
+
             Divider()
 
             SectionHeader(title: "Debug", icon: "ladybug")

@@ -814,6 +814,18 @@
 "machine.state_charging" = "充电中";
 "machine.state_discharging" = "使用电池";
 "machine.state_charged" = "已充满";
+"machine.end_process" = "结束进程…";
+"machine.kill_confirm_title" = "结束此进程？";
+"machine.kill_confirm_message" = "向 %1$@（PID %2$@）发送退出信号。如果 2 秒内没有停止，将被强制结束。未保存的工作可能会丢失。";
+"machine.kill_confirm_button" = "结束进程";
+"machine.kill_err_protected" = "该进程受系统保护，无法在此结束。";
+"machine.kill_err_not_permitted" = "该进程属于其他用户——只能结束你自己的进程。";
+"machine.kill_err_not_found" = "该进程已不在运行。";
+"machine.kill_err_rate_limited" = "操作过于频繁——请稍候再试。";
+"machine.kill_err_not_confirmed" = "已向该进程发送信号，但它可能仍在退出中。";
+"machine.kill_err_generic" = "无法结束该进程。";
+"machine.controls_toggle" = "机器控制";
+"machine.controls_hint" = "允许在“机器”标签页中结束你自己的进程。默认关闭；每次操作都会请求确认。仅限直接下载（Developer ID）版本。";
 "machine.device_health" = "设备健康";
 
 /* Provider service-status component list (status page) */

@@ -19,11 +19,12 @@ final class MachineSnapshotTests: XCTestCase {
                 "adapter_watts": 65.0, "thermal_state": 0,
             ] as [String: Any],
             "top_processes": [
-                ["pid": 429, "name": "WindowServer", "cpu_percent": 21.9, "rss_mb": 67.5] as [String: Any],
+                ["pid": 429, "name": "WindowServer", "cpu_percent": 21.9, "rss_mb": 67.5, "uid": 0] as [String: Any],
+                // uid omitted → -1 fallback (older helper / unreadable).
                 ["pid": 3942, "name": "cli_pulse_helper", "cpu_percent": 5.8, "rss_mb": 29.5] as [String: Any],
             ],
             "capability": ["process_table": true, "battery": true, "thermal_state": true,
-                           "temps": true, "fans": true, "power": true],
+                           "temps": true, "fans": true, "power": true, "kill_process": true],
             "sensors": [
                 "cpu_power_w": 5.36, "gpu_power_w": 1.38, "ane_power_w": 0.0,
                 "system_power_w": 8.27, "cpu_temp_c": 68.4, "gpu_temp_c": 56.8,
@@ -46,6 +47,10 @@ final class MachineSnapshotTests: XCTestCase {
         XCTAssertEqual(s.topProcesses.count, 2)
         XCTAssertEqual(s.topProcesses.first?.name, "WindowServer")
         XCTAssertEqual(s.topProcesses.first?.rssMB ?? 0, 67.5, accuracy: 0.01)
+        // M1: uid decoded when present (root=0), falls back to -1 when absent.
+        XCTAssertEqual(s.topProcesses.first?.uid, 0)
+        XCTAssertEqual(s.topProcesses.last?.uid, -1)
+        XCTAssertTrue(s.can("kill_process"))
         XCTAssertEqual(s.cpuTempC!, 68.4, accuracy: 0.01)
         XCTAssertEqual(s.gpuTempC!, 56.8, accuracy: 0.01)
         XCTAssertEqual(s.systemPowerW!, 8.27, accuracy: 0.01)

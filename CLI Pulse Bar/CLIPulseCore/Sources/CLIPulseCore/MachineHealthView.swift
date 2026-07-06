@@ -15,6 +15,16 @@ public struct MachineHealthView: View {
     private let client = LocalSessionControlClient()
     private let refreshInterval: UInt64 = 2_000_000_000  // 2 s
 
+    // Machine controls M1 (DEVID-only). Off by default; gates the inline
+    // "End Process" affordance. Shares one UserDefaults key with the Settings
+    // toggle so there's no drift.
+    #if DEVID_BUILD
+    @AppStorage("cli_pulse_machine_controls_enabled") private var machineControlsEnabled = false
+    @State private var pendingKillPid: Int?     // row currently showing the inline confirm
+    @State private var killingPid: Int?         // kill RPC in flight
+    @State private var killError: String?       // last refusal / failure message
+    #endif
+
     public init() {}
 
     public var body: some View {
@@ -130,6 +140,9 @@ public struct MachineHealthView: View {
     private func processesSection(_ snap: MachineSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             SectionHeader(title: L10n.machine.topProcesses, icon: "list.bullet")
+            #if DEVID_BUILD
+            if let killError { killErrorNote(killError) }
+            #endif
             if snap.topProcesses.isEmpty {
                 Text(L10n.machine.noProcesses)
                     .font(.system(size: 10))
@@ -138,27 +151,176 @@ public struct MachineHealthView: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(snap.topProcesses.prefix(10)) { proc in
-                        HStack(spacing: 8) {
-                            Text(proc.name)
-                                .font(.system(size: 11))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Spacer()
-                            Text(String(format: "%.0f MB", proc.rssMB))
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                            Text(String(format: "%.1f%%", proc.cpuPercent))
-                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(proc.cpuPercent >= 80 ? .orange : .primary)
-                                .frame(width: 48, alignment: .trailing)
-                        }
-                        .padding(.vertical, 3)
+                        processRow(proc, snap: snap)
                         Divider().opacity(0.4)
                     }
                 }
             }
         }
     }
+
+    @ViewBuilder
+    private func processRow(_ proc: MachineSnapshot.ProcessInfo, snap: MachineSnapshot) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text(proc.name)
+                    .font(.system(size: 11))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Text(String(format: "%.0f MB", proc.rssMB))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Text(String(format: "%.1f%%", proc.cpuPercent))
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(proc.cpuPercent >= 80 ? .orange : .primary)
+                    .frame(width: 48, alignment: .trailing)
+                #if DEVID_BUILD
+                if canOfferKill(proc, snap: snap) {
+                    Button {
+                        killError = nil
+                        pendingKillPid = (pendingKillPid == proc.pid) ? nil : proc.pid
+                    } label: {
+                        Image(systemName: "xmark.circle")
+                            .font(.system(size: 11))
+                            .foregroundStyle(pendingKillPid == proc.pid ? .red : .secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(L10n.machine.endProcess)
+                    .disabled(killingPid != nil)
+                }
+                #endif
+            }
+            .padding(.vertical, 3)
+            #if DEVID_BUILD
+            // Re-gate the open confirm card on the SAME predicate as the button
+            // (not just pendingKillPid) so it disappears the instant the Settings
+            // toggle is turned off, the capability drops, or the row's owner uid
+            // changes — otherwise a stale card would keep a live destructive
+            // button after the gate would have hidden it.
+            if pendingKillPid == proc.pid, canOfferKill(proc, snap: snap) {
+                killConfirmCard(proc)
+            }
+            #endif
+        }
+    }
+
+    // MARK: - Machine controls (M1, DEVID-only)
+
+    #if DEVID_BUILD
+    private func canOfferKill(_ proc: MachineSnapshot.ProcessInfo, snap: MachineSnapshot) -> Bool {
+        MachineControlGate.canOfferKill(
+            machineControlsEnabled: machineControlsEnabled,
+            capabilityKillProcess: snap.can("kill_process"),
+            processUID: proc.uid,
+            currentUID: Int(getuid())
+        )
+    }
+
+    @ViewBuilder
+    private func killConfirmCard(_ proc: MachineSnapshot.ProcessInfo) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(L10n.machine.killConfirmTitle)
+                .font(.system(size: 11, weight: .semibold))
+            Text(L10n.machine.killConfirmMessage(proc.name, "\(proc.pid)"))
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Spacer()
+                Button(L10n.common.cancel) { pendingKillPid = nil }
+                    .controlSize(.small)
+                    .disabled(killingPid == proc.pid)
+                Button(role: .destructive) {
+                    // Set the in-flight guard SYNCHRONOUSLY here (the button
+                    // action runs on the main actor) — performKill sets it only
+                    // after its first `await`, so without this a rapid double-tap
+                    // would spawn two kill RPCs before `.disabled` engages.
+                    guard killingPid == nil else { return }
+                    killingPid = proc.pid
+                    Task { await performKill(proc) }
+                } label: {
+                    HStack(spacing: 4) {
+                        if killingPid == proc.pid { ProgressView().controlSize(.mini) }
+                        Text(L10n.machine.killConfirmButton)
+                    }
+                }
+                .controlSize(.small)
+                .disabled(killingPid == proc.pid)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.red.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.vertical, 4)
+    }
+
+    private func killErrorNote(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            Button { killError = nil } label: {
+                Image(systemName: "xmark").font(.system(size: 9))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.tertiary)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func performKill(_ proc: MachineSnapshot.ProcessInfo) async {
+        // `killingPid` was set synchronously by the button action (re-entrancy
+        // guard). Clear any prior error before we start.
+        await MainActor.run { killError = nil }
+        do {
+            let result = try await client.killProcess(pid: proc.pid)
+            await MainActor.run {
+                killingPid = nil
+                pendingKillPid = nil
+                // The helper signalled the process but couldn't confirm it died
+                // within the grace/SIGKILL window (e.g. stuck in uninterruptible
+                // I/O). Surface a soft, non-fatal note rather than silently
+                // implying success — the field would otherwise be dead weight.
+                if !result.terminated {
+                    killError = L10n.machine.killErrNotConfirmed
+                }
+            }
+            // Refresh immediately so the (now-dead) row drops without waiting
+            // for the 2 s poll. A failed refresh just leaves the row until the
+            // next tick — non-fatal.
+            if let fresh = try? await client.getMachineSnapshot() {
+                await MainActor.run { snapshot = fresh }
+            }
+        } catch {
+            await MainActor.run {
+                killingPid = nil
+                pendingKillPid = nil
+                killError = killErrorMessage(error)
+            }
+        }
+    }
+
+    private func killErrorMessage(_ error: Error) -> String {
+        guard let sce = error as? SessionControlError else { return L10n.machine.killErrGeneric }
+        switch sce {
+        case .processProtected:    return L10n.machine.killErrProtected
+        case .processNotPermitted: return L10n.machine.killErrNotPermitted
+        case .processNotFound:     return L10n.machine.killErrNotFound
+        case .rateLimited:         return L10n.machine.killErrRateLimited
+        default:                   return L10n.machine.killErrGeneric
+        }
+    }
+    #endif
 
     // MARK: - States
 

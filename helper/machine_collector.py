@@ -39,6 +39,11 @@ class ProcessInfo:
     name: str
     cpu_percent: float
     rss_mb: float
+    # Owner UID. Surfaced so the Mac app can offer the M1 "End Process"
+    # affordance ONLY on same-UID rows (a root/other-user pid can't be
+    # killed without the future root helper). NEVER synced — the whole
+    # per-process table stays local (see module docstring).
+    uid: int = -1
 
 
 @dataclass
@@ -76,22 +81,23 @@ class MachineSnapshot:
 
 
 def parse_top_processes(ps_stdout: str, limit: int = 12) -> list[ProcessInfo]:
-    """Parse `ps -Aceo pid,pcpu,rss,comm -r` output (already sorted CPU desc).
+    """Parse `ps -Aceo pid,uid,pcpu,rss,comm -r` output (already sorted CPU desc).
 
     RSS is in KiB; `comm` may contain spaces ("Google Chrome Helper (Renderer)")
     so it is the trailing free-form field. A header row and any malformed row are
-    skipped. Returns at most `limit` rows.
+    skipped. Returns at most `limit` rows. The `uid` column lets the Mac app gate
+    the M1 "End Process" affordance to same-UID rows.
     """
     rows: list[ProcessInfo] = []
     for line in ps_stdout.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
-        parts = stripped.split(None, 3)
-        if len(parts) < 4:
+        parts = stripped.split(None, 4)
+        if len(parts) < 5:
             continue
-        pid_s, cpu_s, rss_s, comm = parts
-        if not pid_s.isdigit():   # header row ("PID %CPU RSS COMM") or junk
+        pid_s, uid_s, cpu_s, rss_s, comm = parts
+        if not pid_s.isdigit():   # header row ("PID UID %CPU RSS COMM") or junk
             continue
         try:
             rows.append(ProcessInfo(
@@ -99,6 +105,7 @@ def parse_top_processes(ps_stdout: str, limit: int = 12) -> list[ProcessInfo]:
                 name=comm.strip(),
                 cpu_percent=round(float(cpu_s), 1),
                 rss_mb=round(int(rss_s) / 1024.0, 1),
+                uid=int(uid_s) if uid_s.isdigit() else -1,
             ))
         except (ValueError, TypeError):
             continue
@@ -285,7 +292,7 @@ def _run(argv: list[str], *, timeout: float = 5.0, binary: bool = False):
 
 
 def collect_top_processes(limit: int = 12) -> list[ProcessInfo]:
-    out = _run(["ps", "-Aceo", "pid,pcpu,rss,comm", "-r"], timeout=10.0)
+    out = _run(["ps", "-Aceo", "pid,uid,pcpu,rss,comm", "-r"], timeout=10.0)
     if not out:
         return []
     return parse_top_processes(out, limit=limit)
@@ -362,10 +369,28 @@ def build_capability(battery: BatteryThermal, sensors: Optional[dict]) -> dict[s
     return cap
 
 
+def local_control_capability() -> dict[str, bool]:
+    """LOCAL-ONLY control capabilities — advertised in the UDS snapshot but
+    deliberately NOT merged into `build_capability` (which feeds the compact
+    heartbeat synced to `devices`).
+
+    M1: the unsandboxed user LaunchAgent can always kill(2) its own same-UID
+    processes, so `kill_process` is true here. It's meaningless in the cloud /
+    mobile view (you can't kill a process remotely), so it stays out of the
+    synced blob. The key is absent on pre-M1 helpers, so a new Mac app talking
+    to an old helper naturally sees no kill capability and hides the affordance.
+    The app ADDITIONALLY gates on #if DEVID_BUILD + a Settings toggle + a
+    same-UID row + an inline confirm.
+    """
+    return {"kill_process": True}
+
+
 def collect_machine_snapshot(limit: int = 12, sensors: Optional[dict] = None) -> MachineSnapshot:
     """Full LOCAL snapshot for the UDS `get_machine_snapshot` method."""
     battery = collect_battery_thermal()
     mem_pct, used_bytes, total_bytes = collect_memory()
+    capability = build_capability(battery, sensors)
+    capability.update(local_control_capability())   # local-only controls (M1)
     return MachineSnapshot(
         collected_at=datetime.now(timezone.utc).isoformat(),
         cpu_percent=collect_cpu_percent(),
@@ -374,7 +399,7 @@ def collect_machine_snapshot(limit: int = 12, sensors: Optional[dict] = None) ->
         memory_total_bytes=total_bytes,
         battery=battery,
         top_processes=collect_top_processes(limit=limit),
-        capability=build_capability(battery, sensors),
+        capability=capability,
         sensors=sensors,
     )
 
@@ -401,7 +426,8 @@ def machine_snapshot_dict(snap: MachineSnapshot) -> dict:
             "thermal_state": b.thermal_state,
         },
         "top_processes": [
-            {"pid": p.pid, "name": p.name, "cpu_percent": p.cpu_percent, "rss_mb": p.rss_mb}
+            {"pid": p.pid, "name": p.name, "cpu_percent": p.cpu_percent,
+             "rss_mb": p.rss_mb, "uid": p.uid}
             for p in snap.top_processes
         ],
         "capability": snap.capability,

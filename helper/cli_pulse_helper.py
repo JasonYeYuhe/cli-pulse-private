@@ -743,6 +743,24 @@ def daemon(args: argparse.Namespace) -> None:
                 sensors = None
             return machine_snapshot_dict(collect_machine_snapshot(sensors=sensors))
 
+        # Machine controls M1: one guard instance shared across connections
+        # (its only mutable state is the rate-limit window, which is
+        # lock-guarded). Constructed lazily-safe: a stale import must not
+        # break the whole UDS server, so fall back to None (→ the verb
+        # replies `not_implemented`).
+        try:
+            from machine_actions import MachineActions
+            _machine_actions = MachineActions()
+
+            def _kill_process_local(pid: int) -> dict:
+                # SAME-UID only, NO root. The guard (same-UID / deny-list /
+                # SIGTERM→grace→SIGKILL / rate-limit) is entirely inside
+                # MachineActions; this hook is a thin bridge to the UDS server.
+                return _machine_actions.kill_process(pid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("machine_actions unavailable — kill_process disabled: %s", exc)
+            _kill_process_local = None  # type: ignore[assignment]
+
         local_uds_server = LocalSessionServer(
             socket_path=default_socket_path(),
             get_auth_token=_get_token,
@@ -757,6 +775,7 @@ def daemon(args: argparse.Namespace) -> None:
             get_tail_snapshot=_get_tail_snapshot_local,
             list_detected_sessions=_list_detected_local,
             get_machine_snapshot=_machine_snapshot_local,
+            kill_process=_kill_process_local,
             # Iter 2B: broker drives subscribe_events; registry
             # backs approve_action / get_pending_approvals plus
             # the hook-side hook_create_approval / wait_decision

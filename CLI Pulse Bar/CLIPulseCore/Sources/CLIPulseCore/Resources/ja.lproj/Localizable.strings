@@ -814,6 +814,18 @@
 "machine.state_charging" = "充電中";
 "machine.state_discharging" = "バッテリー駆動";
 "machine.state_charged" = "満充電";
+"machine.end_process" = "プロセスを終了…";
+"machine.kill_confirm_title" = "このプロセスを終了しますか？";
+"machine.kill_confirm_message" = "%1$@（PID %2$@）に終了シグナルを送信します。2 秒以内に停止しない場合は強制終了されます。保存していない作業は失われる可能性があります。";
+"machine.kill_confirm_button" = "プロセスを終了";
+"machine.kill_err_protected" = "このプロセスはシステムに保護されており、ここでは終了できません。";
+"machine.kill_err_not_permitted" = "このプロセスは別のユーザーのものです。終了できるのは自分のプロセスのみです。";
+"machine.kill_err_not_found" = "このプロセスはすでに実行されていません。";
+"machine.kill_err_rate_limited" = "操作が多すぎます。しばらくしてから再試行してください。";
+"machine.kill_err_not_confirmed" = "プロセスにシグナルを送信しましたが、まだ終了処理中の可能性があります。";
+"machine.kill_err_generic" = "プロセスを終了できませんでした。";
+"machine.controls_toggle" = "マシン制御";
+"machine.controls_hint" = "「マシン」タブから自分のプロセスを終了できるようにします。デフォルトはオフで、操作ごとに確認します。直接ダウンロード（Developer ID）版のみ。";
 "machine.device_health" = "デバイスの状態";
 
 /* Provider service-status component list (status page) */
