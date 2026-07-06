@@ -8,10 +8,10 @@ import machine_collector as mc
 
 class TestParseTopProcesses(unittest.TestCase):
     SAMPLE = (
-        "  PID  %CPU    RSS COMM\n"
-        "  429  21.9  67512 WindowServer\n"
-        "33608  39.7 648848 Google Chrome Helper (Renderer)\n"
-        " 3942   5.8  29536 cli_pulse_helper\n"
+        "  PID   UID  %CPU    RSS COMM\n"
+        "  429     0  21.9  67512 WindowServer\n"
+        "33608   501  39.7 648848 Google Chrome Helper (Renderer)\n"
+        " 3942   501   5.8  29536 cli_pulse_helper\n"
     )
 
     def test_parses_and_ranks(self):
@@ -22,6 +22,18 @@ class TestParseTopProcesses(unittest.TestCase):
         self.assertAlmostEqual(rows[0].cpu_percent, 21.9)
         # RSS 67512 KiB -> ~65.9 MB
         self.assertAlmostEqual(rows[0].rss_mb, round(67512 / 1024.0, 1))
+
+    def test_uid_column_parsed(self):
+        rows = mc.parse_top_processes(self.SAMPLE, limit=10)
+        self.assertEqual(rows[0].uid, 0)      # WindowServer runs as root
+        self.assertEqual(rows[1].uid, 501)    # user-owned
+        self.assertEqual(rows[2].uid, 501)
+
+    def test_non_digit_uid_falls_back(self):
+        sample = "  429     x  21.9  67512 WindowServer\n"
+        rows = mc.parse_top_processes(sample, limit=10)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].uid, -1)
 
     def test_comm_with_spaces_is_preserved(self):
         rows = mc.parse_top_processes(self.SAMPLE, limit=10)
@@ -37,7 +49,9 @@ class TestParseTopProcesses(unittest.TestCase):
 
     def test_empty_and_malformed(self):
         self.assertEqual(mc.parse_top_processes("", limit=5), [])
+        # Rows with fewer than 5 whitespace-separated fields are skipped.
         self.assertEqual(mc.parse_top_processes("garbage\nx y\n", limit=5), [])
+        self.assertEqual(mc.parse_top_processes("1 2 3 4\n", limit=5), [])
 
 
 class TestParseIoregBattery(unittest.TestCase):
@@ -155,6 +169,17 @@ class TestBuildCapability(unittest.TestCase):
         self.assertFalse(cap["fans"])
         self.assertFalse(cap["power"])
 
+    def test_build_capability_excludes_kill_process(self):
+        # M1: kill_process is a LOCAL-only control capability. It must NOT be in
+        # build_capability, because build_capability feeds the compact heartbeat
+        # synced to `devices` and a "can kill" flag is meaningless remotely.
+        bt = mc.BatteryThermal(has_battery=False, thermal_state=None)
+        cap = mc.build_capability(bt, None)
+        self.assertNotIn("kill_process", cap)
+
+    def test_local_control_capability_has_kill(self):
+        self.assertTrue(mc.local_control_capability()["kill_process"])
+
     def test_desktop_no_battery(self):
         bt = mc.BatteryThermal(has_battery=False, thermal_state=None)
         cap = mc.build_capability(bt, None)
@@ -168,6 +193,29 @@ class TestBuildCapability(unittest.TestCase):
         self.assertTrue(cap["temps"])
         self.assertTrue(cap["fans"])
         self.assertTrue(cap["power"])
+
+
+class TestMachineSnapshotDict(unittest.TestCase):
+    def test_top_processes_include_uid(self):
+        snap = mc.MachineSnapshot(
+            collected_at="2026-07-06T00:00:00+00:00",
+            cpu_percent=10, memory_percent=50,
+            memory_used_bytes=1, memory_total_bytes=2,
+            battery=mc.BatteryThermal(has_battery=False),
+            top_processes=[mc.ProcessInfo(pid=42, name="foo", cpu_percent=1.0,
+                                          rss_mb=2.0, uid=501)],
+            capability={**mc.build_capability(mc.BatteryThermal(), None),
+                        **mc.local_control_capability()},
+        )
+        d = mc.machine_snapshot_dict(snap)
+        self.assertEqual(d["top_processes"][0]["uid"], 501)
+        self.assertTrue(d["capability"]["kill_process"])
+
+    def test_collect_machine_snapshot_advertises_kill_locally(self):
+        # The real local snapshot (shells out to ps/ioreg/etc. on macOS) carries
+        # the local-only kill_process capability that build_capability omits.
+        snap = mc.collect_machine_snapshot(limit=1)
+        self.assertTrue(snap.capability.get("kill_process"))
 
 
 class TestHeartbeatMetrics(unittest.TestCase):
@@ -192,6 +240,8 @@ class TestHeartbeatMetrics(unittest.TestCase):
         self.assertIn("capability", m)
         # No per-process rows ever synced.
         self.assertNotIn("top_processes", m)
+        # M1: the local-only kill_process capability must never reach the cloud.
+        self.assertNotIn("kill_process", m["capability"])
 
     def test_desktop_no_battery_still_returns_capability(self):
         self._patch_battery(mc.BatteryThermal(has_battery=False, thermal_state=0))

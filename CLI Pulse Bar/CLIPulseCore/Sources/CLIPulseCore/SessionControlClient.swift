@@ -361,6 +361,18 @@ public enum SessionControlError: Error, Equatable, Sendable, CustomStringConvert
     /// one).
     case spawnFailed(detail: String)
 
+    // ── Machine controls M1: kill_process refusals ──────────────
+    /// The pid no longer exists (or vanished before the kill landed).
+    case processNotFound
+    /// The target is pid ≤ 1, a critical system process (kernel_task,
+    /// launchd, WindowServer, loginwindow, …), or the helper itself.
+    case processProtected
+    /// The target is owned by another user / root. M1 is same-UID only;
+    /// killing a root/other-user process needs the future root helper.
+    case processNotPermitted
+    /// Too many process actions in the helper's rate window — slow down.
+    case rateLimited
+
     public var description: String {
         switch self {
         case .helperNotRunning:    return "helper not running"
@@ -379,6 +391,10 @@ public enum SessionControlError: Error, Equatable, Sendable, CustomStringConvert
         case .approvalCapabilityInvalid: return "approval capability invalid"
         case .approvalLimitReached: return "too many pending approvals"
         case .spawnFailed(let detail):     return "spawn failed: \(detail)"
+        case .processNotFound:     return "process not found"
+        case .processProtected:    return "process is protected"
+        case .processNotPermitted: return "process owned by another user"
+        case .rateLimited:         return "too many process actions"
         case .invalidResponse(let detail): return "invalid response: \(detail)"
         case .internalError(let detail):   return "internal error: \(detail)"
         }
@@ -410,6 +426,12 @@ public enum SessionControlErrorMapping {
         case "approval_not_allowed":       return .approvalNotAllowed
         case "approval_capability_invalid": return .approvalCapabilityInvalid
         case "approval_limit_reached":     return .approvalLimitReached
+        // Machine controls M1 (kill_process). Codes match
+        // helper/machine_actions.py CODE_* constants.
+        case "process_not_found":     return .processNotFound
+        case "process_protected":     return .processProtected
+        case "process_not_permitted": return .processNotPermitted
+        case "rate_limited":          return .rateLimited
         default:                  return .internalError("\(code): \(message)")
         }
     }

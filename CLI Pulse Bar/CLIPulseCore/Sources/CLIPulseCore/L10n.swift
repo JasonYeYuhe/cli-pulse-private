@@ -67,6 +67,21 @@ public enum L10n {
         public static var stateCharging: String { tr("machine.state_charging") }
         public static var stateDischarging: String { tr("machine.state_discharging") }
         public static var stateCharged: String { tr("machine.state_charged") }
+        // Machine controls M1 (kill_process).
+        public static var endProcess: String { tr("machine.end_process") }
+        public static var killConfirmTitle: String { tr("machine.kill_confirm_title") }
+        public static func killConfirmMessage(_ name: String, _ pid: String) -> String {
+            tr("machine.kill_confirm_message", name, pid)
+        }
+        public static var killConfirmButton: String { tr("machine.kill_confirm_button") }
+        public static var killErrProtected: String { tr("machine.kill_err_protected") }
+        public static var killErrNotPermitted: String { tr("machine.kill_err_not_permitted") }
+        public static var killErrNotFound: String { tr("machine.kill_err_not_found") }
+        public static var killErrRateLimited: String { tr("machine.kill_err_rate_limited") }
+        public static var killErrNotConfirmed: String { tr("machine.kill_err_not_confirmed") }
+        public static var killErrGeneric: String { tr("machine.kill_err_generic") }
+        public static var controlsToggle: String { tr("machine.controls_toggle") }
+        public static var controlsHint: String { tr("machine.controls_hint") }
     }
 
     // MARK: - Dashboard

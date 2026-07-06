@@ -46,6 +46,14 @@ each one to a typed error case):
     "not_controllable"    the id IS visible (detected via process
                           scanning) but the helper does not own its
                           PTY, so write/stop is not safe to attempt
+    "process_not_found"   kill_process referenced a pid that does not
+                          exist (or vanished before the kill)
+    "process_protected"   kill_process target is pid ≤ 1, a critical
+                          system process (kernel_task/launchd/…), or the
+                          helper itself
+    "process_not_permitted" kill_process target is owned by another user
+                          / root (same-UID only in M1)
+    "rate_limited"        too many process actions in the rate window
 
 Auth posture
 ============
@@ -134,6 +142,11 @@ SUPPORTED_METHODS = (
     # System Monitor S2: read-only machine-health snapshot (per-process CPU/mem,
     # battery health, thermal state; S3 adds native temps/fans/power).
     "get_machine_snapshot",
+    # Machine controls M1: terminate a same-UID process from the top-N list.
+    # NO root — the unsandboxed user helper may kill(2) its own processes; the
+    # guard matrix lives in machine_actions.py. App-side: DEVID + Settings
+    # toggle + inline confirm.
+    "kill_process",
     # Phase 3 Iter 2B: app-side streaming + structured approvals.
     "subscribe_events",
     "approve_action",
@@ -177,7 +190,13 @@ GATE_BYPASSED_METHODS = frozenset(
      # Machine-health monitoring is read-only and orthogonal to the remote
      # session-control toggle (which gates spawning/driving sessions). It still
      # requires the app auth_token — it just doesn't require local_control_enabled.
-     "get_machine_snapshot"}
+     "get_machine_snapshot",
+     # M1 process actions belong to the Machine tab, not session control, so
+     # they too bypass local_control_enabled. Still auth-gated (app token); the
+     # user-facing gate is the app's "Machine controls" Settings toggle + the
+     # per-action confirm sheet. A same-UID kill grants the caller (same user)
+     # nothing it couldn't already do itself, so there's no privilege to gate.
+     "kill_process"}
 )
 
 
@@ -343,6 +362,7 @@ class LocalSessionServer:
         get_tail_snapshot: Callable[[str, int], dict | None] | None = None,
         list_detected_sessions: Callable[[], list[dict]] | None = None,
         get_machine_snapshot: Callable[[], dict] | None = None,
+        kill_process: Callable[[int], dict] | None = None,
         event_broker: EventBroker | None = None,
         approval_registry: ApprovalRegistry | None = None,
         subscribe_idle_timeout_s: float = 30.0,
@@ -391,6 +411,10 @@ class LocalSessionServer:
         # battery/thermal + capability). None ⇒ the UDS method replies
         # `not_implemented` (older wiring / unit tests that omit it).
         self._get_machine_snapshot = get_machine_snapshot
+        # Machine controls M1: guarded same-UID process termination. Takes a
+        # pid, returns {terminated, escalated, error, code}. None ⇒ the UDS
+        # method replies `not_implemented` (older wiring / unit tests).
+        self._kill_process = kill_process
         # Phase 3 Iter 2B: the broker drives `subscribe_events` and
         # the registry drives `approve_action` / `get_pending_approvals`
         # / `hook_*`. Both default to None so tests that exercise only
@@ -1303,6 +1327,38 @@ class LocalSessionServer:
             except Exception as exc:  # noqa: BLE001 — never leak a stack to the peer
                 logger.warning("get_machine_snapshot failed: %s", exc)
                 raise _RequestError("internal", "machine snapshot unavailable") from exc
+
+        if method == "kill_process":
+            # Machine controls M1: terminate a SAME-UID process (SIGTERM →
+            # grace → SIGKILL). The guard matrix (same-UID, deny-list,
+            # rate-limit) lives in machine_actions.py; here we just validate
+            # the pid type, forward, and map an operational refusal (a
+            # non-None `code` in the result) to the wire error the Swift
+            # client understands. A successful kill returns {terminated,
+            # escalated}.
+            if self._kill_process is None:
+                raise _RequestError("not_implemented",
+                                    "kill_process unavailable on this helper")
+            pid = params.get("pid")
+            if not isinstance(pid, int) or isinstance(pid, bool):
+                raise _RequestError("bad_request", "'pid' must be an integer")
+            try:
+                result = self._kill_process(pid)
+            except Exception as exc:  # noqa: BLE001 — never leak a stack to the peer
+                logger.warning("kill_process(%s) raised: %s", pid, exc)
+                raise _RequestError("internal", "kill_process failed") from exc
+            if not isinstance(result, dict):
+                raise _RequestError("internal", "kill_process returned no result")
+            err = result.get("error")
+            if err:
+                # `code` is a stable machine_actions wire code (process_not_found
+                # / process_protected / process_not_permitted / rate_limited /
+                # internal) forwarded verbatim to the Swift error mapping.
+                raise _RequestError(str(result.get("code") or "internal"), str(err))
+            return {
+                "terminated": bool(result.get("terminated")),
+                "escalated": bool(result.get("escalated")),
+            }
 
         if method == "install_claude_hook":
             # Phase 4 helper-bundling: app asks helper to write the

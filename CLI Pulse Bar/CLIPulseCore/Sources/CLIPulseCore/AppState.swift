@@ -608,6 +608,14 @@ public final class AppState: ObservableObject {
     @AppStorage("cli_pulse_hide_personal_info") public var hidePersonalInfo = false
     @AppStorage("cli_pulse_appearance") public var appearanceModeRaw = 0
 
+    // MARK: - Machine controls (M1)
+    /// Off by default, DEVID-only. Gates the Machine tab's "End Process"
+    /// affordance — no destructive verb is reachable until the owner opts in
+    /// (mirrors the Remote Control / local-fast-path opt-in posture). Read
+    /// directly via @AppStorage in MachineHealthView, so the toggle and the
+    /// affordance share one UserDefaults key with no drift.
+    @AppStorage("cli_pulse_machine_controls_enabled") public var machineControlsEnabled = false
+
     public var appearanceMode: ColorScheme? {
         switch appearanceModeRaw {
         case 1: return .light

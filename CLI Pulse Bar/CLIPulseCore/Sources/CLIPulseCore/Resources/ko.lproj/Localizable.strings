@@ -537,6 +537,18 @@
 "machine.state_charging" = "충전 중";
 "machine.state_discharging" = "배터리 사용";
 "machine.state_charged" = "완충";
+"machine.end_process" = "프로세스 종료…";
+"machine.kill_confirm_title" = "이 프로세스를 종료할까요?";
+"machine.kill_confirm_message" = "%1$@(PID %2$@)에 종료 신호를 보냅니다. 2초 이내에 멈추지 않으면 강제 종료됩니다. 저장하지 않은 작업이 손실될 수 있습니다.";
+"machine.kill_confirm_button" = "프로세스 종료";
+"machine.kill_err_protected" = "이 프로세스는 시스템에서 보호되어 여기서 종료할 수 없습니다.";
+"machine.kill_err_not_permitted" = "이 프로세스는 다른 사용자의 것입니다. 본인의 프로세스만 종료할 수 있습니다.";
+"machine.kill_err_not_found" = "이 프로세스는 더 이상 실행 중이 아닙니다.";
+"machine.kill_err_rate_limited" = "작업이 너무 많습니다. 잠시 후 다시 시도하세요.";
+"machine.kill_err_not_confirmed" = "프로세스에 신호를 보냈지만 아직 종료 중일 수 있습니다.";
+"machine.kill_err_generic" = "프로세스를 종료하지 못했습니다.";
+"machine.controls_toggle" = "머신 제어";
+"machine.controls_hint" = "'머신' 탭에서 본인의 프로세스를 종료할 수 있게 합니다. 기본값은 꺼짐이며, 각 작업마다 확인을 요청합니다. 다이렉트 다운로드(Developer ID) 빌드 전용.";
 "machine.device_health" = "기기 상태";
 
 /* Provider service-status component list (status page) */

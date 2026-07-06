@@ -812,6 +812,18 @@
 "machine.state_charging" = "Charging";
 "machine.state_discharging" = "On battery";
 "machine.state_charged" = "Charged";
+"machine.end_process" = "End Process…";
+"machine.kill_confirm_title" = "End this process?";
+"machine.kill_confirm_message" = "Send a quit signal to %1$@ (pid %2$@). If it doesn't stop within 2 seconds it will be force-quit. Unsaved work may be lost.";
+"machine.kill_confirm_button" = "End Process";
+"machine.kill_err_protected" = "That process is protected by the system and can't be ended here.";
+"machine.kill_err_not_permitted" = "That process belongs to another user — only your own processes can be ended.";
+"machine.kill_err_not_found" = "That process is no longer running.";
+"machine.kill_err_rate_limited" = "Too many actions — wait a moment and try again.";
+"machine.kill_err_not_confirmed" = "The process was signalled but may still be exiting.";
+"machine.kill_err_generic" = "Couldn't end the process.";
+"machine.controls_toggle" = "Machine controls";
+"machine.controls_hint" = "Let the Machine tab end your own processes. Off by default; every action asks for confirmation. Direct-download (Developer ID) build only.";
 "machine.device_health" = "Device Health";
 
 /* Provider service-status component list (status page) */

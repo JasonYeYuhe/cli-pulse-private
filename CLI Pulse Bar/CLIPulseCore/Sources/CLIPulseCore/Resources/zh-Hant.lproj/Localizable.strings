@@ -814,6 +814,18 @@
 "machine.state_charging" = "充電中";
 "machine.state_discharging" = "使用電池";
 "machine.state_charged" = "已充滿";
+"machine.end_process" = "結束程序…";
+"machine.kill_confirm_title" = "結束此程序？";
+"machine.kill_confirm_message" = "向 %1$@（PID %2$@）傳送結束訊號。若 2 秒內沒有停止，將被強制結束。未儲存的工作可能會遺失。";
+"machine.kill_confirm_button" = "結束程序";
+"machine.kill_err_protected" = "該程序受系統保護，無法在此結束。";
+"machine.kill_err_not_permitted" = "該程序屬於其他使用者——只能結束你自己的程序。";
+"machine.kill_err_not_found" = "該程序已不在執行。";
+"machine.kill_err_rate_limited" = "操作過於頻繁——請稍候再試。";
+"machine.kill_err_not_confirmed" = "已向該程序傳送訊號，但它可能仍在結束中。";
+"machine.kill_err_generic" = "無法結束該程序。";
+"machine.controls_toggle" = "機器控制";
+"machine.controls_hint" = "允許在「機器」標籤頁中結束你自己的程序。預設關閉；每次操作都會要求確認。僅限直接下載（Developer ID）版本。";
 "machine.device_health" = "裝置健康";
 
 /* Provider service-status component list (status page) */

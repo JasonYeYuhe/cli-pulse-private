@@ -20,6 +20,20 @@ public struct LocalControlStatus: Sendable, Equatable {
     }
 }
 
+/// Machine controls M1: result of `LocalSessionControlClient.killProcess`.
+/// A refusal throws rather than returning this; a returned value means the
+/// process was signalled. `escalated` is true when SIGTERM didn't take
+/// within the grace window and the helper had to send SIGKILL.
+public struct KillProcessResult: Sendable, Equatable {
+    public let terminated: Bool
+    public let escalated: Bool
+
+    public init(terminated: Bool, escalated: Bool) {
+        self.terminated = terminated
+        self.escalated = escalated
+    }
+}
+
 /// Phase 3 Iter 2B: structured local approval row. Backed by the
 /// helper's `ApprovalRegistry` and surfaced to the UI through both
 /// `subscribe_events` (push) and `get_pending_approvals` (snapshot).
@@ -554,6 +568,21 @@ public final class LocalSessionControlClient: SessionControlClient {
     public func getMachineSnapshot() async throws -> MachineSnapshot {
         let result = try await send(method: "get_machine_snapshot", params: [:])
         return MachineSnapshot(dict: result)
+    }
+
+    /// Machine controls M1: ask the (unsandboxed) helper to terminate a
+    /// SAME-UID process by pid (SIGTERM → ~2s grace → SIGKILL). The helper's
+    /// `machine_actions` guard refuses pid ≤ 1, protected system processes,
+    /// the helper itself, another user's / root's processes, and a flood; a
+    /// refusal throws a typed `SessionControlError` (`.processNotFound` /
+    /// `.processProtected` / `.processNotPermitted` / `.rateLimited`). On
+    /// success it returns whether SIGKILL was needed. NO root — same-UID only.
+    public func killProcess(pid: Int) async throws -> KillProcessResult {
+        let result = try await send(method: "kill_process", params: ["pid": pid])
+        return KillProcessResult(
+            terminated: (result["terminated"] as? Bool) ?? false,
+            escalated: (result["escalated"] as? Bool) ?? false
+        )
     }
 
     public func stopSession(sessionId: String) async throws {
@@ -1153,6 +1182,10 @@ public struct MachineSnapshot: Sendable {
         public let name: String
         public let cpuPercent: Double
         public let rssMB: Double
+        /// Owner UID. Machine controls M1 offers "End Process" ONLY when this
+        /// equals the current user (a root/other-user pid can't be killed
+        /// without the future root helper). -1 when the helper couldn't read it.
+        public let uid: Int
         public var id: Int { pid }
     }
 
@@ -1211,7 +1244,8 @@ public struct MachineSnapshot: Sendable {
             guard let pid = i(row["pid"]), let name = row["name"] as? String else { return nil }
             return ProcessInfo(pid: pid, name: name,
                                cpuPercent: d(row["cpu_percent"]) ?? 0,
-                               rssMB: d(row["rss_mb"]) ?? 0)
+                               rssMB: d(row["rss_mb"]) ?? 0,
+                               uid: i(row["uid"]) ?? -1)
         }
 
         if let capRaw = dict["capability"] as? [String: Any] {
