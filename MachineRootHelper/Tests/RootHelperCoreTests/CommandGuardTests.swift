@@ -37,6 +37,34 @@ final class CommandGuardTests: XCTestCase {
         XCTAssertFalse(CommandGuard.isValidFanMode(-1))
     }
 
+    // MARK: boost-only clamp (M3 core safety rule)
+
+    func testBoostClampRaisesBelowAutoUpToAutoFloor() {
+        // The safety-critical case: a below-auto request must NEVER reduce
+        // cooling — it's raised up to the current auto floor.
+        XCTAssertEqual(try! CommandGuard.clampBoostTarget(requestedRPM: 800, autoFloorRPM: 1520,
+                                                          minRPM: 1499, maxRPM: 4296).get(), 1520)
+    }
+    func testBoostClampKeepsInRangeRequest() {
+        XCTAssertEqual(try! CommandGuard.clampBoostTarget(requestedRPM: 3000, autoFloorRPM: 1520,
+                                                          minRPM: 1499, maxRPM: 4296).get(), 3000)
+    }
+    func testBoostClampCapsAtMax() {
+        XCTAssertEqual(try! CommandGuard.clampBoostTarget(requestedRPM: 9000, autoFloorRPM: 1520,
+                                                          minRPM: 1499, maxRPM: 4296).get(), 4296)
+    }
+    func testBoostClampFloorItselfCappedAtMax() {
+        // A bogus auto reading above max must not push the target past max.
+        XCTAssertEqual(try! CommandGuard.clampBoostTarget(requestedRPM: 2000, autoFloorRPM: 99999,
+                                                          minRPM: 1499, maxRPM: 4296).get(), 4296)
+    }
+    func testBoostClampRefusesUnknownRangeOrFloor() {
+        XCTAssertEqual(CommandGuard.clampBoostTarget(requestedRPM: 3000, autoFloorRPM: nil,
+                                                     minRPM: 1499, maxRPM: 4296), .failure(.rangeUnavailable))
+        XCTAssertEqual(CommandGuard.clampBoostTarget(requestedRPM: 3000, autoFloorRPM: 1520,
+                                                     minRPM: nil, maxRPM: 4296), .failure(.rangeUnavailable))
+    }
+
     // MARK: kill deny-list (M4)
 
     func testDenyListRefusesCriticalProcesses() {

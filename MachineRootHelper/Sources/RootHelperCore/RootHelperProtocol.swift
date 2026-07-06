@@ -16,22 +16,40 @@ import Foundation
     /// Liveness + version handshake. No side effects.
     func ping(reply: @escaping (String) -> Void)
 
-    /// What this root-helper build can actually do. In M2 every privileged
-    /// capability is false — the app must treat a missing/false capability as
-    /// "hide the control", exactly like the user-helper's local_control_capability.
+    /// What this root-helper build can actually do. The app must treat a
+    /// missing/false capability as "hide the control", like the user-helper's
+    /// local_control_capability. `fan_control` is true once the daemon constructs
+    /// a live FanController (M0 go decided: boost-only).
     func capabilities(reply: @escaping ([String: Bool]) -> Void)
 
-    // ── DEFERRED — intentionally NOT part of the M2 protocol ──────────────────
-    //
-    // M3 fan control (ONLY after the M0 go/no-go + a real-hardware revert test):
-    //   func setFan(index: Int, mode: Int, targetRPM: Int,
-    //               reply: @escaping (_ ok: Bool, _ error: String?) -> Void)
-    //   func revertAllFansToAuto(reply: @escaping (_ ok: Bool) -> Void)
-    //   func heartbeat(reply: @escaping (_ ok: Bool) -> Void)   // dead-man's-switch feed
-    //
-    // M4 root/other-user kill (owner chose "add later"):
+    // ── M3 fan control (boost-only + heartbeat-gated; see FanController) ───────
+    // The firmware does NOT self-revert after a controller crash (M0), so this is
+    // ONLY safe with: revert-on-startup + boost-only clamp + heartbeat-gated hold
+    // + launchd KeepAlive + a user-helper watchdog. NEVER exposes an arbitrary SMC
+    // key/value — only a single boost target, clamped server-side to [auto, max].
+
+    /// JSON array of current per-fan state (index/min/max/actual/target/mode).
+    /// Read-only; the client renders the boost slider bounds off this.
+    func getFanState(reply: @escaping (_ fansJSON: String) -> Void)
+
+    /// Apply a BOOST to all fans (clamped boost-only to [auto, max]). Arms the
+    /// heartbeat — the client MUST call `fanHeartbeat` on a short interval or the
+    /// daemon reverts to auto. `appliedJSON` is the per-fan applied target.
+    func setFanBoost(targetRPM: Int,
+                     reply: @escaping (_ ok: Bool, _ error: String?, _ appliedJSON: String) -> Void)
+
+    /// Feed the dead-man's-switch. `held` is false if there was no active boost to
+    /// hold (client should stop heart-beating and refresh state).
+    func fanHeartbeat(reply: @escaping (_ held: Bool) -> Void)
+
+    /// Explicitly revert every fan to Apple auto (the client's "Auto" button and
+    /// its teardown-on-close path).
+    func revertFansToAuto(reply: @escaping (_ ok: Bool) -> Void)
+
+    // ── DEFERRED — M4 root/other-user kill (owner chose "add later") ──────────
     //   func killPid(_ pid: Int, signal: Int32,
     //                reply: @escaping (_ ok: Bool, _ error: String?) -> Void)
+    //   (see CommandGuard.isKillablePid + its ⚠️ resolve-comm-server-side note)
 }
 
 /// Well-known identifiers for the XPC interface. Kept in the core so the daemon
@@ -44,5 +62,5 @@ public enum RootHelperInterface {
     public static let machServiceName = "yyh.CLI-Pulse.machine-root-helper"
 
     /// Version string surfaced by `ping`, so a client can floor-check the daemon.
-    public static let version = "0.0.1-m2-skeleton"
+    public static let version = "0.0.2-m3-fan-boost"
 }

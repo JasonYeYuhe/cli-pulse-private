@@ -1,43 +1,37 @@
 import Foundation
+import IOKit
 import RootHelperCore
 
 // =============================================================================
-// M2 root helper daemon — SKELETON. NOT wired into any shipped build. Runs only
-// when the owner explicitly installs it (mechanism TBD after M0: SMAppService.
-// daemon or a system-domain root .pkg LaunchDaemon — either registers the Mach
-// service name below). Exposes ONLY ping/capabilities: no fan write, no kill.
-// Its whole M2 job is to prove the audit_token → SecCode → Team-ID XPC auth gate
-// end to end. Every privileged command (M3/M4) is added later, behind this same
-// authenticated listener, gated + reviewed separately.
+// machine-root-helper — root daemon for boost-only fan control (M2 auth + M3 fan).
+// NOT wired into any shipped build; runs only when the owner installs it (mechanism
+// TBD after M0 — SMAppService.daemon or a system-domain root .pkg LaunchDaemon —
+// either registers the Mach service below). REQUIRES launchd KeepAlive so a
+// SIGKILL'd daemon relaunches and reverts to auto (the firmware does NOT self-
+// revert — M0). Every command runs behind the audit_token → SecCode → Team-ID
+// gate; fan writes are boost-only + heartbeat-gated (see FanController).
 // =============================================================================
 
-// Apple Developer Team ID (leaf cert subject.OU) that every caller must carry.
 private let kTeamID = "KHMK6Q3L3K"
-// Bundle identifiers permitted to call the daemon — the app + the user-helper.
 // TODO(owner): confirm the final identifiers before this ever installs.
 private let kAllowedIdentifiers = ["yyh.CLI-Pulse", "yyh.CLI-Pulse.helper"]
+// Client silence after which a held boost reverts to auto. Short = tight stuck-
+// window bound; must exceed the client's heartbeat interval with margin.
+private let kHeartbeatTimeoutSeconds = 8.0
 
 // MARK: - Race-free peer audit token
 
 extension NSXPCConnection {
-    /// NSXPCConnection carries a private `auditToken` (`audit_token_t`) that pins
-    /// the exact sending process for this connection. There is no PUBLIC API to
-    /// authenticate a peer's code signature, so reading it is required for secure
-    /// XPC — Apple's own sample code does the equivalent via a bridging header.
-    /// We read it reflectively (KVC boxes the struct as an NSValue) and repackage
-    /// the raw bytes so `PeerAuthenticator.secCode(fromAuditToken:)` can resolve a
-    /// SecCode. Fails closed (nil) if the property shape ever changes on a future
-    /// OS — the listener then rejects the connection.
-    ///
-    /// SECURITY NOTE: prefer the per-connection `auditToken` over `processIdentifier`
-    /// — a PID is TOCTOU-vulnerable to reuse; the audit token is not.
+    /// NSXPCConnection carries a private `auditToken` (`audit_token_t`) pinning the
+    /// exact sending process. No PUBLIC API authenticates a peer's code signature,
+    /// so reading it is required for secure XPC. Read reflectively (KVC boxes the
+    /// struct as NSValue) and validated to fail CLOSED. Prefer this over
+    /// `processIdentifier` (a PID is TOCTOU-vulnerable to reuse).
     var auditTokenData: Data? {
         guard responds(to: NSSelectorFromString("auditToken")),
               let boxed = value(forKey: "auditToken") as? NSValue else { return nil }
-        // Validate the box ACTUALLY wraps an audit_token_t (32 bytes) before
-        // copying — a future OS returning a differently-shaped NSValue must fail
-        // CLOSED (nil), never yield a partially-filled (wrong) token. Checking
-        // only that the selector exists is not enough (security review Finding 1).
+        // Validate the box wraps a 32-byte audit_token_t — a future OS returning a
+        // differently-shaped NSValue must fail CLOSED, not yield a wrong token.
         let expected = MemoryLayout<audit_token_t>.size
         var boxedSize = 0
         NSGetSizeAndAlignment(boxed.objCType, &boxedSize, nil)
@@ -46,32 +40,52 @@ extension NSXPCConnection {
         var token = audit_token_t()
         boxed.getValue(&token, size: expected)
         let data = withUnsafeBytes(of: &token) { Data($0) }
-
-        // Reject an all-zero token: a zeroed audit_token_t maps to pid 0 / the
-        // kernel — never a legitimate XPC peer, and exactly what a partial fill
-        // would leave behind.
+        // Reject an all-zero token (pid 0 / kernel — never a real peer).
         guard data.contains(where: { $0 != 0 }) else { return nil }
-
-        // Belt-and-suspenders: the token's pid must match the connection's own
-        // reported pid. A mismatch means the box isn't this peer's token → reject.
-        // pid is val[5] of audit_token_t (auid,euid,egid,ruid,rgid,PID,asid,pidver)
-        // — read directly to avoid a libbsm link dependency for one accessor.
+        // Belt-and-suspenders: token pid (val[5]) must match the connection's pid.
         let tokenPid = Int32(bitPattern: token.val.5)
         guard tokenPid > 0, tokenPid == processIdentifier else { return nil }
         return data
     }
 }
 
-// MARK: - Exported object (M2: introspection only, zero privileged effect)
+// MARK: - Exported object (shares ONE FanController across all connections)
 
 final class RootHelper: NSObject, MachineRootHelperProtocol {
+    private let fan: FanController
+    init(fan: FanController) { self.fan = fan }
+
     func ping(reply: @escaping (String) -> Void) {
         reply("machine-root-helper \(RootHelperInterface.version) alive (pid \(getpid()), euid \(geteuid()))")
     }
     func capabilities(reply: @escaping ([String: Bool]) -> Void) {
-        // M2: NO privileged capability is live. The client hides every control
-        // whose capability is false/absent — same discipline as the user-helper.
-        reply(["fan_control": false, "root_kill": false])
+        // Fan control is LIVE (boost-only). root_kill (M4) stays off.
+        reply(["fan_control": true, "root_kill": false])
+    }
+    func getFanState(reply: @escaping (String) -> Void) {
+        reply(Self.jsonFans(fan.snapshot()))
+    }
+    func setFanBoost(targetRPM: Int, reply: @escaping (Bool, String?, String) -> Void) {
+        let r = fan.applyBoost(targetRPM: Double(targetRPM))
+        let applied = r.appliedTargets.map { ["index": $0.key, "rpm": Int($0.value.rounded())] as [String: Int] }
+        let json = (try? JSONSerialization.data(withJSONObject: applied)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        reply(r.ok, r.error, json)
+    }
+    func fanHeartbeat(reply: @escaping (Bool) -> Void) {
+        let held = fan.isBoostActive
+        if held { fan.heartbeat() }
+        reply(held)
+    }
+    func revertFansToAuto(reply: @escaping (Bool) -> Void) {
+        reply(fan.revertToAuto().ok)
+    }
+
+    private static func jsonFans(_ fans: [FanState]) -> String {
+        let arr = fans.map { [
+            "index": $0.index, "min": Int($0.minRPM.rounded()), "max": Int($0.maxRPM.rounded()),
+            "actual": Int($0.actualRPM.rounded()), "target": Int($0.targetRPM.rounded()), "mode": $0.mode,
+        ] as [String: Int] }
+        return (try? JSONSerialization.data(withJSONObject: arr)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
     }
 }
 
@@ -79,26 +93,22 @@ final class RootHelper: NSObject, MachineRootHelperProtocol {
 
 final class ServiceDelegate: NSObject, NSXPCListenerDelegate {
     private let auth = PeerAuthenticator(teamID: kTeamID, allowedIdentifiers: kAllowedIdentifiers)
+    private let fan: FanController
+    init(fan: FanController) { self.fan = fan }
 
     func listener(_ listener: NSXPCListener,
                   shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
-        // THE SECURITY GATE. Reject any peer that is not our Team-ID-signed
+        // THE SECURITY GATE — reject any peer that isn't our Team-ID-signed
         // app/helper, BEFORE exporting the interface. Fail closed on every error.
         guard let tokenData = newConnection.auditTokenData else {
-            NSLog("[machine-root-helper] reject: no audit token for peer")
-            return false
+            NSLog("[machine-root-helper] reject: no audit token for peer"); return false
         }
-        let code = PeerAuthenticator.secCode(fromAuditToken: tokenData)
-        switch auth.decide(peerCode: code) {
-        case .accept:
-            break
-        case .reject(let reason):
-            NSLog("[machine-root-helper] reject: \(reason)")
-            return false
+        switch auth.decide(peerCode: PeerAuthenticator.secCode(fromAuditToken: tokenData)) {
+        case .accept: break
+        case .reject(let reason): NSLog("[machine-root-helper] reject: \(reason)"); return false
         }
-
         newConnection.exportedInterface = NSXPCInterface(with: MachineRootHelperProtocol.self)
-        newConnection.exportedObject = RootHelper()
+        newConnection.exportedObject = RootHelper(fan: fan)   // shared controller
         newConnection.resume()
         return true
     }
@@ -106,15 +116,50 @@ final class ServiceDelegate: NSObject, NSXPCListenerDelegate {
 
 // MARK: - Entry point
 
-// Refuse to run un-privileged: the whole point is the root path. (M2 has no
-// privileged command, but installing/running as non-root signals a misconfigured
-// mechanism, so fail loudly rather than pretend.)
 if geteuid() != 0 {
     FileHandle.standardError.write("machine-root-helper must run as root (euid 0).\n".data(using: .utf8)!)
     exit(1)
 }
 
-let delegate = ServiceDelegate()
+guard let smc = RealSMC() else {
+    FileHandle.standardError.write("could not open AppleSMC.\n".data(using: .utf8)!)
+    exit(1)
+}
+
+// Construct the controller — this REVERTS every fan to auto immediately (layer 1:
+// a launchd relaunch after a SIGKILL clears the dead predecessor's stuck manual).
+let fanController = FanController(smc: smc, heartbeatTimeout: kHeartbeatTimeoutSeconds,
+                                 now: { ProcessInfo.processInfo.systemUptime })
+
+// Dead-man's-switch poll — revert to auto when the client heartbeat lapses.
+let tickTimer = Timer(timeInterval: 2.0, repeats: true) { _ in _ = fanController.tick() }
+RunLoop.main.add(tickTimer, forMode: .common)
+
+// Graceful termination → revert. Uses DispatchSource (runs OUTSIDE signal context,
+// so the SMC writes in revertToAuto are safe — a raw signal handler would not be).
+// This covers SIGTERM (launchd stop) / SIGINT; it CANNOT cover SIGKILL — that path
+// is handled by revert-on-startup + launchd KeepAlive instead.
+var signalSources: [DispatchSourceSignal] = []
+for sig in [SIGTERM, SIGINT] {
+    signal(sig, SIG_IGN)
+    let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+    src.setEventHandler {
+        // Retry the revert before exiting: on a `launchctl bootout`/uninstall the
+        // job is being REMOVED, so KeepAlive-relaunch + revert-on-startup can't
+        // save a failed revert here — this is the last chance to un-stick the fan.
+        var reverted = false
+        for _ in 0..<5 {
+            if fanController.revertToAuto().ok { reverted = true; break }
+            usleep(200_000)   // 0.2s between tries — transient SMC busy
+        }
+        NSLog("[machine-root-helper] signal — fans reverted=%@; exiting", reverted ? "yes" : "NO")
+        exit(reverted ? 0 : 1)
+    }
+    src.resume()
+    signalSources.append(src)
+}
+
+let delegate = ServiceDelegate(fan: fanController)
 let listener = NSXPCListener(machServiceName: RootHelperInterface.machServiceName)
 listener.delegate = delegate
 NSLog("[machine-root-helper] %@ listening on %@", RootHelperInterface.version, RootHelperInterface.machServiceName)

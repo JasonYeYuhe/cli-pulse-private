@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LaunchDaemon template for the root fan-control helper. TEMPLATE — do NOT install
+  as-is: the owner finalizes the paths/identifiers and signs it. If SMAppService.
+  daemon is chosen instead (recommended), this plist ships inside the app bundle at
+  Contents/Library/LaunchDaemons/ and is registered via SMAppService — the KeepAlive
+  + MachServices keys below still apply.
+
+  ⚠️ KeepAlive is LOAD-BEARING SAFETY, not a nicety: because the firmware does not
+  self-revert a manual fan (M0), a SIGKILL'd daemon MUST be relaunched so its
+  revert-on-startup clears the stuck manual state. Do not remove it.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>yyh.CLI-Pulse.machine-root-helper</string>
+
+    <!-- TODO(owner): absolute path to the signed, notarized binary. -->
+    <key>BundleProgram</key>
+    <string>Contents/MacOS/machine-root-helper</string>
+
+    <!-- The Mach service the app connects to (must equal
+         RootHelperInterface.machServiceName). -->
+    <key>MachServices</key>
+    <dict>
+        <key>yyh.CLI-Pulse.machine-root-helper</key>
+        <true/>
+    </dict>
+
+    <!-- Relaunch on crash/kill so revert-on-startup clears a stuck fan. -->
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Run as root (fan SMC write needs it). -->
+    <key>UserName</key>
+    <string>root</string>
+
+    <!-- Hardened: no extra ports, minimal env. -->
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>yyh.CLI-Pulse</string>
+    </array>
+</dict>
+</plist>
