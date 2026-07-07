@@ -10,9 +10,37 @@
 
 #if os(macOS)
 import SwiftUI
+import AppKit
 #if canImport(Charts)
 import Charts
 #endif
+
+// MARK: - HUD frosted-glass window background (token-monitor vibrancy:'hud')
+
+/// Frosted `NSVisualEffectView` backdrop for the dashboard window — the token-
+/// monitor `vibrancy:'hud'` look. Scheme-ADAPTIVE: `.hudWindow` (dark) forced to
+/// darkAqua in dark mode, a light `.underWindowBackground` forced to aqua in
+/// light mode — so the backdrop, the `.glassCard()` tint (which reads the same
+/// colorScheme), and the system title bar all agree (no light-mode seam). No
+/// macOS 26 APIs.
+private struct HUDWindowBackground: NSViewRepresentable {
+    var isDark: Bool
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.blendingMode = .behindWindow
+        view.state = .active
+        apply(view)
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) { apply(view) }
+
+    private func apply(_ view: NSVisualEffectView) {
+        view.material = isDark ? .hudWindow : .underWindowBackground
+        view.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+    }
+}
 
 // MARK: - Heatmap blue ramp (token-monitor palette)
 
@@ -162,11 +190,7 @@ struct DashboardStatStrip: View {
                 .overlay(alignment: .leading) { Divider().opacity(0.4) }
             }
         }
-        .background(Color.white.opacity(0.03))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+        .glassCard(cornerRadius: 14, elevated: false)
     }
 }
 
@@ -314,7 +338,10 @@ public struct UsageDashboardView: View {
     /// OverviewTab entry card's `openWindow(id:)` call. Keep them in lockstep.
     public static let windowID = "usage-dashboard"
 
+    @Environment(\.colorScheme) private var colorScheme
     @State private var archive: DailyUsageArchive?
+    @State private var animatedTokens: Double = 0
+    @State private var didAnimateCountUp = false
     private let providedArchive: DailyUsageArchive?
 
     /// Live window (loads the archive snapshot on appear).
@@ -328,6 +355,7 @@ public struct UsageDashboardView: View {
                 .padding(20)
         }
         .frame(minWidth: 760, minHeight: 620)
+        .background(HUDWindowBackground(isDark: colorScheme == .dark).ignoresSafeArea())
         .task { await reload() }
         .onReceive(NotificationCenter.default.publisher(for: .dailyUsageArchiveDidChange)) { _ in
             Task { await reload() }
@@ -336,8 +364,22 @@ public struct UsageDashboardView: View {
 
     @MainActor
     private func reload() async {
-        guard providedArchive == nil else { return }
-        archive = await DailyUsageArchiveManager.shared.snapshot()
+        let a: DailyUsageArchive
+        if let providedArchive {
+            a = providedArchive
+        } else {
+            a = await DailyUsageArchiveManager.shared.snapshot()
+            archive = a
+        }
+        let target = Double(DailyUsageStats.totalTokens(a))
+        // Count-up is a ONE-TIME reveal — background refreshes update the value
+        // without replaying the 2.2s sweep every ~2 min.
+        if didAnimateCountUp {
+            animatedTokens = target
+        } else {
+            didAnimateCountUp = true
+            withAnimation(CountUpNumber.countUpAnimation) { animatedTokens = target }
+        }
     }
 
     @ViewBuilder
@@ -369,26 +411,44 @@ public struct UsageDashboardView: View {
                 }
                 heatmapLegend
             }
-            HStack(alignment: .top, spacing: 24) {
+            .padding(14)
+            .glassCard(elevated: false)
+            HStack(alignment: .top, spacing: 16) {
                 DashboardBreakdown(title: L10n.usageDashboard.byModel,
                                    rows: DailyUsageStats.byModel(a), useProviderColor: false)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .glassCard(elevated: false)
                 DashboardBreakdown(title: L10n.usageDashboard.byProvider,
                                    rows: DailyUsageStats.byProvider(a), useProviderColor: true)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .glassCard(elevated: false)
             }
             DashboardTrends(archive: a)
+                .padding(14)
+                .glassCard(elevated: false)
         }
     }
 
     @ViewBuilder
     private func header(_ a: DailyUsageArchive) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(L10n.usageDashboard.title)
-                .font(.system(size: 22, weight: .bold))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                CountUpNumber(value: animatedTokens,
+                              font: .system(size: 46, weight: .medium, design: .default))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                Text("tokens")
+                    .font(.system(size: 13)).foregroundStyle(.secondary)
+            }
             Text(L10n.usageDashboard.scope)
-                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .font(.system(size: 11)).foregroundStyle(.tertiary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var heatmapLegend: some View {
@@ -442,8 +502,7 @@ public struct CompactUsageCard: View {
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PulseTheme.cardBackground.opacity(0.3))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .glassCard(cornerRadius: 10, elevated: false)
         }
         .buttonStyle(.plain)
         .task { await reload() }
