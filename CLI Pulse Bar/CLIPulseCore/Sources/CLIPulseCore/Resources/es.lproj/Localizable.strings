@@ -619,3 +619,5 @@
 "usage_dashboard.less" = "Menos";
 "usage_dashboard.more" = "Más";
 "usage_dashboard.all" = "Todo";
+
+"settings.refresh_adaptive" = "Adaptativo";

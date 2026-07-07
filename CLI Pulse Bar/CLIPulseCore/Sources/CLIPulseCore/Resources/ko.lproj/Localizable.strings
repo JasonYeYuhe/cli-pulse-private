@@ -619,3 +619,5 @@
 "usage_dashboard.less" = "적음";
 "usage_dashboard.more" = "많음";
 "usage_dashboard.all" = "전체";
+
+"settings.refresh_adaptive" = "자동 조정";

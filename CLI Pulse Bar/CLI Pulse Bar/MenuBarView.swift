@@ -94,6 +94,9 @@ struct MenuBarView: View {
             // per `maxAge` window.
             guard newValue != .inactive else { return }
             Task { await state.helperInstaller.refreshIfStale() }
+            // v1.40 PR-8: feed the adaptive refresh cadence — an active popover is
+            // a "recent interaction" and shortens the next auto-refresh to ~2 min.
+            state.notePopoverActivated()
         }
     }
 

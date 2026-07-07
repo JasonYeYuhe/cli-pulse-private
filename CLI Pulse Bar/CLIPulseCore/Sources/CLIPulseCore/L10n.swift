@@ -335,6 +335,7 @@ public enum L10n {
         public static var connection: String { tr("settings.connection") }
         public static var refreshCadence: String { tr("settings.refresh_cadence") }
         public static var refreshInterval: String { tr("settings.refresh_interval") }
+        public static var refreshAdaptive: String { tr("settings.refresh_adaptive") }
         public static var subscription: String { tr("settings.subscription") }
         public static var currentPlan: String { tr("settings.current_plan") }
         public static var manageSubscription: String { tr("settings.manage_subscription") }
