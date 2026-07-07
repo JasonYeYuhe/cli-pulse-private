@@ -1497,10 +1497,22 @@ extension AppState {
         #if os(macOS)
         guard !refreshAdaptiveDefaultApplied else { return }
         refreshAdaptiveDefaultApplied = true
-        if UserDefaults.standard.object(forKey: "cli_pulse_refresh_interval") == nil {
+        // "Fresh install" = no explicit interval EVER stored AND onboarding not yet
+        // completed. The onboarding flag is what distinguishes a genuinely new
+        // install from an existing user who simply kept the shipped default (their
+        // interval key is also absent) — so existing users are NOT switched.
+        let hasExplicitInterval = UserDefaults.standard.object(forKey: "cli_pulse_refresh_interval") != nil
+        let onboardingCompleted = UserDefaults.standard.bool(forKey: "cli_pulse_onboarding_completed")
+        if Self.shouldDefaultToAdaptive(hasExplicitInterval: hasExplicitInterval,
+                                        onboardingCompleted: onboardingCompleted) {
             refreshInterval = 0   // Adaptive
         }
         #endif
+    }
+
+    /// Pure decision for the fresh-install Adaptive default (testable).
+    nonisolated static func shouldDefaultToAdaptive(hasExplicitInterval: Bool, onboardingCompleted: Bool) -> Bool {
+        !hasExplicitInterval && !onboardingCompleted
     }
 
     /// Ask the user for local notification permission and (on iOS) trigger

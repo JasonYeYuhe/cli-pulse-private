@@ -89,4 +89,16 @@ final class AdaptiveRefreshPolicyTests: XCTestCase {
         XCTAssertFalse(AdaptiveRefreshPolicy.shouldReArm(candidateFire: now.addingTimeInterval(120), pendingFire: pending))
         XCTAssertFalse(AdaptiveRefreshPolicy.shouldReArm(candidateFire: pending, pendingFire: pending))  // equal → no
     }
+
+    // MARK: - Fresh-install Adaptive default
+
+    func test_shouldDefaultToAdaptive_only_fresh_installs() {
+        // Fresh install: no interval stored AND onboarding not completed.
+        XCTAssertTrue(AppState.shouldDefaultToAdaptive(hasExplicitInterval: false, onboardingCompleted: false))
+        // Existing user who kept the shipped default (no interval key) but finished onboarding → NOT switched.
+        XCTAssertFalse(AppState.shouldDefaultToAdaptive(hasExplicitInterval: false, onboardingCompleted: true))
+        // Existing user who explicitly picked an interval → NOT switched.
+        XCTAssertFalse(AppState.shouldDefaultToAdaptive(hasExplicitInterval: true, onboardingCompleted: false))
+        XCTAssertFalse(AppState.shouldDefaultToAdaptive(hasExplicitInterval: true, onboardingCompleted: true))
+    }
 }
