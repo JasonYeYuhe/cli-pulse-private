@@ -17,17 +17,29 @@ import Charts
 
 // MARK: - HUD frosted-glass window background (token-monitor vibrancy:'hud')
 
-/// `NSVisualEffectView(material:.hudWindow, blendingMode:.behindWindow)` — the
-/// authentic frosted backdrop for the dashboard window. No macOS 26 APIs.
+/// Frosted `NSVisualEffectView` backdrop for the dashboard window — the token-
+/// monitor `vibrancy:'hud'` look. Scheme-ADAPTIVE: `.hudWindow` (dark) forced to
+/// darkAqua in dark mode, a light `.underWindowBackground` forced to aqua in
+/// light mode — so the backdrop, the `.glassCard()` tint (which reads the same
+/// colorScheme), and the system title bar all agree (no light-mode seam). No
+/// macOS 26 APIs.
 private struct HUDWindowBackground: NSViewRepresentable {
+    var isDark: Bool
+
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
-        view.material = .hudWindow
         view.blendingMode = .behindWindow
         view.state = .active
+        apply(view)
         return view
     }
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) { apply(view) }
+
+    private func apply(_ view: NSVisualEffectView) {
+        view.material = isDark ? .hudWindow : .underWindowBackground
+        view.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+    }
 }
 
 // MARK: - Heatmap blue ramp (token-monitor palette)
@@ -326,8 +338,10 @@ public struct UsageDashboardView: View {
     /// OverviewTab entry card's `openWindow(id:)` call. Keep them in lockstep.
     public static let windowID = "usage-dashboard"
 
+    @Environment(\.colorScheme) private var colorScheme
     @State private var archive: DailyUsageArchive?
     @State private var animatedTokens: Double = 0
+    @State private var didAnimateCountUp = false
     private let providedArchive: DailyUsageArchive?
 
     /// Live window (loads the archive snapshot on appear).
@@ -341,7 +355,7 @@ public struct UsageDashboardView: View {
                 .padding(20)
         }
         .frame(minWidth: 760, minHeight: 620)
-        .background(HUDWindowBackground().ignoresSafeArea())
+        .background(HUDWindowBackground(isDark: colorScheme == .dark).ignoresSafeArea())
         .task { await reload() }
         .onReceive(NotificationCenter.default.publisher(for: .dailyUsageArchiveDidChange)) { _ in
             Task { await reload() }
@@ -357,8 +371,14 @@ public struct UsageDashboardView: View {
             a = await DailyUsageArchiveManager.shared.snapshot()
             archive = a
         }
-        withAnimation(CountUpNumber.countUpAnimation) {
-            animatedTokens = Double(DailyUsageStats.totalTokens(a))
+        let target = Double(DailyUsageStats.totalTokens(a))
+        // Count-up is a ONE-TIME reveal — background refreshes update the value
+        // without replaying the 2.2s sweep every ~2 min.
+        if didAnimateCountUp {
+            animatedTokens = target
+        } else {
+            didAnimateCountUp = true
+            withAnimation(CountUpNumber.countUpAnimation) { animatedTokens = target }
         }
     }
 
