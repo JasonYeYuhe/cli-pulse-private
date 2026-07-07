@@ -312,6 +312,53 @@ class TestMachineSnapshotDict(unittest.TestCase):
         self.assertTrue(snap.capability.get("kill_process"))
 
 
+class TestSystemExtraMetrics(unittest.TestCase):
+    def test_parse_swapusage(self):
+        used, total = mc.parse_swapusage("total = 3072.00M  used = 2285.50M  free = 786.50M  (encrypted)")
+        self.assertEqual(total, int(3072.0 * 1024 ** 2))
+        self.assertEqual(used, int(2285.5 * 1024 ** 2))
+
+    def test_parse_swapusage_gigabytes_and_missing(self):
+        used, total = mc.parse_swapusage("total = 2.00G  used = 0.50G  free = 1.50G")
+        self.assertEqual(total, 2 * 1024 ** 3)
+        self.assertEqual(used, int(0.5 * 1024 ** 3))
+        self.assertEqual(mc.parse_swapusage("garbage"), (None, None))
+
+    def test_parse_boottime(self):
+        self.assertEqual(mc.parse_boottime_sec("{ sec = 1782641564, usec = 405122 } Sun Jun 28"), 1782641564)
+        self.assertIsNone(mc.parse_boottime_sec("no numbers here"))
+
+    def test_memory_pressure_levels(self):
+        self.assertEqual(mc.memory_pressure_level(40, 0, 3000), "nominal")
+        self.assertEqual(mc.memory_pressure_level(85, 0, 3000), "warn")           # high RAM%
+        self.assertEqual(mc.memory_pressure_level(50, 1600, 3000), "warn")        # ~53% swap
+        self.assertEqual(mc.memory_pressure_level(95, 0, 3000), "critical")       # very high RAM%
+        self.assertEqual(mc.memory_pressure_level(50, 2600, 3000), "critical")    # ~87% swap
+        self.assertEqual(mc.memory_pressure_level(70, None, None), "nominal")     # no swap info
+
+    def test_collect_system_extra_shape(self):
+        # Real collector (root-free syscalls/CLI); assert the keys + types that
+        # exist on macOS. memory_pressure is always present.
+        s = mc.collect_system_extra(memory_percent=50)
+        self.assertIn("memory_pressure", s)
+        self.assertIn(s["memory_pressure"], ("nominal", "warn", "critical"))
+        if "load_avg" in s:
+            self.assertEqual(len(s["load_avg"]), 3)
+        if "disk_total_bytes" in s:
+            self.assertGreater(s["disk_total_bytes"], 0)
+
+    def test_snapshot_dict_includes_system(self):
+        snap = mc.MachineSnapshot(
+            collected_at="t", cpu_percent=1, memory_percent=2,
+            memory_used_bytes=1, memory_total_bytes=2,
+            battery=mc.BatteryThermal(), top_processes=[], capability={},
+            system={"uptime_seconds": 100, "memory_pressure": "nominal"},
+        )
+        d = mc.machine_snapshot_dict(snap)
+        self.assertEqual(d["system"]["uptime_seconds"], 100)
+        self.assertEqual(d["system"]["memory_pressure"], "nominal")
+
+
 class TestHeartbeatMetrics(unittest.TestCase):
     def _patch_battery(self, bt: mc.BatteryThermal):
         mc.collect_battery_thermal = lambda: bt  # type: ignore[assignment]

@@ -81,9 +81,50 @@ class MachineSnapshot:
     # S3 fills this with the native sensor block (temps/fans/power/freq); None
     # until then. Kept here so the UDS snapshot has one place for everything.
     sensors: Optional[dict] = None
+    # v1.39: extra system-monitor metrics (uptime, load avg, memory pressure,
+    # swap, disk). Read-only, root-free; None on an older helper (the app decodes
+    # tolerantly). NEVER synced (local snapshot only), like the per-process table.
+    system: Optional[dict] = None
 
 
 # ── pure parsers (unit-tested with fixtures; no subprocess) ─────────
+
+
+def parse_swapusage(text: str) -> tuple[Optional[int], Optional[int]]:
+    """Parse `sysctl -n vm.swapusage` → (used_bytes, total_bytes).
+
+    e.g. "total = 3072.00M  used = 2285.50M  free = 786.50M  (encrypted)".
+    """
+    def field(label: str) -> Optional[int]:
+        m = re.search(rf"{label}\s*=\s*([\d.]+)\s*([KMG])", text)
+        if not m:
+            return None
+        mult = {"K": 1024, "M": 1024 ** 2, "G": 1024 ** 3}[m.group(2)]
+        return int(float(m.group(1)) * mult)
+    return field("used"), field("total")
+
+
+def parse_boottime_sec(text: str) -> Optional[int]:
+    """Extract the boot epoch seconds from `sysctl -n kern.boottime`
+    ("{ sec = 1782641564, usec = ... } ...")."""
+    m = re.search(r"sec\s*=\s*(\d+)", text)
+    return int(m.group(1)) if m else None
+
+
+def memory_pressure_level(memory_percent: int,
+                          swap_used_bytes: Optional[int],
+                          swap_total_bytes: Optional[int]) -> str:
+    """Coarse, honest, root-free memory-pressure signal from used-% + swap load.
+    "nominal" | "warn" | "critical". macOS swaps freely, so only HEAVY swap
+    combined with high RAM use counts — a little swap is normal."""
+    swap_ratio = 0.0
+    if swap_used_bytes and swap_total_bytes and swap_total_bytes > 0:
+        swap_ratio = swap_used_bytes / swap_total_bytes
+    if memory_percent >= 92 or swap_ratio >= 0.75:
+        return "critical"
+    if memory_percent >= 80 or swap_ratio >= 0.40:
+        return "warn"
+    return "nominal"
 
 
 def _normalize_state(raw: str) -> str:
@@ -483,6 +524,42 @@ def local_control_capability() -> dict[str, bool]:
     return {"kill_process": True, "suspend_process": True}
 
 
+def collect_system_extra(memory_percent: int = 0) -> dict:
+    """v1.39 extra system-monitor metrics (uptime / load / memory-pressure /
+    swap / disk). All root-free CLI/syscall oracles, each independently
+    fail-soft — a broken read just omits its key."""
+    out: dict = {}
+    try:
+        bt = _run(["sysctl", "-n", "kern.boottime"], timeout=5.0)
+        boot = parse_boottime_sec(bt or "")
+        if boot:
+            out["uptime_seconds"] = max(0, int(datetime.now(timezone.utc).timestamp()) - boot)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("uptime read failed: %s", exc)
+    try:
+        out["load_avg"] = [round(x, 2) for x in os.getloadavg()]
+    except (OSError, AttributeError) as exc:
+        logger.debug("loadavg read failed: %s", exc)
+    try:
+        sw = _run(["sysctl", "-n", "vm.swapusage"], timeout=5.0)
+        used, total = parse_swapusage(sw or "")
+        if used is not None:
+            out["swap_used_bytes"] = used
+        if total is not None:
+            out["swap_total_bytes"] = total
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("swapusage read failed: %s", exc)
+    try:
+        st = os.statvfs("/")
+        out["disk_free_bytes"] = st.f_bavail * st.f_frsize
+        out["disk_total_bytes"] = st.f_blocks * st.f_frsize
+    except OSError as exc:
+        logger.debug("statvfs failed: %s", exc)
+    out["memory_pressure"] = memory_pressure_level(
+        memory_percent, out.get("swap_used_bytes"), out.get("swap_total_bytes"))
+    return out
+
+
 def collect_machine_snapshot(limit: int = _PROCESS_UNION_N,
                              sensors: Optional[dict] = None) -> MachineSnapshot:
     """Full LOCAL snapshot for the UDS `get_machine_snapshot` method."""
@@ -500,6 +577,7 @@ def collect_machine_snapshot(limit: int = _PROCESS_UNION_N,
         top_processes=collect_top_processes(limit=limit),
         capability=capability,
         sensors=sensors,
+        system=collect_system_extra(memory_percent=mem_pct),
     )
 
 
@@ -531,6 +609,7 @@ def machine_snapshot_dict(snap: MachineSnapshot) -> dict:
         ],
         "capability": snap.capability,
         "sensors": snap.sensors,
+        "system": snap.system,
     }
 
 
