@@ -839,6 +839,33 @@
 "machine.suspend_err_generic" = "プロセスを一時停止／再開できませんでした。";
 "machine.show_more" = "他 %@ 件を表示";
 "machine.show_less" = "表示を減らす";
+"machine.fan_control" = "ファン制御";
+"machine.fan_boosting" = "ブースト中";
+"machine.fan_auto" = "自動";
+"machine.fan_cool" = "冷却";
+"machine.fan_full" = "全開";
+"machine.fan_hint" = "ブーストのみ。ファンは自動より遅くならず、「自動」をタップするかアプリを終了すると自動に戻ります。直接ダウンロード（Developer ID）版のみ。";
+"machine.fan_confirm_title" = "ファンを回しますか？";
+"machine.fan_confirm_message" = "「自動」をタップする（またはアプリを終了する）まで、ファンは大きな音で回り続けます。冷却を強めるだけで、システムより遅く回すことはありません。";
+"machine.fan_confirm_button" = "ファンをブースト";
+"machine.fan_err_generic" = "ファンの速度を変更できませんでした。";
+"machine.fan_install" = "ファン制御をインストール";
+"machine.fan_install_prompt" = "ファン制御には小さな特権ヘルパーが必要です。インストール時に承認を求められます。macOS はアプリが無断でインストールすることを許しません。";
+"machine.fan_approve" = "システム設定を開く";
+"machine.fan_approve_prompt" = "あと少しです。システム設定の「ログイン項目と機能拡張」で「CLI Pulse」を有効にすると、ファン制御のインストールが完了します。";
+"machine.system" = "システム";
+"machine.uptime" = "稼働時間";
+"machine.load" = "負荷";
+"machine.mem_pressure" = "メモリ負荷";
+"machine.disk" = "ディスク空き";
+"machine.swap" = "スワップ";
+"machine.of_fmt" = "／ %@";
+"machine.pressure_normal" = "正常";
+"machine.pressure_elevated" = "やや高い";
+"machine.pressure_high" = "高い";
+"machine.low_power" = "低電力モード";
+"machine.on" = "オン";
+"machine.off" = "オフ";
 "machine.device_health" = "デバイスの状態";
 
 /* Provider service-status component list (status page) */

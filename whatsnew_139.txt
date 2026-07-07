@@ -1,0 +1,13 @@
+New in this version:
+
+• Machine tab — a new System card shows your Mac's uptime, load average, memory pressure, free disk space, and swap usage at a glance, all read privately on-device.
+
+• Low Power Mode — see at a glance whether your Mac is in Low Power Mode. On the direct-download build you can also toggle it right from the Machine tab.
+
+• Fan control (direct-download / Developer ID build only) — a new slider lets you boost your fans from Auto all the way up to full speed. By design it only ever raises the fans, never lowers them below what your Mac would run on its own. Off by default; turn on "Machine controls" in Settings.
+
+• Reliability improvements and small fixes.
+
+—
+
+Note for direct-download (Developer ID) users: the new System metrics come from the CLI Pulse Companion helper — install the updated helper package (1.27.0) to see them. Fan control and the Low Power Mode toggle are exclusive to the direct-download build and stay off until you enable "Machine controls" in Settings.

@@ -99,6 +99,35 @@ public enum L10n {
         // Process-list usability v1.38.1 (B2 — sort/expand).
         public static func showMore(_ n: String) -> String { tr("machine.show_more", n) }
         public static var showLess: String { tr("machine.show_less") }
+        // Fan control (M3, boost-only — DEVID + root daemon).
+        public static var fanControl: String { tr("machine.fan_control") }
+        public static var fanBoosting: String { tr("machine.fan_boosting") }
+        public static var fanAuto: String { tr("machine.fan_auto") }
+        public static var fanCool: String { tr("machine.fan_cool") }
+        public static var fanFull: String { tr("machine.fan_full") }
+        public static var fanHint: String { tr("machine.fan_hint") }
+        public static var fanConfirmTitle: String { tr("machine.fan_confirm_title") }
+        public static var fanConfirmMessage: String { tr("machine.fan_confirm_message") }
+        public static var fanConfirmButton: String { tr("machine.fan_confirm_button") }
+        public static var fanErrGeneric: String { tr("machine.fan_err_generic") }
+        public static var fanInstall: String { tr("machine.fan_install") }
+        public static var fanInstallPrompt: String { tr("machine.fan_install_prompt") }
+        public static var fanApprove: String { tr("machine.fan_approve") }
+        public static var fanApprovePrompt: String { tr("machine.fan_approve_prompt") }
+        // System metrics + Low Power Mode (v1.39).
+        public static var system: String { tr("machine.system") }
+        public static var uptime: String { tr("machine.uptime") }
+        public static var load: String { tr("machine.load") }
+        public static var memPressure: String { tr("machine.mem_pressure") }
+        public static var disk: String { tr("machine.disk") }
+        public static var swap: String { tr("machine.swap") }
+        public static func freeOf(_ total: String) -> String { tr("machine.of_fmt", total) }
+        public static var pressureNormal: String { tr("machine.pressure_normal") }
+        public static var pressureElevated: String { tr("machine.pressure_elevated") }
+        public static var pressureHigh: String { tr("machine.pressure_high") }
+        public static var lowPower: String { tr("machine.low_power") }
+        public static var on: String { tr("machine.on") }
+        public static var off: String { tr("machine.off") }
     }
 
     // MARK: - Dashboard

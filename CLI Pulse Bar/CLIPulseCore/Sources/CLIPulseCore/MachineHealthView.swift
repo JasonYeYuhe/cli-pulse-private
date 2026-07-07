@@ -20,6 +20,10 @@ public struct MachineHealthView: View {
     @State private var sortKey: ProcessSortKey = .cpu
     @State private var showAllProcesses = false
 
+    // Low Power Mode — READING the state is free everywhere (ProcessInfo); only
+    // the toggle (below) needs the root daemon + DEVID. Read every refresh.
+    @State private var lowPowerOn = false
+
     // Machine controls M1 + v1.38.1 (DEVID-only). Off by default; gates the
     // inline End Process / Suspend / Resume affordances. Shares one UserDefaults
     // key with the Settings toggle so there's no drift.
@@ -33,6 +37,25 @@ public struct MachineHealthView: View {
     @State private var pendingSuspendPid: Int?  // row currently showing the Suspend confirm
     @State private var suspendingPid: Int?      // suspend/resume RPC in flight
     @State private var killError: String?       // last refusal / failure message (any control)
+
+    // Fan control (M3, boost-only). Talks to the ROOT daemon (not the user
+    // helper) — only reachable when the owner has installed it, so the card is
+    // hidden unless `fanAvailable` (capability probe) comes back true, on top of
+    // the same DEVID + machine-controls-toggle gate as the process controls.
+    // @State (not `let`): the client holds a persistent connection + the boost
+    // heartbeat timer, which MUST survive view redraws — a fresh `let` each redraw
+    // would drop the heartbeat and the daemon would revert the boost.
+    @State private var fanClient = FanControlClient()
+    @State private var fanAvailable = false
+    @State private var fanInfos: [FanControlClient.FanInfo] = []
+    @State private var fanBusy = false
+    @State private var fanError: String?
+    @State private var pendingFanTarget: Int?   // showing the boost confirm for this target
+    @State private var fanInstallState: FanDaemonInstallState = .notInstalled
+    @State private var fanSliderRPM: Double = 0 // fine boost control (Auto floor → max)
+    @State private var fanEditingSlider = false // suppress poll-overwrite while dragging
+    @State private var lpmAvailable = false      // root daemon advertises low_power_mode
+    @State private var lpmBusy = false           // LPM toggle RPC in flight
     #endif
 
     public init() {}
@@ -45,6 +68,13 @@ public struct MachineHealthView: View {
                     gauges(snap)
                     if snap.battery.hasBattery { batteryCard(snap.battery) }
                     sensorsSection(snap)
+                    systemSection(snap)
+                    #if DEVID_BUILD
+                    if machineControlsEnabled {
+                        if fanAvailable { fanBoostCard }
+                        else { fanInstallRow }
+                    }
+                    #endif
                     processesSection(snap)
                     if MASSandboxGate.isSandboxed && !hasNativeSensors(snap) {
                         masAffordance
@@ -144,6 +174,138 @@ public struct MachineHealthView: View {
                      text: L10n.machine.noSensorsDevid)
         }
     }
+
+    // MARK: - System metrics (v1.39, all builds, read-only) + Low Power Mode
+
+    @ViewBuilder
+    private func systemSection(_ snap: MachineSnapshot) -> some View {
+        let hasMetrics = snap.uptimeSeconds != nil || snap.loadAvg != nil
+            || snap.diskTotalBytes != nil || snap.memoryPressure != nil || snap.swapTotalBytes != nil
+        if hasMetrics || lowPowerVisible {
+            VStack(alignment: .leading, spacing: 6) {
+                SectionHeader(title: L10n.machine.system, icon: "gauge.with.dots.needle.bottom.50percent")
+                if hasMetrics {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
+                        if let up = snap.uptimeSeconds {
+                            MetricCard(title: L10n.machine.uptime, value: formatUptime(up), icon: "clock", color: PulseTheme.accent)
+                        }
+                        if let la = snap.loadAvg, let one = la.first {
+                            MetricCard(title: L10n.machine.load, value: String(format: "%.2f", one),
+                                       subtitle: la.count >= 3 ? String(format: "%.2f · %.2f", la[1], la[2]) : nil,
+                                       icon: "speedometer", color: .teal)
+                        }
+                        if let mp = snap.memoryPressure {
+                            MetricCard(title: L10n.machine.memPressure, value: memPressureLabel(mp),
+                                       icon: "memorychip", color: memPressureColor(mp))
+                        }
+                        if let free = snap.diskFreeBytes, let total = snap.diskTotalBytes, total > 0 {
+                            MetricCard(title: L10n.machine.disk, value: gb(free),
+                                       subtitle: L10n.machine.freeOf(gb(total)), icon: "internaldrive",
+                                       color: Double(free) / Double(total) < 0.1 ? .orange : .green)
+                        }
+                        if let used = snap.swapUsedBytes, let total = snap.swapTotalBytes, total > 0 {
+                            MetricCard(title: L10n.machine.swap, value: gb(used),
+                                       subtitle: L10n.machine.freeOf(gb(total)),
+                                       icon: "arrow.left.arrow.right", color: Double(used) / Double(total) > 0.7 ? .orange : .secondary)
+                        }
+                    }
+                }
+                lowPowerRow
+            }
+        }
+    }
+
+    /// The LPM row shows whenever LPM is ON (any build) or a toggle is offerable.
+    private var lowPowerVisible: Bool {
+        #if DEVID_BUILD
+        return lowPowerOn || (machineControlsEnabled && lpmAvailable)
+        #else
+        return lowPowerOn
+        #endif
+    }
+
+    @ViewBuilder
+    private var lowPowerRow: some View {
+        if lowPowerVisible {
+            HStack(spacing: 8) {
+                Image(systemName: lowPowerOn ? "bolt.circle.fill" : "bolt.circle")
+                    .font(.system(size: 12)).foregroundStyle(lowPowerOn ? .green : .secondary)
+                Text(L10n.machine.lowPower).font(.system(size: 11))
+                Spacer()
+                #if DEVID_BUILD
+                if machineControlsEnabled && lpmAvailable {
+                    if lpmBusy { ProgressView().controlSize(.mini) }
+                    Toggle("", isOn: Binding(
+                        get: { lowPowerOn },
+                        set: { newVal in
+                            guard !lpmBusy else { return }
+                            lpmBusy = true
+                            Task { await setLowPower(newVal) }
+                        }
+                    )).labelsHidden().controlSize(.small).disabled(lpmBusy)
+                } else {
+                    Text(lowPowerOn ? L10n.machine.on : L10n.machine.off)
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+                #else
+                Text(lowPowerOn ? L10n.machine.on : L10n.machine.off)
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                #endif
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func formatUptime(_ seconds: Int) -> String {
+        let d = seconds / 86400, h = (seconds % 86400) / 3600, m = (seconds % 3600) / 60
+        if d > 0 { return "\(d)d \(h)h" }
+        if h > 0 { return "\(h)h \(m)m" }
+        return "\(m)m"
+    }
+    private func gb(_ bytes: Int) -> String {
+        String(format: "%.0f GB", Double(bytes) / 1_073_741_824.0)
+    }
+    private func memPressureLabel(_ level: String) -> String {
+        switch level {
+        case "warn": return L10n.machine.pressureElevated
+        case "critical": return L10n.machine.pressureHigh
+        default: return L10n.machine.pressureNormal
+        }
+    }
+    private func memPressureColor(_ level: String) -> Color {
+        switch level {
+        case "warn": return .orange
+        case "critical": return .red
+        default: return .green
+        }
+    }
+
+    #if DEVID_BUILD
+    private func setLowPower(_ on: Bool) async {
+        _ = await fanClient.setLowPowerMode(on)
+        // Re-read the truth from the system (don't trust the requested value —
+        // the write could no-op or race). ProcessInfo reflects it near-instantly.
+        await MainActor.run {
+            lpmBusy = false
+            lowPowerOn = Foundation.ProcessInfo.processInfo.isLowPowerModeEnabled
+        }
+    }
+
+    /// Keep the fan slider synced to reality except while the user is dragging:
+    /// show the current boost target when boosting, else the auto floor.
+    private func syncFanSlider(_ infos: [FanControlClient.FanInfo]) {
+        // Don't move the thumb while the user is dragging OR while a boost RPC is in
+        // flight — mid-apply, `infos` still reflects the pre-boost state and would
+        // snap the thumb backward before applyFanBoost's own refresh corrects it.
+        guard !fanEditingSlider, !fanBusy, !infos.isEmpty else { return }
+        let boosting = infos.contains { $0.isManual }
+        if boosting {
+            fanSliderRPM = Double(infos.map { $0.targetRPM }.max() ?? 0)
+        } else {
+            fanSliderRPM = Double(infos.map { $0.actualRPM }.max() ?? infos.map { $0.minRPM }.min() ?? 0)
+        }
+    }
+    #endif
 
     // MARK: - Processes
 
@@ -550,6 +712,208 @@ public struct MachineHealthView: View {
         default:                   return L10n.machine.suspendErrGeneric
         }
     }
+
+    // MARK: - Fan control (M3, boost-only)
+
+    /// A single boost RPM applied to every fan (the daemon clamps it boost-only to
+    /// each fan's [auto, max]). "Cool" is a moderate boost; "Full Blast" sends a
+    /// value ≥ any fan's max so each pins to its own max (the unconditionally-safe
+    /// preset). Presets rather than a free slider keep the control safe + simple.
+    private var fanBoostActive: Bool { fanInfos.contains { $0.isManual } }
+
+    @ViewBuilder
+    private var fanBoostCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader(title: L10n.machine.fanControl, icon: "fanblades.fill")
+            if let fanError { infoWarn(fanError) }
+
+            // Live per-fan RPM + a "Boosting" badge while manual.
+            HStack(spacing: 10) {
+                ForEach(fanInfos) { fan in
+                    HStack(spacing: 4) {
+                        Image(systemName: "fanblades").font(.system(size: 9)).foregroundStyle(.tertiary)
+                        Text("\(fan.actualRPM)").font(.system(size: 10, design: .monospaced))
+                        Text("rpm").font(.system(size: 8)).foregroundStyle(.tertiary)
+                    }
+                }
+                if fanBoostActive {
+                    StatusBadge(text: L10n.machine.fanBoosting, color: .orange)
+                }
+                Spacer()
+            }
+
+            // Presets. Auto is immediate (benign); a boost asks to confirm.
+            HStack(spacing: 8) {
+                fanButton(L10n.machine.fanAuto, filled: !fanBoostActive) {
+                    pendingFanTarget = nil
+                    Task { await revertFan() }
+                }
+                .disabled(fanBusy)
+                fanButton(L10n.machine.fanCool, filled: false) {
+                    fanError = nil; pendingFanTarget = 3000
+                }
+                .disabled(fanBusy)
+                fanButton(L10n.machine.fanFull, filled: false) {
+                    fanError = nil; pendingFanTarget = 100_000    // ≥ any fan max → per-fan max
+                }
+                .disabled(fanBusy)
+                if fanBusy { ProgressView().controlSize(.mini) }
+                Spacer()
+            }
+
+            // Fine control: drag from Auto (floor) to Max. Boost-only — the daemon
+            // clamps anything below the current auto RPM back up to auto — applied
+            // on release (no per-drag spam). No confirm: it's a deliberate drag.
+            if !fanInfos.isEmpty {
+                let minR = Double(fanInfos.map { $0.minRPM }.min() ?? 1499)
+                let maxR = Double(fanInfos.map { $0.maxRPM }.max() ?? 4744)
+                HStack(spacing: 8) {
+                    Text(L10n.machine.fanAuto).font(.system(size: 9)).foregroundStyle(.tertiary)
+                    Slider(
+                        value: Binding(get: { min(max(fanSliderRPM, minR), maxR) },
+                                       set: { fanSliderRPM = $0 }),
+                        in: minR...maxR, step: 50,
+                        onEditingChanged: { editing in
+                            fanEditingSlider = editing
+                            if !editing {
+                                guard !fanBusy else { return }
+                                fanBusy = true
+                                // Far-left == "Auto": release near the floor reverts to
+                                // Apple auto instead of pinning a manual target at min.
+                                let rpm = Int(min(max(fanSliderRPM, minR), maxR))
+                                if Double(rpm) <= minR + 50 {
+                                    Task { await revertFan() }
+                                } else {
+                                    Task { await applyFanBoost(rpm) }
+                                }
+                            }
+                        })
+                    .disabled(fanBusy)
+                    Text("\(Int(min(max(fanSliderRPM, minR), maxR))) rpm")
+                        .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
+                        .frame(width: 64, alignment: .trailing)
+                }
+            }
+
+            if let target = pendingFanTarget {
+                fanConfirmCard(target: target)
+            }
+            Text(L10n.machine.fanHint)
+                .font(.system(size: 9)).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PulseTheme.accent.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func fanButton(_ title: String, filled: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 10, weight: .medium))
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(filled ? PulseTheme.accent.opacity(0.2) : Color.secondary.opacity(0.12))
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func fanConfirmCard(target: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(L10n.machine.fanConfirmTitle).font(.system(size: 11, weight: .semibold))
+            Text(L10n.machine.fanConfirmMessage)
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Spacer()
+                Button(L10n.common.cancel) { pendingFanTarget = nil }.controlSize(.small).disabled(fanBusy)
+                Button {
+                    guard !fanBusy else { return }
+                    fanBusy = true
+                    Task { await applyFanBoost(target) }
+                } label: {
+                    HStack(spacing: 4) {
+                        if fanBusy { ProgressView().controlSize(.mini) }
+                        Text(L10n.machine.fanConfirmButton)
+                    }
+                }
+                .controlSize(.small).disabled(fanBusy)
+            }
+        }
+        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.vertical, 2)
+    }
+
+    private func infoWarn(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(.orange)
+            Text(message).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+    }
+
+    private func applyFanBoost(_ target: Int) async {
+        let result = await fanClient.startBoost(targetRPM: target)
+        let infos = await fanClient.fanState()
+        await MainActor.run {
+            fanBusy = false
+            pendingFanTarget = nil
+            fanInfos = infos
+            // Settle the thumb on the value the daemon actually applied (it may have
+            // clamped a below-auto request up to the auto floor).
+            syncFanSlider(infos)
+            fanError = result.ok ? nil : (result.error ?? L10n.machine.fanErrGeneric)
+        }
+    }
+
+    private func revertFan() async {
+        await MainActor.run { fanBusy = true }
+        let ok = await fanClient.revert()
+        let infos = await fanClient.fanState()
+        await MainActor.run {
+            fanBusy = false
+            fanInfos = infos
+            fanError = ok ? nil : L10n.machine.fanErrGeneric
+        }
+    }
+
+    /// Shown when the root fan daemon isn't reachable yet: an Install prompt, or —
+    /// after register() — an "Approve in System Settings" prompt (macOS forces the
+    /// user to enable a privileged daemon). Nothing when unsupported (<macOS 13) or
+    /// already enabled-but-just-starting (the boost card takes over once reachable).
+    @ViewBuilder
+    private var fanInstallRow: some View {
+        switch fanInstallState {
+        case .unsupported, .installed:
+            EmptyView()
+        case .notInstalled, .error:
+            fanInstallCard(text: L10n.machine.fanInstallPrompt, button: L10n.machine.fanInstall) {
+                fanInstallState = FanDaemonInstaller.install()
+                if case .requiresApproval = fanInstallState { FanDaemonInstaller.openApprovalSettings() }
+            }
+        case .requiresApproval:
+            fanInstallCard(text: L10n.machine.fanApprovePrompt, button: L10n.machine.fanApprove) {
+                FanDaemonInstaller.openApprovalSettings()
+            }
+        }
+    }
+
+    private func fanInstallCard(text: String, button: String, _ action: @escaping () -> Void) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "fanblades.fill").font(.system(size: 12)).foregroundStyle(PulseTheme.accent)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L10n.machine.fanControl).font(.system(size: 11, weight: .semibold))
+                Text(text).font(.system(size: 10)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(button, action: action).controlSize(.small)
+            }
+            Spacer()
+        }
+        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+        .background(PulseTheme.accent.opacity(0.05)).clipShape(RoundedRectangle(cornerRadius: 6))
+    }
     #endif
 
     // MARK: - States
@@ -609,6 +973,39 @@ public struct MachineHealthView: View {
                     if snapshot != nil { snapshot = nil }  // helper went away
                 }
             }
+            // Low Power Mode state is free to read (system API) on every build.
+            // Don't clobber the toggle while our own write is in flight — a tick's
+            // pre-`pmset` read can otherwise land after setLowPower's corrected value
+            // and bounce the switch back until the next tick.
+            let lpmState = Foundation.ProcessInfo.processInfo.isLowPowerModeEnabled
+            await MainActor.run {
+                #if DEVID_BUILD
+                if !lpmBusy { lowPowerOn = lpmState }
+                #else
+                lowPowerOn = lpmState
+                #endif
+            }
+            #if DEVID_BUILD
+            // Fan control + LPM toggle (root daemon). Probe capabilities + poll
+            // live RPMs only when the user opted into machine controls — never
+            // reach for the root daemon otherwise. An absent daemon just keeps the
+            // fan card / LPM toggle hidden.
+            if machineControlsEnabled {
+                let caps = await fanClient.capabilities()
+                let available = caps["fan_control"] == true
+                let infos = available ? await fanClient.fanState() : []
+                let install = available ? FanDaemonInstallState.installed : FanDaemonInstaller.state()
+                await MainActor.run {
+                    fanAvailable = available
+                    lpmAvailable = caps["low_power_mode"] == true
+                    fanInfos = infos
+                    fanInstallState = install
+                    syncFanSlider(infos)
+                }
+            } else if fanAvailable || lpmAvailable {
+                await MainActor.run { fanAvailable = false; lpmAvailable = false }
+            }
+            #endif
             try? await Task.sleep(nanoseconds: refreshInterval)
         }
     }

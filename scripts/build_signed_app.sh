@@ -170,6 +170,24 @@ echo "==> [4/7] Embedding LaunchAgent plist at Contents/Library/LaunchAgents/ ..
 mkdir -p "$APP_PATH/Contents/Library/LaunchAgents"
 cp "$PLIST_TEMPLATE" "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
 
+# 4b. (DEVID only) Embed the fan-control ROOT daemon (M3) + its SMAppService
+#     LaunchDaemon plist. Root SMC write needs a privileged daemon, registered by
+#     the app via SMAppService.daemon (FanDaemonInstaller). NOT in the MAS build
+#     (sandbox forbids it) — this whole block is DEVID-gated. Signed below, before
+#     the final app re-seal.
+if [[ -n "${DEVID_BUILD_FLAG:-}" ]]; then
+    echo "==> [4b] Building + embedding fan-control root daemon (DEVID) ..."
+    ( cd "$PROJECT_ROOT/MachineRootHelper" && swift build -c release )
+    FAN_DAEMON_BIN="$PROJECT_ROOT/MachineRootHelper/.build/release/machine-root-helper"
+    [[ -x "$FAN_DAEMON_BIN" ]] || { echo "error: fan daemon missing at $FAN_DAEMON_BIN" >&2; exit 1; }
+    cp "$FAN_DAEMON_BIN" "$APP_PATH/Contents/MacOS/machine-root-helper"
+    chmod +x "$APP_PATH/Contents/MacOS/machine-root-helper"
+    mkdir -p "$APP_PATH/Contents/Library/LaunchDaemons"
+    cp "$PROJECT_ROOT/MachineRootHelper/install/yyh.CLI-Pulse.machine-root-helper.plist" \
+       "$APP_PATH/Contents/Library/LaunchDaemons/yyh.CLI-Pulse.machine-root-helper.plist"
+    echo "    embedded machine-root-helper + LaunchDaemon plist"
+fi
+
 # 5. Resolve signing identity + capture original app entitlements
 #    BEFORE we touch the bundle. Codex P1.C review: the previous
 #    `--force --deep` re-sign stripped sandbox / app-group
@@ -271,6 +289,18 @@ codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
     --sign "$SIGN_IDENTITY" \
     "$APP_PATH/Contents/Helpers/cli_pulse_helper"
 
+# (DEVID only) Sign the fan-control root daemon — bare Mach-O in Contents/MacOS/,
+# Hardened Runtime, NO entitlements (root SMC write needs none; the XPC gate
+# authenticates the app by Team-ID + identifier, not by daemon entitlements).
+# Signed here, before the final app re-seal below, so it's part of the seal.
+if [[ -n "${DEVID_BUILD_FLAG:-}" ]]; then
+    xattr -cr "$APP_PATH/Contents/MacOS/machine-root-helper" 2>/dev/null || true
+    codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
+        --sign "$SIGN_IDENTITY" \
+        "$APP_PATH/Contents/MacOS/machine-root-helper"
+    echo "    signed fan daemon (Hardened Runtime, no entitlements)"
+fi
+
 # W1-A: re-sign the embedded LoginItem (CLIPulseHelper.app) with its OWN
 # entitlements. The bottom-up walk above re-signed nested .app bundles with NO
 # entitlements, which STRIPPED this LoginItem's sandbox + app-group + keychain
@@ -344,6 +374,12 @@ codesign --force --options runtime "$CODESIGN_TIMESTAMP_FLAG" \
 echo "==> [7/7] Verifying bundle ..."
 test -x "$APP_PATH/Contents/Helpers/cli_pulse_helper"
 test -f "$APP_PATH/Contents/Library/LaunchAgents/yyh.CLI-Pulse.helper.agent.plist"
+# (DEVID only) fan daemon + its SMAppService plist must be embedded.
+if [[ -n "${DEVID_BUILD_FLAG:-}" ]]; then
+    test -x "$APP_PATH/Contents/MacOS/machine-root-helper"
+    test -f "$APP_PATH/Contents/Library/LaunchDaemons/yyh.CLI-Pulse.machine-root-helper.plist"
+    echo "    fan daemon + LaunchDaemon plist present"
+fi
 # v1.20: macOS 26.5 (post-26.5.1) re-adds com.apple.provenance xattrs to
 # _CodeSignature/CodeResources files at LaunchServices registration time
 # (faster than we can strip them — even an immediate `xattr -cr` followed

@@ -1236,6 +1236,16 @@ public struct MachineSnapshot: Sendable {
     public let fanRpm: Int?
     public let fanMaxRpm: Int?
 
+    /// v1.39 extra system-monitor metrics. All Optional — nil against an older
+    /// helper (≤1.26.0) that doesn't send the `system` block.
+    public let uptimeSeconds: Int?
+    public let loadAvg: [Double]?          // [1m, 5m, 15m]
+    public let memoryPressure: String?     // "nominal" | "warn" | "critical"
+    public let swapUsedBytes: Int?
+    public let swapTotalBytes: Int?
+    public let diskFreeBytes: Int?
+    public let diskTotalBytes: Int?
+
     public func can(_ key: String) -> Bool { capability[key] == true }
 
     init(dict: [String: Any]) {
@@ -1296,6 +1306,15 @@ public struct MachineSnapshot: Sendable {
         systemPowerW = d(s["system_power_w"])
         fanRpm = i(s["fan_rpm"])
         fanMaxRpm = i(s["fan_max_rpm"])
+
+        let sys = dict["system"] as? [String: Any] ?? [:]
+        uptimeSeconds = i(sys["uptime_seconds"])
+        loadAvg = (sys["load_avg"] as? [Any])?.compactMap { d($0) }
+        memoryPressure = sys["memory_pressure"] as? String
+        swapUsedBytes = i(sys["swap_used_bytes"])
+        swapTotalBytes = i(sys["swap_total_bytes"])
+        diskFreeBytes = i(sys["disk_free_bytes"])
+        diskTotalBytes = i(sys["disk_total_bytes"])
     }
 }
 #endif

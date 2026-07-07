@@ -96,6 +96,51 @@ final class MachineSnapshotTests: XCTestCase {
         XCTAssertTrue(s.can("suspend_process"))
     }
 
+    func testSystemExtraMetricsDecode() {
+        // v1.39: the helper adds a "system" block (root-free oracles: uptime,
+        // load avg, swap, disk, derived memory-pressure level). Numbers arrive as
+        // NSNumber; load_avg is an array of doubles.
+        let s = MachineSnapshot(dict: [
+            "cpu_percent": 20, "memory_percent": 55,
+            "battery": ["has_battery": false] as [String: Any],
+            "top_processes": [],
+            "capability": ["process_table": true],
+            "system": [
+                "uptime_seconds": 183_600,               // 2d 3h
+                "load_avg": [2.5, 1.8, 1.2],
+                "swap_used_bytes": 1_610_612_736,        // 1.5 GB
+                "swap_total_bytes": 3_221_225_472,       // 3 GB
+                "disk_free_bytes": 35_433_480_192,
+                "disk_total_bytes": 494_384_795_648,
+                "memory_pressure": "warn",
+            ] as [String: Any],
+        ])
+        XCTAssertEqual(s.uptimeSeconds, 183_600)
+        XCTAssertEqual(s.loadAvg?.count, 3)
+        XCTAssertEqual(s.loadAvg?.first ?? 0, 2.5, accuracy: 0.001)
+        XCTAssertEqual(s.loadAvg?.last ?? 0, 1.2, accuracy: 0.001)
+        XCTAssertEqual(s.swapUsedBytes, 1_610_612_736)
+        XCTAssertEqual(s.swapTotalBytes, 3_221_225_472)
+        XCTAssertEqual(s.diskFreeBytes, 35_433_480_192)
+        XCTAssertEqual(s.diskTotalBytes, 494_384_795_648)
+        XCTAssertEqual(s.memoryPressure, "warn")
+    }
+
+    func testSystemBlockAbsentYieldsNils() {
+        // An older helper (≤1.26.0) sends no "system" block → all new fields nil,
+        // so the System card just hides.
+        let s = MachineSnapshot(dict: [
+            "cpu_percent": 10, "memory_percent": 30,
+            "battery": ["has_battery": false] as [String: Any],
+            "top_processes": [], "capability": [:],
+        ])
+        XCTAssertNil(s.uptimeSeconds)
+        XCTAssertNil(s.loadAvg)
+        XCTAssertNil(s.memoryPressure)
+        XCTAssertNil(s.swapTotalBytes)
+        XCTAssertNil(s.diskTotalBytes)
+    }
+
     func testDesktopNoBatteryNoSensors() {
         // Mac mini: no battery node, S2-only helper (no native sensors).
         let s = MachineSnapshot(dict: [

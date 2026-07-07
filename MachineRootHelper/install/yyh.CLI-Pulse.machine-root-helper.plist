@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SMAppService LaunchDaemon for the root fan-control helper.
+
+  SHIP: this file is embedded in the app bundle at
+      Contents/Library/LaunchDaemons/yyh.CLI-Pulse.machine-root-helper.plist
+  and registered by the app via SMAppService.daemon(plistName:).register()
+  (see FanDaemonInstaller). The daemon binary is embedded at BundleProgram below.
+  SMAppService daemons run as ROOT — no UserName key needed.
+
+  ⚠️ KeepAlive is LOAD-BEARING SAFETY, not a nicety: because the firmware does NOT
+  self-revert a manual fan (M0), a SIGKILL'd daemon MUST be relaunched so its
+  FanController revert-on-startup clears the stuck manual state. Do not remove it.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>yyh.CLI-Pulse.machine-root-helper</string>
+
+    <!-- Executable path RELATIVE to the app bundle. Embed the release binary here
+         (see SHIP_RUNBOOK.md). -->
+    <key>BundleProgram</key>
+    <string>Contents/MacOS/machine-root-helper</string>
+
+    <!-- The Mach service the app connects to (== RootHelperInterface.machServiceName). -->
+    <key>MachServices</key>
+    <dict>
+        <key>yyh.CLI-Pulse.machine-root-helper</key>
+        <true/>
+    </dict>
+
+    <!-- Relaunch on crash/kill so revert-on-startup clears a stuck fan. -->
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Only our app may associate/manage this daemon in Login Items. -->
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>yyh.CLI-Pulse</string>
+    </array>
+</dict>
+</plist>
