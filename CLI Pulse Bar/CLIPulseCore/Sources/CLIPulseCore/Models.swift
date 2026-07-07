@@ -132,6 +132,9 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case qoder = "Qoder"
     // v1.40.0: Sakana AI console billing HTML scrape (.quota 5h+weekly windows; manual cookie).
     case sakana = "Sakana AI"
+    // v1.40.0: Zed editor account (.quota edit-predictions + billing cycle; reads Zed's OWN
+    // Keychain item — DEVID-only, MAS sandbox can't read another app's Keychain).
+    case zed = "Zed"
 
     public var id: String { rawValue }
 
@@ -213,6 +216,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .chutes: return "c.square.fill"
         case .qoder: return "q.circle"
         case .sakana: return "fish"
+        case .zed: return "z.square"
         }
     }
 }

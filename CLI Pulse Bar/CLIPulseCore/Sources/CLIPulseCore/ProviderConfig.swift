@@ -773,6 +773,17 @@ public enum ProviderRegistry {
             requiresHelperBackend: false,
             cliNames: [], webDomain: "console.sakana.ai"
         ),
+        ProviderDescriptor(
+            // v1.40.0: reads Zed editor's OWN Keychain credential (no user config)
+            // ⇒ `.quota` (edit-predictions + billing cycle). DEVID-only at runtime
+            // (ZedCollector.isAvailable is #if DEVID_BUILD) — the descriptor stays
+            // present on all builds so the registry-coverage invariant holds.
+            kind: .zed, displayName: "Zed", category: .cloud,
+            supportedSources: [.auto],
+            supportsQuota: true, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: ["zed"], webDomain: "zed.dev"
+        ),
     ]
 }
 
