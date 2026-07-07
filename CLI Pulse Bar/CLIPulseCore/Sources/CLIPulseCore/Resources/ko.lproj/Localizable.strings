@@ -572,6 +572,10 @@
 "machine.fan_confirm_message" = "'자동'을 누르거나 앱을 종료할 때까지 팬이 크게 돕니다. 냉각만 강화하며, 시스템보다 느리게 돌리지는 않습니다.";
 "machine.fan_confirm_button" = "팬 부스트";
 "machine.fan_err_generic" = "팬 속도를 변경하지 못했습니다.";
+"machine.fan_install" = "팬 제어 설치";
+"machine.fan_install_prompt" = "팬 제어에는 작은 권한 도우미가 필요합니다. 설치 시 승인을 요청합니다 — macOS는 앱이 몰래 설치하도록 허용하지 않습니다.";
+"machine.fan_approve" = "시스템 설정 열기";
+"machine.fan_approve_prompt" = "거의 다 됐습니다 — 시스템 설정의 '로그인 항목 및 확장 프로그램'에서 'CLI Pulse'를 켜면 팬 제어 설치가 완료됩니다.";
 "machine.device_health" = "기기 상태";
 
 /* Provider service-status component list (status page) */

@@ -110,6 +110,10 @@ public enum L10n {
         public static var fanConfirmMessage: String { tr("machine.fan_confirm_message") }
         public static var fanConfirmButton: String { tr("machine.fan_confirm_button") }
         public static var fanErrGeneric: String { tr("machine.fan_err_generic") }
+        public static var fanInstall: String { tr("machine.fan_install") }
+        public static var fanInstallPrompt: String { tr("machine.fan_install_prompt") }
+        public static var fanApprove: String { tr("machine.fan_approve") }
+        public static var fanApprovePrompt: String { tr("machine.fan_approve_prompt") }
     }
 
     // MARK: - Dashboard

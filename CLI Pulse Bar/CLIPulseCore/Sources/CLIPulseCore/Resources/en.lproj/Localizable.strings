@@ -847,6 +847,10 @@
 "machine.fan_confirm_message" = "The fans will run loud until you tap Auto (or quit the app). This only boosts cooling — it never runs the fans slower than the system would.";
 "machine.fan_confirm_button" = "Boost fans";
 "machine.fan_err_generic" = "Couldn't change fan speed.";
+"machine.fan_install" = "Install fan control";
+"machine.fan_install_prompt" = "Fan control needs a small privileged helper. Installing asks for your approval — macOS never lets an app install it silently.";
+"machine.fan_approve" = "Open System Settings";
+"machine.fan_approve_prompt" = "Almost done — enable “CLI Pulse” under Login Items & Extensions in System Settings to finish installing fan control.";
 "machine.device_health" = "Device Health";
 
 /* Provider service-status component list (status page) */

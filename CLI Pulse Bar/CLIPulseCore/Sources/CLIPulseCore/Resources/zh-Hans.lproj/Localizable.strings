@@ -849,6 +849,10 @@
 "machine.fan_confirm_message" = "在你点“自动”（或退出应用）之前，风扇会一直大声运转。这只会增强散热，绝不会让风扇比系统更慢。";
 "machine.fan_confirm_button" = "提速风扇";
 "machine.fan_err_generic" = "无法更改风扇转速。";
+"machine.fan_install" = "安装风扇控制";
+"machine.fan_install_prompt" = "风扇控制需要一个小的特权助手。安装时会请求你批准——macOS 绝不允许 App 静默安装它。";
+"machine.fan_approve" = "打开系统设置";
+"machine.fan_approve_prompt" = "就快好了——在系统设置的“登录项与扩展”中启用「CLI Pulse」即可完成风扇控制的安装。";
 "machine.device_health" = "设备健康";
 
 /* Provider service-status component list (status page) */

@@ -47,6 +47,7 @@ public struct MachineHealthView: View {
     @State private var fanBusy = false
     @State private var fanError: String?
     @State private var pendingFanTarget: Int?   // showing the boost confirm for this target
+    @State private var fanInstallState: FanDaemonInstallState = .notInstalled
     #endif
 
     public init() {}
@@ -60,7 +61,10 @@ public struct MachineHealthView: View {
                     if snap.battery.hasBattery { batteryCard(snap.battery) }
                     sensorsSection(snap)
                     #if DEVID_BUILD
-                    if machineControlsEnabled, fanAvailable { fanBoostCard }
+                    if machineControlsEnabled {
+                        if fanAvailable { fanBoostCard }
+                        else { fanInstallRow }
+                    }
                     #endif
                     processesSection(snap)
                     if MASSandboxGate.isSandboxed && !hasNativeSensors(snap) {
@@ -696,6 +700,42 @@ public struct MachineHealthView: View {
             fanError = ok ? nil : L10n.machine.fanErrGeneric
         }
     }
+
+    /// Shown when the root fan daemon isn't reachable yet: an Install prompt, or —
+    /// after register() — an "Approve in System Settings" prompt (macOS forces the
+    /// user to enable a privileged daemon). Nothing when unsupported (<macOS 13) or
+    /// already enabled-but-just-starting (the boost card takes over once reachable).
+    @ViewBuilder
+    private var fanInstallRow: some View {
+        switch fanInstallState {
+        case .unsupported, .installed:
+            EmptyView()
+        case .notInstalled, .error:
+            fanInstallCard(text: L10n.machine.fanInstallPrompt, button: L10n.machine.fanInstall) {
+                fanInstallState = FanDaemonInstaller.install()
+                if case .requiresApproval = fanInstallState { FanDaemonInstaller.openApprovalSettings() }
+            }
+        case .requiresApproval:
+            fanInstallCard(text: L10n.machine.fanApprovePrompt, button: L10n.machine.fanApprove) {
+                FanDaemonInstaller.openApprovalSettings()
+            }
+        }
+    }
+
+    private func fanInstallCard(text: String, button: String, _ action: @escaping () -> Void) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "fanblades.fill").font(.system(size: 12)).foregroundStyle(PulseTheme.accent)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L10n.machine.fanControl).font(.system(size: 11, weight: .semibold))
+                Text(text).font(.system(size: 10)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(button, action: action).controlSize(.small)
+            }
+            Spacer()
+        }
+        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+        .background(PulseTheme.accent.opacity(0.05)).clipShape(RoundedRectangle(cornerRadius: 6))
+    }
     #endif
 
     // MARK: - States
@@ -763,7 +803,8 @@ public struct MachineHealthView: View {
             if machineControlsEnabled {
                 let available = await fanClient.isAvailable()
                 let infos = available ? await fanClient.fanState() : []
-                await MainActor.run { fanAvailable = available; fanInfos = infos }
+                let install = available ? FanDaemonInstallState.installed : FanDaemonInstaller.state()
+                await MainActor.run { fanAvailable = available; fanInfos = infos; fanInstallState = install }
             } else if fanAvailable {
                 await MainActor.run { fanAvailable = false }
             }

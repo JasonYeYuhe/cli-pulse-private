@@ -572,6 +572,10 @@
 "machine.fan_confirm_message" = "Los ventiladores sonarán fuerte hasta que toques Automático (o cierres la app). Esto solo aumenta la refrigeración: nunca gira los ventiladores más lento que el sistema.";
 "machine.fan_confirm_button" = "Acelerar";
 "machine.fan_err_generic" = "No se pudo cambiar la velocidad de los ventiladores.";
+"machine.fan_install" = "Instalar control de ventiladores";
+"machine.fan_install_prompt" = "El control de ventiladores necesita un pequeño asistente con privilegios. Al instalarlo se te pedirá tu aprobación: macOS nunca deja que una app lo instale en silencio.";
+"machine.fan_approve" = "Abrir Ajustes del Sistema";
+"machine.fan_approve_prompt" = "Casi listo: activa «CLI Pulse» en Ítems de inicio y extensiones dentro de Ajustes del Sistema para terminar de instalar el control de ventiladores.";
 "machine.device_health" = "Estado del dispositivo";
 
 /* Provider service-status component list (status page) */
