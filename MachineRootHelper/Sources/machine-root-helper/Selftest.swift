@@ -26,6 +26,23 @@ func runSelftest(mode: String) -> Int32 {
     show("read")
     if mode == "read" { return 0 }
 
+    // ── root test hooks (for the launchd KeepAlive / crash-recovery test) ──
+    // leavestuck: force every fan MANUAL and EXIT WITHOUT reverting — simulates a
+    //   controller kill -9'd mid-boost, leaving the fan stuck (the M0 hazard). Sets
+    //   up the "a launchd relaunch must recover it" test.
+    // revert: force every fan back to auto (safety cleanup; == revert-on-startup).
+    if mode == "leavestuck" || mode == "revert" {
+        guard geteuid() == 0 else { print("\n\(mode) needs root (sudo)."); return 2 }
+        if mode == "leavestuck" {
+            for i in 0..<smc.fanCount() { _ = smc.writeManualMode(i, manual: true); _ = smc.writeTargetRPM(i, rpm: 3000) }
+            print("\nleft fans MANUAL@3000 (stuck; NO revert) — simulating a kill -9'd controller")
+        } else {
+            _ = FanController(smc: smc, heartbeatTimeout: 3, now: { ProcessInfo.processInfo.systemUptime }, revertOnInit: true)
+            print("\nforced all fans back to auto")
+        }
+        show(mode); return 0
+    }
+
     // ── write mode ──
     guard geteuid() == 0 else { print("\nwrite selftest needs root (sudo)."); return 2 }
     if snap().contains(where: { $0.mode == 1 }) {
