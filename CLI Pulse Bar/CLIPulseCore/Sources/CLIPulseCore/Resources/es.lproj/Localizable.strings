@@ -576,6 +576,19 @@
 "machine.fan_install_prompt" = "El control de ventiladores necesita un pequeño asistente con privilegios. Al instalarlo se te pedirá tu aprobación: macOS nunca deja que una app lo instale en silencio.";
 "machine.fan_approve" = "Abrir Ajustes del Sistema";
 "machine.fan_approve_prompt" = "Casi listo: activa «CLI Pulse» en Ítems de inicio y extensiones dentro de Ajustes del Sistema para terminar de instalar el control de ventiladores.";
+"machine.system" = "Sistema";
+"machine.uptime" = "Tiempo activo";
+"machine.load" = "Carga";
+"machine.mem_pressure" = "Presión de memoria";
+"machine.disk" = "Disco libre";
+"machine.swap" = "Swap";
+"machine.of_fmt" = "de %@";
+"machine.pressure_normal" = "Normal";
+"machine.pressure_elevated" = "Elevada";
+"machine.pressure_high" = "Alta";
+"machine.low_power" = "Modo de bajo consumo";
+"machine.on" = "Activado";
+"machine.off" = "Desactivado";
 "machine.device_health" = "Estado del dispositivo";
 
 /* Provider service-status component list (status page) */

@@ -114,6 +114,20 @@ public enum L10n {
         public static var fanInstallPrompt: String { tr("machine.fan_install_prompt") }
         public static var fanApprove: String { tr("machine.fan_approve") }
         public static var fanApprovePrompt: String { tr("machine.fan_approve_prompt") }
+        // System metrics + Low Power Mode (v1.39).
+        public static var system: String { tr("machine.system") }
+        public static var uptime: String { tr("machine.uptime") }
+        public static var load: String { tr("machine.load") }
+        public static var memPressure: String { tr("machine.mem_pressure") }
+        public static var disk: String { tr("machine.disk") }
+        public static var swap: String { tr("machine.swap") }
+        public static func freeOf(_ total: String) -> String { tr("machine.of_fmt", total) }
+        public static var pressureNormal: String { tr("machine.pressure_normal") }
+        public static var pressureElevated: String { tr("machine.pressure_elevated") }
+        public static var pressureHigh: String { tr("machine.pressure_high") }
+        public static var lowPower: String { tr("machine.low_power") }
+        public static var on: String { tr("machine.on") }
+        public static var off: String { tr("machine.off") }
     }
 
     // MARK: - Dashboard

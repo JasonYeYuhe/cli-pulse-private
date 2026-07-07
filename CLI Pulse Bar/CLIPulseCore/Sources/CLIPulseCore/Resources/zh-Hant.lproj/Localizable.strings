@@ -853,6 +853,19 @@
 "machine.fan_install_prompt" = "風扇控制需要一個小的特權輔助程式。安裝時會請求你批准——macOS 絕不允許 App 靜默安裝它。";
 "machine.fan_approve" = "打開系統設定";
 "machine.fan_approve_prompt" = "就快好了——在系統設定的「登入項目與擴充功能」中啟用「CLI Pulse」即可完成風扇控制的安裝。";
+"machine.system" = "系統";
+"machine.uptime" = "運行時間";
+"machine.load" = "負載";
+"machine.mem_pressure" = "記憶體壓力";
+"machine.disk" = "磁碟可用";
+"machine.swap" = "交換空間";
+"machine.of_fmt" = "/ 共 %@";
+"machine.pressure_normal" = "正常";
+"machine.pressure_elevated" = "偏高";
+"machine.pressure_high" = "緊張";
+"machine.low_power" = "低耗電模式";
+"machine.on" = "開";
+"machine.off" = "關";
 "machine.device_health" = "裝置健康";
 
 /* Provider service-status component list (status page) */

@@ -576,6 +576,19 @@
 "machine.fan_install_prompt" = "팬 제어에는 작은 권한 도우미가 필요합니다. 설치 시 승인을 요청합니다 — macOS는 앱이 몰래 설치하도록 허용하지 않습니다.";
 "machine.fan_approve" = "시스템 설정 열기";
 "machine.fan_approve_prompt" = "거의 다 됐습니다 — 시스템 설정의 '로그인 항목 및 확장 프로그램'에서 'CLI Pulse'를 켜면 팬 제어 설치가 완료됩니다.";
+"machine.system" = "시스템";
+"machine.uptime" = "가동 시간";
+"machine.load" = "부하";
+"machine.mem_pressure" = "메모리 압력";
+"machine.disk" = "디스크 여유";
+"machine.swap" = "스왑";
+"machine.of_fmt" = "/ %@";
+"machine.pressure_normal" = "정상";
+"machine.pressure_elevated" = "다소 높음";
+"machine.pressure_high" = "높음";
+"machine.low_power" = "저전력 모드";
+"machine.on" = "켬";
+"machine.off" = "끔";
 "machine.device_health" = "기기 상태";
 
 /* Provider service-status component list (status page) */

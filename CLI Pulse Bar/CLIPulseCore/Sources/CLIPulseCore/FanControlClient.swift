@@ -15,6 +15,7 @@ private let fanLog = Logger(subsystem: "com.cli-pulse.bar", category: "fan-contr
     func setFanBoost(targetRPM: Int, reply: @escaping (_ ok: Bool, _ error: String?, _ appliedJSON: String) -> Void)
     func fanHeartbeat(reply: @escaping (_ held: Bool) -> Void)
     func revertFansToAuto(reply: @escaping (_ ok: Bool) -> Void)
+    func setLowPowerMode(_ on: Bool, reply: @escaping (_ ok: Bool, _ error: String?) -> Void)
 }
 
 /// Client for the **root** fan-control daemon (DEVID only; the daemon is a
@@ -96,10 +97,23 @@ public final class FanControlClient: @unchecked Sendable {
 
     // MARK: - API
 
+    /// The root daemon's capability map (empty if it's not installed/reachable).
+    /// Drives which controls the Machine tab shows (fan_control, low_power_mode).
+    public func capabilities() async -> [String: Bool] {
+        await call({ (p, reply: @escaping ([String: Bool]) -> Void) in p.capabilities { reply($0) } }, fallback: [:])
+    }
+
     /// True iff the root daemon is installed, reachable, and advertises fan
     /// control. The Machine tab shows the fan card only when this is true.
     public func isAvailable() async -> Bool {
-        await call({ p, reply in p.capabilities { reply($0["fan_control"] == true) } }, fallback: false)
+        await capabilities()["fan_control"] == true
+    }
+
+    /// Toggle macOS Low Power Mode via the root daemon (reading the state is free
+    /// client-side — `ProcessInfo.isLowPowerModeEnabled`; only setting needs root).
+    @discardableResult
+    public func setLowPowerMode(_ on: Bool) async -> Bool {
+        await call({ (p, reply: @escaping (Bool) -> Void) in p.setLowPowerMode(on) { ok, _ in reply(ok) } }, fallback: false)
     }
 
     public func fanState() async -> [FanInfo] {
