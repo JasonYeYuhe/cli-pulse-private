@@ -723,6 +723,36 @@ public enum ProviderRegistry {
             cliNames: ["volcano", "doubao", "ark", "vecli"],
             webDomain: "console.volcengine.com"
         ),
+        ProviderDescriptor(
+            // v1.40.0: Poe developer-API points balance ⇒ `.credits`. Bearer
+            // POE_API_KEY (or config apiKey). Balance-only port; upstream's
+            // optional points_history chart has no consumer here.
+            kind: .poe, displayName: "Poe", category: .cloud,
+            supportedSources: [.auto, .api],
+            supportsQuota: false, supportsExactCost: false, supportsCredits: true,
+            requiresHelperBackend: false,
+            cliNames: [], webDomain: "poe.com"
+        ),
+        ProviderDescriptor(
+            // v1.40.0: CrossModel wallet balance (required /credits) + best-effort
+            // /usage spend windows ⇒ `.credits`. Bearer CROSSMODEL_API_KEY;
+            // optional CROSSMODEL_API_URL (HTTPS-or-loopback validated).
+            kind: .crossModel, displayName: "CrossModel", category: .cloud,
+            supportedSources: [.auto, .api],
+            supportsQuota: false, supportsExactCost: false, supportsCredits: true,
+            requiresHelperBackend: false,
+            cliNames: [], webDomain: "crossmodel.ai"
+        ),
+        ProviderDescriptor(
+            // v1.40.0: Chutes subscription_usage rolling-4h + monthly windows ⇒
+            // `.quota` (.statusOnly fallback on schema drift). Bearer
+            // CHUTES_API_KEY. Primary-shape port only (no /quotas fallback).
+            kind: .chutes, displayName: "Chutes", category: .cloud,
+            supportedSources: [.auto, .api],
+            supportsQuota: true, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: [], webDomain: "chutes.ai"
+        ),
     ]
 }
 
