@@ -86,6 +86,9 @@ public enum CollectorRegistry {
         WindsurfCollector(),
         OpenCodeGoCollector(),
         GrokCollector(),
+        PoeCollector(),
+        CrossModelCollector(),
+        ChutesCollector(),
     ]
 
     /// Returns the collector for a given provider, if one exists and is available.

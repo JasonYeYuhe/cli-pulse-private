@@ -122,6 +122,12 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case openCodeGo = "OpenCode Go"
     // v1.23.0 Phase C-23: gRPC-web GetGrokCreditsConfig (.quota usedPercent window / .statusOnly; xAI).
     case grok = "Grok"
+    // v1.40.0: Poe developer-API points balance (.credits; Bearer POE_API_KEY).
+    case poe = "Poe"
+    // v1.40.0: CrossModel wallet balance + best-effort spend windows (.credits; Bearer CROSSMODEL_API_KEY, micro units).
+    case crossModel = "CrossModel"
+    // v1.40.0: Chutes subscription_usage rolling-4h + monthly quota windows (.quota; Bearer CHUTES_API_KEY).
+    case chutes = "Chutes"
 
     public var id: String { rawValue }
 
@@ -198,6 +204,9 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .windsurf: return "w.circle"
         case .openCodeGo: return "o.square"
         case .grok: return "x.circle"
+        case .poe: return "p.circle"
+        case .crossModel: return "arrow.left.arrow.right.circle"
+        case .chutes: return "c.square.fill"
         }
     }
 }
