@@ -229,7 +229,7 @@ private struct TeamDetailView: View {
                 HStack(spacing: 16) {
                     Label(L10n.team.membersCount(usage.member_count), systemImage: "person.2")
                     Label(L10n.team.tokensCount(usage.total_usage), systemImage: "chart.bar")
-                    Label(String(format: "$%.2f", usage.total_cost), systemImage: "dollarsign.circle")
+                    Label(CostFormatter.format(usage.total_cost), systemImage: "dollarsign.circle")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)

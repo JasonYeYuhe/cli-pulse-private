@@ -47,6 +47,9 @@ struct GetStatusIntent: AppIntent {
     }
 
     private func formatCost(_ cost: Double) -> String {
+        // NOTE (v1.40 PR-7): the Siri intent is a separate App Intents extension
+        // process without CLIPulseCore's CurrencyConverter — stays USD, deferred
+        // with the widget/watch to a future app-group currency-sync pass.
         if cost < 0.01 { return "less than one cent" }
         return String(format: "$%.2f", cost)
     }

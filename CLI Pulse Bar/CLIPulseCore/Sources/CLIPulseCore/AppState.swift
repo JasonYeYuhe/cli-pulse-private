@@ -606,6 +606,19 @@ public final class AppState: ObservableObject {
     @AppStorage("cli_pulse_refresh_interval") public var refreshInterval: Int = 120
     /// One-time guard so the Adaptive default is applied to fresh installs only.
     @AppStorage("cli_pulse_refresh_adaptive_default_applied") var refreshAdaptiveDefaultApplied = false
+
+    /// v1.40 PR-7: display currency for costs (storage stays USD; conversion at
+    /// display time via CurrencyConverter). Use `displayCurrency` / `setDisplayCurrency`.
+    @AppStorage("cli_pulse_display_currency") var displayCurrencyRaw = DisplayCurrency.usd.rawValue
+    public var displayCurrency: DisplayCurrency {
+        DisplayCurrency(rawValue: displayCurrencyRaw) ?? .usd
+    }
+    public func setDisplayCurrency(_ currency: DisplayCurrency) {
+        displayCurrencyRaw = currency.rawValue
+        CurrencyConverter.shared.setCurrency(currency)
+        objectWillChange.send()   // re-render the popover's cost labels immediately
+        Task { await CurrencyConverter.shared.refreshRatesIfStale() }
+    }
     @AppStorage("cli_pulse_show_cost") public var showCost = true
     @AppStorage("cli_pulse_notifications") public var notificationsEnabled = true
     @AppStorage("cli_pulse_compact_mode") public var compactMode = false
@@ -697,6 +710,9 @@ public final class AppState: ObservableObject {
         loadProviderConfigs()
         loadSuppressedAlertIDs()
         applyAdaptiveRefreshDefaultIfFreshInstall()
+        // v1.40 PR-7: sync the display currency + refresh FX rates (cached 24h).
+        CurrencyConverter.shared.setCurrency(displayCurrency)
+        Task { await CurrencyConverter.shared.refreshRatesIfStale() }
 
         // v1.10 P2-3 slice 2: the `subscriptionCancellable` forwarder that
         // re-emitted the manager's objectWillChange into AppState's has been

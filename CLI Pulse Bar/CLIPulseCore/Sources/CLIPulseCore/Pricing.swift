@@ -22,14 +22,14 @@ public enum TokenPricing {
         #endif
     }
 
-    /// Format a cost value for display.
+    /// Format a raw USD cost value (4-decimal sub-cent precision). NOT routed
+    /// through the display-currency converter — this is an internal/diagnostic
+    /// USD formatter (per-token estimates); owner-facing costs use
+    /// `CostFormatter.format`, which converts. (v1.40 PR-7.)
     public static func formatCost(_ cost: Double) -> String {
         if cost < 0.01 {
             return cost > 0 ? String(format: "$%.4f", cost) : "$0.00"
-        } else if cost < 1.0 {
-            return String(format: "$%.2f", cost)
-        } else {
-            return String(format: "$%.2f", cost)
         }
+        return String(format: "$%.2f", cost)
     }
 }
