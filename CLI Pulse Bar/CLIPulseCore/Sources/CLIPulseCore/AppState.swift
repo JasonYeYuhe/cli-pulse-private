@@ -599,7 +599,13 @@ public final class AppState: ObservableObject {
         set { Self.persistAuthTokens(access: newValue, refresh: storedRefreshToken) }
     }
 
+    /// Refresh cadence in seconds. `0` = the v1.40 "Adaptive" mode (2–30 min by
+    /// menu-open recency / LPM / thermal). Fresh installs default to Adaptive
+    /// (see `applyAdaptiveRefreshDefaultIfFreshInstall`); existing users keep
+    /// whatever they had (the stored default was 120s).
     @AppStorage("cli_pulse_refresh_interval") public var refreshInterval: Int = 120
+    /// One-time guard so the Adaptive default is applied to fresh installs only.
+    @AppStorage("cli_pulse_refresh_adaptive_default_applied") var refreshAdaptiveDefaultApplied = false
     @AppStorage("cli_pulse_show_cost") public var showCost = true
     @AppStorage("cli_pulse_notifications") public var notificationsEnabled = true
     @AppStorage("cli_pulse_compact_mode") public var compactMode = false
@@ -690,6 +696,7 @@ public final class AppState: ObservableObject {
         subscriptionManager.apiClient = api
         loadProviderConfigs()
         loadSuppressedAlertIDs()
+        applyAdaptiveRefreshDefaultIfFreshInstall()
 
         // v1.10 P2-3 slice 2: the `subscriptionCancellable` forwarder that
         // re-emitted the manager's objectWillChange into AppState's has been

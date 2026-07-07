@@ -85,6 +85,15 @@ internal final class DataRefreshManager {
     private var refreshTimer: Timer?
     private var refreshTask: Task<Void, Never>?
 
+    // v1.40 PR-8: adaptive refresh cadence. When `isAdaptive`, the timer is a
+    // self-rescheduling one-shot whose delay is recomputed each tick from the
+    // AdaptiveRefreshPolicy (menu-open recency + LPM/thermal).
+    private let adaptivePolicy = AdaptiveRefreshPolicy()
+    private var isAdaptive = false
+    private var lastMenuOpenAt: Date?
+    private var nextAdaptiveFire: Date?
+    private var adaptiveRefreshRequest: (@MainActor () async -> Void)?
+
     /// Alert IDs we've already seen on a previous refresh cycle. New IDs —
     /// those NOT in this set — trigger a user notification at most once per
     /// "first appearance". Must survive cold launch, or every unresolved
@@ -473,9 +482,66 @@ internal final class DataRefreshManager {
         #endif
     }
 
+    // MARK: - Adaptive refresh loop (v1.40 PR-8)
+
+    /// Starts the adaptive cadence: a self-rescheduling one-shot timer whose delay
+    /// is recomputed each tick from the AdaptiveRefreshPolicy.
+    func startAdaptiveLoop(onRefreshRequested: @escaping @MainActor () async -> Void) {
+        stopRefreshLoop()
+        isAdaptive = true
+        adaptiveRefreshRequest = onRefreshRequested
+        armAdaptive()
+
+        #if os(macOS)
+        observeHelperSync(onRefreshRequested: onRefreshRequested)
+        #endif
+    }
+
+    /// Records a menu-bar popover activation. In adaptive mode this shortens the
+    /// cadence to the recent-interaction window — but only re-arms if the new tick
+    /// would fire SOONER, so repeated opens can't keep resetting a soon-due tick.
+    func noteMenuOpened(at date: Date = Date()) {
+        lastMenuOpenAt = date
+        guard isAdaptive else { return }
+        let candidate = adaptiveDecision(now: date)
+        let candidateFire = date.addingTimeInterval(candidate.seconds)
+        if AdaptiveRefreshPolicy.shouldReArm(candidateFire: candidateFire, pendingFire: nextAdaptiveFire) {
+            armAdaptive()
+        }
+    }
+
+    private func adaptiveDecision(now: Date = Date()) -> AdaptiveRefreshPolicy.Decision {
+        #if os(macOS) || os(iOS)
+        let lpm = ProcessInfo.processInfo.isLowPowerModeEnabled
+        #else
+        let lpm = false
+        #endif
+        let raw = adaptivePolicy.nextDelay(for: .init(
+            now: now, lastMenuOpenAt: lastMenuOpenAt,
+            lowPowerModeEnabled: lpm, thermalState: ProcessInfo.processInfo.thermalState))
+        // Respect the same 60s floor as the fixed loop (adaptive min is 120s anyway).
+        return AdaptiveRefreshPolicy.Decision(seconds: max(60, raw.seconds), reason: raw.reason)
+    }
+
+    private func armAdaptive() {
+        refreshTimer?.invalidate()
+        let decision = adaptiveDecision()
+        nextAdaptiveFire = Date().addingTimeInterval(decision.seconds)
+        let request = adaptiveRefreshRequest
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: decision.seconds, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                if let request { self.requestRefresh(using: request) }
+                if self.isAdaptive { self.armAdaptive() }   // reschedule the next tick
+            }
+        }
+    }
+
     func stopRefreshLoop() {
         refreshTimer?.invalidate()
         refreshTimer = nil
+        isAdaptive = false
+        nextAdaptiveFire = nil
 
         #if os(macOS)
         if let helperSyncObserver {
@@ -1387,7 +1453,12 @@ extension AppState {
     }
 
     public func startRefreshLoop() {
-        dataRefreshManager.startRefreshLoop(interval: refreshInterval, onRefreshRequested: refreshRequest())
+        // v1.40 PR-8: refreshInterval == 0 is the "Adaptive" sentinel.
+        if refreshInterval == 0 {
+            dataRefreshManager.startAdaptiveLoop(onRefreshRequested: refreshRequest())
+        } else {
+            dataRefreshManager.startRefreshLoop(interval: refreshInterval, onRefreshRequested: refreshRequest())
+        }
     }
 
     public func stopRefreshLoop() {
@@ -1396,12 +1467,52 @@ extension AppState {
 
     public func updateRefreshInterval(_ seconds: Int) {
         refreshInterval = seconds
-        dataRefreshManager.updateRefreshInterval(
-            seconds,
-            isAuthenticated: isAuthenticated,
-            isLocalMode: isLocalMode,
-            onRefreshRequested: refreshRequest()
-        )
+        if seconds == 0 {
+            // Adaptive — gate on the same auth/local-mode condition as the fixed path.
+            if isAuthenticated || isLocalMode {
+                dataRefreshManager.startAdaptiveLoop(onRefreshRequested: refreshRequest())
+            }
+        } else {
+            dataRefreshManager.updateRefreshInterval(
+                seconds,
+                isAuthenticated: isAuthenticated,
+                isLocalMode: isLocalMode,
+                onRefreshRequested: refreshRequest()
+            )
+        }
+    }
+
+    /// v1.40 PR-8: called when the menu-bar popover activates, so the adaptive
+    /// cadence can shorten to the recent-interaction window.
+    public func notePopoverActivated() {
+        dataRefreshManager.noteMenuOpened()
+    }
+
+    /// v1.40 PR-8: one-time — a FRESH install (no explicit refresh-interval ever
+    /// stored) defaults to Adaptive. Existing users who explicitly picked an
+    /// interval keep it; the guard flag means this runs at most once.
+    func applyAdaptiveRefreshDefaultIfFreshInstall() {
+        // macOS only — Adaptive keys off menu-bar popover recency, which iOS has
+        // no equivalent of (it would degenerate to always-30 min there).
+        #if os(macOS)
+        guard !refreshAdaptiveDefaultApplied else { return }
+        refreshAdaptiveDefaultApplied = true
+        // "Fresh install" = no explicit interval EVER stored AND onboarding not yet
+        // completed. The onboarding flag is what distinguishes a genuinely new
+        // install from an existing user who simply kept the shipped default (their
+        // interval key is also absent) — so existing users are NOT switched.
+        let hasExplicitInterval = UserDefaults.standard.object(forKey: "cli_pulse_refresh_interval") != nil
+        let onboardingCompleted = UserDefaults.standard.bool(forKey: "cli_pulse_onboarding_completed")
+        if Self.shouldDefaultToAdaptive(hasExplicitInterval: hasExplicitInterval,
+                                        onboardingCompleted: onboardingCompleted) {
+            refreshInterval = 0   // Adaptive
+        }
+        #endif
+    }
+
+    /// Pure decision for the fresh-install Adaptive default (testable).
+    nonisolated static func shouldDefaultToAdaptive(hasExplicitInterval: Bool, onboardingCompleted: Bool) -> Bool {
+        !hasExplicitInterval && !onboardingCompleted
     }
 
     /// Ask the user for local notification permission and (on iOS) trigger

@@ -45,6 +45,7 @@ struct GeneralSection: View {
                     get: { state.refreshInterval },
                     set: { state.updateRefreshInterval($0) }
                 )) {
+                    Text(L10n.settings.refreshAdaptive).tag(0)   // v1.40 PR-8: 2–30 min by usage
                     Text("1m").tag(60)
                     Text("2m").tag(120)
                     Text("5m").tag(300)
@@ -53,7 +54,7 @@ struct GeneralSection: View {
                 }
                 .pickerStyle(.segmented)
                 .controlSize(.small)
-                .frame(width: 220)
+                .frame(width: 300)
             }
 
             Divider()

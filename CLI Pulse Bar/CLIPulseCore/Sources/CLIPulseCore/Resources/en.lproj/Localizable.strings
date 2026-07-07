@@ -894,3 +894,5 @@
 "usage_dashboard.less" = "Less";
 "usage_dashboard.more" = "More";
 "usage_dashboard.all" = "All";
+
+"settings.refresh_adaptive" = "Adaptive";

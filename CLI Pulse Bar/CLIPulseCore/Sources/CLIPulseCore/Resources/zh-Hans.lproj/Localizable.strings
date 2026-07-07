@@ -896,3 +896,5 @@
 "usage_dashboard.less" = "少";
 "usage_dashboard.more" = "多";
 "usage_dashboard.all" = "全部";
+
+"settings.refresh_adaptive" = "自适应";
