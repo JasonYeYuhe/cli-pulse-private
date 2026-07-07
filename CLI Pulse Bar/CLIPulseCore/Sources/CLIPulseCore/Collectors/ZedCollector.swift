@@ -11,9 +11,14 @@
 // Store sandbox cannot read another app's Keychain item, so `isAvailable` is
 // gated `#if DEVID_BUILD`. The descriptor stays present on all builds so the
 // registry-coverage invariant holds; on MAS the provider is simply never
-// available. Keychain queries are no-UI (`kSecUseAuthenticationUIFail`) so they
-// never spawn a password prompt — errSecInteractionNotAllowed maps to a
-// friendly error ([[feedback_claude_oauth_keychain_prompt_spam]] class).
+// available. Keychain queries pass the no-UI flag (`kSecUseAuthenticationUIFail`)
+// so a Touch-ID/passcode-protected item fails fast instead of prompting — but a
+// Zed item with a restrictive cross-app ACL can STILL make macOS show a one-time
+// SecurityAgent "allow access" dialog (upstream docs/zed.md notes the same). To
+// avoid re-triggering that dialog every refresh (the prompt-spam class this
+// codebase already fixed for Claude — [[feedback_claude_oauth_keychain_prompt_spam]],
+// [[feedback_keychain_agent_bug_macos26]]), an interaction-denied read arms a
+// 30-min cooldown during which `isAvailable` returns false.
 //
 // ─── MIT License (full notice required by upstream) ───────────────
 //
@@ -45,6 +50,23 @@
 import Foundation
 import Security
 
+/// Backs off Zed Keychain reads after an interaction-denied result so a
+/// restrictive-ACL item can't re-trigger the SecurityAgent dialog every refresh.
+enum ZedKeychainGate {
+    static let cooldown: TimeInterval = 30 * 60
+    nonisolated(unsafe) private static var deniedUntil: Date?
+    private static let lock = NSLock()
+
+    static func noteInteractionDenied(now: Date = Date()) {
+        lock.withLock { deniedUntil = now.addingTimeInterval(cooldown) }
+    }
+    static func isCoolingDown(now: Date = Date()) -> Bool {
+        lock.withLock { if let d = deniedUntil { return now < d }; return false }
+    }
+    /// Test seam.
+    static func reset() { lock.withLock { deniedUntil = nil } }
+}
+
 public struct ZedCollector: ProviderCollector, Sendable {
     public let kind = ProviderKind.zed
 
@@ -53,6 +75,9 @@ public struct ZedCollector: ProviderCollector, Sendable {
 
     public func isAvailable(config: ProviderConfig) -> Bool {
         #if DEVID_BUILD
+        // Skip entirely while cooling down from an interaction-denied read, so we
+        // don't re-trigger the SecurityAgent ACL dialog every refresh.
+        guard !ZedKeychainGate.isCoolingDown() else { return false }
         // Available only when Zed's own credential is present in the Keychain.
         return Self.credentialsPresent()
         #else
@@ -92,7 +117,9 @@ public struct ZedCollector: ProviderCollector, Sendable {
                 kSecReturnData as String: false,
             ]
             noUI(&query)
-            if SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess { return true }
+            let status = SecItemCopyMatching(query as CFDictionary, nil)
+            if status == errSecSuccess { return true }
+            if status == errSecInteractionNotAllowed { ZedKeychainGate.noteInteractionDenied() }
         }
         return false
     }
@@ -119,7 +146,8 @@ public struct ZedCollector: ProviderCollector, Sendable {
         case errSecSuccess: break
         case errSecItemNotFound: return nil
         case errSecInteractionNotAllowed, errSecAuthFailed, errSecNoAccessForItem:
-            throw CollectorError.notSignedIn("Zed: Keychain locked/denied — sign in to Zed again")
+            ZedKeychainGate.noteInteractionDenied()   // back off so we don't re-prompt every refresh
+            throw CollectorError.notSignedIn("Zed: Keychain access needs approval — allow access to zed.dev in the dialog, or sign in to Zed again")
         default:
             throw CollectorError.notSignedIn("Zed: could not read Keychain (status \(status))")
         }
@@ -306,11 +334,20 @@ public struct ZedCollector: ProviderCollector, Sendable {
     }
     private struct Limit: Decodable {
         let value: UsageLimit
+        private enum CodingKeys: String, CodingKey { case limited }
         init(from decoder: Decoder) throws {
-            let single = try decoder.singleValueContainer()
-            if let s = try? single.decode(String.self), s == "unlimited" { value = .unlimited; return }
-            if let n = try? single.decode(Int.self) { value = .limited(n); return }
-            throw DecodingError.dataCorruptedError(in: single, debugDescription: "Unrecognized Zed usage limit")
+            // Scalar forms: "unlimited" or a bare Int.
+            if let single = try? decoder.singleValueContainer() {
+                if let s = try? single.decode(String.self), s == "unlimited" { value = .unlimited; return }
+                if let n = try? single.decode(Int.self) { value = .limited(n); return }
+            }
+            // Serde externally-tagged form: {"limited": N} (upstream fallback).
+            if let keyed = try? decoder.container(keyedBy: CodingKeys.self),
+               let n = try? keyed.decodeIfPresent(Int.self, forKey: .limited) {
+                value = .limited(n); return
+            }
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "Unrecognized Zed usage limit"))
         }
     }
 }

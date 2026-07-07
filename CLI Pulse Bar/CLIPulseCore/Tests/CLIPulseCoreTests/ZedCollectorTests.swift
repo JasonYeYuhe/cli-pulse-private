@@ -41,6 +41,12 @@ final class ZedCollectorTests: XCTestCase {
         XCTAssertEqual(s.editLimit, .unlimited)
     }
 
+    func test_parse_limited_nested_serde_form() throws {
+        // Zed's Rust backend may emit the externally-tagged {"limited": N} shape.
+        let s = try parse(json(limit: "{\"limited\": 500}"))
+        XCTAssertEqual(s.editLimit, .limited(500))
+    }
+
     func test_parse_invalid_throws() {
         XCTAssertThrowsError(try parse("not json")) {
             guard case CollectorError.parseFailed = $0 else { return XCTFail("expected parseFailed") }
@@ -100,6 +106,19 @@ final class ZedCollectorTests: XCTestCase {
                                                             now: Date(timeIntervalSince1970: 25)), 25, accuracy: 0.001)
         // Degenerate window → 0, clamped.
         XCTAssertEqual(ZedCollector.billingCycleUsedPercent(start: end, end: start), 0)
+    }
+
+    // MARK: - Keychain cooldown gate
+
+    func test_keychainGate_cooldown() {
+        ZedKeychainGate.reset()
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        XCTAssertFalse(ZedKeychainGate.isCoolingDown(now: now))
+        ZedKeychainGate.noteInteractionDenied(now: now)
+        XCTAssertTrue(ZedKeychainGate.isCoolingDown(now: now.addingTimeInterval(60)))          // within 30 min
+        XCTAssertFalse(ZedKeychainGate.isCoolingDown(now: now.addingTimeInterval(31 * 60)))    // expired
+        ZedKeychainGate.reset()
+        XCTAssertFalse(ZedKeychainGate.isCoolingDown(now: now))
     }
 
     // MARK: - DEVID gate
