@@ -598,3 +598,24 @@
 "status.unknown" = "알 수 없음";
 "providers.service_status" = "서비스 상태";
 "providers.open_status_page" = "상태 페이지 열기";
+
+/* MARK: - Usage Dashboard (v1.40) */
+"usage_dashboard.title" = "사용량 대시보드";
+"usage_dashboard.open" = "사용량 대시보드 열기";
+"usage_dashboard.scope" = "Claude + Codex 로컬 기록";
+"usage_dashboard.empty" = "아직 로컬 사용 기록이 없습니다";
+"usage_dashboard.total_tokens" = "총 토큰";
+"usage_dashboard.total_cost" = "총 비용";
+"usage_dashboard.active_days" = "활성 일수";
+"usage_dashboard.current_streak" = "연속 일수";
+"usage_dashboard.longest_streak" = "최장 연속";
+"usage_dashboard.peak_day" = "최대 사용일";
+"usage_dashboard.favorite_model" = "자주 쓰는 모델";
+"usage_dashboard.messages" = "메시지 수";
+"usage_dashboard.by_model" = "모델별";
+"usage_dashboard.by_provider" = "제공자별";
+"usage_dashboard.activity" = "활동";
+"usage_dashboard.trends" = "추세";
+"usage_dashboard.less" = "적음";
+"usage_dashboard.more" = "많음";
+"usage_dashboard.all" = "전체";

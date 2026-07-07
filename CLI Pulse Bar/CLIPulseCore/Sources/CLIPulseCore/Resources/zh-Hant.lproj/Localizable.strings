@@ -875,3 +875,24 @@
 "status.unknown" = "未知";
 "providers.service_status" = "服務狀態";
 "providers.open_status_page" = "開啟狀態頁";
+
+/* MARK: - Usage Dashboard (v1.40) */
+"usage_dashboard.title" = "用量儀表板";
+"usage_dashboard.open" = "開啟用量儀表板";
+"usage_dashboard.scope" = "Claude + Codex 本機歷史";
+"usage_dashboard.empty" = "尚無本機用量歷史";
+"usage_dashboard.total_tokens" = "總 Token";
+"usage_dashboard.total_cost" = "總花費";
+"usage_dashboard.active_days" = "活躍天數";
+"usage_dashboard.current_streak" = "連續天數";
+"usage_dashboard.longest_streak" = "最長連續";
+"usage_dashboard.peak_day" = "尖峰單日";
+"usage_dashboard.favorite_model" = "常用模型";
+"usage_dashboard.messages" = "訊息數";
+"usage_dashboard.by_model" = "依模型";
+"usage_dashboard.by_provider" = "依服務商";
+"usage_dashboard.activity" = "活動";
+"usage_dashboard.trends" = "趨勢";
+"usage_dashboard.less" = "少";
+"usage_dashboard.more" = "多";
+"usage_dashboard.all" = "全部";

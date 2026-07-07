@@ -181,6 +181,33 @@ public enum L10n {
         public static func pendingApprovalCount(_ count: Int) -> String { tr("dashboard.pending_approval_count", count) }
     }
 
+    // MARK: - Usage Dashboard (v1.40)
+
+    public enum usageDashboard {
+        public static var title: String { tr("usage_dashboard.title") }
+        public static var open: String { tr("usage_dashboard.open") }
+        public static var scope: String { tr("usage_dashboard.scope") }
+        public static var empty: String { tr("usage_dashboard.empty") }
+        // Stat tiles
+        public static var totalTokens: String { tr("usage_dashboard.total_tokens") }
+        public static var totalCost: String { tr("usage_dashboard.total_cost") }
+        public static var activeDays: String { tr("usage_dashboard.active_days") }
+        public static var currentStreak: String { tr("usage_dashboard.current_streak") }
+        public static var longestStreak: String { tr("usage_dashboard.longest_streak") }
+        public static var peakDay: String { tr("usage_dashboard.peak_day") }
+        public static var favoriteModel: String { tr("usage_dashboard.favorite_model") }
+        public static var messages: String { tr("usage_dashboard.messages") }
+        // Sections
+        public static var byModel: String { tr("usage_dashboard.by_model") }
+        public static var byProvider: String { tr("usage_dashboard.by_provider") }
+        public static var activity: String { tr("usage_dashboard.activity") }
+        public static var trends: String { tr("usage_dashboard.trends") }
+        // Heatmap legend + trend range
+        public static var less: String { tr("usage_dashboard.less") }
+        public static var more: String { tr("usage_dashboard.more") }
+        public static var all: String { tr("usage_dashboard.all") }
+    }
+
     // MARK: - Providers
 
     public enum providers {
