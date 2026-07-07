@@ -147,7 +147,7 @@ public struct SakanaCollector: ProviderCollector, Sendable {
         let escaped = NSRegularExpression.escapedPattern(for: label)
         guard let labelMatch = firstMatch("<p[^>]*>\\s*\(escaped)\\s*</p>", html),
               let bodyStart = Range(labelMatch.range, in: html)?.upperBound else { return nil }
-        let boundary = #"<p[^>]*>\s*(?:5-hour|Weekly)\s*</p>|<div[^>]*data-slot=(?:"card"|"card-title")[^>]*>"#
+        let boundary = #"<p[^>]*>\s*(?:5-hour|Weekly)\s*</p>|<div[^>]*data-slot=(?:"card"|'card'|"card-title"|'card-title')[^>]*>"#
         let ns = html as NSString
         let searchRange = NSRange(location: NSMaxRange(labelMatch.range),
                                   length: max(0, ns.length - NSMaxRange(labelMatch.range)))

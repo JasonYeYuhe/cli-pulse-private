@@ -79,6 +79,21 @@ final class QoderCollectorTests: XCTestCase {
         XCTAssertTrue(u.status_text.contains("credits"), u.status_text)
     }
 
+    func test_buildResult_saturates_on_huge_credits_no_crash() {
+        // An "unlimited" plan sentinel (Int64.max-ish) must saturate, not trap Int().
+        let s = QoderCollector.Snapshot(usedCredits: 0, totalCredits: 1e20, remainingCredits: 1e20,
+                                        usagePercentage: 0, unit: nil, resetsAt: nil)
+        let result = QoderCollector.buildResult(s)
+        XCTAssertEqual(result.usage.quota, Int.max)
+        XCTAssertEqual(result.usage.remaining, Int.max)
+    }
+
+    func test_creditInt_clamps() {
+        XCTAssertEqual(QoderCollector.creditInt(-5), 0)
+        XCTAssertEqual(QoderCollector.creditInt(1e30), Int.max)
+        XCTAssertEqual(QoderCollector.creditInt(42.6), 43)
+    }
+
     func test_isAvailable_matrix() {
         XCTAssertTrue(collector.isAvailable(config: ProviderConfig(kind: .qoder, manualCookieHeader: "sid=abc")))
         XCTAssertFalse(collector.isAvailable(config: ProviderConfig(kind: .qoder)))

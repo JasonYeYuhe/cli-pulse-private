@@ -108,9 +108,15 @@ public struct QoderCollector: ProviderCollector, Sendable {
         request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
         request.setValue(bxVersion, forHTTPHeaderField: "Bx-V")
         let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let http = response as? HTTPURLResponse
+        let status = http?.statusCode ?? 0
         if status == 401 || status == 403 {
             throw CollectorError.notSignedIn("Qoder: session expired (sign in again)")
+        }
+        // Reject a cross-origin redirect that could have leaked the cookie.
+        if let responseHost = http?.url?.host?.lowercased(),
+           let requestHost = url.host?.lowercased(), responseHost != requestHost {
+            throw CollectorError.notSignedIn("Qoder: redirected off-origin")
         }
         guard (200..<300).contains(status) else {
             throw CollectorError.httpError(status: status, provider: "Qoder")
@@ -175,8 +181,8 @@ public struct QoderCollector: ProviderCollector, Sendable {
     static func buildResult(_ s: Snapshot) -> CollectorResult {
         let unit = s.unit?.trimmingCharacters(in: .whitespacesAndNewlines)
         let unitSuffix = (unit?.isEmpty == false) ? " \(unit!)" : " credits"
-        let total = Int(max(0, s.totalCredits).rounded())
-        let remaining = Int(min(Double(total), max(0, s.remainingCredits)).rounded())
+        let total = creditInt(s.totalCredits)
+        let remaining = min(total, creditInt(s.remainingCredits))
         let reset = s.resetsAt.map { sharedISO8601Formatter.string(from: $0) }
         let tier = TierDTO(name: "Credits", quota: total, remaining: remaining, reset_time: reset)
         let status = "\(remaining) / \(total)\(unitSuffix) left"
@@ -192,6 +198,13 @@ public struct QoderCollector: ProviderCollector, Sendable {
             metadata: ProviderMetadata(display_name: "Qoder", category: "cloud",
                                        supports_exact_cost: false, supports_quota: true))
         return CollectorResult(usage: usage, dataKind: .quota)
+    }
+
+    /// Non-negative credit magnitude, saturating instead of trapping `Int(Double)`
+    /// on a finite-but-huge value (e.g. an "unlimited" plan's Int64.max sentinel).
+    static func creditInt(_ value: Double) -> Int {
+        guard value.isFinite, value > 0 else { return 0 }
+        return value >= Double(Int.max) ? Int.max : Int(value.rounded())
     }
 
     // MARK: - Response DTOs (camelCase ?? snake_case)
