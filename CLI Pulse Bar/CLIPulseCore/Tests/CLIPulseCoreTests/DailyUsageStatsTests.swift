@@ -138,4 +138,37 @@ final class DailyUsageStatsTests: XCTestCase {
         XCTAssertEqual(DailyUsageStats.previousDay("2026-03-01"), "2026-02-28")
         XCTAssertNil(DailyUsageStats.previousDay("garbage"))
     }
+
+    // MARK: - Heatmap grid helpers
+
+    func test_shift_and_daySequence() {
+        XCTAssertEqual(DailyUsageStats.shift("2026-01-01", byDays: -1), "2025-12-31")
+        XCTAssertEqual(DailyUsageStats.shift("2026-01-01", byDays: 7), "2026-01-08")
+        XCTAssertEqual(DailyUsageStats.daySequence(startingAt: "2026-01-01", count: 3),
+                       ["2026-01-01", "2026-01-02", "2026-01-03"])
+    }
+
+    func test_weekdayIndex_sunday_is_zero() {
+        // 2024-01-07 was a Sunday; 2024-01-13 a Saturday.
+        XCTAssertEqual(DailyUsageStats.weekdayIndex("2024-01-07"), 0)
+        XCTAssertEqual(DailyUsageStats.weekdayIndex("2024-01-08"), 1)
+        XCTAssertEqual(DailyUsageStats.weekdayIndex("2024-01-13"), 6)
+    }
+
+    func test_localDayKey_formats_local_date() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        let d = Date(timeIntervalSince1970: 1_704_067_200)   // 2024-01-01T00:00:00Z
+        XCTAssertEqual(DailyUsageStats.localDayKey(d, calendar: cal), "2024-01-01")
+    }
+
+    func test_heatmapColumns_sunday_start_grid() {
+        // today = Sat 2024-01-13, 2 weeks. Grid start = Sun 2023-12-31.
+        let cols = DailyUsageStats.heatmapColumns(todayKey: "2024-01-13", weeks: 2)
+        XCTAssertEqual(cols.count, 2)
+        XCTAssertEqual(cols[0].count, 7)
+        XCTAssertEqual(cols[0][0], "2023-12-31")     // first Sunday
+        XCTAssertEqual(cols[1][6], "2024-01-13")     // today in the last cell
+        XCTAssertEqual(DailyUsageStats.weekdayIndex(cols[0][0]), 0)   // column top is always Sunday
+    }
 }

@@ -10,6 +10,14 @@
 #if os(macOS)
 import Foundation
 
+public extension Notification.Name {
+    /// Posted after the durable usage archive is mutated + saved, so the
+    /// dashboard window + Overview card can re-snapshot live (they otherwise
+    /// only load once via `.task`, and `.menuBarExtraStyle(.window)` keeps the
+    /// popover content alive across close/reopen).
+    static let dailyUsageArchiveDidChange = Notification.Name("cli_pulse_daily_usage_archive_did_change")
+}
+
 public actor DailyUsageArchiveManager {
     public static let shared = DailyUsageArchiveManager()
 
@@ -56,6 +64,7 @@ public actor DailyUsageArchiveManager {
         a.lastUpdatedUnixMs = Self.nowMs()
         archive = a
         DailyUsageArchiveIO.save(a, root: root)
+        NotificationCenter.default.post(name: .dailyUsageArchiveDidChange, object: nil)
     }
 
     // MARK: - Merge cloud daily usage (fill-only, other devices / pre-history)
@@ -68,6 +77,7 @@ public actor DailyUsageArchiveManager {
         a.lastUpdatedUnixMs = Self.nowMs()
         archive = a
         DailyUsageArchiveIO.save(a, root: root)
+        NotificationCenter.default.post(name: .dailyUsageArchiveDidChange, object: nil)
     }
 
     // MARK: - One-time 365-day backfill (isolated cacheRoot)
@@ -93,6 +103,7 @@ public actor DailyUsageArchiveManager {
             a.lastUpdatedUnixMs = Self.nowMs()
             archive = a
             DailyUsageArchiveIO.save(a, root: root)
+            NotificationCenter.default.post(name: .dailyUsageArchiveDidChange, object: nil)
         }
         try? FileManager.default.removeItem(at: tmp)   // discard the throwaway cache
         defaults.set(true, forKey: backfillKey)        // access was confirmed by caller — done

@@ -170,16 +170,66 @@ public enum DailyUsageStats {
     }()
 
     /// The previous calendar day's key ("yyyy-MM-dd" → "yyyy-MM-dd"), or nil if unparseable.
-    public static func previousDay(_ dayKey: String) -> String? { shift(dayKey, by: -1) }
+    public static func previousDay(_ dayKey: String) -> String? { shift(dayKey, byDays: -1) }
     /// The next calendar day's key.
-    public static func nextDay(_ dayKey: String) -> String? { shift(dayKey, by: 1) }
+    public static func nextDay(_ dayKey: String) -> String? { shift(dayKey, byDays: 1) }
 
-    private static func shift(_ dayKey: String, by days: Int) -> String? {
+    /// Shifts a "yyyy-MM-dd" key by a whole number of days (TZ-agnostic string
+    /// date-math: parse+format use the same fixed UTC calendar, so the result is
+    /// purely a date-portion decrement/increment). nil if the key is unparseable.
+    public static func shift(_ dayKey: String, byDays days: Int) -> String? {
         guard let date = keyFormatter.date(from: dayKey),
-              let shifted = Calendar(identifier: .gregorian).date(
-                byAdding: .day, value: days,
-                to: date, wrappingComponents: false)
+              let shifted = utcCalendar.date(byAdding: .day, value: days, to: date, wrappingComponents: false)
         else { return nil }
         return keyFormatter.string(from: shifted)
+    }
+
+    private static let utcCalendar: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(secondsFromGMT: 0)!
+        return c
+    }()
+
+    // MARK: - Heatmap grid helpers
+
+    /// Today's key in the LOCAL calendar — matches the scanner's day-key basis
+    /// (CostUsageScanner buckets by Calendar.current), so archive lookups line up.
+    /// NOTE: the grid's weekday/shift math (below) assumes Gregorian y/m/d
+    /// numbering, as does the scanner. A user whose macOS Region uses a
+    /// non-Gregorian calendar would see misaligned weekday columns (dictionary
+    /// lookups still match, since both sides share the numbering). Rare enough to
+    /// defer; a real fix pins the scanner to Gregorian too.
+    public static func localDayKey(_ date: Date = Date(), calendar: Calendar = .current) -> String {
+        let comps = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", comps.year ?? 0, comps.month ?? 0, comps.day ?? 0)
+    }
+
+    /// Weekday index of a key: 0 = Sunday … 6 = Saturday. nil if unparseable.
+    public static func weekdayIndex(_ dayKey: String) -> Int? {
+        guard let date = keyFormatter.date(from: dayKey) else { return nil }
+        return utcCalendar.component(.weekday, from: date) - 1   // Calendar weekday is 1...7 (Sun=1)
+    }
+
+    /// `count` consecutive day keys starting at `start` (inclusive), ascending.
+    public static func daySequence(startingAt start: String, count: Int) -> [String] {
+        guard count > 0, keyFormatter.date(from: start) != nil else { return [] }
+        var result: [String] = [start]
+        result.reserveCapacity(count)
+        var cur = start
+        while result.count < count, let next = nextDay(cur) { result.append(next); cur = next }
+        return result
+    }
+
+    /// GitHub-style heatmap columns for the `weeks` weeks ending in the week that
+    /// contains `todayKey` (Sunday-start). Each inner array is one week of 7 keys
+    /// (index 0 = Sunday). Keys AFTER `todayKey` are still returned (future cells)
+    /// — the view renders them faint/empty. Empty if inputs are unparseable.
+    public static func heatmapColumns(todayKey: String, weeks: Int) -> [[String]] {
+        guard weeks > 0, let todayWeekday = weekdayIndex(todayKey) else { return [] }
+        guard let lastSunday = shift(todayKey, byDays: -todayWeekday),
+              let gridStart = shift(lastSunday, byDays: -(weeks - 1) * 7) else { return [] }
+        let flat = daySequence(startingAt: gridStart, count: weeks * 7)
+        guard flat.count == weeks * 7 else { return [] }
+        return stride(from: 0, to: flat.count, by: 7).map { Array(flat[$0 ..< $0 + 7]) }
     }
 }

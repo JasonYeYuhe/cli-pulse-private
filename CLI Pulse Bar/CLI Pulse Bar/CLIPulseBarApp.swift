@@ -148,6 +148,15 @@ struct CLIPulseBarApp: App {
         .windowResizability(.contentSize)
         .defaultPosition(.center)
 
+        // v1.40 PR-5 — the usage dashboard (year heatmap needs width, so it's a
+        // real resizable Window, not a popover tab). Self-contained: reads the
+        // durable DailyUsageArchive snapshot on appear, no env injection needed.
+        Window(L10n.usageDashboard.title, id: UsageDashboardView.windowID) {
+            UsageDashboardView()
+        }
+        .windowResizability(.contentMinSize)
+        .defaultPosition(.center)
+
         // v1.32.1 P1 — in-app terminal as the PRIMARY surface. A value-based
         // WindowGroup keyed by `TerminalSessionKey` gives a per-session
         // SINGLETON: `openWindow(value:)` with a key whose window is already

@@ -875,3 +875,24 @@
 "status.unknown" = "不明";
 "providers.service_status" = "サービス状態";
 "providers.open_status_page" = "ステータスページを開く";
+
+/* MARK: - Usage Dashboard (v1.40) */
+"usage_dashboard.title" = "使用状況ダッシュボード";
+"usage_dashboard.open" = "使用状況ダッシュボードを開く";
+"usage_dashboard.scope" = "Claude + Codex ローカル履歴";
+"usage_dashboard.empty" = "ローカル使用履歴がまだありません";
+"usage_dashboard.total_tokens" = "総トークン";
+"usage_dashboard.total_cost" = "総コスト";
+"usage_dashboard.active_days" = "アクティブ日数";
+"usage_dashboard.current_streak" = "連続日数";
+"usage_dashboard.longest_streak" = "最長連続";
+"usage_dashboard.peak_day" = "ピーク日";
+"usage_dashboard.favorite_model" = "よく使うモデル";
+"usage_dashboard.messages" = "メッセージ数";
+"usage_dashboard.by_model" = "モデル別";
+"usage_dashboard.by_provider" = "プロバイダ別";
+"usage_dashboard.activity" = "アクティビティ";
+"usage_dashboard.trends" = "トレンド";
+"usage_dashboard.less" = "少";
+"usage_dashboard.more" = "多";
+"usage_dashboard.all" = "すべて";

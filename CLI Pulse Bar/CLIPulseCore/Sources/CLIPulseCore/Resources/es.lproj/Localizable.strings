@@ -598,3 +598,24 @@
 "status.unknown" = "Desconocido";
 "providers.service_status" = "Estado del servicio";
 "providers.open_status_page" = "Abrir página de estado";
+
+/* MARK: - Usage Dashboard (v1.40) */
+"usage_dashboard.title" = "Panel de uso";
+"usage_dashboard.open" = "Abrir panel de uso";
+"usage_dashboard.scope" = "Historial local de Claude + Codex";
+"usage_dashboard.empty" = "Aún no hay historial de uso local";
+"usage_dashboard.total_tokens" = "Tokens totales";
+"usage_dashboard.total_cost" = "Costo total";
+"usage_dashboard.active_days" = "Días activos";
+"usage_dashboard.current_streak" = "Racha actual";
+"usage_dashboard.longest_streak" = "Racha más larga";
+"usage_dashboard.peak_day" = "Día pico";
+"usage_dashboard.favorite_model" = "Modelo favorito";
+"usage_dashboard.messages" = "Mensajes";
+"usage_dashboard.by_model" = "Por modelo";
+"usage_dashboard.by_provider" = "Por proveedor";
+"usage_dashboard.activity" = "Actividad";
+"usage_dashboard.trends" = "Tendencias";
+"usage_dashboard.less" = "Menos";
+"usage_dashboard.more" = "Más";
+"usage_dashboard.all" = "Todo";

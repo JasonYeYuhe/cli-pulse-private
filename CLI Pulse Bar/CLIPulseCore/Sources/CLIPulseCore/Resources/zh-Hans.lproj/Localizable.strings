@@ -875,3 +875,24 @@
 "status.unknown" = "未知";
 "providers.service_status" = "服务状态";
 "providers.open_status_page" = "打开状态页";
+
+/* MARK: - Usage Dashboard (v1.40) */
+"usage_dashboard.title" = "用量仪表板";
+"usage_dashboard.open" = "打开用量仪表板";
+"usage_dashboard.scope" = "Claude + Codex 本地历史";
+"usage_dashboard.empty" = "暂无本地用量历史";
+"usage_dashboard.total_tokens" = "总 Token";
+"usage_dashboard.total_cost" = "总花费";
+"usage_dashboard.active_days" = "活跃天数";
+"usage_dashboard.current_streak" = "连续天数";
+"usage_dashboard.longest_streak" = "最长连续";
+"usage_dashboard.peak_day" = "峰值单日";
+"usage_dashboard.favorite_model" = "常用模型";
+"usage_dashboard.messages" = "消息数";
+"usage_dashboard.by_model" = "按模型";
+"usage_dashboard.by_provider" = "按服务商";
+"usage_dashboard.activity" = "活动";
+"usage_dashboard.trends" = "趋势";
+"usage_dashboard.less" = "少";
+"usage_dashboard.more" = "多";
+"usage_dashboard.all" = "全部";

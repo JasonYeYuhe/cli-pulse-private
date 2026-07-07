@@ -58,6 +58,10 @@ struct OverviewTab: View {
                 if let dash = state.dashboard {
                     metricsGrid(dash)
 
+                    // v1.40 PR-5: compact year-heatmap card → opens the full
+                    // Usage Dashboard window (Claude + Codex local history).
+                    CompactUsageCard()
+
                     // Activity timeline sparkline
                     if !dash.trend.isEmpty {
                         activityTimeline(dash.trend)
