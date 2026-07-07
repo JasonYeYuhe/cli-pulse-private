@@ -46,6 +46,13 @@ import Foundation
     /// its teardown-on-close path).
     func revertFansToAuto(reply: @escaping (_ ok: Bool) -> Void)
 
+    // ── Low Power Mode (v1.39) ────────────────────────────────────────────────
+    /// Toggle macOS Low Power Mode (`pmset -a lowpowermode`). Reading the state
+    /// is free client-side (ProcessInfo.isLowPowerModeEnabled); only SETTING it
+    /// needs root, so it lives here. Safe + reversible + no thermal risk (unlike
+    /// fan control). Fixed argv — never a shell string.
+    func setLowPowerMode(_ on: Bool, reply: @escaping (_ ok: Bool, _ error: String?) -> Void)
+
     // ── DEFERRED — M4 root/other-user kill (owner chose "add later") ──────────
     //   func killPid(_ pid: Int, signal: Int32,
     //                reply: @escaping (_ ok: Bool, _ error: String?) -> Void)
@@ -62,5 +69,5 @@ public enum RootHelperInterface {
     public static let machServiceName = "yyh.CLI-Pulse.machine-root-helper"
 
     /// Version string surfaced by `ping`, so a client can floor-check the daemon.
-    public static let version = "0.0.2-m3-fan-boost"
+    public static let version = "0.0.3-fan-lpm"
 }

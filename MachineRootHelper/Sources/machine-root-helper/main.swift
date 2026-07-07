@@ -59,8 +59,8 @@ final class RootHelper: NSObject, MachineRootHelperProtocol {
         reply("machine-root-helper \(RootHelperInterface.version) alive (pid \(getpid()), euid \(geteuid()))")
     }
     func capabilities(reply: @escaping ([String: Bool]) -> Void) {
-        // Fan control is LIVE (boost-only). root_kill (M4) stays off.
-        reply(["fan_control": true, "root_kill": false])
+        // Fan control + Low Power Mode toggle are LIVE. root_kill (M4) stays off.
+        reply(["fan_control": true, "low_power_mode": true, "root_kill": false])
     }
     func getFanState(reply: @escaping (String) -> Void) {
         reply(Self.jsonFans(fan.snapshot()))
@@ -78,6 +78,22 @@ final class RootHelper: NSObject, MachineRootHelperProtocol {
     }
     func revertFansToAuto(reply: @escaping (Bool) -> Void) {
         reply(fan.revertToAuto().ok)
+    }
+
+    func setLowPowerMode(_ on: Bool, reply: @escaping (Bool, String?) -> Void) {
+        // Fixed argv — `pmset -a lowpowermode 0|1`. No shell, no client-supplied
+        // strings. Reversible + no thermal risk. Blocks briefly; XPC handler thread.
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+        p.arguments = ["-a", "lowpowermode", on ? "1" : "0"]
+        do {
+            try p.run()
+            p.waitUntilExit()
+            if p.terminationStatus == 0 { reply(true, nil) }
+            else { reply(false, "pmset exited \(p.terminationStatus)") }
+        } catch {
+            reply(false, error.localizedDescription)
+        }
     }
 
     private static func jsonFans(_ fans: [FanState]) -> String {
