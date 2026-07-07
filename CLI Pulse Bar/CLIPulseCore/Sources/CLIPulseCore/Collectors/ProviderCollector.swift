@@ -91,6 +91,7 @@ public enum CollectorRegistry {
         ChutesCollector(),
         QoderCollector(),
         SakanaCollector(),
+        ZedCollector(),
     ]
 
     /// Returns the collector for a given provider, if one exists and is available.
