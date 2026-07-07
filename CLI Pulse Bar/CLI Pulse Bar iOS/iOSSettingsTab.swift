@@ -182,6 +182,15 @@ struct iOSSettingsTab: View {
 
                         Toggle(L10n.settings.showCostEstimates, isOn: $state.showCost)
                         Toggle(L10n.settings.compactMode, isOn: $state.compactMode)
+                        // v1.40 PR-7: display currency (costs convert at display time; storage stays USD).
+                        Picker(L10n.settings.currency, selection: Binding(
+                            get: { state.displayCurrency },
+                            set: { state.setDisplayCurrency($0) }
+                        )) {
+                            ForEach(DisplayCurrency.allCases, id: \.self) { currency in
+                                Text(currency.rawValue).tag(currency)
+                            }
+                        }
                         // Menu-bar display mode is a macOS-only setting (iOS has
                         // no menu bar) — intentionally not surfaced here.
                     }

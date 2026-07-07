@@ -57,6 +57,25 @@ struct GeneralSection: View {
                 .frame(width: 300)
             }
 
+            // v1.40 PR-7: display currency (costs convert at display time; storage stays USD).
+            HStack {
+                Text(L10n.settings.currency)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Picker("", selection: Binding(
+                    get: { state.displayCurrency },
+                    set: { state.setDisplayCurrency($0) }
+                )) {
+                    ForEach(DisplayCurrency.allCases, id: \.self) { currency in
+                        Text(currency.rawValue).tag(currency)
+                    }
+                }
+                .pickerStyle(.menu)
+                .controlSize(.small)
+                .frame(width: 120)
+            }
+
             Divider()
 
             SectionHeader(title: L10n.settings.notifications, icon: "bell")

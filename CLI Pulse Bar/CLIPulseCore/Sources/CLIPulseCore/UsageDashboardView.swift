@@ -360,6 +360,9 @@ public struct UsageDashboardView: View {
         .onReceive(NotificationCenter.default.publisher(for: .dailyUsageArchiveDidChange)) { _ in
             Task { await reload() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .displayCurrencyDidChange)) { _ in
+            Task { await reload() }   // re-render cost figures in the new currency
+        }
     }
 
     @MainActor
