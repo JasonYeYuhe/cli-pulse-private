@@ -17,39 +17,90 @@ public enum PulseTheme {
     #endif
     public static let dimText = Color.secondary
 
+    /// Per-provider accent color. v1.40 PR-6: backfilled so NO provider falls to
+    /// gray (was invisible on dark glass), key brands aligned to the token-monitor
+    /// vendor table, and every color passed through a luminance-lift so near-black
+    /// brands (Grok/Moonshot/etc.) stay visible on the frosted-glass panels.
+    ///
+    /// token-monitor (javis603/token-monitor, MIT) vendor palette + lift formula.
     public static func providerColor(_ provider: String) -> Color {
+        liftForDarkGlass(rawProviderRGB(provider))
+    }
+
+    private static func rawProviderRGB(_ provider: String) -> (r: Double, g: Double, b: Double) {
         switch provider {
-        case "Codex": return Color(red: 0.36, green: 0.51, blue: 1.0)
-        case "Gemini": return Color(red: 0.58, green: 0.39, blue: 0.98)
-        case "Claude": return Color(red: 0.90, green: 0.55, blue: 0.20)
-        case "Cursor": return Color(red: 0.40, green: 0.80, blue: 0.40)
-        case "OpenCode": return Color(red: 0.50, green: 0.50, blue: 0.80)
-        case "Droid": return Color(red: 0.70, green: 0.40, blue: 0.70)
-        case "Antigravity": return Color(red: 0.85, green: 0.35, blue: 0.55)
-        case "Copilot": return Color(red: 0.30, green: 0.70, blue: 0.90)
-        case "z.ai": return Color(red: 0.95, green: 0.60, blue: 0.10)
-        case "MiniMax": return Color(red: 0.60, green: 0.30, blue: 0.90)
-        case "Augment": return Color(red: 0.25, green: 0.75, blue: 0.55)
-        case "JetBrains AI": return Color(red: 0.95, green: 0.30, blue: 0.50)
-        case "Kimi K2": return Color(red: 0.40, green: 0.60, blue: 0.95)
-        case "Amp": return Color(red: 0.90, green: 0.75, blue: 0.20)
-        case "Synthetic": return Color(red: 0.55, green: 0.45, blue: 0.85)
-        case "Warp": return Color(red: 0.20, green: 0.80, blue: 0.80)
-        case "Kilo": return Color(red: 0.75, green: 0.55, blue: 0.35)
-        case "OpenRouter": return Color(red: 0.20, green: 0.65, blue: 0.90)
-        case "Ollama": return Color(red: 0.30, green: 0.80, blue: 0.65)
-        case "Alibaba": return Color(red: 0.95, green: 0.50, blue: 0.15)
-        case "Crof": return Color(red: 0.45, green: 0.70, blue: 0.95)
-        case "DeepSeek": return Color(red: 0.30, green: 0.45, blue: 0.85)
-        case "ElevenLabs": return Color(red: 0.15, green: 0.55, blue: 0.55)
-        case "Venice": return Color(red: 0.65, green: 0.35, blue: 0.85)
-        case "Kimi": return Color(red: 0.35, green: 0.55, blue: 0.90)
-        case "Kiro": return Color(red: 0.20, green: 0.70, blue: 0.50)
-        case "Vertex AI": return Color(red: 0.26, green: 0.52, blue: 0.96)
-        case "Perplexity": return Color(red: 0.10, green: 0.75, blue: 0.75)
-        case "Volcano Engine": return Color(red: 0.15, green: 0.55, blue: 0.95)
-        default: return .gray
+        // token-monitor canonical brands
+        case "Claude": return rgb(0xCC7C5E)
+        case "Codex": return rgb(0x49A3B0)
+        case "Gemini", "Vertex AI": return rgb(0x4285F4)
+        case "DeepSeek": return rgb(0x4D6BFE)
+        case "Kiro": return rgb(0x9046FF)
+        case "MiniMax": return rgb(0xF23F5D)
+        case "Alibaba", "Alibaba Token Plan": return rgb(0x615CED)   // Qwen
+        case "Volcano Engine": return rgb(0x006EFF)
+        // Existing tuned brands (kept)
+        case "Cursor": return rgb(0x66CC66)
+        case "OpenCode", "OpenCode Go": return rgb(0x8080CC)
+        case "Droid": return rgb(0xB366B3)
+        case "Antigravity": return rgb(0xD9598C)
+        case "Copilot": return rgb(0x4DB3E6)
+        case "z.ai": return rgb(0xF29A1A)
+        case "Augment": return rgb(0x40BF8C)
+        case "JetBrains AI": return rgb(0xF24D80)
+        case "Kimi", "Kimi K2": return rgb(0x5A8CF2)
+        case "Amp": return rgb(0xE6BF33)
+        case "Synthetic": return rgb(0x8C73D9)
+        case "Warp": return rgb(0x33CCCC)
+        case "Kilo": return rgb(0xBF8C59)
+        case "OpenRouter": return rgb(0x33A6E6)
+        case "Ollama": return rgb(0x4DCCA6)
+        case "Crof": return rgb(0x73B3F2)
+        case "ElevenLabs": return rgb(0x268C8C)
+        case "Venice": return rgb(0xA659D9)
+        case "Perplexity": return rgb(0x1AC0C0)
+        // Backfilled (were gray)
+        case "GLM": return rgb(0x3859FF)
+        case "Grok": return rgb(0x1A1A1A)          // xAI black → lifted
+        case "Moonshot", "MiMo": return rgb(0x16182D)   // dark navy → lifted
+        case "Groq": return rgb(0xF55036)
+        case "Mistral": return rgb(0xFA5310)
+        case "Poe": return rgb(0x6B4EFF)
+        case "CrossModel": return rgb(0x00B8A9)
+        case "Chutes": return rgb(0x2ADB5C)
+        case "OpenAI Admin": return rgb(0x10A37F)
+        case "Azure OpenAI": return rgb(0x0078D4)
+        case "Deepgram": return rgb(0x13EF93)
+        case "AWS Bedrock": return rgb(0xFF9900)
+        case "Windsurf": return rgb(0x58A65C)
+        // Everything else → token-monitor default blue (never gray)
+        default: return rgb(0x6AB4F0)
         }
+    }
+
+    /// Hex (0xRRGGBB) → normalized sRGB tuple.
+    private static func rgb(_ hex: UInt) -> (r: Double, g: Double, b: Double) {
+        (Double((hex >> 16) & 0xFF) / 255, Double((hex >> 8) & 0xFF) / 255, Double(hex & 0xFF) / 255)
+    }
+
+    /// token-monitor's near-black lift: if perceived luminance < 42 (of 255),
+    /// lift each channel 62% of the way toward 205 so the brand stays legible on
+    /// the dark frosted-glass panels. A no-op for already-bright colors.
+    static func liftForDarkGlass(_ c: (r: Double, g: Double, b: Double)) -> Color {
+        let l = liftedRGB(c)
+        return Color(.sRGB, red: l.r, green: l.g, blue: l.b, opacity: 1)
+    }
+
+    /// Pure lift math (0…1 sRGB in/out), extracted for testing.
+    static func liftedRGB(_ c: (r: Double, g: Double, b: Double)) -> (r: Double, g: Double, b: Double) {
+        let r = c.r * 255, g = c.g * 255, b = c.b * 255
+        let lum = 0.299 * r + 0.587 * g + 0.114 * b
+        func adj(_ x: Double) -> Double { lum < 42 ? x + (205 - x) * 0.62 : x }
+        return (adj(r) / 255, adj(g) / 255, adj(b) / 255)
+    }
+
+    /// Test seam: the raw (pre-lift) sRGB tuple for a provider.
+    static func rawProviderRGBForTesting(_ provider: String) -> (r: Double, g: Double, b: Double) {
+        rawProviderRGB(provider)
     }
 
     public static func severityColor(_ severity: String) -> Color {
@@ -74,6 +125,110 @@ public enum PulseTheme {
         case "down": return .red
         default: return .gray
         }
+    }
+}
+
+// MARK: - 毛玻璃 Glass (v1.40 PR-6)
+
+/// The frosted-glass card recipe extracted from javis603/token-monitor (MIT):
+/// `.ultraThinMaterial` base → tint → two gradient washes → hairline → top sheen
+/// → soft shadow. Scheme-aware (the token-monitor constants are the dark theme;
+/// a lighter tint is used in light mode so cards don't go dark-on-light).
+///
+/// Deliberately does NOT use the macOS 26 `glassEffect` Liquid Glass APIs — CI
+/// runs macos-15 / Xcode 16 runners that cannot compile that SDK symbol.
+public struct GlassCardModifier: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+    var cornerRadius: CGFloat = 14
+    var elevated: Bool = true
+
+    public init(cornerRadius: CGFloat = 14, elevated: Bool = true) {
+        self.cornerRadius = cornerRadius
+        self.elevated = elevated
+    }
+
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: cornerRadius, style: .continuous) }
+    private var isDark: Bool { scheme == .dark }
+
+    private var tint: Color {
+        isDark ? Color(.sRGB, red: 48 / 255, green: 52 / 255, blue: 56 / 255, opacity: 0.68)
+               : Color(.sRGB, red: 1, green: 1, blue: 1, opacity: 0.5)
+    }
+    private var verticalWash: LinearGradient {
+        LinearGradient(colors: [Color.white.opacity(isDark ? 0.07 : 0.5),
+                                Color.white.opacity(isDark ? 0.022 : 0.16)],
+                       startPoint: .top, endPoint: .bottom)
+    }
+    private var diagonalWash: LinearGradient {
+        LinearGradient(colors: [Color.white.opacity(isDark ? 0.035 : 0.12),
+                                Color.black.opacity(isDark ? 0.09 : 0.05)],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    private var hairline: Color { isDark ? Color.white.opacity(0.238) : Color.black.opacity(0.08) }
+    private var sheen: Color { Color.white.opacity(isDark ? 0.08 : 0.5) }
+
+    public func body(content: Content) -> some View {
+        content
+            .background(
+                ZStack {
+                    shape.fill(.ultraThinMaterial)
+                    shape.fill(tint)
+                    shape.fill(verticalWash)
+                    shape.fill(diagonalWash)
+                }
+            )
+            .overlay(alignment: .top) {
+                shape.fill(
+                    LinearGradient(colors: [sheen, .clear],
+                                   startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.36)))
+                    .allowsHitTesting(false)
+            }
+            .overlay(shape.strokeBorder(hairline, lineWidth: 1))
+            .clipShape(shape)
+            .shadow(color: Color.black.opacity(elevated ? 0.36 : 0.18),
+                    radius: elevated ? 22 : 10, x: 0, y: elevated ? 16 : 6)
+    }
+}
+
+public extension View {
+    /// Applies the v1.40 毛玻璃 frosted-glass card treatment. See `GlassCardModifier`.
+    func glassCard(cornerRadius: CGFloat = 14, elevated: Bool = true) -> some View {
+        modifier(GlassCardModifier(cornerRadius: cornerRadius, elevated: elevated))
+    }
+}
+
+// MARK: - Count-up number (glass headline)
+
+/// A number that animates up to `value` (Animatable drives the interpolation).
+/// Used for the dashboard's 46pt en-US-grouped headline. Drive the reveal with a
+/// `withAnimation(.timingCurve(...))` change of the bound value.
+public struct CountUpNumber: View, Animatable {
+    public var value: Double
+    public var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    private let font: Font
+
+    public init(value: Double, font: Font) {
+        self.value = value
+        self.font = font
+    }
+
+    public var body: some View {
+        Text(Self.grouped(Int(value.rounded())))
+            .font(font)
+            .monospacedDigit()
+    }
+
+    /// easeOutQuart timing curve (token-monitor's 2.2s count-up feel).
+    public static let countUpAnimation: Animation = .timingCurve(0.165, 0.84, 0.44, 1.0, duration: 2.2)
+
+    static func grouped(_ n: Int) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.locale = Locale(identifier: "en_US")
+        return f.string(from: NSNumber(value: n)) ?? "\(n)"
     }
 }
 

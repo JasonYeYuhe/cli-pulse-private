@@ -535,8 +535,7 @@ struct OverviewTab: View {
             }
         }
         .padding(10)
-        .background(PulseTheme.cardBackground.opacity(0.3))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .glassCard(cornerRadius: 8, elevated: false)
     }
 
     private func utilizationColor(_ percent: Double) -> Color {
@@ -647,8 +646,7 @@ struct OverviewTab: View {
             }
         }
         .padding(10)
-        .background(PulseTheme.cardBackground.opacity(0.3))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .glassCard(cornerRadius: 8, elevated: false)
     }
 
     // MARK: - Top Projects
@@ -663,8 +661,7 @@ struct OverviewTab: View {
             )
         }
         .padding(10)
-        .background(PulseTheme.cardBackground.opacity(0.3))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .glassCard(cornerRadius: 8, elevated: false)
     }
 
     // MARK: - Activity Timeline
@@ -675,8 +672,7 @@ struct OverviewTab: View {
             ActivityTimelineChart(trend: trend, style: .macOS)
         }
         .padding(10)
-        .background(PulseTheme.cardBackground.opacity(0.3))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .glassCard(cornerRadius: 8, elevated: false)
     }
 
     // MARK: - Risk Signals

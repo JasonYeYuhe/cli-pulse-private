@@ -10,9 +10,25 @@
 
 #if os(macOS)
 import SwiftUI
+import AppKit
 #if canImport(Charts)
 import Charts
 #endif
+
+// MARK: - HUD frosted-glass window background (token-monitor vibrancy:'hud')
+
+/// `NSVisualEffectView(material:.hudWindow, blendingMode:.behindWindow)` — the
+/// authentic frosted backdrop for the dashboard window. No macOS 26 APIs.
+private struct HUDWindowBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .hudWindow
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
 
 // MARK: - Heatmap blue ramp (token-monitor palette)
 
@@ -162,11 +178,7 @@ struct DashboardStatStrip: View {
                 .overlay(alignment: .leading) { Divider().opacity(0.4) }
             }
         }
-        .background(Color.white.opacity(0.03))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+        .glassCard(cornerRadius: 14, elevated: false)
     }
 }
 
@@ -315,6 +327,7 @@ public struct UsageDashboardView: View {
     public static let windowID = "usage-dashboard"
 
     @State private var archive: DailyUsageArchive?
+    @State private var animatedTokens: Double = 0
     private let providedArchive: DailyUsageArchive?
 
     /// Live window (loads the archive snapshot on appear).
@@ -328,6 +341,7 @@ public struct UsageDashboardView: View {
                 .padding(20)
         }
         .frame(minWidth: 760, minHeight: 620)
+        .background(HUDWindowBackground().ignoresSafeArea())
         .task { await reload() }
         .onReceive(NotificationCenter.default.publisher(for: .dailyUsageArchiveDidChange)) { _ in
             Task { await reload() }
@@ -336,8 +350,16 @@ public struct UsageDashboardView: View {
 
     @MainActor
     private func reload() async {
-        guard providedArchive == nil else { return }
-        archive = await DailyUsageArchiveManager.shared.snapshot()
+        let a: DailyUsageArchive
+        if let providedArchive {
+            a = providedArchive
+        } else {
+            a = await DailyUsageArchiveManager.shared.snapshot()
+            archive = a
+        }
+        withAnimation(CountUpNumber.countUpAnimation) {
+            animatedTokens = Double(DailyUsageStats.totalTokens(a))
+        }
     }
 
     @ViewBuilder
@@ -369,26 +391,44 @@ public struct UsageDashboardView: View {
                 }
                 heatmapLegend
             }
-            HStack(alignment: .top, spacing: 24) {
+            .padding(14)
+            .glassCard(elevated: false)
+            HStack(alignment: .top, spacing: 16) {
                 DashboardBreakdown(title: L10n.usageDashboard.byModel,
                                    rows: DailyUsageStats.byModel(a), useProviderColor: false)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .glassCard(elevated: false)
                 DashboardBreakdown(title: L10n.usageDashboard.byProvider,
                                    rows: DailyUsageStats.byProvider(a), useProviderColor: true)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .glassCard(elevated: false)
             }
             DashboardTrends(archive: a)
+                .padding(14)
+                .glassCard(elevated: false)
         }
     }
 
     @ViewBuilder
     private func header(_ a: DailyUsageArchive) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(L10n.usageDashboard.title)
-                .font(.system(size: 22, weight: .bold))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                CountUpNumber(value: animatedTokens,
+                              font: .system(size: 46, weight: .medium, design: .default))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                Text("tokens")
+                    .font(.system(size: 13)).foregroundStyle(.secondary)
+            }
             Text(L10n.usageDashboard.scope)
-                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .font(.system(size: 11)).foregroundStyle(.tertiary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var heatmapLegend: some View {
@@ -442,8 +482,7 @@ public struct CompactUsageCard: View {
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PulseTheme.cardBackground.opacity(0.3))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .glassCard(cornerRadius: 10, elevated: false)
         }
         .buttonStyle(.plain)
         .task { await reload() }
