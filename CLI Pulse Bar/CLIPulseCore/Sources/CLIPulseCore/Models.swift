@@ -128,6 +128,10 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     case crossModel = "CrossModel"
     // v1.40.0: Chutes subscription_usage rolling-4h + monthly quota windows (.quota; Bearer CHUTES_API_KEY).
     case chutes = "Chutes"
+    // v1.40.0: Qoder big_model_credits (.quota credits; manual cookie + Bx-V; qoder.com/.cn).
+    case qoder = "Qoder"
+    // v1.40.0: Sakana AI console billing HTML scrape (.quota 5h+weekly windows; manual cookie).
+    case sakana = "Sakana AI"
 
     public var id: String { rawValue }
 
@@ -207,6 +211,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
         case .poe: return "p.circle"
         case .crossModel: return "arrow.left.arrow.right.circle"
         case .chutes: return "c.square.fill"
+        case .qoder: return "q.circle"
+        case .sakana: return "fish"
         }
     }
 }

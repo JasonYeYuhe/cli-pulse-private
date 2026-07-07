@@ -89,6 +89,8 @@ public enum CollectorRegistry {
         PoeCollector(),
         CrossModelCollector(),
         ChutesCollector(),
+        QoderCollector(),
+        SakanaCollector(),
     ]
 
     /// Returns the collector for a given provider, if one exists and is available.
