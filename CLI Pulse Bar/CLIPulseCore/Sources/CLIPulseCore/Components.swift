@@ -67,6 +67,8 @@ public enum PulseTheme {
         case "Poe": return rgb(0x6B4EFF)
         case "CrossModel": return rgb(0x00B8A9)
         case "Chutes": return rgb(0x2ADB5C)
+        case "Qoder": return rgb(0x7C5CFF)
+        case "Sakana AI": return rgb(0x2B6CB0)
         case "OpenAI Admin": return rgb(0x10A37F)
         case "Azure OpenAI": return rgb(0x0078D4)
         case "Deepgram": return rgb(0x13EF93)

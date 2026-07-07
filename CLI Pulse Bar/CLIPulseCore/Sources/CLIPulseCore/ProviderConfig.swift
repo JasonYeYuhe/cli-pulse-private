@@ -753,6 +753,26 @@ public enum ProviderRegistry {
             requiresHelperBackend: false,
             cliNames: [], webDomain: "chutes.ai"
         ),
+        ProviderDescriptor(
+            // v1.40.0: manual-cookie big_model_credits (total+shared additive) ⇒
+            // `.quota` credits. Two hosts (qoder.com / qoder.com.cn); magic
+            // Bx-V header. Cookie/QODER_COOKIE env.
+            kind: .qoder, displayName: "Qoder", category: .cloud,
+            supportedSources: [.auto, .web],
+            supportsQuota: true, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: [], webDomain: "qoder.com"
+        ),
+        ProviderDescriptor(
+            // v1.40.0: manual-cookie console.sakana.ai/billing HTML scrape ⇒
+            // `.quota` 5-hour + weekly windows (+ best-effort PAYG credit).
+            // Cookie/SAKANA_COOKIE env.
+            kind: .sakana, displayName: "Sakana AI", category: .cloud,
+            supportedSources: [.auto, .web],
+            supportsQuota: true, supportsExactCost: false, supportsCredits: false,
+            requiresHelperBackend: false,
+            cliNames: [], webDomain: "console.sakana.ai"
+        ),
     ]
 }
 
