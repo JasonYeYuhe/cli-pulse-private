@@ -99,6 +99,17 @@ public enum L10n {
         // Process-list usability v1.38.1 (B2 — sort/expand).
         public static func showMore(_ n: String) -> String { tr("machine.show_more", n) }
         public static var showLess: String { tr("machine.show_less") }
+        // Fan control (M3, boost-only — DEVID + root daemon).
+        public static var fanControl: String { tr("machine.fan_control") }
+        public static var fanBoosting: String { tr("machine.fan_boosting") }
+        public static var fanAuto: String { tr("machine.fan_auto") }
+        public static var fanCool: String { tr("machine.fan_cool") }
+        public static var fanFull: String { tr("machine.fan_full") }
+        public static var fanHint: String { tr("machine.fan_hint") }
+        public static var fanConfirmTitle: String { tr("machine.fan_confirm_title") }
+        public static var fanConfirmMessage: String { tr("machine.fan_confirm_message") }
+        public static var fanConfirmButton: String { tr("machine.fan_confirm_button") }
+        public static var fanErrGeneric: String { tr("machine.fan_err_generic") }
     }
 
     // MARK: - Dashboard

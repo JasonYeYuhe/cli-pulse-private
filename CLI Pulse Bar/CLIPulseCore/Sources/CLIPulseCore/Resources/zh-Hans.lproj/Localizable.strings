@@ -839,6 +839,16 @@
 "machine.suspend_err_generic" = "无法暂停或恢复该进程。";
 "machine.show_more" = "再显示 %@ 个";
 "machine.show_less" = "收起";
+"machine.fan_control" = "风扇控制";
+"machine.fan_boosting" = "已提速";
+"machine.fan_auto" = "自动";
+"machine.fan_cool" = "降温";
+"machine.fan_full" = "全速";
+"machine.fan_hint" = "仅提速——风扇不会比自动更慢，点“自动”或退出应用即恢复自动。仅限直接下载（Developer ID）版本。";
+"machine.fan_confirm_title" = "让风扇提速？";
+"machine.fan_confirm_message" = "在你点“自动”（或退出应用）之前，风扇会一直大声运转。这只会增强散热，绝不会让风扇比系统更慢。";
+"machine.fan_confirm_button" = "提速风扇";
+"machine.fan_err_generic" = "无法更改风扇转速。";
 "machine.device_health" = "设备健康";
 
 /* Provider service-status component list (status page) */

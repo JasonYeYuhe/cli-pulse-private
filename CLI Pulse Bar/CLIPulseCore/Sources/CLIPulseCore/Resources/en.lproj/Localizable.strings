@@ -837,6 +837,16 @@
 "machine.suspend_err_generic" = "Couldn't pause or resume the process.";
 "machine.show_more" = "Show %@ more";
 "machine.show_less" = "Show less";
+"machine.fan_control" = "Fan Control";
+"machine.fan_boosting" = "Boosting";
+"machine.fan_auto" = "Auto";
+"machine.fan_cool" = "Cool";
+"machine.fan_full" = "Full Blast";
+"machine.fan_hint" = "Boost only — fans run at least as fast as automatic, never slower, and return to Auto when you tap Auto or quit. Direct-download (Developer ID) build only.";
+"machine.fan_confirm_title" = "Spin the fans up?";
+"machine.fan_confirm_message" = "The fans will run loud until you tap Auto (or quit the app). This only boosts cooling — it never runs the fans slower than the system would.";
+"machine.fan_confirm_button" = "Boost fans";
+"machine.fan_err_generic" = "Couldn't change fan speed.";
 "machine.device_health" = "Device Health";
 
 /* Provider service-status component list (status page) */

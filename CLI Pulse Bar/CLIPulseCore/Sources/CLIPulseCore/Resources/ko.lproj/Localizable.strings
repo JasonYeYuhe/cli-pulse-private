@@ -562,6 +562,16 @@
 "machine.suspend_err_generic" = "프로세스를 일시정지하거나 재개하지 못했습니다.";
 "machine.show_more" = "%@개 더 보기";
 "machine.show_less" = "간략히 보기";
+"machine.fan_control" = "팬 제어";
+"machine.fan_boosting" = "부스트 중";
+"machine.fan_auto" = "자동";
+"machine.fan_cool" = "냉각";
+"machine.fan_full" = "최대";
+"machine.fan_hint" = "부스트 전용 — 팬은 자동보다 느려지지 않으며, '자동'을 누르거나 앱을 종료하면 자동으로 돌아갑니다. 다이렉트 다운로드(Developer ID) 빌드 전용.";
+"machine.fan_confirm_title" = "팬을 올릴까요?";
+"machine.fan_confirm_message" = "'자동'을 누르거나 앱을 종료할 때까지 팬이 크게 돕니다. 냉각만 강화하며, 시스템보다 느리게 돌리지는 않습니다.";
+"machine.fan_confirm_button" = "팬 부스트";
+"machine.fan_err_generic" = "팬 속도를 변경하지 못했습니다.";
 "machine.device_health" = "기기 상태";
 
 /* Provider service-status component list (status page) */

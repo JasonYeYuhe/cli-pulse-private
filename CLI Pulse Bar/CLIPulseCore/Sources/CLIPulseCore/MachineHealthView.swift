@@ -33,6 +33,20 @@ public struct MachineHealthView: View {
     @State private var pendingSuspendPid: Int?  // row currently showing the Suspend confirm
     @State private var suspendingPid: Int?      // suspend/resume RPC in flight
     @State private var killError: String?       // last refusal / failure message (any control)
+
+    // Fan control (M3, boost-only). Talks to the ROOT daemon (not the user
+    // helper) — only reachable when the owner has installed it, so the card is
+    // hidden unless `fanAvailable` (capability probe) comes back true, on top of
+    // the same DEVID + machine-controls-toggle gate as the process controls.
+    // @State (not `let`): the client holds a persistent connection + the boost
+    // heartbeat timer, which MUST survive view redraws — a fresh `let` each redraw
+    // would drop the heartbeat and the daemon would revert the boost.
+    @State private var fanClient = FanControlClient()
+    @State private var fanAvailable = false
+    @State private var fanInfos: [FanControlClient.FanInfo] = []
+    @State private var fanBusy = false
+    @State private var fanError: String?
+    @State private var pendingFanTarget: Int?   // showing the boost confirm for this target
     #endif
 
     public init() {}
@@ -45,6 +59,9 @@ public struct MachineHealthView: View {
                     gauges(snap)
                     if snap.battery.hasBattery { batteryCard(snap.battery) }
                     sensorsSection(snap)
+                    #if DEVID_BUILD
+                    if machineControlsEnabled, fanAvailable { fanBoostCard }
+                    #endif
                     processesSection(snap)
                     if MASSandboxGate.isSandboxed && !hasNativeSensors(snap) {
                         masAffordance
@@ -550,6 +567,135 @@ public struct MachineHealthView: View {
         default:                   return L10n.machine.suspendErrGeneric
         }
     }
+
+    // MARK: - Fan control (M3, boost-only)
+
+    /// A single boost RPM applied to every fan (the daemon clamps it boost-only to
+    /// each fan's [auto, max]). "Cool" is a moderate boost; "Full Blast" sends a
+    /// value ≥ any fan's max so each pins to its own max (the unconditionally-safe
+    /// preset). Presets rather than a free slider keep the control safe + simple.
+    private var fanBoostActive: Bool { fanInfos.contains { $0.isManual } }
+
+    @ViewBuilder
+    private var fanBoostCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader(title: L10n.machine.fanControl, icon: "fanblades.fill")
+            if let fanError { infoWarn(fanError) }
+
+            // Live per-fan RPM + a "Boosting" badge while manual.
+            HStack(spacing: 10) {
+                ForEach(fanInfos) { fan in
+                    HStack(spacing: 4) {
+                        Image(systemName: "fanblades").font(.system(size: 9)).foregroundStyle(.tertiary)
+                        Text("\(fan.actualRPM)").font(.system(size: 10, design: .monospaced))
+                        Text("rpm").font(.system(size: 8)).foregroundStyle(.tertiary)
+                    }
+                }
+                if fanBoostActive {
+                    StatusBadge(text: L10n.machine.fanBoosting, color: .orange)
+                }
+                Spacer()
+            }
+
+            // Presets. Auto is immediate (benign); a boost asks to confirm.
+            HStack(spacing: 8) {
+                fanButton(L10n.machine.fanAuto, filled: !fanBoostActive) {
+                    pendingFanTarget = nil
+                    Task { await revertFan() }
+                }
+                .disabled(fanBusy)
+                fanButton(L10n.machine.fanCool, filled: false) {
+                    fanError = nil; pendingFanTarget = 3000
+                }
+                .disabled(fanBusy)
+                fanButton(L10n.machine.fanFull, filled: false) {
+                    fanError = nil; pendingFanTarget = 100_000    // ≥ any fan max → per-fan max
+                }
+                .disabled(fanBusy)
+                if fanBusy { ProgressView().controlSize(.mini) }
+                Spacer()
+            }
+
+            if let target = pendingFanTarget {
+                fanConfirmCard(target: target)
+            }
+            Text(L10n.machine.fanHint)
+                .font(.system(size: 9)).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PulseTheme.accent.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func fanButton(_ title: String, filled: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 10, weight: .medium))
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(filled ? PulseTheme.accent.opacity(0.2) : Color.secondary.opacity(0.12))
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func fanConfirmCard(target: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(L10n.machine.fanConfirmTitle).font(.system(size: 11, weight: .semibold))
+            Text(L10n.machine.fanConfirmMessage)
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Spacer()
+                Button(L10n.common.cancel) { pendingFanTarget = nil }.controlSize(.small).disabled(fanBusy)
+                Button {
+                    guard !fanBusy else { return }
+                    fanBusy = true
+                    Task { await applyFanBoost(target) }
+                } label: {
+                    HStack(spacing: 4) {
+                        if fanBusy { ProgressView().controlSize(.mini) }
+                        Text(L10n.machine.fanConfirmButton)
+                    }
+                }
+                .controlSize(.small).disabled(fanBusy)
+            }
+        }
+        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.vertical, 2)
+    }
+
+    private func infoWarn(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(.orange)
+            Text(message).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+    }
+
+    private func applyFanBoost(_ target: Int) async {
+        let result = await fanClient.startBoost(targetRPM: target)
+        let infos = await fanClient.fanState()
+        await MainActor.run {
+            fanBusy = false
+            pendingFanTarget = nil
+            fanInfos = infos
+            fanError = result.ok ? nil : (result.error ?? L10n.machine.fanErrGeneric)
+        }
+    }
+
+    private func revertFan() async {
+        await MainActor.run { fanBusy = true }
+        let ok = await fanClient.revert()
+        let infos = await fanClient.fanState()
+        await MainActor.run {
+            fanBusy = false
+            fanInfos = infos
+            fanError = ok ? nil : L10n.machine.fanErrGeneric
+        }
+    }
     #endif
 
     // MARK: - States
@@ -609,6 +755,19 @@ public struct MachineHealthView: View {
                     if snapshot != nil { snapshot = nil }  // helper went away
                 }
             }
+            #if DEVID_BUILD
+            // Fan control (root daemon). Probe availability + poll live RPMs only
+            // when the user opted into machine controls — never reach for the
+            // root daemon otherwise. Fully independent of the user-helper snapshot
+            // above: an absent daemon just keeps the card hidden.
+            if machineControlsEnabled {
+                let available = await fanClient.isAvailable()
+                let infos = available ? await fanClient.fanState() : []
+                await MainActor.run { fanAvailable = available; fanInfos = infos }
+            } else if fanAvailable {
+                await MainActor.run { fanAvailable = false }
+            }
+            #endif
             try? await Task.sleep(nanoseconds: refreshInterval)
         }
     }

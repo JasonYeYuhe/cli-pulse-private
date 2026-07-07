@@ -839,6 +839,16 @@
 "machine.suspend_err_generic" = "プロセスを一時停止／再開できませんでした。";
 "machine.show_more" = "他 %@ 件を表示";
 "machine.show_less" = "表示を減らす";
+"machine.fan_control" = "ファン制御";
+"machine.fan_boosting" = "ブースト中";
+"machine.fan_auto" = "自動";
+"machine.fan_cool" = "冷却";
+"machine.fan_full" = "全開";
+"machine.fan_hint" = "ブーストのみ。ファンは自動より遅くならず、「自動」をタップするかアプリを終了すると自動に戻ります。直接ダウンロード（Developer ID）版のみ。";
+"machine.fan_confirm_title" = "ファンを回しますか？";
+"machine.fan_confirm_message" = "「自動」をタップする（またはアプリを終了する）まで、ファンは大きな音で回り続けます。冷却を強めるだけで、システムより遅く回すことはありません。";
+"machine.fan_confirm_button" = "ファンをブースト";
+"machine.fan_err_generic" = "ファンの速度を変更できませんでした。";
 "machine.device_health" = "デバイスの状態";
 
 /* Provider service-status component list (status page) */

@@ -839,6 +839,16 @@
 "machine.suspend_err_generic" = "無法暫停或恢復該程序。";
 "machine.show_more" = "再顯示 %@ 個";
 "machine.show_less" = "收合";
+"machine.fan_control" = "風扇控制";
+"machine.fan_boosting" = "已提速";
+"machine.fan_auto" = "自動";
+"machine.fan_cool" = "降溫";
+"machine.fan_full" = "全速";
+"machine.fan_hint" = "僅提速——風扇不會比自動更慢，點「自動」或結束 App 即恢復自動。僅限直接下載（Developer ID）版本。";
+"machine.fan_confirm_title" = "讓風扇提速？";
+"machine.fan_confirm_message" = "在你點「自動」（或結束 App）之前，風扇會一直大聲運轉。這只會增強散熱，絕不會讓風扇比系統更慢。";
+"machine.fan_confirm_button" = "提速風扇";
+"machine.fan_err_generic" = "無法更改風扇轉速。";
 "machine.device_health" = "裝置健康";
 
 /* Provider service-status component list (status page) */
