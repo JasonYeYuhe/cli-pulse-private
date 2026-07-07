@@ -123,6 +123,10 @@ if CommandLine.arguments.count >= 2, CommandLine.arguments[1] == "selftest" {
     let mode = CommandLine.arguments.count >= 3 ? CommandLine.arguments[2] : "read"
     exit(runSelftest(mode: mode))
 }
+// Client-side XPC probe — validates the signed auth gate on hardware (XPCProbe.swift).
+if CommandLine.arguments.count >= 2, CommandLine.arguments[1] == "xpcprobe" {
+    exit(runXpcProbe())
+}
 
 if geteuid() != 0 {
     FileHandle.standardError.write("machine-root-helper must run as root (euid 0).\n".data(using: .utf8)!)
