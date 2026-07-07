@@ -116,6 +116,14 @@ final class ServiceDelegate: NSObject, NSXPCListenerDelegate {
 
 // MARK: - Entry point
 
+// On-hardware self-test path (no XPC / no launchd) — see Selftest.swift. `read`
+// needs no root; `write` drives the real FanController through every safety layer
+// and always ends in auto.
+if CommandLine.arguments.count >= 2, CommandLine.arguments[1] == "selftest" {
+    let mode = CommandLine.arguments.count >= 3 ? CommandLine.arguments[2] : "read"
+    exit(runSelftest(mode: mode))
+}
+
 if geteuid() != 0 {
     FileHandle.standardError.write("machine-root-helper must run as root (euid 0).\n".data(using: .utf8)!)
     exit(1)
