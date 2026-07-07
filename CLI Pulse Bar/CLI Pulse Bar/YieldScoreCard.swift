@@ -135,7 +135,7 @@ struct YieldScoreCard: View {
     }
 
     private func costLine(_ s: YieldScoreSummary) -> String {
-        let cost = String(format: "$%.2f", s.totalCost)
+        let cost = CostFormatter.format(s.totalCost)
         let commits: String
         if s.weightedCommits > 0 && abs(s.weightedCommits - Double(s.rawCommits)) < 0.01 {
             commits = L10n.yield.commitsCount(s.rawCommits)
@@ -149,7 +149,7 @@ struct YieldScoreCard: View {
 
     private func yieldLine(_ s: YieldScoreSummary) -> String {
         guard let cpc = s.costPerCommit else { return "—" }
-        return String(format: "$%.2f / commit", cpc)
+        return "\(CostFormatter.format(cpc)) / commit"
     }
 
     /// Star the best yield (lowest cost/commit), warn at >2× the median.
@@ -205,7 +205,7 @@ struct YieldScoreDetailView: View {
                 Text(s.provider).font(.headline)
                 Spacer()
                 if let cpc = s.costPerCommit {
-                    Text(String(format: "$%.3f / commit", cpc))
+                    Text("\(CostFormatter.format(cpc)) / commit")
                         .font(.system(.body, design: .monospaced))
                         .foregroundStyle(.purple)
                 } else {
@@ -215,7 +215,7 @@ struct YieldScoreDetailView: View {
                 }
             }
             HStack(spacing: 16) {
-                Label(String(format: "$%.2f", s.totalCost), systemImage: "dollarsign.circle")
+                Label(CostFormatter.format(s.totalCost), systemImage: "dollarsign.circle")
                 Label(L10n.yield.commitsCount(s.rawCommits), systemImage: "checkmark.circle")
                 if s.ambiguousCommits > 0 {
                     Label(L10n.yield.ambiguousCount(s.ambiguousCommits), systemImage: "questionmark.circle")

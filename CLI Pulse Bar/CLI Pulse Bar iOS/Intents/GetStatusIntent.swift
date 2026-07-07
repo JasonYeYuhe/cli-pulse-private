@@ -48,6 +48,6 @@ struct GetStatusIntent: AppIntent {
 
     private func formatCost(_ cost: Double) -> String {
         if cost < 0.01 { return "less than one cent" }
-        return String(format: "$%.2f", cost)
+        return CostFormatter.format(cost)   // v1.40 PR-7: display currency
     }
 }

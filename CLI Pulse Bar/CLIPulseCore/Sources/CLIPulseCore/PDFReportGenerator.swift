@@ -138,7 +138,7 @@ public enum PDFReportGenerator {
 
             let summaryItems: [(String, String)] = [
                 (L10n.pdf.todayUsage, formatTokens(d.total_usage_today)),
-                (L10n.pdf.todayEstimatedCost, String(format: "$%.2f", d.total_estimated_cost_today)),
+                (L10n.pdf.todayEstimatedCost, CostFormatter.format(d.total_estimated_cost_today)),
                 (L10n.pdf.activeSessions, "\(d.active_sessions)"),
                 (L10n.pdf.onlineDevices, "\(d.online_devices)"),
                 (L10n.pdf.unresolvedAlerts, "\(d.unresolved_alerts)"),
@@ -157,9 +157,9 @@ public enum PDFReportGenerator {
             y = drawText(L10n.pdf.costForecast, at: CGPoint(x: margin, y: y), fontSize: 16, bold: true, context: context)
             y -= 8
 
-            y = drawKeyValue(L10n.pdf.monthEndEstimate, value: String(format: "$%.2f", forecast.predictedMonthTotal), at: y, x: margin, width: contentWidth, fontSize: 11, context: context)
-            y = drawKeyValue(L10n.pdf.spentSoFar, value: String(format: "$%.2f", forecast.actualToDate), at: y, x: margin, width: contentWidth, fontSize: 11, context: context)
-            y = drawKeyValue(L10n.pdf.confidenceRange, value: String(format: "$%.2f — $%.2f", forecast.lowerBound, forecast.upperBound), at: y, x: margin, width: contentWidth, fontSize: 11, context: context)
+            y = drawKeyValue(L10n.pdf.monthEndEstimate, value: CostFormatter.format(forecast.predictedMonthTotal), at: y, x: margin, width: contentWidth, fontSize: 11, context: context)
+            y = drawKeyValue(L10n.pdf.spentSoFar, value: CostFormatter.format(forecast.actualToDate), at: y, x: margin, width: contentWidth, fontSize: 11, context: context)
+            y = drawKeyValue(L10n.pdf.confidenceRange, value: "\(CostFormatter.format(forecast.lowerBound)) — \(CostFormatter.format(forecast.upperBound))", at: y, x: margin, width: contentWidth, fontSize: 11, context: context)
             y = drawKeyValue(L10n.pdf.progress, value: L10n.pdf.progressValue(forecast.currentDayOfMonth, forecast.daysInMonth), at: y, x: margin, width: contentWidth, fontSize: 11, context: context)
             y -= 12
         }
@@ -183,7 +183,7 @@ public enum PDFReportGenerator {
             let row = [
                 p.provider,
                 formatTokens(p.week_usage),
-                String(format: "$%.2f", p.estimated_cost_week),
+                CostFormatter.format(p.estimated_cost_week),
                 p.remaining.map { formatTokens($0) } ?? L10n.pdf.na,
                 p.quota.map { formatTokens($0) } ?? L10n.pdf.na,
             ]
@@ -209,7 +209,7 @@ public enum PDFReportGenerator {
             let row = [
                 s.provider,
                 s.project,
-                String(format: "$%.4f", s.estimated_cost),
+                CostFormatter.format(s.estimated_cost),
                 formatTokens(s.total_usage),
                 s.status,
             ]
@@ -244,7 +244,7 @@ public enum PDFReportGenerator {
                 context.fill(CGRect(x: margin + 45, y: y - 2, width: barWidth, height: 8))
 
                 // Cost label
-                let _ = drawText(String(format: "$%.2f", cost), at: CGPoint(x: margin + 50 + (contentWidth - 130), y: y), fontSize: 8, context: context)
+                let _ = drawText(CostFormatter.format(cost), at: CGPoint(x: margin + 50 + (contentWidth - 130), y: y), fontSize: 8, context: context)
                 y -= 12
             }
         }
