@@ -285,10 +285,12 @@ struct DashboardTrends: View {
     }
 
     private struct TrendPoint: Identifiable {
-        let id = UUID()
         let day: String
         let provider: String
         let tokens: Int
+        // Deterministic id (one bar per day×provider) so Charts diffs stably
+        // across re-renders instead of treating every bar as removed+inserted.
+        var id: String { "\(day)|\(provider)" }
     }
 
     private func trendPoints() -> [TrendPoint] {
@@ -326,7 +328,16 @@ public struct UsageDashboardView: View {
                 .padding(20)
         }
         .frame(minWidth: 760, minHeight: 620)
-        .task { if providedArchive == nil { archive = await DailyUsageArchiveManager.shared.snapshot() } }
+        .task { await reload() }
+        .onReceive(NotificationCenter.default.publisher(for: .dailyUsageArchiveDidChange)) { _ in
+            Task { await reload() }
+        }
+    }
+
+    @MainActor
+    private func reload() async {
+        guard providedArchive == nil else { return }
+        archive = await DailyUsageArchiveManager.shared.snapshot()
     }
 
     @ViewBuilder
@@ -435,7 +446,15 @@ public struct CompactUsageCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
-        .task { archive = await DailyUsageArchiveManager.shared.snapshot() }
+        .task { await reload() }
+        .onReceive(NotificationCenter.default.publisher(for: .dailyUsageArchiveDidChange)) { _ in
+            Task { await reload() }
+        }
+    }
+
+    @MainActor
+    private func reload() async {
+        archive = await DailyUsageArchiveManager.shared.snapshot()
     }
 
     private func miniStat(_ value: String, _ label: String) -> some View {

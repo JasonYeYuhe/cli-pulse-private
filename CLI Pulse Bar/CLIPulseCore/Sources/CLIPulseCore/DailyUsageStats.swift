@@ -194,6 +194,11 @@ public enum DailyUsageStats {
 
     /// Today's key in the LOCAL calendar — matches the scanner's day-key basis
     /// (CostUsageScanner buckets by Calendar.current), so archive lookups line up.
+    /// NOTE: the grid's weekday/shift math (below) assumes Gregorian y/m/d
+    /// numbering, as does the scanner. A user whose macOS Region uses a
+    /// non-Gregorian calendar would see misaligned weekday columns (dictionary
+    /// lookups still match, since both sides share the numbering). Rare enough to
+    /// defer; a real fix pins the scanner to Gregorian too.
     public static func localDayKey(_ date: Date = Date(), calendar: Calendar = .current) -> String {
         let comps = calendar.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", comps.year ?? 0, comps.month ?? 0, comps.day ?? 0)
