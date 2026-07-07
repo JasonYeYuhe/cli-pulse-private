@@ -136,10 +136,11 @@ public struct DailyUsageArchive: Codable, Sendable, Equatable {
 
     // MARK: Merge — cloud (fill-only, non-destructive)
 
-    /// Fills days that the local scan doesn't cover (other devices / pre-history)
-    /// from cloud daily-usage rows. Non-destructive: never overwrites a day that
-    /// already has local token detail (which also carries messages the cloud
-    /// lacks). Cloud rows have no message counts.
+    /// Fills days that the local scan has NEVER recorded (other devices /
+    /// pre-history) from cloud daily-usage rows. Non-destructive: only writes a
+    /// day absent from `days` — a locally-known day is left untouched even if it
+    /// has 0 tokens, because it may still carry local message counts (near a
+    /// UTC boundary) that cloud rows lack. Folded days are never reintroduced.
     public mutating func mergeCloudDays(_ rows: [CloudEntry], retainDays: Int = DailyUsageArchive.retainDays) {
         var byDay: [String: DayRollup] = [:]
         for r in rows {
@@ -157,10 +158,7 @@ public struct DailyUsageArchive: Codable, Sendable, Equatable {
         }
         for (dayKey, rollup) in byDay {
             if let folded = foldedThroughDay, dayKey <= folded { continue }
-            let existing = days[dayKey]
-            if existing == nil || (existing?.tokens ?? 0) == 0 {
-                days[dayKey] = rollup
-            }
+            if days[dayKey] == nil { days[dayKey] = rollup }   // fill absent days only
         }
         pruneAndFold(retainDays: retainDays)
     }

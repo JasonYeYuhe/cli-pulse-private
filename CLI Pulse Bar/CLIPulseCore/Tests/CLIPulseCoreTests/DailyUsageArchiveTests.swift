@@ -94,6 +94,19 @@ final class DailyUsageArchiveTests: XCTestCase {
         XCTAssertEqual(a.days["2026-06-01"]?.tokens, 50)
     }
 
+    func test_mergeCloud_preserves_zero_token_but_messaged_local_day() {
+        // A day near a UTC boundary can have local messages but 0 tokens yet.
+        // Cloud fill must NOT clobber it (would zero the messages).
+        var a = DailyUsageArchive()
+        a.mergeScanEntries([se("2026-07-08", "Claude", ScanEntry.messageBucketModel, msgs: 5)])
+        XCTAssertEqual(a.days["2026-07-08"]?.tokens, 0)
+        XCTAssertEqual(a.days["2026-07-08"]?.messages, 5)
+        a.mergeCloudDays([CloudEntry(date: "2026-07-08", provider: "Claude", model: "claude-sonnet-4-5",
+                                     inputTokens: 1000, cachedTokens: 0, outputTokens: 0, cost: 0.05)])
+        XCTAssertEqual(a.days["2026-07-08"]?.messages, 5, "local messages must survive cloud fill")
+        XCTAssertEqual(a.days["2026-07-08"]?.tokens, 0, "locally-known day is left untouched")
+    }
+
     // MARK: - IO
 
     private func makeTempRoot() -> URL {
