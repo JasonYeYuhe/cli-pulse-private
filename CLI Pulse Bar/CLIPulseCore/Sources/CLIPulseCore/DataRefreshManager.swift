@@ -251,6 +251,18 @@ internal final class DataRefreshManager {
                 Task { await self.api.syncDailyUsage(scanResult) }
             }
 
+            // v1.40 PR-4: fold the scan into the durable ≥1-year usage archive
+            // (Application Support), and kick the one-time 365-day backfill —
+            // access is confirmed here since the scan returned data.
+            #if os(macOS)
+            if let scanResult {
+                Task {
+                    await DailyUsageArchiveManager.shared.record(scanResult)
+                    await DailyUsageArchiveManager.shared.runBackfillIfNeeded()
+                }
+            }
+            #endif
+
             #if DEBUG
             Self.dumpMergeDiagnostic(cloud: providerData, local: localResults, merged: resolvedProviders)
             #endif
@@ -502,6 +514,17 @@ internal final class DataRefreshManager {
         let costScanResult: CostUsageScanResult? = costScanData.entries.isEmpty ? nil : costScanData
         let needsAccess = Self.needsFolderAccessNudge(scanIsEmpty: costScanResult == nil)
         await callbacks.setNeedsFolderAccess(needsAccess)
+
+        // v1.40 PR-4: populate the durable usage archive for local-mode users
+        // too (no cloud dependency) + one-time backfill once access is confirmed.
+        #if os(macOS)
+        if let costScanResult {
+            Task {
+                await DailyUsageArchiveManager.shared.record(costScanResult)
+                await DailyUsageArchiveManager.shared.runBackfillIfNeeded()
+            }
+        }
+        #endif
 
         // App Store sandbox fallback: when `proc_listallpids` is denied
         // (sandbox restricts process enumeration), `LocalScanner` returns
