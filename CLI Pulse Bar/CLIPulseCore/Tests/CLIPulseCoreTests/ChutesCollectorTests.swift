@@ -38,6 +38,15 @@ final class ChutesCollectorTests: XCTestCase {
         XCTAssertEqual(s.rolling?.usedPercent ?? -1, 75, accuracy: 0.001)
     }
 
+    func test_parse_fractional_percent_scales_like_upstream() throws {
+        // Upstream treats a sub-1 percent as a 0–1 fraction: 0.4 ⇒ 40%.
+        let s = try parse(#"{"rolling":{"used_percent":0.4}}"#)
+        XCTAssertEqual(s.rolling?.usedPercent ?? -1, 40, accuracy: 0.001)
+        // percent_remaining fraction inverts after scaling: 0.25 ⇒ 25% ⇒ 75% used.
+        let s2 = try parse(#"{"monthly":{"percent_remaining":0.25}}"#)
+        XCTAssertEqual(s2.monthly?.usedPercent ?? -1, 75, accuracy: 0.001)
+    }
+
     func test_parse_iso8601_reset() throws {
         let s = try parse(#"{"monthly":{"usage_percent":10,"resets_at":"2027-01-01T00:00:00Z"}}"#)
         XCTAssertNotNil(s.monthly?.resetsAt)

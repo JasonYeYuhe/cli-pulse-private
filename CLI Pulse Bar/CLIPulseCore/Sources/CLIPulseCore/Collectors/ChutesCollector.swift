@@ -217,7 +217,11 @@ public struct ChutesCollector: ProviderCollector, Sendable {
 
     private static func normalizedPercent(_ v: Double?) -> Double? {
         guard let v, v.isFinite else { return nil }
-        return max(0, min(100, v))
+        // Faithful to upstream ChutesUsageParser.normalizedPercent: a sub-1
+        // value is a fraction (0.4 ⇒ 40%), not 0.4%. Matching upstream keeps
+        // the Mac app in lockstep with the desktop mirror for the same account.
+        let percent = abs(v) < 1 ? v * 100 : v
+        return max(0, min(100, percent))
     }
 
     private static func dictionary(_ value: Any?) -> [String: Any]? { value as? [String: Any] }
@@ -225,10 +229,11 @@ public struct ChutesCollector: ProviderCollector, Sendable {
     private static func firstDictionary(
         _ root: [String: Any], _ dataRoot: [String: Any], keys: [String]) -> [String: Any]?
     {
-        for k in keys {
-            if let d = dictionary(root[k]) { return d }
-            if let d = dictionary(dataRoot[k]) { return d }
-        }
+        // Upstream order: exhaust all keys against root first, then dataRoot —
+        // NOT interleaved per-key (matters only when window data lives under a
+        // lower-priority root key and a higher-priority dataRoot key at once).
+        for k in keys { if let d = dictionary(root[k]) { return d } }
+        for k in keys { if let d = dictionary(dataRoot[k]) { return d } }
         return nil
     }
 

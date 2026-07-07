@@ -120,6 +120,9 @@ public struct PoeCollector: ProviderCollector, Sendable {
     }
 
     static func double(from value: Any?) -> Double? {
+        // JSON booleans bridge to NSNumber; a `true`/`false` balance is not a
+        // number (mirror ChutesCollector.double's guard — keep parsers uniform).
+        if value is Bool { return nil }
         switch value {
         case let n as NSNumber:
             let raw = n.doubleValue
@@ -162,9 +165,11 @@ public struct PoeCollector: ProviderCollector, Sendable {
     }
 
     /// Points are whole compute units — clamp to a non-negative Int magnitude.
+    /// A finite-but-huge balance (≥ Int.max, e.g. an adversarial/malformed
+    /// response) would trap `Int(Double)`, so saturate instead of crashing.
     static func points(_ value: Double) -> Int {
         guard value.isFinite, value > 0 else { return 0 }
-        return Int(value.rounded())
+        return value >= Double(Int.max) ? Int.max : Int(value.rounded())
     }
 
     /// Upstream `PoeUsageSnapshot.compactNumber` — en-US grouped, ≤1 fractional

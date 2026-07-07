@@ -275,7 +275,8 @@ public struct CrossModelCollector: ProviderCollector, Sendable {
 
     static func units(_ value: Double) -> Int {
         guard value.isFinite, value > 0 else { return 0 }
-        return Int((value * usdUnitScale).rounded())
+        let scaled = (value * usdUnitScale).rounded()
+        return scaled >= Double(Int.max) ? Int.max : Int(scaled)   // saturate, never trap
     }
 
     static func currencyString(_ value: Double, code: String) -> String {

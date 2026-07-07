@@ -34,6 +34,12 @@ final class PoeCollectorTests: XCTestCase {
         }
     }
 
+    func test_parseBalance_boolean_is_nil_not_one() throws {
+        // JSON booleans bridge to NSNumber; must NOT read as 1.0.
+        XCTAssertNil(try parse(#"{"current_point_balance": true}"#))
+        XCTAssertNil(try parse(#"{"current_point_balance": false}"#))
+    }
+
     // MARK: - buildResult
 
     func test_buildResult_positive_balance() {
@@ -59,6 +65,14 @@ final class PoeCollectorTests: XCTestCase {
     func test_points_clamps_negative() {
         XCTAssertEqual(PoeCollector.points(-3), 0)
         XCTAssertEqual(PoeCollector.points(42.6), 43)
+    }
+
+    func test_points_saturates_on_overflow_no_crash() {
+        // A finite-but-huge value must saturate, never trap Int(Double).
+        XCTAssertEqual(PoeCollector.points(1e30), Int.max)
+        XCTAssertEqual(PoeCollector.points(Double(Int.max)), Int.max)
+        // buildResult must not crash on such a balance either.
+        XCTAssertEqual(PoeCollector.buildResult(1e30).usage.remaining, Int.max)
     }
 
     // MARK: - Availability
