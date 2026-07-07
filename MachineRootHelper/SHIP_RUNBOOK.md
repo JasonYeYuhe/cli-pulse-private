@@ -18,12 +18,18 @@ cd MachineRootHelper
 swift build -c release            # -> .build/release/machine-root-helper
 ```
 
-## 2. Embed into the app bundle (Xcode, DEVID scheme only)
-The daemon + its plist must live in the app bundle:
-- `Contents/MacOS/machine-root-helper`  (the release binary)
-- `Contents/Library/LaunchDaemons/yyh.CLI-Pulse.machine-root-helper.plist`  (`install/…plist`)
+## 2. Embed into the app bundle (DONE — `scripts/build_signed_app.sh`)
+`scripts/build_signed_app.sh` now builds `MachineRootHelper` (release) and embeds
++ signs the daemon into the app, **DEVID-gated** (never in MAS):
+- `Contents/MacOS/machine-root-helper`  (release binary, Hardened-Runtime signed)
+- `Contents/Library/LaunchDaemons/yyh.CLI-Pulse.machine-root-helper.plist`
 
-Recommended: a **Run Script build phase** (DEVID config only) that runs `swift build -c release` in `MachineRootHelper/` and copies both into the bundle, then a **Copy Files** phase is unnecessary. Keep this OUT of the MAS target (the MAS archive-excludes-helper guard in `swift-ci.yml` must also exclude this binary — extend it).
+Verified 2026-07-07: `DEVID_BUILD_FLAG=1 CODE_SIGN_IDENTITY="Developer ID
+Application: Yuhe Ye (KHMK6Q3L3K)" scripts/build_signed_app.sh Release <out>` → app
+signed Dev ID (id `yyh.CLI-Pulse`), embedded daemon signed Dev ID + runtime,
+`codesign --verify --deep` OK. `build_devid_dmg.sh` calls this script so the DMG
+picks up the daemon automatically; MAS's `build-appstore.sh` never runs it → daemon
+absent from MAS, as required.
 
 ## 3. Sign (Developer ID, hardened runtime, same team KHMK6Q3L3K)
 Sign the daemon **before** the outer app is sealed:
