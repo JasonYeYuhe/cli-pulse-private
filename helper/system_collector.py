@@ -47,7 +47,11 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 # SIGWINCH — claude/agy kept rendering at the old column count on every
 # in-app-terminal window resize. `PosixPtyTransport.resize` now signals the
 # child's process group with SIGWINCH after updating the winsize.
-HELPER_VERSION = "1.27.0"
+# 1.27.0 → 1.28.0 (v1.41 "Mobile Machine"): heartbeat_metrics now also syncs the
+# system block (uptime/load/memory-pressure/swap/disk) + Low Power Mode so the
+# phone/watch Machine view shows live system state. Snapshot-uplink only; the
+# per-process table is still never synced.
+HELPER_VERSION = "1.28.0"
 
 logger = logging.getLogger("cli_pulse.collector")
 

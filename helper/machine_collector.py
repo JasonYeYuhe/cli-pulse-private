@@ -370,6 +370,20 @@ def parse_pmset_thermal(text: str) -> Optional[int]:
     return None
 
 
+def parse_lpm(text: str) -> Optional[bool]:
+    """Parse Low Power Mode state from `pmset -g` (current-settings dump).
+
+    The active-settings block lists `lowpowermode  N` (N=1 on, 0 off) on Macs
+    that support it. Returns None when the line is absent (unsupported OS / parse
+    miss) so the heartbeat's per-field coalesce preserves the last-known value
+    rather than fabricating False.
+    """
+    m = re.search(r"lowpowermode\s+(\d+)", text)
+    if not m:
+        return None
+    return m.group(1) != "0"
+
+
 def parse_vm_stat_memory(vm_stat_out: str, total_bytes: int) -> tuple[int, int]:
     """Return (used_bytes, memory_percent) from `vm_stat` output + hw.memsize.
 
@@ -457,6 +471,14 @@ def collect_battery_thermal() -> BatteryThermal:
     if therm_out is not None:
         bt.thermal_state = parse_pmset_thermal(therm_out)
     return bt
+
+
+def collect_lpm() -> Optional[bool]:
+    """Low Power Mode state via `pmset -g` (root-free). None if unavailable."""
+    out = _run(["pmset", "-g"])
+    if out is None:
+        return None
+    return parse_lpm(out)
 
 
 def collect_memory() -> tuple[int, int, int]:
@@ -651,6 +673,41 @@ def heartbeat_metrics(sensors: Optional[dict] = None) -> Optional[dict]:
                 continue
             if val is not None:
                 metrics[key] = val
+
+    # v1.41: system block (uptime / load / memory-pressure / swap / disk) + Low
+    # Power Mode, so the phone's Machine view shows live system state — not just
+    # battery/thermal. Each read is independently fail-soft; a failure omits its
+    # key(s) and the RPC's per-field coalesce preserves last-known. The
+    # per-process table is STILL never synced (privacy) — only the fixed summary.
+    try:
+        mem_pct, _used, _total = collect_memory()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("collect_memory failed in heartbeat: %s", exc)
+        mem_pct = 0
+    try:
+        system = collect_system_extra(memory_percent=mem_pct)
+        # collect_system_extra returns load_avg as a [1m,5m,15m] list, but the
+        # v0.66 helper_heartbeat spec wants three scalar keys — flatten it.
+        load = system.get("load_avg")
+        if isinstance(load, (list, tuple)):
+            for name, val in zip(("load_avg_1m", "load_avg_5m", "load_avg_15m"), load):
+                if isinstance(val, (int, float)) and not isinstance(val, bool):
+                    metrics[name] = round(float(val), 2)
+        # The rest already use v0.66 heartbeat key names verbatim.
+        for key in ("uptime_seconds", "memory_pressure",
+                    "swap_used_bytes", "swap_total_bytes",
+                    "disk_free_bytes", "disk_total_bytes"):
+            val = system.get(key)
+            if val is not None:
+                metrics[key] = val
+    except Exception as exc:  # noqa: BLE001 — system block must never break the heartbeat
+        logger.debug("collect_system_extra failed in heartbeat: %s", exc)
+    try:
+        lpm = collect_lpm()
+        if lpm is not None:
+            metrics["lpm_on"] = lpm
+    except Exception as exc:  # noqa: BLE001 — LPM read must never break the heartbeat
+        logger.debug("collect_lpm failed in heartbeat: %s", exc)
 
     metrics["capability"] = build_capability(battery, sensors)
 

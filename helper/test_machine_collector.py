@@ -328,6 +328,11 @@ class TestSystemExtraMetrics(unittest.TestCase):
         self.assertEqual(mc.parse_boottime_sec("{ sec = 1782641564, usec = 405122 } Sun Jun 28"), 1782641564)
         self.assertIsNone(mc.parse_boottime_sec("no numbers here"))
 
+    def test_parse_lpm(self):
+        self.assertIs(mc.parse_lpm(" lowpowermode         1"), True)
+        self.assertIs(mc.parse_lpm("hibernatemode 0\n lowpowermode 0"), False)
+        self.assertIsNone(mc.parse_lpm("no such setting here"))
+
     def test_memory_pressure_levels(self):
         self.assertEqual(mc.memory_pressure_level(40, 0, 3000), "nominal")
         self.assertEqual(mc.memory_pressure_level(85, 0, 3000), "warn")           # high RAM%
@@ -365,9 +370,21 @@ class TestHeartbeatMetrics(unittest.TestCase):
 
     def setUp(self):
         self._orig = mc.collect_battery_thermal
+        self._orig_mem = mc.collect_memory
+        self._orig_sys = mc.collect_system_extra
+        self._orig_lpm = mc.collect_lpm
+        # Hermetic defaults so battery-focused tests don't shell out to the real
+        # sysctl/vm_stat/pmset oracles (heartbeat_metrics now calls them
+        # unconditionally). Tests that assert on the system block override these.
+        mc.collect_memory = lambda: (0, 0, 0)  # type: ignore[assignment]
+        mc.collect_system_extra = lambda memory_percent=0: {"memory_pressure": "nominal"}  # type: ignore[assignment]
+        mc.collect_lpm = lambda: None  # type: ignore[assignment]
 
     def tearDown(self):
         mc.collect_battery_thermal = self._orig  # type: ignore[assignment]
+        mc.collect_memory = self._orig_mem  # type: ignore[assignment]
+        mc.collect_system_extra = self._orig_sys  # type: ignore[assignment]
+        mc.collect_lpm = self._orig_lpm  # type: ignore[assignment]
 
     def test_omits_none_values(self):
         self._patch_battery(mc.BatteryThermal(
@@ -407,6 +424,56 @@ class TestHeartbeatMetrics(unittest.TestCase):
         self.assertEqual(m["cpu_power_w"], 12.5)
         self.assertEqual(m["fan_rpm"], 1980)
         self.assertTrue(m["capability"]["temps"])
+
+    def test_system_block_synced_and_flattened(self):
+        # v1.41: heartbeat_metrics also carries the system block; the load_avg
+        # list is flattened into the three scalar keys the v0.66 RPC accepts.
+        self._patch_battery(mc.BatteryThermal(has_battery=True, thermal_state=0))
+        mc.collect_memory = lambda: (50, 0, 0)  # type: ignore[assignment]
+        mc.collect_system_extra = lambda memory_percent=0: {  # type: ignore[assignment]
+            "uptime_seconds": 123456,
+            "load_avg": [2.5, 1.8, 1.2],
+            "memory_pressure": "warn",
+            "swap_used_bytes": 1073741824,
+            "swap_total_bytes": 4294967296,
+            "disk_free_bytes": 250000000000,
+            "disk_total_bytes": 500000000000,
+        }
+        mc.collect_lpm = lambda: True  # type: ignore[assignment]
+        m = mc.heartbeat_metrics()
+        self.assertEqual(m["load_avg_1m"], 2.5)
+        self.assertEqual(m["load_avg_5m"], 1.8)
+        self.assertEqual(m["load_avg_15m"], 1.2)
+        self.assertNotIn("load_avg", m)   # the raw list is never synced
+        self.assertEqual(m["uptime_seconds"], 123456)
+        self.assertEqual(m["memory_pressure"], "warn")
+        self.assertEqual(m["disk_total_bytes"], 500000000000)
+        self.assertEqual(m["lpm_on"], True)
+
+    def test_lpm_none_omitted(self):
+        self._patch_battery(mc.BatteryThermal(has_battery=True, thermal_state=0))
+        mc.collect_memory = lambda: (10, 0, 0)  # type: ignore[assignment]
+        mc.collect_system_extra = lambda memory_percent=0: {"memory_pressure": "nominal"}  # type: ignore[assignment]
+        mc.collect_lpm = lambda: None  # type: ignore[assignment]
+        m = mc.heartbeat_metrics()
+        self.assertNotIn("lpm_on", m)     # None omitted → server preserves last-known
+        self.assertEqual(m["memory_pressure"], "nominal")
+
+    def test_system_block_failsoft(self):
+        # A crashing system/LPM collector must NEVER break the heartbeat.
+        self._patch_battery(mc.BatteryThermal(has_battery=True, thermal_state=0))
+
+        def _boom(*a, **k):
+            raise RuntimeError("sensor blew up")
+
+        mc.collect_memory = _boom      # type: ignore[assignment]
+        mc.collect_system_extra = _boom  # type: ignore[assignment]
+        mc.collect_lpm = _boom         # type: ignore[assignment]
+        m = mc.heartbeat_metrics()
+        self.assertIsNotNone(m)
+        self.assertIn("capability", m)          # base blob still returned
+        self.assertNotIn("uptime_seconds", m)
+        self.assertNotIn("lpm_on", m)
 
 
 if __name__ == "__main__":
