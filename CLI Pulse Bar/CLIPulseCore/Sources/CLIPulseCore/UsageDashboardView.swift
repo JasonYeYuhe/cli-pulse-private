@@ -343,19 +343,28 @@ public struct UsageDashboardView: View {
     @State private var animatedTokens: Double = 0
     @State private var didAnimateCountUp = false
     private let providedArchive: DailyUsageArchive?
+    /// When false, the content is laid out at its natural height with no
+    /// ScrollView — the slide-out panel sizes its window to this height so
+    /// everything fits on one page (no vertical scrollbar). The resizable
+    /// standalone Window keeps `scrollable: true`.
+    private let scrollable: Bool
 
     /// Live window (loads the archive snapshot on appear).
-    public init() { self.providedArchive = nil }
+    public init(scrollable: Bool = true) { self.providedArchive = nil; self.scrollable = scrollable }
     /// Preview/testing with an explicit archive.
-    public init(archive: DailyUsageArchive) { self.providedArchive = archive }
+    public init(archive: DailyUsageArchive, scrollable: Bool = true) {
+        self.providedArchive = archive; self.scrollable = scrollable
+    }
 
     public var body: some View {
-        ScrollView {
-            content
-                .padding(.horizontal, 26)
-                .padding(.vertical, 22)
+        Group {
+            if scrollable {
+                ScrollView { paddedContent }
+            } else {
+                paddedContent
+            }
         }
-        .frame(minWidth: 380, minHeight: 500)
+        .frame(minWidth: 380, minHeight: scrollable ? 500 : nil)
         .background(HUDWindowBackground(isDark: colorScheme == .dark).ignoresSafeArea())
         .task { await reload() }
         .onReceive(NotificationCenter.default.publisher(for: .dailyUsageArchiveDidChange)) { _ in
@@ -364,6 +373,12 @@ public struct UsageDashboardView: View {
         .onReceive(NotificationCenter.default.publisher(for: .displayCurrencyDidChange)) { _ in
             Task { await reload() }   // re-render cost figures in the new currency
         }
+    }
+
+    private var paddedContent: some View {
+        content
+            .padding(.horizontal, 26)
+            .padding(.vertical, 22)
     }
 
     @MainActor
@@ -410,9 +425,18 @@ public struct UsageDashboardView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(L10n.usageDashboard.activity)
                     .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    UsageHeatmapGrid(archive: a, weeks: 53)
+                // Fill the card width with as many trailing weeks as fit, ending
+                // in TODAY's column (heatmapColumns anchors on `localDayKey()`), so
+                // "now" is always the rightmost column. The old fixed 53-week grid
+                // sat in a horizontal ScrollView that defaulted to the left
+                // (oldest) edge, hiding recent activity off-screen to the right.
+                let cell: CGFloat = 11, gap: CGFloat = 3
+                GeometryReader { geo in
+                    let weeks = max(12, Int((geo.size.width + gap) / (cell + gap)))
+                    UsageHeatmapGrid(archive: a, weeks: weeks, cell: cell, gap: gap,
+                                     showMonthLabels: true)
                 }
+                .frame(height: cell * 7 + gap * 6 + 18)   // 7 day-rows + month labels
                 heatmapLegend
             }
             .padding(14)

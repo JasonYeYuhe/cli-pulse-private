@@ -31,7 +31,13 @@ import Foundation
 ///       pricingVersion=0 had `costNanos=0` for every Opus 4.7
 ///       event; bump invalidates them so a normal refresh — not a
 ///       manual Force Rescan — produces correct Today/Week cost.
-let costUsageCachePricingVersion: Int = 2
+///   3 — Jul 2026: `claude-opus-4-8` priced with a dedicated entry.
+///       Before this, the family fallback relabeled every opus-4-8
+///       event `opus-4-7`, so the By-Model breakdown mis-attributed
+///       ~all current Claude Code traffic. The stored per-file model
+///       key is the normalized name, so a bump is required to re-parse
+///       existing logs under the correct `opus-4-8` label.
+let costUsageCachePricingVersion: Int = 3
 
 struct CostUsageCache: Codable {
     var version: Int = 1

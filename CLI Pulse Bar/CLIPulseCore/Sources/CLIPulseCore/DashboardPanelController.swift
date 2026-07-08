@@ -18,6 +18,14 @@ public final class DashboardPanelController {
 
     private var panel: NSPanel?
     private var observers: [NSObjectProtocol] = []
+    /// True from the moment show() starts until the panel exists — guards the
+    /// `await` snapshot window against a second toggle spawning a duplicate.
+    private var isPreparing = false
+    /// Set when the user toggles again DURING the async prepare window (before the
+    /// panel exists, so isVisible is still false). Without it, that dismissing tap
+    /// would spawn a second (no-op) show() and the panel would still appear when
+    /// the snapshot() await resolves — an open-against-intent orphan.
+    private var wantsHide = false
 
     public init() {}
 
@@ -25,24 +33,59 @@ public final class DashboardPanelController {
 
     /// Show the panel if hidden, hide it if shown.
     public func toggle() {
-        if isVisible { hide() } else { show() }
+        if isVisible {
+            hide()
+        } else if isPreparing {
+            wantsHide = true   // dismiss requested mid-prepare; honored after the await
+        } else {
+            wantsHide = false
+            Task { await show() }
+        }
     }
 
-    private func show() {
-        guard panel == nil else { return }
+    private func show() async {
+        guard panel == nil, !isPreparing else { return }
+        isPreparing = true
+        defer { isPreparing = false }
+        // Snapshot the archive up front so the size probe (and the panel itself)
+        // render the LOADED dashboard, not the async loading spinner — otherwise
+        // the panel would be sized to the ~400pt ProgressView and clip everything.
+        let snapshot = await DailyUsageArchiveManager.shared.snapshot()
+        // Honor a hide()/re-toggle that raced during the await.
+        guard panel == nil, !wantsHide else { wantsHide = false; return }
+        present(snapshot: snapshot)
+    }
+
+    /// Synchronous panel construction — kept out of the `async show()` so
+    /// `NSAnimationContext.runAnimationGroup`'s trailing closure resolves to the
+    /// non-async overload.
+    private func present(snapshot: DailyUsageArchive) {
         // The popover is key when the user taps the card inside it.
         let anchor = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.canBecomeKey })
         let screen = anchor?.screen ?? NSScreen.main
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
-        // A compact companion panel — matches the popover height, kept narrow.
-        let height = min(max(anchor?.frame.height ?? 640, 480), visible.height - 24)
+        // A compact companion panel — kept narrow, to the left of the popover.
         let leftEdge = anchor?.frame.minX ?? (visible.maxX - 420)
         let available = leftEdge - visible.minX - 16
         let width = min(520, max(440, available))
 
+        // Size the panel to the dashboard's NATURAL height so everything fits on
+        // one page with no vertical scrollbar. Probe a non-scrolling copy at this
+        // width, then fall back to a scrolling panel only when the content is
+        // taller than the screen (small displays).
+        let maxHeight = visible.height - 24
+        let probe = NSHostingView(rootView:
+            UsageDashboardView(archive: snapshot, scrollable: false)
+                .frame(width: width)
+                .environment(\.colorScheme, .dark))
+        probe.layoutSubtreeIfNeeded()
+        let naturalHeight = probe.fittingSize.height
+        let fits = naturalHeight > 1 && naturalHeight <= maxHeight
+        let height = fits ? naturalHeight : maxHeight
+
         let hosting = NSHostingView(rootView:
-            UsageDashboardView()
+            UsageDashboardView(archive: snapshot, scrollable: !fits)
                 .frame(width: width, height: height)
                 .overlay(alignment: .topTrailing) {
                     Button { DashboardPanelController.shared.hide() } label: {
@@ -76,7 +119,10 @@ public final class DashboardPanelController {
         p.contentView = hosting
         p.isMovableByWindowBackground = true
 
-        let targetY = (anchor?.frame.maxY ?? visible.maxY) - height
+        // Top-align with the popover, but clamp so a tall (full-height) panel
+        // never spills below the screen's visible area.
+        let topY = anchor?.frame.maxY ?? visible.maxY
+        let targetY = max(visible.minY, min(topY, visible.maxY) - height)
         let targetX = leftEdge - width - 8
         // Start tucked behind the popover, then slide out to the left.
         p.setFrame(NSRect(x: leftEdge - width + 24, y: targetY, width: width, height: height), display: false)
