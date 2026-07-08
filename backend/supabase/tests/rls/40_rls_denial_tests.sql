@@ -38,7 +38,7 @@ declare
   tables text[] := array[
     'remote_sessions','remote_session_commands','remote_session_events',
     'remote_permission_requests','remote_permission_decisions',
-    'daily_usage_metrics','subscriptions'];
+    'machine_commands','daily_usage_metrics','subscriptions'];
 begin
   foreach tbl in array tables loop
     execute format('select count(*) from public.%I where user_id = %L', tbl,
@@ -102,6 +102,12 @@ begin
   get diagnostics n = row_count;
   if n <> 0 then raise exception 'FAIL[update]: userB updated % remote_session_commands rows', n; end if;
   raise notice 'PASS[update]: userB updated 0 remote_session_commands rows';
+
+  update public.machine_commands set status = 'delivered'
+    where user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'FAIL[update]: userB updated % machine_commands rows', n; end if;
+  raise notice 'PASS[update]: userB updated 0 machine_commands rows';
 
   update public.daily_usage_metrics set cost = 0
     where user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -208,7 +214,7 @@ declare
   tables text[] := array[
     'remote_sessions','remote_session_commands','remote_session_events',
     'remote_permission_requests','remote_permission_decisions',
-    'daily_usage_metrics','subscriptions'];
+    'machine_commands','daily_usage_metrics','subscriptions'];
 begin
   foreach tbl in array tables loop
     execute format('select count(*) from public.%I where user_id = %L', tbl,

@@ -81,6 +81,10 @@ HELPER_RPCS = {
     "remote_helper_complete_command",
     "remote_helper_create_permission_request",
     "remote_helper_poll_permission_decision",
+    # v1.41 machine-mobile (migrate_v0.66): pulled/completed via the helper's
+    # generic rpc_caller in remote_agent.py, so tagged helper-facing here.
+    "remote_helper_pull_machine_commands",
+    "remote_helper_complete_machine_command",
     "_remote_authenticate_helper_gated",
     "_remote_control_enabled_for_caller",
 }
