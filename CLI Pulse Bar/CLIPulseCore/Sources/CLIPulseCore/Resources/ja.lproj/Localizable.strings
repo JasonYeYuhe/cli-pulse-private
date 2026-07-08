@@ -880,6 +880,7 @@
 "machine.requesting" = "リクエスト済み — Mac は次回のチェックイン時に適用します";
 "machine.min_fmt" = "%@ 分";
 "machine.command_failed" = "コマンドを送信できませんでした。もう一度お試しください。";
+"machine.no_readings" = "データがありません";
 "machine.on" = "オン";
 "machine.off" = "オフ";
 "machine.device_health" = "デバイスの状態";

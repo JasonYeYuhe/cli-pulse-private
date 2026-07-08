@@ -56,6 +56,12 @@ final class WatchDeviceSummaryTests: XCTestCase {
         XCTAssertEqual(s.fanRpm, 2100)
         XCTAssertEqual(s.batteryState, "charging")
         XCTAssertEqual(s.deviceStatus, .online)
+        // Fields that are mapped + rendered but were previously unasserted.
+        XCTAssertEqual(s.cpuTempC, 61.0)
+        XCTAssertEqual(s.thermalState, 1)
+        XCTAssertEqual(s.batteryChargePct, 88)
+        XCTAssertEqual(s.batteryHealthPct, 96.0)
+        XCTAssertEqual(s.diskFreeBytes, 250_000_000_000)
     }
 
     func testCodableRoundtripSymmetric() throws {

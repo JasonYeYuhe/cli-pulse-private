@@ -147,6 +147,7 @@ public enum L10n {
         public static var requesting: String { tr("machine.requesting") }
         public static func minutes(_ n: Int) -> String { tr("machine.min_fmt", String(n)) }
         public static var commandFailed: String { tr("machine.command_failed") }
+        public static var noReadings: String { tr("machine.no_readings") }
     }
 
     // MARK: - Dashboard

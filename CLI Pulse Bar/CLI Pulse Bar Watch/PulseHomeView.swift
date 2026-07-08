@@ -66,6 +66,10 @@ struct PulseHomeView: View {
                 } else {
                     emptyState
                 }
+
+                // v1.41: machine health is independent of the dashboard aggregate,
+                // so render it even when the dashboard fetch failed / is loading.
+                machineSection
             }
             .padding(.horizontal, 2)
         }
@@ -288,9 +292,15 @@ struct PulseHomeView: View {
                 }
             }
         }
+    }
 
-        // v1.41 Mobile Machine: read-only per-device Machine cards, each drilling
-        // into a detail List. No controls on the watch (by design).
+    // MARK: - Machine section (v1.41)
+
+    /// Read-only per-device Machine cards, each drilling into a detail List. No
+    /// controls (by design). Rendered INDEPENDENTLY of the dashboard fetch (a
+    /// dashboard failure must not hide fresh machine-health data).
+    @ViewBuilder
+    private var machineSection: some View {
         if !state.devices.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 SectionHeader(title: L10n.machine.deviceHealth, icon: "desktopcomputer")
