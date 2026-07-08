@@ -826,6 +826,8 @@
 "machine.kill_err_generic" = "無法結束該程序。";
 "machine.controls_toggle" = "機器控制";
 "machine.controls_hint" = "允許在「機器」標籤頁中結束你自己的程序。預設關閉；每次操作都會要求確認。僅限直接下載（Developer ID）版本。";
+"machine.remote_control_toggle" = "遠端機器控制";
+"machine.remote_control_hint" = "允許你其他已登入的裝置請求在這台 Mac 上加速風扇或開啟低耗電模式。預設關閉；僅限風扇和低耗電模式，每次加速都會自動還原。僅限直接下載（Developer ID）版本。";
 "machine.suspend" = "暫停";
 "machine.resume" = "恢復";
 "machine.paused_badge" = "已暫停";

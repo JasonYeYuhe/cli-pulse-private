@@ -549,6 +549,8 @@
 "machine.kill_err_generic" = "프로세스를 종료하지 못했습니다.";
 "machine.controls_toggle" = "머신 제어";
 "machine.controls_hint" = "'머신' 탭에서 본인의 프로세스를 종료할 수 있게 합니다. 기본값은 꺼짐이며, 각 작업마다 확인을 요청합니다. 다이렉트 다운로드(Developer ID) 빌드 전용.";
+"machine.remote_control_toggle" = "원격 머신 제어";
+"machine.remote_control_hint" = "로그인된 다른 기기에서 이 Mac의 팬 부스트나 저전력 모드를 요청할 수 있게 합니다. 기본값은 꺼짐. 팬과 저전력 모드로만 제한되며, 부스트는 자동으로 되돌아갑니다. 직접 다운로드(Developer ID) 빌드 전용.";
 "machine.suspend" = "일시정지";
 "machine.resume" = "재개";
 "machine.paused_badge" = "일시정지됨";

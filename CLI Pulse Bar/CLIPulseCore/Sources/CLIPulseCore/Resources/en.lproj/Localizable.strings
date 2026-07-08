@@ -824,6 +824,8 @@
 "machine.kill_err_generic" = "Couldn't end the process.";
 "machine.controls_toggle" = "Machine controls";
 "machine.controls_hint" = "Let the Machine tab end your own processes. Off by default; every action asks for confirmation. Direct-download (Developer ID) build only.";
+"machine.remote_control_toggle" = "Remote machine control";
+"machine.remote_control_hint" = "Let your other signed-in devices request fan boost or Low Power Mode on this Mac. Off by default; bounded to fan and Low Power Mode, and each boost auto-reverts. Direct-download (Developer ID) build only.";
 "machine.suspend" = "Suspend";
 "machine.resume" = "Resume";
 "machine.paused_badge" = "Paused";

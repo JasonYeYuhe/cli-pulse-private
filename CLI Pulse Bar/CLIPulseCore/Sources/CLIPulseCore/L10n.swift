@@ -82,6 +82,9 @@ public enum L10n {
         public static var killErrGeneric: String { tr("machine.kill_err_generic") }
         public static var controlsToggle: String { tr("machine.controls_toggle") }
         public static var controlsHint: String { tr("machine.controls_hint") }
+        // Remote machine control (v1.41 "Mobile Machine").
+        public static var remoteControlToggle: String { tr("machine.remote_control_toggle") }
+        public static var remoteControlHint: String { tr("machine.remote_control_hint") }
         // Machine controls v1.38.1 (Suspend/Resume).
         public static var suspend: String { tr("machine.suspend") }
         public static var resume: String { tr("machine.resume") }

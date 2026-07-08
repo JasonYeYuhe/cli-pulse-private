@@ -549,6 +549,8 @@
 "machine.kill_err_generic" = "No se pudo finalizar el proceso.";
 "machine.controls_toggle" = "Controles de la máquina";
 "machine.controls_hint" = "Permite finalizar tus propios procesos desde la pestaña Máquina. Desactivado por defecto; cada acción pide confirmación. Solo en la versión de descarga directa (Developer ID).";
+"machine.remote_control_toggle" = "Control remoto de la máquina";
+"machine.remote_control_hint" = "Permite que tus otros dispositivos con sesión iniciada soliciten aumentar los ventiladores o el Modo de Bajo Consumo en este Mac. Desactivado por defecto; limitado a ventiladores y Modo de Bajo Consumo, y cada impulso se revierte automáticamente. Solo compilación de descarga directa (Developer ID).";
 "machine.suspend" = "Suspender";
 "machine.resume" = "Reanudar";
 "machine.paused_badge" = "En pausa";

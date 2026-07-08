@@ -298,7 +298,7 @@ public enum LocalSessionEvent: Sendable, Equatable {
 /// perspective). When iter 2A introduces a streaming `subscribe_events`
 /// surface, that path will hold a connection open for the lifetime of
 /// the subscription — but iter 1 does NOT need that.
-public final class LocalSessionControlClient: SessionControlClient {
+public final class LocalSessionControlClient: SessionControlClient, MachineControlRelaying {
     public static let appGroupID = "group.yyh.CLI-Pulse"
     public static let socketFilename = "clipulse-helper.sock"
     public static let authTokenFilename = "helper-auth-token"
@@ -568,6 +568,51 @@ public final class LocalSessionControlClient: SessionControlClient {
     public func getMachineSnapshot() async throws -> MachineSnapshot {
         let result = try await send(method: "get_machine_snapshot", params: [:])
         return MachineSnapshot(dict: result)
+    }
+
+    // MARK: - v1.41 machine-mobile relay (Track B, MachineControlRelaying)
+
+    /// Drain the fan/LPM commands the helper pulled from the cloud queue for the
+    /// RemoteMachineExecutor. Read-only; the executor acks each via
+    /// `completeMachineCommand`. A `.notImplemented` throw ⇒ helper too old — the
+    /// executor treats that as "skip this tick" (mirrors get_machine_snapshot).
+    public func pullMachineCommands() async throws -> [RemoteMachineCommand] {
+        let result = try await send(method: "pull_machine_commands", params: [:])
+        let rows = (result["commands"] as? [[String: Any]]) ?? []
+        return rows.compactMap { row in
+            guard let id = row["id"] as? String, let kind = row["kind"] as? String else { return nil }
+            let payload = row["payload"] as? [String: Any] ?? [:]
+            return RemoteMachineCommand(
+                id: id,
+                kind: kind,
+                rpm: (payload["rpm"] as? NSNumber)?.intValue,
+                ttlSeconds: (payload["ttl_seconds"] as? NSNumber)?.intValue,
+                on: payload["on"] as? Bool
+            )
+        }
+    }
+
+    /// Forward the executor's typed completion (done/failed + optional error code
+    /// like daemon_unavailable / clamped) to the cloud via the helper.
+    public func completeMachineCommand(id: String, status: String, error: String?) async throws {
+        var params: [String: Any] = ["command_id": id, "status": status]
+        if let error, !error.isEmpty {
+            params["result"] = ["error": error]
+        }
+        _ = try await send(method: "complete_machine_command", params: params)
+    }
+
+    /// Report the executor's live control state so the helper folds it into the
+    /// next heartbeat (the phone renders ONLY controls the Mac will honor). Must
+    /// be called ~every 2 s — the helper treats a report as "alive" for 15 s.
+    public func reportMachineControlState(_ state: RemoteMachineControlState) async throws {
+        var s: [String: Any] = [
+            "remote_fan": state.remoteFan,
+            "remote_lpm": state.remoteLPM,
+            "boost_active": state.boostActive,
+        ]
+        if let rpm = state.boostTargetRPM { s["boost_target_rpm"] = rpm }
+        _ = try await send(method: "report_machine_control_state", params: ["state": s])
     }
 
     /// Machine controls M1: ask the (unsandboxed) helper to terminate a
