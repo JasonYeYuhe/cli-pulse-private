@@ -354,7 +354,7 @@ public struct UsageDashboardView: View {
             content
                 .padding(20)
         }
-        .frame(minWidth: 460, minHeight: 500)
+        .frame(minWidth: 420, minHeight: 500)
         .background(HUDWindowBackground(isDark: colorScheme == .dark).ignoresSafeArea())
         .task { await reload() }
         .onReceive(NotificationCenter.default.publisher(for: .dailyUsageArchiveDidChange)) { _ in

@@ -35,11 +35,11 @@ public final class DashboardPanelController {
         let screen = anchor?.screen ?? NSScreen.main
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
+        // A compact companion panel — matches the popover height, kept narrow.
         let height = min(max(anchor?.frame.height ?? 640, 480), visible.height - 24)
-        // Fit into the room to the left of the popover, capped at a comfortable width.
         let leftEdge = anchor?.frame.minX ?? (visible.maxX - 420)
         let available = leftEdge - visible.minX - 16
-        let width = min(760, max(460, available))
+        let width = min(500, max(420, available))
 
         let hosting = NSHostingView(rootView:
             ZStack(alignment: .topTrailing) {
