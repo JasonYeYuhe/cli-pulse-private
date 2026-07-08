@@ -288,6 +288,22 @@ struct PulseHomeView: View {
                 }
             }
         }
+
+        // v1.41 Mobile Machine: read-only per-device Machine cards, each drilling
+        // into a detail List. No controls on the watch (by design).
+        if !state.devices.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                SectionHeader(title: L10n.machine.deviceHealth, icon: "desktopcomputer")
+                ForEach(state.devices) { d in
+                    NavigationLink {
+                        WatchMachineDetailView(device: d)
+                    } label: {
+                        WatchMachineCard(device: d)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
     }
 
     // MARK: - States

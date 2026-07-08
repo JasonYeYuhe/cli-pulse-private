@@ -65,6 +65,7 @@
 		A30007 /* WatchAlertsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30007 /* WatchAlertsView.swift */; };
 		A30008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B30008 /* Assets.xcassets */; };
 		A30009 /* WatchSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30011 /* WatchSessionManager.swift */; };
+		A30040 /* WatchMachineCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30040 /* WatchMachineCard.swift */; };
 		A30020 /* WatchAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30020 /* WatchAppState.swift */; };
 		A30030 /* WatchTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30030 /* WatchTheme.swift */; };
 		A30021 /* PhoneSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30021 /* PhoneSessionManager.swift */; };
@@ -247,6 +248,7 @@
 		B30009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B30010 /* CLI_Pulse_Watch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CLI_Pulse_Watch.entitlements; sourceTree = "<group>"; };
 		B30011 /* WatchSessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSessionManager.swift; sourceTree = "<group>"; };
+		B30040 /* WatchMachineCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchMachineCard.swift; sourceTree = "<group>"; };
 		B30020 /* WatchAppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAppState.swift; sourceTree = "<group>"; };
 		B30030 /* WatchTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchTheme.swift; sourceTree = "<group>"; };
 		B30021 /* PhoneSessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneSessionManager.swift; sourceTree = "<group>"; };
@@ -428,6 +430,7 @@
 				B30006 /* WatchSessionsView.swift */,
 				B30007 /* WatchAlertsView.swift */,
 				B30011 /* WatchSessionManager.swift */,
+				B30040 /* WatchMachineCard.swift */,
 				B30020 /* WatchAppState.swift */,
 				B30030 /* WatchTheme.swift */,
 				B30008 /* Assets.xcassets */,
@@ -763,6 +766,7 @@
 				A30006 /* WatchSessionsView.swift in Sources */,
 				A30007 /* WatchAlertsView.swift in Sources */,
 				A30009 /* WatchSessionManager.swift in Sources */,
+				A30040 /* WatchMachineCard.swift in Sources */,
 				A30020 /* WatchAppState.swift in Sources */,
 				A30030 /* WatchTheme.swift in Sources */,
 			);
