@@ -305,6 +305,13 @@ def pair(args: argparse.Namespace) -> None:
     print(f"paired {config.device_name} as {config.device_id}")
 
 
+# v1.41 machine-mobile: the daemon builds a MachineCommandRelay and stashes it
+# here so BOTH the ~1 Hz command pull AND the heartbeat (separate functions in
+# this module) can reach it. None outside the daemon (e.g. the standalone
+# `heartbeat`/`sync` subcommands) — those simply skip the fan/LPM relay.
+_MACHINE_RELAY = None
+
+
 def heartbeat(_: argparse.Namespace) -> None:
     config = load_config()
     snapshot = collect_device_snapshot()
@@ -343,6 +350,18 @@ def heartbeat(_: argparse.Namespace) -> None:
             logger.debug("sensor_bridge.read_sensors() failed: %s", exc)
             sensors = None
         metrics = heartbeat_metrics(sensors=sensors)
+        # v1.41: fold in the Mac executor's reported machine-control state (fan
+        # boost + the honest remote-control capability map). Only present in the
+        # daemon (where the relay lives); the standalone `heartbeat` subcommand
+        # has no relay, so it simply omits these keys (server preserves them).
+        if _MACHINE_RELAY is not None:
+            try:
+                frag = _MACHINE_RELAY.heartbeat_metrics_fragment()
+                if metrics is None:
+                    metrics = {}
+                metrics.update(frag)
+            except Exception as exc:  # noqa: BLE001 — relay must never break the heartbeat
+                logger.debug("machine relay fragment failed: %s", exc)
         if metrics:
             params["p_metrics"] = metrics
     except Exception as exc:  # noqa: BLE001 — machine metrics must never break the heartbeat
@@ -585,6 +604,20 @@ def daemon(args: argparse.Namespace) -> None:
         logger.info(
             "remote agent manager initialised (executor=on, broker=on, approvals=on)",
         )
+        # v1.41: the machine-command relay (cloud fan/LPM queue ↔ DEVID app
+        # executor). Optional — a failure here must not break the daemon.
+        global _MACHINE_RELAY
+        try:
+            from machine_command_relay import MachineCommandRelay
+            _MACHINE_RELAY = MachineCommandRelay(
+                rpc_caller=supabase_rpc,
+                device_id=config_for_manager.device_id,
+                helper_secret=config_for_manager.helper_secret,
+            )
+            logger.info("machine command relay initialised")
+        except Exception as exc:  # noqa: BLE001 — relay is optional
+            logger.warning("machine command relay init failed: %s", exc)
+            _MACHINE_RELAY = None
     except ConfigError:
         # Helper not paired yet — daemon will likely fail in heartbeat
         # too. Don't synthesise a manager; the next iteration's
@@ -782,6 +815,29 @@ def daemon(args: argparse.Namespace) -> None:
             _kill_process_local = None  # type: ignore[assignment]
             _signal_process_local = None  # type: ignore[assignment]
 
+        # v1.41 machine-mobile relay closures. None when unpaired (no relay) →
+        # the UDS verbs reply not_implemented. The helper only RELAYS; the DEVID
+        # app executor is what actually drives the root fan daemon.
+        _pull_machine_commands_local = None
+        _complete_machine_command_local = None
+        _report_machine_control_state_local = None
+        if _MACHINE_RELAY is not None:
+            _relay = _MACHINE_RELAY
+
+            def _mc_pull() -> dict:
+                return {"commands": _relay.drain_for_app()}
+
+            def _mc_complete(command_id: str, status: str, result: dict | None) -> dict:
+                return _relay.complete(command_id, status, result)
+
+            def _mc_report(state: dict) -> dict:
+                _relay.report_control_state(state)
+                return {"status": "ok"}
+
+            _pull_machine_commands_local = _mc_pull
+            _complete_machine_command_local = _mc_complete
+            _report_machine_control_state_local = _mc_report
+
         local_uds_server = LocalSessionServer(
             socket_path=default_socket_path(),
             get_auth_token=_get_token,
@@ -798,6 +854,10 @@ def daemon(args: argparse.Namespace) -> None:
             get_machine_snapshot=_machine_snapshot_local,
             kill_process=_kill_process_local,
             signal_process=_signal_process_local,
+            # v1.41 machine-mobile relay (cloud fan/LPM queue ↔ app executor).
+            pull_machine_commands=_pull_machine_commands_local,
+            complete_machine_command=_complete_machine_command_local,
+            report_machine_control_state=_report_machine_control_state_local,
             # Iter 2B: broker drives subscribe_events; registry
             # backs approve_action / get_pending_approvals plus
             # the hook-side hook_create_approval / wait_decision
@@ -954,6 +1014,11 @@ def daemon(args: argparse.Namespace) -> None:
                     try:
                         if _now_tick - _last_full_tick >= 1.0:
                             remote_agent_manager.tick()
+                            # v1.41: pull queued fan/LPM commands into the relay
+                            # for the DEVID app executor (~1 Hz, gated on a fresh
+                            # executor report). pull_from_cloud is fail-soft.
+                            if _MACHINE_RELAY is not None:
+                                _MACHINE_RELAY.pull_from_cloud()
                             # review L5: advance only AFTER a successful full
                             # tick, so a raised tick() doesn't suppress the
                             # remote command poll for the rest of the second.
