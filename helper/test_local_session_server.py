@@ -209,6 +209,9 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
                  get_machine_snapshot: object | None = None,
                  kill_process: object | None = None,
                  signal_process: object | None = None,
+                 pull_machine_commands: object | None = None,
+                 complete_machine_command: object | None = None,
+                 report_machine_control_state: object | None = None,
                  ) -> tuple[LocalSessionServer, FakeManager, dict]:
     """Spin up a server bound to a tmp socket. Returns (server, manager,
     state-dict-for-toggle-introspection).
@@ -243,6 +246,9 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
         get_machine_snapshot=get_machine_snapshot,
         kill_process=kill_process,
         signal_process=signal_process,
+        pull_machine_commands=pull_machine_commands,
+        complete_machine_command=complete_machine_command,
+        report_machine_control_state=report_machine_control_state,
     )
     server.start()
     return server, mgr, state
@@ -268,6 +274,8 @@ def test_hello_returns_caps_without_auth(short_sock_dir):
             "approvals": False,
             # S2: _make_server omits get_machine_snapshot -> capability False.
             "machine_snapshot": False,
+            # v1.41: _make_server omits the relay -> capability False.
+            "machine_commands": False,
         }
         # v1.15: provider_availability is a list of installed CLI
         # spawners. The exact contents depend on the host PATH (the
@@ -1698,6 +1706,121 @@ def _parse_swift_client_methods() -> set[str] | None:
     # quoted lowercase value avoids matching the generic `"method": method`
     # envelope line (variable, not a literal).
     return set(re.findall(r'"?method"?:\s*"([a-z_]+)"', text))
+
+
+# ── v1.41 machine-mobile relay verbs ─────────────────────────────────────────
+
+
+def test_pull_machine_commands_drains_and_bypasses_gate(short_sock_dir):
+    # Machine tab → app-auth-gated but NOT session-control gated (enabled=False).
+    queue = [{"id": "c1", "kind": "set_fan_target", "payload": {"rpm": 4200}}]
+
+    def _pull() -> dict:
+        out, queue[:] = list(queue), []
+        return {"commands": out}
+
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T", enabled=False, pull_machine_commands=_pull)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "p", "method": "pull_machine_commands", "auth_token": "T", "params": {}})
+        assert reply["ok"] is True, reply
+        assert [c["id"] for c in reply["result"]["commands"]] == ["c1"]
+        reply2 = _client_call(server._socket_path, {
+            "id": "p2", "method": "pull_machine_commands", "auth_token": "T", "params": {}})
+        assert reply2["result"]["commands"] == []
+    finally:
+        server.stop()
+
+
+def test_pull_machine_commands_requires_auth(short_sock_dir):
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T", pull_machine_commands=lambda: {"commands": []})
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "p", "method": "pull_machine_commands", "auth_token": "WRONG", "params": {}})
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "unauthenticated"
+    finally:
+        server.stop()
+
+
+def test_pull_machine_commands_not_implemented_when_unwired(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir, token="T")  # no relay
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "p", "method": "pull_machine_commands", "auth_token": "T", "params": {}})
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "not_implemented"
+    finally:
+        server.stop()
+
+
+def test_complete_machine_command_forwards(short_sock_dir):
+    seen: list[tuple] = []
+
+    def _complete(command_id: str, status: str, result) -> dict:
+        seen.append((command_id, status, result))
+        return {"status": "ok"}
+
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T", complete_machine_command=_complete)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "c", "method": "complete_machine_command", "auth_token": "T",
+            "params": {"command_id": "c1", "status": "done", "result": {"applied": True}}})
+        assert reply["ok"] is True, reply
+        assert seen == [("c1", "done", {"applied": True})]
+    finally:
+        server.stop()
+
+
+def test_complete_machine_command_rejects_bad_status(short_sock_dir):
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T",
+        complete_machine_command=lambda cid, status, result: {"status": "ok"})
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "c", "method": "complete_machine_command", "auth_token": "T",
+            "params": {"command_id": "c1", "status": "delivered"}})
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "bad_request"
+    finally:
+        server.stop()
+
+
+def test_report_machine_control_state_records(short_sock_dir):
+    seen: list[dict] = []
+
+    def _report(state: dict) -> dict:
+        seen.append(state)
+        return {"status": "ok"}
+
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T", report_machine_control_state=_report)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "r", "method": "report_machine_control_state", "auth_token": "T",
+            "params": {"state": {"remote_fan": True, "remote_lpm": False,
+                                 "boost_active": True, "boost_target_rpm": 4200}}})
+        assert reply["ok"] is True, reply
+        assert seen[0]["remote_fan"] is True
+    finally:
+        server.stop()
+
+
+def test_report_machine_control_state_rejects_non_object(short_sock_dir):
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T",
+        report_machine_control_state=lambda state: {"status": "ok"})
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "r", "method": "report_machine_control_state", "auth_token": "T",
+            "params": {"state": "nope"}})
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "bad_request"
+    finally:
+        server.stop()
 
 
 def test_hardcoded_swift_method_set_matches_parsed_source():

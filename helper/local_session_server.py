@@ -170,6 +170,14 @@ SUPPORTED_METHODS = (
     # and reports the action / previous_command / new_command back
     # to the app for UI rendering.
     "install_claude_hook",
+    # v1.41 machine-mobile relay (Track B): the Mac app executor drains queued
+    # fan/LPM commands, reports typed completions, and reports its live control
+    # state. App-auth-gated but NOT local_control-gated (Machine tab, like
+    # get_machine_snapshot). Actual fan/LPM enforcement is DEVID + root daemon,
+    # never here.
+    "pull_machine_commands",
+    "complete_machine_command",
+    "report_machine_control_state",
 )
 
 # Methods whose body uses the per-session capability token (set by
@@ -205,7 +213,12 @@ GATE_BYPASSED_METHODS = frozenset(
      "kill_process",
      # v1.38.1 suspend/resume — same rationale as kill_process (Machine tab,
      # same-UID, no new privilege).
-     "signal_process"}
+     "signal_process",
+     # v1.41 machine-mobile relay — Machine tab, app-auth-gated, orthogonal to
+     # the session-control toggle (which gates spawning/driving CLI sessions).
+     "pull_machine_commands",
+     "complete_machine_command",
+     "report_machine_control_state"}
 )
 
 
@@ -373,6 +386,12 @@ class LocalSessionServer:
         get_machine_snapshot: Callable[[], dict] | None = None,
         kill_process: Callable[[int], dict] | None = None,
         signal_process: Callable[[int, str], dict] | None = None,
+        # v1.41 machine-mobile relay (Track B): the Mac app executor drains
+        # queued fan/LPM commands (pull), forwards typed completions (complete),
+        # and reports its live control state (report). None ⇒ not_implemented.
+        pull_machine_commands: Callable[[], dict] | None = None,
+        complete_machine_command: Callable[[str, str, dict | None], dict] | None = None,
+        report_machine_control_state: Callable[[dict], dict] | None = None,
         event_broker: EventBroker | None = None,
         approval_registry: ApprovalRegistry | None = None,
         subscribe_idle_timeout_s: float = 30.0,
@@ -429,6 +448,11 @@ class LocalSessionServer:
         # (pid, action) where action ∈ {"suspend","resume"} and returns
         # {signaled, action, error, code}. None ⇒ `not_implemented`.
         self._signal_process = signal_process
+        # v1.41 machine-mobile relay (Track B). All three None ⇒ the verbs reply
+        # `not_implemented` (unpaired helper / older wiring / unit tests).
+        self._pull_machine_commands = pull_machine_commands
+        self._complete_machine_command = complete_machine_command
+        self._report_machine_control_state = report_machine_control_state
         # Phase 3 Iter 2B: the broker drives `subscribe_events` and
         # the registry drives `approve_action` / `get_pending_approvals`
         # / `hook_*`. Both default to None so tests that exercise only
@@ -935,6 +959,10 @@ class LocalSessionServer:
                     # System Monitor S2: whether this helper can serve the
                     # read-only machine-health snapshot over get_machine_snapshot.
                     "machine_snapshot": self._get_machine_snapshot is not None,
+                    # v1.41 machine-mobile: whether this helper relays remote
+                    # fan/LPM commands (pull/complete/report). The DEVID app
+                    # executor lights up only when this is true.
+                    "machine_commands": self._pull_machine_commands is not None,
                 },
                 # v1.15: array of installed providers (subset of
                 # ['claude','codex','gemini']). UI uses this to disable
@@ -1404,6 +1432,63 @@ class LocalSessionServer:
                 "signaled": bool(result.get("signaled")),
                 "action": action,
             }
+
+        if method == "pull_machine_commands":
+            # v1.41: hand the DEVID app executor the fan/LPM commands the daemon
+            # pulled from the cloud queue. Read-only drain; the executor acks each
+            # via complete_machine_command. The helper NEVER runs these itself.
+            if self._pull_machine_commands is None:
+                raise _RequestError("not_implemented",
+                                    "machine command relay unavailable on this helper")
+            try:
+                result = self._pull_machine_commands()
+            except Exception as exc:  # noqa: BLE001 — never leak a stack to the peer
+                logger.warning("pull_machine_commands raised: %s", exc)
+                raise _RequestError("internal", "pull_machine_commands failed") from exc
+            if not isinstance(result, dict):
+                raise _RequestError("internal", "pull_machine_commands returned no result")
+            return result
+
+        if method == "complete_machine_command":
+            # v1.41: forward the executor's typed completion (done/failed +
+            # optional typed result) to the cloud via the relay.
+            if self._complete_machine_command is None:
+                raise _RequestError("not_implemented",
+                                    "machine command relay unavailable on this helper")
+            command_id = params.get("command_id")
+            status = params.get("status")
+            result_obj = params.get("result")
+            if not isinstance(command_id, str) or not command_id:
+                raise _RequestError("bad_request", "'command_id' must be a non-empty string")
+            if status not in ("done", "failed"):
+                raise _RequestError("bad_request", "'status' must be 'done' or 'failed'")
+            if result_obj is not None and not isinstance(result_obj, dict):
+                raise _RequestError("bad_request", "'result' must be an object when present")
+            try:
+                out = self._complete_machine_command(command_id, status, result_obj)
+            except ValueError as exc:
+                raise _RequestError("bad_request", str(exc)) from exc
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("complete_machine_command raised: %s", exc)
+                raise _RequestError("internal", "complete_machine_command failed") from exc
+            return out if isinstance(out, dict) else {"status": "ok"}
+
+        if method == "report_machine_control_state":
+            # v1.41: record the executor's live {remote_fan, remote_lpm,
+            # boost_active, boost_target_rpm}; folded into the next heartbeat so
+            # the phone renders ONLY controls the Mac will honor.
+            if self._report_machine_control_state is None:
+                raise _RequestError("not_implemented",
+                                    "machine command relay unavailable on this helper")
+            state = params.get("state")
+            if not isinstance(state, dict):
+                raise _RequestError("bad_request", "'state' must be an object")
+            try:
+                out = self._report_machine_control_state(state)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("report_machine_control_state raised: %s", exc)
+                raise _RequestError("internal", "report_machine_control_state failed") from exc
+            return out if isinstance(out, dict) else {"status": "ok"}
 
         if method == "install_claude_hook":
             # Phase 4 helper-bundling: app asks helper to write the
