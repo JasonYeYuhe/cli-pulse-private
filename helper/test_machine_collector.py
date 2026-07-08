@@ -373,6 +373,12 @@ class TestHeartbeatMetrics(unittest.TestCase):
         self._orig_mem = mc.collect_memory
         self._orig_sys = mc.collect_system_extra
         self._orig_lpm = mc.collect_lpm
+        # Hermetic defaults so battery-focused tests don't shell out to the real
+        # sysctl/vm_stat/pmset oracles (heartbeat_metrics now calls them
+        # unconditionally). Tests that assert on the system block override these.
+        mc.collect_memory = lambda: (0, 0, 0)  # type: ignore[assignment]
+        mc.collect_system_extra = lambda memory_percent=0: {"memory_pressure": "nominal"}  # type: ignore[assignment]
+        mc.collect_lpm = lambda: None  # type: ignore[assignment]
 
     def tearDown(self):
         mc.collect_battery_thermal = self._orig  # type: ignore[assignment]
