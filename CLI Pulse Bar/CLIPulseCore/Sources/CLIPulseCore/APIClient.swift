@@ -363,6 +363,20 @@ public actor APIClient {
         let adapter_watts: Double?
         let sensors_capability: [String: Bool]?
         let sensors_updated_at: String?
+        // v0.66 Mobile Machine: system block + LPM + fan-boost state + remote-control map.
+        let uptime_seconds: Int?
+        let load_avg_1m: Double?
+        let load_avg_5m: Double?
+        let load_avg_15m: Double?
+        let memory_pressure: String?
+        let swap_used_bytes: Int?
+        let swap_total_bytes: Int?
+        let disk_free_bytes: Int?
+        let disk_total_bytes: Int?
+        let lpm_on: Bool?
+        let fan_boost_active: Bool?
+        let fan_boost_target_rpm: Int?
+        let machine_controls: [String: Bool]?
     }
 
     private struct AlertRecordPayload: Decodable {
@@ -769,7 +783,20 @@ public actor APIClient {
                 battery_health_pct: row.battery_health_pct,
                 adapter_watts: row.adapter_watts,
                 sensors_capability: row.sensors_capability ?? [:],
-                sensors_updated_at: row.sensors_updated_at
+                sensors_updated_at: row.sensors_updated_at,
+                uptime_seconds: row.uptime_seconds,
+                load_avg_1m: row.load_avg_1m,
+                load_avg_5m: row.load_avg_5m,
+                load_avg_15m: row.load_avg_15m,
+                memory_pressure: row.memory_pressure,
+                swap_used_bytes: row.swap_used_bytes,
+                swap_total_bytes: row.swap_total_bytes,
+                disk_free_bytes: row.disk_free_bytes,
+                disk_total_bytes: row.disk_total_bytes,
+                lpm_on: row.lpm_on,
+                fan_boost_active: row.fan_boost_active,
+                fan_boost_target_rpm: row.fan_boost_target_rpm,
+                machine_controls: row.machine_controls ?? [:]
             )
         }
     }

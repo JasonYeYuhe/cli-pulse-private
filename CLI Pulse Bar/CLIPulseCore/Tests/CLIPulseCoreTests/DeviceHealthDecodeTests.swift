@@ -44,6 +44,68 @@ final class DeviceHealthDecodeTests: XCTestCase {
         XCTAssertFalse(d.hasDeviceHealth)
     }
 
+    func testDecodesV066MobileMachineFields() throws {
+        // v0.66: system block + LPM + fan-boost state + remote-control map.
+        let d = try decode("""
+        {"id":"d4","name":"MBP","type":"macOS","system":"macOS 26","status":"Online",
+         "helper_version":"1.28.0","current_session_count":0,
+         "uptime_seconds":123456,"load_avg_1m":2.5,"load_avg_5m":1.8,"load_avg_15m":1.2,
+         "memory_pressure":"warn","swap_used_bytes":1073741824,"swap_total_bytes":4294967296,
+         "disk_free_bytes":250000000000,"disk_total_bytes":500000000000,
+         "lpm_on":true,"fan_boost_active":true,"fan_boost_target_rpm":4200,
+         "machine_controls":{"remote_fan":true,"remote_lpm":false},
+         "sensors_updated_at":"2026-07-09T00:00:00Z"}
+        """)
+        XCTAssertEqual(d.uptime_seconds, 123456)
+        XCTAssertEqual(d.load_avg_1m, 2.5)
+        XCTAssertEqual(d.memory_pressure, "warn")
+        XCTAssertEqual(d.swap_total_bytes, 4294967296)
+        XCTAssertEqual(d.disk_total_bytes, 500000000000)
+        XCTAssertEqual(d.lpm_on, true)
+        XCTAssertEqual(d.fan_boost_active, true)
+        XCTAssertEqual(d.fan_boost_target_rpm, 4200)
+        XCTAssertTrue(d.remoteControlCan("remote_fan"))
+        XCTAssertFalse(d.remoteControlCan("remote_lpm"))
+        XCTAssertTrue(d.hasDeviceHealth)
+    }
+
+    func testV066FieldsAbsentDecodeToNil() throws {
+        // A device on an old helper (no v0.66 keys) must still decode cleanly.
+        let d = try decode("""
+        {"id":"d5","name":"Old","type":"macOS","system":"macOS 15","status":"Online",
+         "helper_version":"1.26.0","current_session_count":0,"cpu_temp_c":55.0,
+         "sensors_updated_at":"2026-07-09T00:00:00Z"}
+        """)
+        XCTAssertNil(d.uptime_seconds)
+        XCTAssertNil(d.lpm_on)
+        XCTAssertNil(d.fan_boost_target_rpm)
+        XCTAssertTrue(d.machine_controls.isEmpty)
+        XCTAssertFalse(d.remoteControlCan("remote_fan"))
+    }
+
+    func testHasDeviceHealthWithOnlySystemBlock() throws {
+        // A system-only Mac (uptime/LPM but NO sensors + NO sensors_updated_at)
+        // must still surface in the Overview device-health section — this locks in
+        // the v0.66 OR-clause (uptime_seconds != nil || lpm_on != nil).
+        let d = try decode("""
+        {"id":"d7","name":"mini","type":"macOS","system":"macOS 26","status":"Online",
+         "helper_version":"1.28.0","current_session_count":0,"uptime_seconds":5000,"lpm_on":false}
+        """)
+        XCTAssertTrue(d.hasDeviceHealth)
+        XCTAssertNil(d.sensors_updated_at)
+        XCTAssertNil(d.cpu_temp_c)
+        XCTAssertTrue(d.sensors_capability.isEmpty)
+    }
+
+    func testReadingStaleThreshold() throws {
+        let base = "{\"id\":\"d6\",\"name\":\"M\",\"type\":\"macOS\",\"system\":\"macOS 26\",\"status\":\"Online\",\"helper_version\":\"1.28.0\",\"current_session_count\":0,\"uptime_seconds\":1,"
+        let fresh = try decode(base + "\"sensors_updated_at\":\"2026-07-09T12:00:00Z\"}")
+        let now = ISO8601DateFormatter().date(from: "2026-07-09T12:02:00Z")!  // 2 min later
+        XCTAssertFalse(fresh.isReadingStale(after: 300, now: now))
+        let later = ISO8601DateFormatter().date(from: "2026-07-09T12:10:00Z")!  // 10 min later
+        XCTAssertTrue(fresh.isReadingStale(after: 300, now: later))
+    }
+
     func testDesktopNoBattery() throws {
         // Mac mini: thermal + no battery.
         let d = try decode("""

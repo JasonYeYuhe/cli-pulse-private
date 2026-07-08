@@ -183,7 +183,15 @@ struct iOSOverviewTab: View {
             VStack(alignment: .leading, spacing: 8) {
                 SectionHeader(title: L10n.machine.deviceHealth, icon: "waveform.path.ecg")
                 ForEach(healthy) { device in
-                    DeviceHealthCard(device: device)
+                    // v1.41: drill into the full read-only Machine view (System /
+                    // Sensors / Battery / Power). Closure-destination form (matches
+                    // the Remote Approvals banner) — DeviceRecord isn't Hashable.
+                    NavigationLink {
+                        iOSMachineView(deviceID: device.id)
+                    } label: {
+                        DeviceHealthCard(device: device)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal)

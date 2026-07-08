@@ -866,6 +866,8 @@
 "machine.pressure_elevated" = "偏高";
 "machine.pressure_high" = "紧张";
 "machine.low_power" = "低电量模式";
+"machine.fan_boost" = "风扇加速";
+"machine.last_updated_fmt" = "%@更新";
 "machine.on" = "开";
 "machine.off" = "关";
 "machine.device_health" = "设备健康";
