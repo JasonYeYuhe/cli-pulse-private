@@ -28,6 +28,9 @@ insert into public.remote_session_commands (id, user_id, device_id, kind, payloa
 insert into public.remote_session_events (session_id, user_id, device_id, seq, kind, payload)
   values ('a0000000-0000-0000-0000-0000000000a1', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', gen_random_uuid(), 1, 'stdout', 'private terminal output');
 
+insert into public.machine_commands (id, user_id, device_id, kind, payload)
+  values ('a0000000-0000-0000-0000-0000000000a5', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', gen_random_uuid(), 'set_fan_target', '{"rpm":4200,"ttl_seconds":900}'::jsonb);
+
 insert into public.remote_permission_requests (id, user_id, device_id, provider, summary)
   values ('a0000000-0000-0000-0000-0000000000a3', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', gen_random_uuid(), 'claude', 'rm -rf approval');
 
