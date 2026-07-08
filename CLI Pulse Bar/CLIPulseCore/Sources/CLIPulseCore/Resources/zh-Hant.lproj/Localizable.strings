@@ -868,6 +868,17 @@
 "machine.low_power" = "低耗電模式";
 "machine.fan_boost" = "風扇加速";
 "machine.last_updated_fmt" = "%@更新";
+"machine.remote_controls" = "控制";
+"machine.fan_target" = "風扇目標";
+"machine.auto" = "自動";
+"machine.hold_duration" = "保持";
+"machine.apply_boost" = "套用加速";
+"machine.revert_auto" = "還原自動";
+"machine.boost_confirm_title" = "加速風扇？";
+"machine.boost_confirm_body_fmt" = "這會讓 %@ 的風扇轉速提高。到保持時間後或你點按「還原」時會自動還原。";
+"machine.boost_confirm_button" = "加速";
+"machine.requesting" = "已請求 — Mac 會在下次簽到時套用";
+"machine.min_fmt" = "%@ 分鐘";
 "machine.on" = "開";
 "machine.off" = "關";
 "machine.device_health" = "裝置健康";

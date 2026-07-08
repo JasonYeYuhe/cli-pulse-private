@@ -12,6 +12,15 @@ struct iOSMachineView: View {
     @EnvironmentObject var state: AppState
     let deviceID: String
 
+    // v1.41 PR-6 remote controls.
+    @AppStorage("cli_pulse_remote_fan_boost_confirmed") private var confirmedBoostBefore = false
+    @State private var fanTargetRPM: Double = 0
+    @State private var ttlMinutes = 15
+    @State private var busy = false
+    @State private var fanRequested = false
+    @State private var showBoostConfirm = false
+    @State private var actionError: String?
+
     private var device: DeviceRecord? { state.devices.first(where: { $0.id == deviceID }) }
 
     var body: some View {
@@ -19,12 +28,17 @@ struct iOSMachineView: View {
             if let device {
                 VStack(alignment: .leading, spacing: 16) {
                     updatedRow(device)
-                    systemCard(device)
-                    DeviceHealthCard(device: device)   // Sensors + Battery + thermal
-                    powerCard(device)
+                    // Read-only cards grey out when the reading is stale; the
+                    // control actions below stay crisp + interactive.
+                    Group {
+                        systemCard(device)
+                        DeviceHealthCard(device: device)   // Sensors + Battery + thermal
+                        powerCard(device)
+                    }
+                    .opacity(device.isReadingStale() ? 0.6 : 1.0)
+                    controlsSection(device)
                 }
                 .padding()
-                .opacity(device.isReadingStale() ? 0.6 : 1.0)   // grey stale readings
             } else {
                 // The device dropped out of the list (unpaired / removed).
                 VStack(spacing: 8) {
@@ -111,6 +125,120 @@ struct iOSMachineView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Controls (PR-6) — rendered ONLY for controls the Mac will honor
+
+    @ViewBuilder
+    private func controlsSection(_ d: DeviceRecord) -> some View {
+        if d.remoteControlCan("remote_fan") || d.remoteControlCan("remote_lpm") {
+            VStack(alignment: .leading, spacing: 12) {
+                SectionHeader(title: L10n.machine.remoteControls, icon: "slider.horizontal.3")
+                if d.remoteControlCan("remote_fan") { fanControl(d) }
+                if d.remoteControlCan("remote_lpm") { lpmControl(d) }
+                if let actionError {
+                    Text(actionError).font(.caption).foregroundStyle(.red)
+                }
+            }
+            .padding(12)
+            .background(PulseTheme.cardBackground.opacity(0.5))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .alert(L10n.machine.boostConfirmTitle, isPresented: $showBoostConfirm) {
+                Button(L10n.common.cancel, role: .cancel) {}
+                Button(L10n.machine.boostConfirmButton) {
+                    confirmedBoostBefore = true
+                    sendBoost(d)
+                }
+            } message: {
+                Text(L10n.machine.boostConfirmBody(d.name))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func fanControl(_ d: DeviceRecord) -> some View {
+        let maxRPM = Double(max(d.fan_max_rpm ?? 6000, 1000))
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(L10n.machine.fanTarget).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Text(fanTargetRPM < 1 ? L10n.machine.auto : "\(Int(fanTargetRPM)) RPM")
+                    .font(.caption.monospacedDigit())
+            }
+            Slider(value: $fanTargetRPM, in: 0...maxRPM, step: 100)
+            Picker(L10n.machine.holdDuration, selection: $ttlMinutes) {
+                Text(L10n.machine.minutes(15)).tag(15)
+                Text(L10n.machine.minutes(30)).tag(30)
+                Text(L10n.machine.minutes(60)).tag(60)
+            }
+            .pickerStyle(.segmented)
+            HStack {
+                Button(L10n.machine.applyBoost) {
+                    if confirmedBoostBefore { sendBoost(d) } else { showBoostConfirm = true }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(busy || fanTargetRPM < 1)
+                Button(L10n.machine.revertAuto) { sendRevert(d) }
+                    .buttonStyle(.bordered)
+                    .disabled(busy)
+            }
+            // "Requesting…" until the next heartbeat reports the boost active.
+            if fanRequested && d.fan_boost_active != true {
+                Label(L10n.machine.requesting, systemImage: "clock.arrow.circlepath")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func lpmControl(_ d: DeviceRecord) -> some View {
+        Toggle(isOn: Binding(
+            get: { d.lpm_on ?? false },
+            set: { sendLPM(d, on: $0) }
+        )) {
+            Text(L10n.machine.lowPower).font(.subheadline)
+        }
+        .disabled(busy)
+    }
+
+    // MARK: - control actions (send a REQUEST; the Mac executor applies + the
+    // next heartbeat reflects it in the Power card — see plan §4 PR-6)
+
+    private func sendBoost(_ d: DeviceRecord) {
+        fanRequested = true
+        let rpm = Int(fanTargetRPM)
+        let ttl = ttlMinutes * 60
+        runCommand { try await state.api.remoteSendMachineCommand(
+            deviceId: d.id, kind: "set_fan_target", rpm: rpm, ttlSeconds: ttl) } onError: {
+            fanRequested = false
+        }
+    }
+
+    private func sendRevert(_ d: DeviceRecord) {
+        fanRequested = false
+        runCommand { try await state.api.remoteSendMachineCommand(
+            deviceId: d.id, kind: "revert_fan_auto") }
+    }
+
+    private func sendLPM(_ d: DeviceRecord, on: Bool) {
+        runCommand { try await state.api.remoteSendMachineCommand(
+            deviceId: d.id, kind: "set_low_power_mode", on: on) }
+    }
+
+    private func runCommand(_ op: @escaping () async throws -> String,
+                            onError: @escaping () -> Void = {}) {
+        busy = true
+        actionError = nil
+        Task {
+            do {
+                _ = try await op()
+            } catch {
+                actionError = error.localizedDescription
+                onError()
+            }
+            busy = false
+            await state.refreshAll()   // pull the fresh device state promptly
         }
     }
 

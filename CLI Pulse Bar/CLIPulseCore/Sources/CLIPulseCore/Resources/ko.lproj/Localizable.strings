@@ -591,6 +591,17 @@
 "machine.low_power" = "저전력 모드";
 "machine.fan_boost" = "팬 부스트";
 "machine.last_updated_fmt" = "%@ 업데이트됨";
+"machine.remote_controls" = "제어";
+"machine.fan_target" = "팬 목표";
+"machine.auto" = "자동";
+"machine.hold_duration" = "유지 시간";
+"machine.apply_boost" = "부스트 적용";
+"machine.revert_auto" = "자동으로 되돌리기";
+"machine.boost_confirm_title" = "팬을 부스트할까요?";
+"machine.boost_confirm_body_fmt" = "%@의 팬 속도를 높입니다. 유지 시간이 지나거나 되돌리기를 누르면 자동으로 되돌아갑니다.";
+"machine.boost_confirm_button" = "부스트";
+"machine.requesting" = "요청됨 — Mac이 다음 체크인 때 적용합니다";
+"machine.min_fmt" = "%@분";
 "machine.on" = "켬";
 "machine.off" = "끔";
 "machine.device_health" = "기기 상태";

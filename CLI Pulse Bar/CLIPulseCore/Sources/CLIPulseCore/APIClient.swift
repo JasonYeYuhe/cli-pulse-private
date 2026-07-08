@@ -1277,6 +1277,41 @@ public actor APIClient {
         return result.command_id
     }
 
+    /// v1.41 "Mobile Machine": enqueue a remote fan/LPM control REQUEST for a
+    /// paired Mac. `kind` ∈ set_fan_target | revert_fan_auto | set_low_power_mode.
+    /// The server validates + clamps the payload (rpm 0..30000, ttl 60..3600) and
+    /// rate-limits to 6/min; the Mac executor honors it only if the owner opted in.
+    /// Returns the new command id. Throws (RC disabled / not owner / rate limit).
+    public func remoteSendMachineCommand(
+        deviceId: String,
+        kind: String,
+        rpm: Int? = nil,
+        ttlSeconds: Int? = nil,
+        on: Bool? = nil
+    ) async throws -> String {
+        struct Payload: Encodable {
+            let rpm: Int?
+            let ttl_seconds: Int?
+            let on: Bool?
+        }
+        struct Params: Encodable {
+            let p_device_id: String
+            let p_kind: String
+            let p_payload: Payload
+        }
+        struct Result: Decodable { let command_id: String }
+        // Build the jsonb payload separately so the RPC-contract checker sees only
+        // the three top-level params (p_device_id/p_kind/p_payload), not the nested
+        // payload keys. Encodable omits nil optionals, so {} / {"rpm":…,"ttl_seconds":…}
+        // / {"on":…} are produced per kind.
+        let payload = Payload(rpm: rpm, ttl_seconds: ttlSeconds, on: on)
+        let result: Result = try await rpc(
+            "remote_app_send_machine_command",
+            params: Params(p_device_id: deviceId, p_kind: kind, p_payload: payload)
+        )
+        return result.command_id
+    }
+
     /// List the caller's active remote sessions (pending or running),
     /// joined with `devices.name` so the UI can label which Mac each
     /// session belongs to. Returns `[]` when Remote Control is disabled

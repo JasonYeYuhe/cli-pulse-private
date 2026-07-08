@@ -591,6 +591,17 @@
 "machine.low_power" = "Modo de bajo consumo";
 "machine.fan_boost" = "Impulso del ventilador";
 "machine.last_updated_fmt" = "Actualizado %@";
+"machine.remote_controls" = "Controles";
+"machine.fan_target" = "Objetivo del ventilador";
+"machine.auto" = "Automático";
+"machine.hold_duration" = "Mantener";
+"machine.apply_boost" = "Aplicar impulso";
+"machine.revert_auto" = "Volver a automático";
+"machine.boost_confirm_title" = "¿Impulsar el ventilador?";
+"machine.boost_confirm_body_fmt" = "Esto acelera el ventilador de %@. Vuelve automáticamente tras el temporizador o cuando pulsas Revertir.";
+"machine.boost_confirm_button" = "Impulsar";
+"machine.requesting" = "Solicitado: el Mac lo aplicará en su próximo registro";
+"machine.min_fmt" = "%@ min";
 "machine.on" = "Activado";
 "machine.off" = "Desactivado";
 "machine.device_health" = "Estado del dispositivo";

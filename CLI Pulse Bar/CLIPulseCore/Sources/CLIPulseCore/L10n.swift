@@ -134,6 +134,18 @@ public enum L10n {
         // v1.41 Mobile Machine (iOS read-only view).
         public static var fanBoost: String { tr("machine.fan_boost") }
         public static func lastUpdated(_ ago: String) -> String { tr("machine.last_updated_fmt", ago) }
+        // v1.41 Mobile Machine (iOS remote controls, PR-6).
+        public static var remoteControls: String { tr("machine.remote_controls") }
+        public static var fanTarget: String { tr("machine.fan_target") }
+        public static var auto: String { tr("machine.auto") }
+        public static var holdDuration: String { tr("machine.hold_duration") }
+        public static var applyBoost: String { tr("machine.apply_boost") }
+        public static var revertAuto: String { tr("machine.revert_auto") }
+        public static var boostConfirmTitle: String { tr("machine.boost_confirm_title") }
+        public static func boostConfirmBody(_ name: String) -> String { tr("machine.boost_confirm_body_fmt", name) }
+        public static var boostConfirmButton: String { tr("machine.boost_confirm_button") }
+        public static var requesting: String { tr("machine.requesting") }
+        public static func minutes(_ n: Int) -> String { tr("machine.min_fmt", String(n)) }
     }
 
     // MARK: - Dashboard
