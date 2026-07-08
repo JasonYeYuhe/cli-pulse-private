@@ -241,6 +241,29 @@ struct AdvancedSection: View {
             }
             .toggleStyle(.switch)
             .controlSize(.small)
+
+            // Remote machine control (v1.41, DEVID-only). Off by default; a SECOND
+            // opt-in on top of Machine controls. When ON, this Mac's executor honors
+            // fan-boost / Low Power Mode REQUESTS from the owner's other signed-in
+            // devices. A cloud command is only a request — the fan hold heartbeat +
+            // TTL revert stay local, and it's bounded to fan RPM + LPM (never process
+            // control). Shown only when the local Machine controls opt-in is also on.
+            if state.machineControlsEnabled {
+                Toggle(isOn: Binding(
+                    get: { state.remoteMachineControlEnabled },
+                    set: { state.remoteMachineControlEnabled = $0 }
+                )) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(L10n.machine.remoteControlToggle)
+                            .font(.system(size: 11))
+                        Text(L10n.machine.remoteControlHint)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+            }
             #endif
 
             Divider()

@@ -826,6 +826,8 @@
 "machine.kill_err_generic" = "プロセスを終了できませんでした。";
 "machine.controls_toggle" = "マシン制御";
 "machine.controls_hint" = "「マシン」タブから自分のプロセスを終了できるようにします。デフォルトはオフで、操作ごとに確認します。直接ダウンロード（Developer ID）版のみ。";
+"machine.remote_control_toggle" = "リモートマシン制御";
+"machine.remote_control_hint" = "サインイン済みの他のデバイスから、この Mac のファン増速や低電力モードをリクエストできるようにします。デフォルトはオフ。ファンと低電力モードのみに限定され、増速は自動的に元に戻ります。直接ダウンロード（Developer ID）ビルドのみ。";
 "machine.suspend" = "一時停止";
 "machine.resume" = "再開";
 "machine.paused_badge" = "一時停止中";

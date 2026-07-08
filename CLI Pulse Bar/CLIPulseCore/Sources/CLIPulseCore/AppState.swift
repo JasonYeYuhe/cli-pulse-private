@@ -567,6 +567,19 @@ public final class AppState: ObservableObject {
     @Published public var appUpdater: AppUpdater = AppUpdater()
     #endif
 
+    // MARK: - v1.41 Remote machine control executor
+    /// Polls the helper UDS for fan/LPM REQUESTS and executes them via the root
+    /// fan daemon (FanControlClient). DEVID-only (the root daemon + FanControlClient
+    /// are DEVID-only); gated at runtime by `remoteMachineControlEnabled` (default
+    /// OFF) && the daemon being available. Started from `init()`; the fan dead-man
+    /// heartbeat + TTL revert stay local so the phone never holds a boost.
+    #if os(macOS) && DEVID_BUILD
+    public let remoteMachineExecutor = RemoteMachineExecutor(
+        fan: FanControlClient(),
+        relay: LocalSessionControlClient()
+    )
+    #endif
+
     // MARK: - v1.19 G1 permission migration checker
     /// Detects TCC permission revocations on the MAS → DEVID migration
     /// path and surfaces a banner for re-granting. Snapshot writer runs
@@ -634,6 +647,15 @@ public final class AppState: ObservableObject {
     /// directly via @AppStorage in MachineHealthView, so the toggle and the
     /// affordance share one UserDefaults key with no drift.
     @AppStorage("cli_pulse_machine_controls_enabled") public var machineControlsEnabled = false
+
+    // MARK: - Remote machine control (v1.41 "Mobile Machine")
+    /// Off by default, DEVID-only, SECOND opt-in on top of `machineControlsEnabled`.
+    /// Gates whether this Mac's `RemoteMachineExecutor` will honor fan-boost / Low
+    /// Power Mode REQUESTS from the owner's other signed-in devices (phone/watch).
+    /// A cloud command is only ever a request — the fan hold heartbeat + TTL revert
+    /// stay entirely local. Read directly via UserDefaults by the executor (same
+    /// key, no drift), mirroring `machineControlsEnabled`.
+    @AppStorage(kRemoteMachineControlEnabledKey) public var remoteMachineControlEnabled = false
 
     public var appearanceMode: ColorScheme? {
         switch appearanceModeRaw {
@@ -758,6 +780,16 @@ public final class AppState: ObservableObject {
             guard let self else { return }
             await self.permissionMigrationChecker.runOnLaunch()
         }
+
+        #if DEVID_BUILD
+        // v1.41: start the remote machine-control executor. It stays idle (no UDS
+        // traffic) until the `remoteMachineControlEnabled` opt-in AND the fan
+        // daemon are both ready, so starting unconditionally on launch is safe.
+        Task { [weak self] in
+            guard let self else { return }
+            await self.remoteMachineExecutor.start()
+        }
+        #endif
         #endif
     }
 

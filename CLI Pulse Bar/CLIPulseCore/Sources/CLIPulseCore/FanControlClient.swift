@@ -29,7 +29,7 @@ private let fanLog = Logger(subsystem: "com.cli-pulse.bar", category: "fan-contr
 /// client keeps heart-beating. `startBoost` therefore arms a heartbeat timer, and
 /// `stop()` / `deinit` revert to auto — so quitting the app or closing the view
 /// returns the fans to Apple auto even before the daemon's own heartbeat timeout.
-public final class FanControlClient: @unchecked Sendable {
+public final class FanControlClient: @unchecked Sendable, FanControlling {
     public static let machServiceName = "yyh.CLI-Pulse.machine-root-helper"
     // Well under the daemon's kHeartbeatTimeoutSeconds (8s) so a single dropped
     // beat doesn't trip the dead-man's-switch.
