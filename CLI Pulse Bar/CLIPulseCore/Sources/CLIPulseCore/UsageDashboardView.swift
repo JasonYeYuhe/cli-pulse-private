@@ -173,20 +173,20 @@ struct DashboardStatStrip: View {
     var body: some View {
         LazyVGrid(columns: columns, spacing: 0) {
             ForEach(Array(tiles.enumerated()), id: \.offset) { _, tile in
-                VStack(spacing: 3) {
+                VStack(spacing: 2) {
                     Text(tile.value)
-                        .font(.system(size: 19, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))
                         .monospacedDigit()
                         .lineLimit(1)
-                        .minimumScaleFactor(0.6)
+                        .minimumScaleFactor(0.5)
                     Text(tile.label.uppercased())
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 8.5, weight: .medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
+                .padding(.vertical, 9)
                 .overlay(alignment: .leading) { Divider().opacity(0.4) }
             }
         }
@@ -352,7 +352,8 @@ public struct UsageDashboardView: View {
     public var body: some View {
         ScrollView {
             content
-                .padding(20)
+                .padding(.horizontal, 26)
+                .padding(.vertical, 22)
         }
         .frame(minWidth: 380, minHeight: 500)
         .background(HUDWindowBackground(isDark: colorScheme == .dark).ignoresSafeArea())
@@ -416,40 +417,51 @@ public struct UsageDashboardView: View {
             }
             .padding(14)
             .glassCard(elevated: false)
-            HStack(alignment: .top, spacing: 16) {
-                DashboardBreakdown(title: L10n.usageDashboard.byModel,
-                                   rows: DailyUsageStats.byModel(a), useProviderColor: false)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
-                    .glassCard(elevated: false)
-                DashboardBreakdown(title: L10n.usageDashboard.byProvider,
-                                   rows: DailyUsageStats.byProvider(a), useProviderColor: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
-                    .glassCard(elevated: false)
-            }
+            breakdowns(a)
             DashboardTrends(archive: a)
                 .padding(14)
                 .glassCard(elevated: false)
         }
     }
 
+    // By-Model / By-Provider breakdowns. Side-by-side when there's room (the
+    // standalone dashboard window), stacked when narrow (the slide-out companion
+    // panel) — otherwise the two cards' fixed-width columns force a min width
+    // wider than the panel, which swallows the content padding on both edges.
+    @ViewBuilder
+    private func breakdowns(_ a: DailyUsageArchive) -> some View {
+        let byModel = DashboardBreakdown(title: L10n.usageDashboard.byModel,
+                                         rows: DailyUsageStats.byModel(a), useProviderColor: false)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .glassCard(elevated: false)
+        let byProvider = DashboardBreakdown(title: L10n.usageDashboard.byProvider,
+                                            rows: DailyUsageStats.byProvider(a), useProviderColor: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .glassCard(elevated: false)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 16) { byModel; byProvider }
+            VStack(spacing: 12) { byModel; byProvider }
+        }
+    }
+
     @ViewBuilder
     private func header(_ a: DailyUsageArchive) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             Text(L10n.usageDashboard.title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 CountUpNumber(value: animatedTokens,
-                              font: .system(size: 46, weight: .medium, design: .default))
+                              font: .system(size: 33, weight: .medium, design: .default))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.65)
+                    .minimumScaleFactor(0.5)
                 Text("tokens")
-                    .font(.system(size: 13)).foregroundStyle(.secondary)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Text(L10n.usageDashboard.scope)
-                .font(.system(size: 11)).foregroundStyle(.tertiary)
+                .font(.system(size: 10)).foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

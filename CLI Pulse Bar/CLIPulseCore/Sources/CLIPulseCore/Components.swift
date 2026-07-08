@@ -154,12 +154,14 @@ public struct GlassCardModifier: ViewModifier {
     private var isDark: Bool { scheme == .dark }
 
     private var tint: Color {
-        isDark ? Color(.sRGB, red: 48 / 255, green: 52 / 255, blue: 56 / 255, opacity: 0.68)
-               : Color(.sRGB, red: 1, green: 1, blue: 1, opacity: 0.5)
+        // v1.40: more transparent (owner: 更透明, token-monitor style) — lower the
+        // tint opacity so more of the frosted backdrop shows through.
+        isDark ? Color(.sRGB, red: 48 / 255, green: 52 / 255, blue: 56 / 255, opacity: 0.46)
+               : Color(.sRGB, red: 1, green: 1, blue: 1, opacity: 0.34)
     }
     private var verticalWash: LinearGradient {
-        LinearGradient(colors: [Color.white.opacity(isDark ? 0.07 : 0.5),
-                                Color.white.opacity(isDark ? 0.022 : 0.16)],
+        LinearGradient(colors: [Color.white.opacity(isDark ? 0.06 : 0.32),
+                                Color.white.opacity(isDark ? 0.02 : 0.12)],
                        startPoint: .top, endPoint: .bottom)
     }
     private var diagonalWash: LinearGradient {

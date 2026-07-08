@@ -53,7 +53,10 @@ public final class DashboardPanelController {
                     }
                     .buttonStyle(.plain)
                     .help("Close")
-                })
+                }
+                // token-monitor look: the slide-out panel is always dark frosted
+                // glass (see-through HUD backdrop), regardless of the system theme.
+                .environment(\.colorScheme, .dark))
         hosting.wantsLayer = true
         // Round the window's own layer instead of clip-shaping the content (which
         // was centering + clipping the dashboard when its minWidth exceeded the panel).
