@@ -603,6 +603,7 @@
 "machine.requesting" = "Solicitado: el Mac lo aplicará en su próximo registro";
 "machine.min_fmt" = "%@ min";
 "machine.command_failed" = "No se pudo enviar el comando. Inténtalo de nuevo.";
+"machine.no_readings" = "Sin lecturas todavía";
 "machine.on" = "Activado";
 "machine.off" = "Desactivado";
 "machine.device_health" = "Estado del dispositivo";

@@ -74,7 +74,8 @@ final class PhoneSessionManager: NSObject, ObservableObject {
                 dashboard: state.dashboard,
                 providers: state.providers,
                 sessions: state.sessions,
-                alerts: state.alerts
+                alerts: state.alerts,
+                devices: state.devices
             )
         }
     }
@@ -124,7 +125,8 @@ final class PhoneSessionManager: NSObject, ObservableObject {
 
     /// Update application context with fresh dashboard data.
     func sendDashboardToWatch(dashboard: DashboardSummary?, providers: [ProviderUsage],
-                               sessions: [SessionRecord], alerts: [AlertRecord]) {
+                               sessions: [SessionRecord], alerts: [AlertRecord],
+                               devices: [DeviceRecord] = []) {
         let encoder = JSONEncoder()
         var context: [String: Any] = [:]
 
@@ -139,6 +141,12 @@ final class PhoneSessionManager: NSObject, ObservableObject {
         }
         if !alerts.isEmpty, let data = try? encoder.encode(alerts) {
             context["alerts"] = data
+        }
+        // v1.41 Mobile Machine: trimmed, ≤4 device-health summaries (keeps the
+        // WC context small; no control-plane fields cross to the read-only watch).
+        let deviceSummaries = WatchDeviceTrim.summaries(from: devices)
+        if !deviceSummaries.isEmpty, let data = try? encoder.encode(deviceSummaries) {
+            context["devices"] = data
         }
 
         guard !context.isEmpty, WCSession.isSupported() else { return }

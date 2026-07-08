@@ -17,6 +17,8 @@ public final class WatchAppState: ObservableObject {
     @Published var providers: [ProviderUsage] = []
     @Published var sessions: [SessionRecord] = []
     @Published var alerts: [AlertRecord] = []
+    // v1.41 Mobile Machine: trimmed, read-only device-health summaries (≤4).
+    @Published var devices: [WatchDeviceSummary] = []
 
     // MARK: - Cost
     @Published var costSummary = CostSummary()
@@ -39,6 +41,9 @@ public final class WatchAppState: ObservableObject {
     private let api: APIClient
     private let authManager: AuthManager
     private var refreshTimer: Timer?
+    // v1.41: fetch devices() every 2nd refresh (tick 0, 2, 4…) to save watch
+    // battery — machine health changes slowly and rides the WC fallback anyway.
+    private var refreshTickCount = 0
 
     init() {
         // v0.2.14 — one-shot migration off UserDefaults for any auth tokens
@@ -173,6 +178,8 @@ public final class WatchAppState: ObservableObject {
         providers = []
         sessions = []
         alerts = []
+        devices = []
+        refreshTickCount = 0
     }
 
     // MARK: - Provider Helpers
@@ -216,6 +223,8 @@ public final class WatchAppState: ObservableObject {
         guard isAuthenticated else { return }
         isLoading = true
         lastError = nil
+        let fetchDevices = refreshTickCount % 2 == 0   // ticks 0,2,4… (first paint included)
+        refreshTickCount &+= 1
         do {
             async let dashTask = api.dashboard()
             async let provTask = api.providers()
@@ -231,6 +240,11 @@ public final class WatchAppState: ObservableObject {
         } catch {
             serverOnline = false
             lastError = error.localizedDescription
+        }
+        // v1.41: devices on every 2nd tick, in its own try so a devices failure
+        // never marks the whole refresh offline.
+        if fetchDevices, let fetched = try? await api.devices() {
+            devices = WatchDeviceTrim.summaries(from: fetched)
         }
         isLoading = false
     }
@@ -303,6 +317,9 @@ public final class WatchAppState: ObservableObject {
         }
         if !sessionManager.lastReceivedAlerts.isEmpty, overwrite || alerts.isEmpty {
             alerts = sessionManager.lastReceivedAlerts
+        }
+        if !sessionManager.lastReceivedDevices.isEmpty, overwrite || devices.isEmpty {
+            devices = sessionManager.lastReceivedDevices
         }
         if overwrite {
             lastRefresh = sessionManager.lastSyncDate ?? lastRefresh

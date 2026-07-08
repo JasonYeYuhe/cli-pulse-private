@@ -878,6 +878,7 @@
 "machine.requesting" = "Requesting — the Mac applies it on its next check-in";
 "machine.min_fmt" = "%@ min";
 "machine.command_failed" = "Couldn't send the command. Please try again.";
+"machine.no_readings" = "No readings yet";
 "machine.on" = "On";
 "machine.off" = "Off";
 "machine.device_health" = "Device Health";

@@ -11,6 +11,7 @@ final class WatchSessionManager: NSObject, ObservableObject {
     @Published var lastReceivedProviders: [ProviderUsage] = []
     @Published var lastReceivedSessions: [SessionRecord] = []
     @Published var lastReceivedAlerts: [AlertRecord] = []
+    @Published var lastReceivedDevices: [WatchDeviceSummary] = []   // v1.41 Mobile Machine
     @Published var isPhoneReachable = false
     @Published var lastSyncDate: Date?
 
@@ -24,6 +25,7 @@ final class WatchSessionManager: NSObject, ObservableObject {
     private let providersKey = "cli_pulse_watch_providers"
     private let sessionsKey = "cli_pulse_watch_sessions"
     private let alertsKey = "cli_pulse_watch_alerts"
+    private let devicesKey = "cli_pulse_watch_devices"
 
     private override init() {
         super.init()
@@ -57,6 +59,10 @@ final class WatchSessionManager: NSObject, ObservableObject {
            let data = try? encoder.encode(lastReceivedAlerts) {
             UserDefaults.standard.set(data, forKey: alertsKey)
         }
+        if !lastReceivedDevices.isEmpty,
+           let data = try? encoder.encode(lastReceivedDevices) {
+            UserDefaults.standard.set(data, forKey: devicesKey)
+        }
     }
 
     func loadPersistedData() {
@@ -77,6 +83,10 @@ final class WatchSessionManager: NSObject, ObservableObject {
            let alerts = try? decoder.decode([AlertRecord].self, from: data) {
             lastReceivedAlerts = alerts
         }
+        if let data = UserDefaults.standard.data(forKey: devicesKey),
+           let devices = try? decoder.decode([WatchDeviceSummary].self, from: data) {
+            lastReceivedDevices = devices
+        }
     }
 
     // MARK: - Process application context
@@ -89,12 +99,14 @@ final class WatchSessionManager: NSObject, ObservableObject {
         let providers = (context["providers"] as? Data).flatMap { try? decoder.decode([ProviderUsage].self, from: $0) }
         let sessions = (context["sessions"] as? Data).flatMap { try? decoder.decode([SessionRecord].self, from: $0) }
         let alerts = (context["alerts"] as? Data).flatMap { try? decoder.decode([AlertRecord].self, from: $0) }
+        let devices = (context["devices"] as? Data).flatMap { try? decoder.decode([WatchDeviceSummary].self, from: $0) }
 
         DispatchQueue.main.async {
             if let dash { self.lastReceivedDashboard = dash }
             if let providers { self.lastReceivedProviders = providers }
             if let sessions { self.lastReceivedSessions = sessions }
             if let alerts { self.lastReceivedAlerts = alerts }
+            if let devices { self.lastReceivedDevices = devices }
             self.lastSyncDate = Date()
             self.persistData()
             // Let WatchAppState re-apply fallback data into its @Published
