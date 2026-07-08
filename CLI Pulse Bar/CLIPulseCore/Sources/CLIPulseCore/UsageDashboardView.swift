@@ -354,7 +354,7 @@ public struct UsageDashboardView: View {
             content
                 .padding(20)
         }
-        .frame(minWidth: 760, minHeight: 620)
+        .frame(minWidth: 460, minHeight: 500)
         .background(HUDWindowBackground(isDark: colorScheme == .dark).ignoresSafeArea())
         .task { await reload() }
         .onReceive(NotificationCenter.default.publisher(for: .dailyUsageArchiveDidChange)) { _ in
@@ -471,26 +471,35 @@ public struct UsageDashboardView: View {
 
 /// A ~12-week heatmap card for the Overview tab that opens the full dashboard.
 public struct CompactUsageCard: View {
-    @Environment(\.openWindow) private var openWindow
     @State private var archive: DailyUsageArchive?
 
     public init() {}
 
+    // Heatmap cell metrics for the compact card; weeks are computed to fill width.
+    private let cell: CGFloat = 11
+    private let gap: CGFloat = 3
+    private var rowHeight: CGFloat { 7 * cell + 6 * gap }
+
     public var body: some View {
         Button {
-            NSApp.activate(ignoringOtherApps: true)
-            openWindow(id: UsageDashboardView.windowID)
+            // Slide the dashboard out to the LEFT of the popover (not a new window).
+            DashboardPanelController.shared.toggle()
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text(L10n.usageDashboard.activity)
                         .font(.system(size: 12, weight: .semibold))
                     Spacer()
-                    Image(systemName: "arrow.up.forward.square")
+                    Image(systemName: "sidebar.left")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 if let a = archive, !a.days.isEmpty {
-                    UsageHeatmapGrid(archive: a, weeks: 12, cell: 10, gap: 3, showMonthLabels: false)
+                    // Fill the whole card width: pick as many weeks as fit.
+                    GeometryReader { geo in
+                        let weeks = max(12, Int((geo.size.width + gap) / (cell + gap)))
+                        UsageHeatmapGrid(archive: a, weeks: weeks, cell: cell, gap: gap, showMonthLabels: false)
+                    }
+                    .frame(height: rowHeight)
                     HStack(spacing: 14) {
                         miniStat(CostFormatter.formatUsage(DailyUsageStats.totalTokens(a)),
                                  L10n.usageDashboard.totalTokens)
