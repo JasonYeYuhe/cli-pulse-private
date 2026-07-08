@@ -163,25 +163,28 @@ public actor RemoteMachineExecutor {
         // 2. Feature off → go idle. We stop reporting; the helper's 15 s control
         //    freshness lapses and the next heartbeat clears devices.machine_controls,
         //    so the phone hides the controls. No UDS traffic while off (the default).
-        guard toggle else { return }
+        guard toggle else { return }   // feature off → idle (no UDS traffic)
 
-        // 3. Report live state every tick so the phone renders ONLY honorable
-        //    controls. Daemon unavailable → report false so the phone hides them.
+        // 3. Pull + execute FIRST (when the daemon is available), so the report in
+        //    step 4 reflects a boost armed THIS tick — the phone sees it on the
+        //    same heartbeat, not the next. The helper already dropped commands
+        //    pulled >60 s ago; we additionally clamp the payload locally.
+        //    stop() may have interleaved during an await → skip pulling then.
+        if available && !stopped {
+            let commands = (try? await relay.pullMachineCommands()) ?? []
+            for cmd in commands {
+                if stopped { break }
+                await execute(cmd)
+            }
+        }
+
+        // 4. Report live state every tick (helper 15 s freshness) so the phone
+        //    renders ONLY honorable controls. Daemon unavailable → remoteFan/LPM
+        //    false so the phone hides them.
         let state = RemoteMachineControlState(
             remoteFan: available, remoteLPM: available,
             boostActive: boostActive, boostTargetRPM: boostTargetRPM)
         try? await relay.reportMachineControlState(state)
-
-        guard available else { return }
-        guard !stopped else { return }   // stop() may have interleaved during an await
-
-        // 4. Pull + execute. (The helper already dropped commands pulled >60 s ago;
-        //    we additionally clamp the payload locally — last line before actuation.)
-        let commands = (try? await relay.pullMachineCommands()) ?? []
-        for cmd in commands {
-            if stopped { break }
-            await execute(cmd)
-        }
     }
 
     // MARK: - Execute one command
