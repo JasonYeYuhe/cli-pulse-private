@@ -39,24 +39,26 @@ public final class DashboardPanelController {
         let height = min(max(anchor?.frame.height ?? 640, 480), visible.height - 24)
         let leftEdge = anchor?.frame.minX ?? (visible.maxX - 420)
         let available = leftEdge - visible.minX - 16
-        let width = min(500, max(420, available))
+        let width = min(520, max(440, available))
 
         let hosting = NSHostingView(rootView:
-            ZStack(alignment: .topTrailing) {
-                UsageDashboardView()
-                    .frame(width: width, height: height)
-                Button { DashboardPanelController.shared.hide() } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 17))
-                        .foregroundStyle(.secondary)
-                        .padding(8)
-                }
-                .buttonStyle(.plain)
-                .help("Close")
-            }
-            .frame(width: width, height: height)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous)))
+            UsageDashboardView()
+                .frame(width: width, height: height)
+                .overlay(alignment: .topTrailing) {
+                    Button { DashboardPanelController.shared.hide() } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 17))
+                            .foregroundStyle(.secondary)
+                            .padding(8)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Close")
+                })
         hosting.wantsLayer = true
+        // Round the window's own layer instead of clip-shaping the content (which
+        // was centering + clipping the dashboard when its minWidth exceeded the panel).
+        hosting.layer?.cornerRadius = 16
+        hosting.layer?.masksToBounds = true
 
         let p = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: width, height: height),
