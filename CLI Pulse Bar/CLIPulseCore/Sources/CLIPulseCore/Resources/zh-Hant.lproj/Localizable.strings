@@ -879,6 +879,7 @@
 "machine.boost_confirm_button" = "加速";
 "machine.requesting" = "已請求 — Mac 會在下次簽到時套用";
 "machine.min_fmt" = "%@ 分鐘";
+"machine.command_failed" = "指令傳送失敗，請重試。";
 "machine.on" = "開";
 "machine.off" = "關";
 "machine.device_health" = "裝置健康";

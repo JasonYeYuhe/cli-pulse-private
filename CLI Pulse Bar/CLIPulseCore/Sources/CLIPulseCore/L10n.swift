@@ -146,6 +146,7 @@ public enum L10n {
         public static var boostConfirmButton: String { tr("machine.boost_confirm_button") }
         public static var requesting: String { tr("machine.requesting") }
         public static func minutes(_ n: Int) -> String { tr("machine.min_fmt", String(n)) }
+        public static var commandFailed: String { tr("machine.command_failed") }
     }
 
     // MARK: - Dashboard

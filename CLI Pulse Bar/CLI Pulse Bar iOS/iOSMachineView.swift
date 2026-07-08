@@ -18,6 +18,7 @@ struct iOSMachineView: View {
     @State private var ttlMinutes = 15
     @State private var busy = false
     @State private var fanRequested = false
+    @State private var lpmPending: Bool?    // optimistic toggle value until the heartbeat confirms
     @State private var showBoostConfirm = false
     @State private var actionError: String?
 
@@ -132,11 +133,21 @@ struct iOSMachineView: View {
 
     @ViewBuilder
     private func controlsSection(_ d: DeviceRecord) -> some View {
-        if d.remoteControlCan("remote_fan") || d.remoteControlCan("remote_lpm") {
+        // Show a control ONLY when it will actually work end-to-end:
+        //  - the CALLER has Remote Control enabled (the server RPC's own gate —
+        //    otherwise every tap 400s with "Remote Control is disabled");
+        //  - the Mac is online + its snapshot is fresh (machine_controls is a
+        //    sticky last-known column, so a sleeping/offline Mac would still
+        //    "advertise" controls; a command it can't pick up just expires in 60s);
+        //  - the Mac reports the specific capability (executor opt-in + daemon).
+        let live = d.deviceStatus == .online && !d.isReadingStale()
+        let canFan = live && state.remoteControlEnabled && d.remoteControlCan("remote_fan")
+        let canLPM = live && state.remoteControlEnabled && d.remoteControlCan("remote_lpm")
+        if canFan || canLPM {
             VStack(alignment: .leading, spacing: 12) {
                 SectionHeader(title: L10n.machine.remoteControls, icon: "slider.horizontal.3")
-                if d.remoteControlCan("remote_fan") { fanControl(d) }
-                if d.remoteControlCan("remote_lpm") { lpmControl(d) }
+                if canFan { fanControl(d) }
+                if canLPM { lpmControl(d) }
                 if let actionError {
                     Text(actionError).font(.caption).foregroundStyle(.red)
                 }
@@ -193,8 +204,10 @@ struct iOSMachineView: View {
 
     @ViewBuilder
     private func lpmControl(_ d: DeviceRecord) -> some View {
+        // Optimistic: reflect the tapped value immediately (lpmPending) instead of
+        // snapping back to the sticky d.lpm_on until the next heartbeat confirms.
         Toggle(isOn: Binding(
-            get: { d.lpm_on ?? false },
+            get: { lpmPending ?? (d.lpm_on ?? false) },
             set: { sendLPM(d, on: $0) }
         )) {
             Text(L10n.machine.lowPower).font(.subheadline)
@@ -222,8 +235,10 @@ struct iOSMachineView: View {
     }
 
     private func sendLPM(_ d: DeviceRecord, on: Bool) {
-        runCommand { try await state.api.remoteSendMachineCommand(
-            deviceId: d.id, kind: "set_low_power_mode", on: on) }
+        lpmPending = on
+        runCommand({ try await state.api.remoteSendMachineCommand(
+            deviceId: d.id, kind: "set_low_power_mode", on: on) },
+            onError: { lpmPending = nil })
     }
 
     private func runCommand(_ op: @escaping () async throws -> String,
@@ -234,11 +249,18 @@ struct iOSMachineView: View {
             do {
                 _ = try await op()
             } catch {
-                actionError = error.localizedDescription
+                // Friendly, non-leaking message (raw PostgREST JSON stays out of the UI).
+                actionError = L10n.machine.commandFailed
                 onError()
             }
             busy = false
             await state.refreshAll()   // pull the fresh device state promptly
+            // Backstop: bound the optimistic hints so they can't linger if the Mac
+            // never confirms (they also vanish when the device goes stale/offline,
+            // since the whole controls section is gated on online+fresh).
+            try? await Task.sleep(nanoseconds: 150_000_000_000)
+            fanRequested = false
+            lpmPending = nil
         }
     }
 
