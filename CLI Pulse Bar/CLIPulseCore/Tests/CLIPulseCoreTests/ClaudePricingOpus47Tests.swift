@@ -85,14 +85,53 @@ final class ClaudePricingOpus47Tests: XCTestCase {
         XCTAssertEqual(opus47 ?? 0, opus46 ?? -1, accuracy: 0.0001)
     }
 
+    func testOpus48_pricesNonNilAndIdenticalToOpus47() {
+        // opus-4-8 is now the dominant Claude Code model. Pin its rate row so a
+        // single-digit typo (which the label + pricingVersion tests can't catch)
+        // can't silently misprice ~100% of current traffic. Same headline rate as
+        // the rest of the Opus 4.x line → $36.75 for the 1M/1M/1M/1M bundle.
+        let bundle = (input: 1_000_000, cacheRead: 1_000_000, cacheCreate: 1_000_000, output: 1_000_000)
+        let opus48 = CostUsageScanner.Pricing.claudeCostUSD(
+            model: "claude-opus-4-8",
+            inputTokens: bundle.input,
+            cacheReadInputTokens: bundle.cacheRead,
+            cacheCreationInputTokens: bundle.cacheCreate,
+            outputTokens: bundle.output
+        )
+        XCTAssertNotNil(opus48, "Opus 4.8 must NOT return nil cost")
+        XCTAssertEqual(opus48 ?? 0, 36.75, accuracy: 0.0001)
+
+        let opus47 = CostUsageScanner.Pricing.claudeCostUSD(
+            model: "claude-opus-4-7",
+            inputTokens: bundle.input,
+            cacheReadInputTokens: bundle.cacheRead,
+            cacheCreationInputTokens: bundle.cacheCreate,
+            outputTokens: bundle.output
+        )
+        XCTAssertEqual(opus48 ?? 0, opus47 ?? -1, accuracy: 0.0001,
+            "opus-4-8 must price identically to opus-4-7")
+    }
+
     // MARK: - 2 + 3. Family fallback safety net
 
+    func testNormalize_opus48IsNowExplicitAndKeepsItsName() {
+        // opus-4-8 now has a dedicated dictionary entry, so it round-trips to
+        // itself instead of being relabeled `opus-4-7` via the family fallback.
+        // This is what the By-Model breakdown shows the user, so the real name
+        // must survive normalization.
+        XCTAssertEqual(
+            CostUsageScanner.Pricing.normalizeClaudeModel("claude-opus-4-8"),
+            "claude-opus-4-8",
+            "opus-4-8 has an explicit entry and must keep its own name")
+    }
+
     func testNormalize_unknownFutureOpusFallsBackToHighestKnownMinor() {
-        // `claude-opus-4-8` doesn't exist yet. Without the family
-        // fallback, the next minor release silently regresses cost
-        // to $0 the day it ships.
-        let normalized = CostUsageScanner.Pricing.normalizeClaudeModel("claude-opus-4-8")
-        XCTAssertEqual(normalized, "claude-opus-4-7",
+        // A still-unreleased minor (`claude-opus-4-9`) isn't priced. Without the
+        // family fallback, the next minor release silently regresses cost to $0
+        // the day it ships. It should fall back to the highest priced sibling,
+        // which is now opus-4-8.
+        let normalized = CostUsageScanner.Pricing.normalizeClaudeModel("claude-opus-4-9")
+        XCTAssertEqual(normalized, "claude-opus-4-8",
             "unknown opus minor should fall back to the highest priced sibling in the same family")
     }
 

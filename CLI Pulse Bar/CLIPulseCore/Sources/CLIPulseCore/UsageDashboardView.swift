@@ -173,20 +173,20 @@ struct DashboardStatStrip: View {
     var body: some View {
         LazyVGrid(columns: columns, spacing: 0) {
             ForEach(Array(tiles.enumerated()), id: \.offset) { _, tile in
-                VStack(spacing: 3) {
+                VStack(spacing: 2) {
                     Text(tile.value)
-                        .font(.system(size: 19, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))
                         .monospacedDigit()
                         .lineLimit(1)
-                        .minimumScaleFactor(0.6)
+                        .minimumScaleFactor(0.5)
                     Text(tile.label.uppercased())
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 8.5, weight: .medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
+                .padding(.vertical, 9)
                 .overlay(alignment: .leading) { Divider().opacity(0.4) }
             }
         }
@@ -343,18 +343,28 @@ public struct UsageDashboardView: View {
     @State private var animatedTokens: Double = 0
     @State private var didAnimateCountUp = false
     private let providedArchive: DailyUsageArchive?
+    /// When false, the content is laid out at its natural height with no
+    /// ScrollView — the slide-out panel sizes its window to this height so
+    /// everything fits on one page (no vertical scrollbar). The resizable
+    /// standalone Window keeps `scrollable: true`.
+    private let scrollable: Bool
 
     /// Live window (loads the archive snapshot on appear).
-    public init() { self.providedArchive = nil }
+    public init(scrollable: Bool = true) { self.providedArchive = nil; self.scrollable = scrollable }
     /// Preview/testing with an explicit archive.
-    public init(archive: DailyUsageArchive) { self.providedArchive = archive }
+    public init(archive: DailyUsageArchive, scrollable: Bool = true) {
+        self.providedArchive = archive; self.scrollable = scrollable
+    }
 
     public var body: some View {
-        ScrollView {
-            content
-                .padding(20)
+        Group {
+            if scrollable {
+                ScrollView { paddedContent }
+            } else {
+                paddedContent
+            }
         }
-        .frame(minWidth: 760, minHeight: 620)
+        .frame(minWidth: 380, minHeight: scrollable ? 500 : nil)
         .background(HUDWindowBackground(isDark: colorScheme == .dark).ignoresSafeArea())
         .task { await reload() }
         .onReceive(NotificationCenter.default.publisher(for: .dailyUsageArchiveDidChange)) { _ in
@@ -363,6 +373,12 @@ public struct UsageDashboardView: View {
         .onReceive(NotificationCenter.default.publisher(for: .displayCurrencyDidChange)) { _ in
             Task { await reload() }   // re-render cost figures in the new currency
         }
+    }
+
+    private var paddedContent: some View {
+        content
+            .padding(.horizontal, 26)
+            .padding(.vertical, 22)
     }
 
     @MainActor
@@ -409,47 +425,67 @@ public struct UsageDashboardView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(L10n.usageDashboard.activity)
                     .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    UsageHeatmapGrid(archive: a, weeks: 53)
+                // Fill the card width with as many trailing weeks as fit, ending
+                // in TODAY's column (heatmapColumns anchors on `localDayKey()`), so
+                // "now" is always the rightmost column. The old fixed 53-week grid
+                // sat in a horizontal ScrollView that defaulted to the left
+                // (oldest) edge, hiding recent activity off-screen to the right.
+                let cell: CGFloat = 11, gap: CGFloat = 3
+                GeometryReader { geo in
+                    let weeks = max(12, Int((geo.size.width + gap) / (cell + gap)))
+                    UsageHeatmapGrid(archive: a, weeks: weeks, cell: cell, gap: gap,
+                                     showMonthLabels: true)
                 }
+                .frame(height: cell * 7 + gap * 6 + 18)   // 7 day-rows + month labels
                 heatmapLegend
             }
             .padding(14)
             .glassCard(elevated: false)
-            HStack(alignment: .top, spacing: 16) {
-                DashboardBreakdown(title: L10n.usageDashboard.byModel,
-                                   rows: DailyUsageStats.byModel(a), useProviderColor: false)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
-                    .glassCard(elevated: false)
-                DashboardBreakdown(title: L10n.usageDashboard.byProvider,
-                                   rows: DailyUsageStats.byProvider(a), useProviderColor: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
-                    .glassCard(elevated: false)
-            }
+            breakdowns(a)
             DashboardTrends(archive: a)
                 .padding(14)
                 .glassCard(elevated: false)
         }
     }
 
+    // By-Model / By-Provider breakdowns. Side-by-side when there's room (the
+    // standalone dashboard window), stacked when narrow (the slide-out companion
+    // panel) — otherwise the two cards' fixed-width columns force a min width
+    // wider than the panel, which swallows the content padding on both edges.
+    @ViewBuilder
+    private func breakdowns(_ a: DailyUsageArchive) -> some View {
+        let byModel = DashboardBreakdown(title: L10n.usageDashboard.byModel,
+                                         rows: DailyUsageStats.byModel(a), useProviderColor: false)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .glassCard(elevated: false)
+        let byProvider = DashboardBreakdown(title: L10n.usageDashboard.byProvider,
+                                            rows: DailyUsageStats.byProvider(a), useProviderColor: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .glassCard(elevated: false)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 16) { byModel; byProvider }
+            VStack(spacing: 12) { byModel; byProvider }
+        }
+    }
+
     @ViewBuilder
     private func header(_ a: DailyUsageArchive) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             Text(L10n.usageDashboard.title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 CountUpNumber(value: animatedTokens,
-                              font: .system(size: 46, weight: .medium, design: .default))
+                              font: .system(size: 33, weight: .medium, design: .default))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.65)
+                    .minimumScaleFactor(0.5)
                 Text("tokens")
-                    .font(.system(size: 13)).foregroundStyle(.secondary)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Text(L10n.usageDashboard.scope)
-                .font(.system(size: 11)).foregroundStyle(.tertiary)
+                .font(.system(size: 10)).foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -471,26 +507,35 @@ public struct UsageDashboardView: View {
 
 /// A ~12-week heatmap card for the Overview tab that opens the full dashboard.
 public struct CompactUsageCard: View {
-    @Environment(\.openWindow) private var openWindow
     @State private var archive: DailyUsageArchive?
 
     public init() {}
 
+    // Heatmap cell metrics for the compact card; weeks are computed to fill width.
+    private let cell: CGFloat = 11
+    private let gap: CGFloat = 3
+    private var rowHeight: CGFloat { 7 * cell + 6 * gap }
+
     public var body: some View {
         Button {
-            NSApp.activate(ignoringOtherApps: true)
-            openWindow(id: UsageDashboardView.windowID)
+            // Slide the dashboard out to the LEFT of the popover (not a new window).
+            DashboardPanelController.shared.toggle()
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text(L10n.usageDashboard.activity)
                         .font(.system(size: 12, weight: .semibold))
                     Spacer()
-                    Image(systemName: "arrow.up.forward.square")
+                    Image(systemName: "sidebar.left")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 if let a = archive, !a.days.isEmpty {
-                    UsageHeatmapGrid(archive: a, weeks: 12, cell: 10, gap: 3, showMonthLabels: false)
+                    // Fill the whole card width: pick as many weeks as fit.
+                    GeometryReader { geo in
+                        let weeks = max(12, Int((geo.size.width + gap) / (cell + gap)))
+                        UsageHeatmapGrid(archive: a, weeks: weeks, cell: cell, gap: gap, showMonthLabels: false)
+                    }
+                    .frame(height: rowHeight)
                     HStack(spacing: 14) {
                         miniStat(CostFormatter.formatUsage(DailyUsageStats.totalTokens(a)),
                                  L10n.usageDashboard.totalTokens)

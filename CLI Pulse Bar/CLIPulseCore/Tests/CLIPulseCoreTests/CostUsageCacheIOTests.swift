@@ -160,7 +160,7 @@ final class CostUsageCacheIOTests: XCTestCase {
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let payload: [String: Any] = [
             "version": 1,
-            "pricingVersion": 1,        // <-- one behind costUsageCachePricingVersion (=2)
+            "pricingVersion": 2,        // <-- one behind costUsageCachePricingVersion (=3)
             "lastScanUnixMs": 1_700_000_000,
             "files": [:],
             "days": [
@@ -195,12 +195,12 @@ final class CostUsageCacheIOTests: XCTestCase {
         XCTAssertEqual(loaded.lastScanUnixMs, 42, "save→load roundtrip should not be invalidated by the stamping policy")
     }
 
-    func testCurrentPricingVersionIsTwo() {
+    func testCurrentPricingVersionIsThree() {
         // Pin the constant so future bumps land in this test as a
         // grep-able diff. When you change pricing, bump the constant
         // AND this expectation in the same commit so the diff makes
         // the cache-invalidation intent obvious in code review.
-        XCTAssertEqual(costUsageCachePricingVersion, 2)
+        XCTAssertEqual(costUsageCachePricingVersion, 3)
     }
 
     // MARK: - wipeAll
