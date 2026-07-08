@@ -83,6 +83,20 @@ final class DeviceHealthDecodeTests: XCTestCase {
         XCTAssertFalse(d.remoteControlCan("remote_fan"))
     }
 
+    func testHasDeviceHealthWithOnlySystemBlock() throws {
+        // A system-only Mac (uptime/LPM but NO sensors + NO sensors_updated_at)
+        // must still surface in the Overview device-health section — this locks in
+        // the v0.66 OR-clause (uptime_seconds != nil || lpm_on != nil).
+        let d = try decode("""
+        {"id":"d7","name":"mini","type":"macOS","system":"macOS 26","status":"Online",
+         "helper_version":"1.28.0","current_session_count":0,"uptime_seconds":5000,"lpm_on":false}
+        """)
+        XCTAssertTrue(d.hasDeviceHealth)
+        XCTAssertNil(d.sensors_updated_at)
+        XCTAssertNil(d.cpu_temp_c)
+        XCTAssertTrue(d.sensors_capability.isEmpty)
+    }
+
     func testReadingStaleThreshold() throws {
         let base = "{\"id\":\"d6\",\"name\":\"M\",\"type\":\"macOS\",\"system\":\"macOS 26\",\"status\":\"Online\",\"helper_version\":\"1.28.0\",\"current_session_count\":0,\"uptime_seconds\":1,"
         let fresh = try decode(base + "\"sensors_updated_at\":\"2026-07-09T12:00:00Z\"}")
