@@ -44,6 +44,13 @@ logger = logging.getLogger("cli_pulse.machine_relay")
 # ~2 s poll, so 15 s tolerates a few missed polls before we treat it as gone.
 _CONTROL_FRESH_S = 15.0
 
+# Defense-in-depth: a command pulled (→ marked `delivered` server-side) but not
+# drained by the app within this window is DROPPED on the next drain, so a fan
+# command can never actuate late (app quit between pull and drain, relaunched
+# hours later). Matches the 60 s server-side pickup expiry. PR-4's executor also
+# enforces the command's own TTL against created_at — this is the helper-side backstop.
+_QUEUE_MAX_AGE_S = 60.0
+
 # Completion statuses the helper will forward to the cloud (mirrors the RPC).
 _COMPLETION_STATUSES = ("done", "failed")
 
@@ -72,14 +79,16 @@ class MachineCommandRelay:
         *,
         clock: Callable[[], float] = time.monotonic,
         control_fresh_s: float = _CONTROL_FRESH_S,
+        queue_max_age_s: float = _QUEUE_MAX_AGE_S,
     ) -> None:
         self._rpc_caller = rpc_caller
         self._device_id = device_id
         self._helper_secret = helper_secret
         self._clock = clock
         self._control_fresh_s = control_fresh_s
+        self._queue_max_age_s = queue_max_age_s
         self._lock = threading.Lock()
-        self._queue: list[dict] = []               # pulled, awaiting app drain
+        self._queue: list[tuple[float, dict]] = []  # (pulled_at, cmd) awaiting drain
         self._control_state: Optional[dict] = None  # last executor report
         self._reported_at: float = 0.0
 
@@ -125,8 +134,9 @@ class MachineCommandRelay:
         picked = [c for c in result if isinstance(c, dict) and c.get("id")]
         if not picked:
             return 0
+        now = self._clock()
         with self._lock:
-            self._queue.extend(picked)
+            self._queue.extend((now, c) for c in picked)
         logger.info("relayed %d machine command(s) from cloud queue", len(picked))
         return len(picked)
 
@@ -135,11 +145,18 @@ class MachineCommandRelay:
     def drain_for_app(self) -> list[dict]:
         """Hand the queued commands to the app executor and clear the queue.
         The commands are already `delivered` server-side (marked at pull); the
-        executor acks each via `complete`."""
+        executor acks each via `complete`. Drops any command pulled more than
+        `queue_max_age_s` ago so a late fan command can never actuate (see
+        _QUEUE_MAX_AGE_S)."""
+        now = self._clock()
         with self._lock:
-            out = self._queue
+            queued = self._queue
             self._queue = []
-        return out
+        fresh = [cmd for (pulled_at, cmd) in queued if (now - pulled_at) <= self._queue_max_age_s]
+        dropped = len(queued) - len(fresh)
+        if dropped:
+            logger.info("dropped %d stale machine command(s) on drain", dropped)
+        return fresh
 
     # ── app → cloud (UDS: complete_machine_command) ──────────────────
 

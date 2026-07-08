@@ -97,6 +97,25 @@ class TestMachineCommandRelay(unittest.TestCase):
         self.rpc.raise_on.add("remote_helper_pull_machine_commands")
         self.assertEqual(self.relay.pull_from_cloud(), 0)  # no raise
 
+    def test_drain_drops_stale_pulled_commands(self):
+        # A command pulled but not drained (app quit) must NOT actuate late when
+        # the app relaunches hours later — it is dropped on drain.
+        self.relay.report_control_state(_fresh_report())
+        self.rpc.results["remote_helper_pull_machine_commands"] = [
+            {"id": "c1", "kind": "set_fan_target", "payload": {"rpm": 4200}},
+        ]
+        self.assertEqual(self.relay.pull_from_cloud(), 1)
+        self.clock.advance(61.0)  # past queue_max_age_s (and control freshness)
+        self.assertEqual(self.relay.drain_for_app(), [])
+        # a command drained promptly (within the window) still gets through
+        # (re-report so the control state is fresh again for should_pull)
+        self.relay.report_control_state(_fresh_report())
+        self.rpc.results["remote_helper_pull_machine_commands"] = [
+            {"id": "c2", "kind": "revert_fan_auto", "payload": {}},
+        ]
+        self.assertEqual(self.relay.pull_from_cloud(), 1)
+        self.assertEqual([c["id"] for c in self.relay.drain_for_app()], ["c2"])
+
     # ── complete ──────────────────────────────────────────────────
     def test_complete_forwards_with_result(self):
         out = self.relay.complete("c1", "done", {"applied": True})
