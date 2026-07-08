@@ -7,7 +7,11 @@ import XCTest
 /// fake fan daemon + fake relay + a mutable clock (no real timers / XPC / UDS),
 /// mirroring the root daemon's DeadMansSwitch test pattern. Covers the
 /// TTL/heartbeat/revert matrix the plan calls out: opt-in gating, daemon-vanish,
-/// disable-while-boosting, TTL expiry, phone-vanish (empty pull), typed acks.
+/// disable-while-boosting, TTL expiry (precise boundary), local clamp, re-boost
+/// newest-wins, revert-failure, phone-vanish (empty pull), typed acks, stop.
+///
+/// Note: every `await` is pulled into a `let` before XCTAssert — `await` inside
+/// an assert autoclosure is a hard error under CI's strict-concurrency build.
 final class RemoteMachineExecutorTests: XCTestCase {
 
     // MARK: - fakes
@@ -23,18 +27,20 @@ final class RemoteMachineExecutorTests: XCTestCase {
         var available = true
         var boostOK = true
         var boostError: String?
+        var revertOK = true
         private(set) var boostCalls: [Int] = []
         private(set) var revertCount = 0
         private(set) var lpmCalls: [Bool] = []
 
         func setAvailable(_ b: Bool) { available = b }
         func setBoost(ok: Bool, error: String?) { boostOK = ok; boostError = error }
+        func setRevertOK(_ b: Bool) { revertOK = b }
 
         func isAvailable() async -> Bool { available }
         func startBoost(targetRPM: Int) async -> (ok: Bool, error: String?) {
             boostCalls.append(targetRPM); return (boostOK, boostError)
         }
-        func revert() async -> Bool { revertCount += 1; return true }
+        func revert() async -> Bool { revertCount += 1; return revertOK }
         func setLowPowerMode(_ on: Bool) async -> Bool { lpmCalls.append(on); return true }
     }
 
@@ -75,7 +81,6 @@ final class RemoteMachineExecutorTests: XCTestCase {
         await relay.enqueue(.init(id: "c1", kind: "set_fan_target", rpm: 4000, ttlSeconds: 120))
         let ex = makeExecutor(box, fan: fan, relay: relay)
         await ex.tick()
-        // No report, no pull-driven completion, no fan actuation while off.
         let reports = await relay.reports
         let completions = await relay.completions
         let boostCalls = await fan.boostCalls
@@ -116,9 +121,8 @@ final class RemoteMachineExecutorTests: XCTestCase {
         XCTAssertNil(completions[0].error)
         let boosting = await ex.isBoosting
         XCTAssertTrue(boosting)
-        // reported state reflects the active boost
         let reports = await relay.reports
-        XCTAssertTrue(reports.last?.boostActive ?? false)
+        XCTAssertEqual(reports.last?.boostActive, true)
         XCTAssertEqual(reports.last?.boostTargetRPM, 4200)
     }
 
@@ -162,30 +166,58 @@ final class RemoteMachineExecutorTests: XCTestCase {
 
     // MARK: - TTL / revert matrix
 
-    func test_ttl_expiry_reverts_boost() async {
-        let box = Box()
+    func test_ttl_expiry_reverts_boost_at_precise_boundary() async {
+        let box = Box(); box.clock = 5_000
         let fan = FakeFan(); let relay = FakeRelay()
-        await relay.enqueue(.init(id: "c1", kind: "set_fan_target", rpm: 4200, ttlSeconds: 120))
+        await relay.enqueue(.init(id: "c1", kind: "set_fan_target", rpm: 4200, ttlSeconds: 100))
         let ex = makeExecutor(box, fan: fan, relay: relay)
-        await ex.tick()                     // start boost at t=1000
-        XCTAssertTrue(await ex.isBoosting)
-        box.clock += 121                    // past the 120s TTL
-        await ex.tick()                     // should revert
-        XCTAssertFalse(await ex.isBoosting)
+        await ex.tick()                          // started at 5000, ttl 100 -> expires 5100
+        box.clock = 5_099                         // 99s elapsed < ttl -> still holding
+        await ex.tick()
+        let holding = await ex.isBoosting
+        XCTAssertTrue(holding)
+        box.clock = 5_100                         // exactly ttl -> revert
+        await ex.tick()
+        let reverted = await ex.isBoosting
+        XCTAssertFalse(reverted)
         let revertCount = await fan.revertCount
         XCTAssertEqual(revertCount, 1)
     }
 
-    func test_boost_persists_before_ttl() async {
-        let box = Box()
+    func test_reboost_refreshes_ttl_newest_wins() async {
+        let box = Box(); box.clock = 1_000
         let fan = FakeFan(); let relay = FakeRelay()
-        await relay.enqueue(.init(id: "c1", kind: "set_fan_target", rpm: 4200, ttlSeconds: 120))
+        await relay.enqueue(.init(id: "c1", kind: "set_fan_target", rpm: 3000, ttlSeconds: 100))
+        let ex = makeExecutor(box, fan: fan, relay: relay)
+        await ex.tick()                           // c1 at 1000 -> old expiry 1100
+        box.clock = 1_090
+        await relay.enqueue(.init(id: "c2", kind: "set_fan_target", rpm: 5000, ttlSeconds: 100))
+        await ex.tick()                           // c2 at 1090 -> new expiry 1190
+        let reportedTarget = await relay.reports.last?.boostTargetRPM
+        XCTAssertEqual(reportedTarget, 5000, "newer target replaces the older")
+        box.clock = 1_150                         // past OLD expiry (1100), within NEW (1190)
+        await ex.tick()
+        let holding = await ex.isBoosting
+        XCTAssertTrue(holding, "newer boost's TTL wins; old TTL must not revert it")
+    }
+
+    func test_rpm_and_ttl_clamped_locally() async {
+        // Defense-in-depth: even an out-of-band payload is clamped before actuation.
+        let box = Box(); box.clock = 1_000
+        let fan = FakeFan(); let relay = FakeRelay()
+        await relay.enqueue(.init(id: "c1", kind: "set_fan_target", rpm: 99_999, ttlSeconds: 99_999))
         let ex = makeExecutor(box, fan: fan, relay: relay)
         await ex.tick()
-        box.clock += 60                     // still within TTL
+        let boostCalls = await fan.boostCalls
+        XCTAssertEqual(boostCalls, [30_000], "rpm clamped to maxRPM")
+        box.clock = 1_000 + 3_599                 // within clamped ttl (3600)
         await ex.tick()
-        XCTAssertTrue(await ex.isBoosting)
-        XCTAssertEqual(await fan.revertCount, 0)
+        let holding = await ex.isBoosting
+        XCTAssertTrue(holding)
+        box.clock = 1_000 + 3_601                 // past clamped ttl
+        await ex.tick()
+        let reverted = await ex.isBoosting
+        XCTAssertFalse(reverted, "ttl clamped to maxTTL")
     }
 
     func test_disable_while_boosting_reverts() async {
@@ -193,11 +225,13 @@ final class RemoteMachineExecutorTests: XCTestCase {
         let fan = FakeFan(); let relay = FakeRelay()
         await relay.enqueue(.init(id: "c1", kind: "set_fan_target", rpm: 4200, ttlSeconds: 900))
         let ex = makeExecutor(box, fan: fan, relay: relay)
-        await ex.tick()                     // boosting
-        box.enabled = false                 // owner flips opt-in off
-        await ex.tick()                     // must revert immediately
-        XCTAssertFalse(await ex.isBoosting)
-        XCTAssertGreaterThanOrEqual(await fan.revertCount, 1)
+        await ex.tick()                           // boosting
+        box.enabled = false                        // owner flips opt-in off
+        await ex.tick()                           // must revert immediately
+        let boosting = await ex.isBoosting
+        XCTAssertFalse(boosting)
+        let revertCount = await fan.revertCount
+        XCTAssertGreaterThanOrEqual(revertCount, 1)
     }
 
     func test_daemon_vanish_while_boosting_reverts() async {
@@ -205,23 +239,41 @@ final class RemoteMachineExecutorTests: XCTestCase {
         let fan = FakeFan(); let relay = FakeRelay()
         await relay.enqueue(.init(id: "c1", kind: "set_fan_target", rpm: 4200, ttlSeconds: 900))
         let ex = makeExecutor(box, fan: fan, relay: relay)
-        await ex.tick()                     // boosting
-        await fan.setAvailable(false)       // daemon disappears
+        await ex.tick()                           // boosting
+        await fan.setAvailable(false)              // daemon disappears
         await ex.tick()
-        XCTAssertFalse(await ex.isBoosting)
+        let boosting = await ex.isBoosting
+        XCTAssertFalse(boosting)
     }
 
-    // MARK: - resilience
+    func test_revert_failure_still_clears_local_state() async {
+        // If the daemon revert reports failure, we still clear local boost state —
+        // FanControlClient stops its heartbeat first, so the daemon's 8s dead-man
+        // reverts. The executor must not get stuck believing it's still boosting.
+        let box = Box()
+        let fan = FakeFan(); await fan.setRevertOK(false)
+        let relay = FakeRelay()
+        await relay.enqueue(.init(id: "c1", kind: "revert_fan_auto"))
+        let ex = makeExecutor(box, fan: fan, relay: relay)
+        await ex.tick()
+        let boosting = await ex.isBoosting
+        XCTAssertFalse(boosting)
+        let completions = await relay.completions
+        XCTAssertEqual(completions[0].status, "failed")
+    }
+
+    // MARK: - resilience / lifecycle
 
     func test_pull_error_is_skipped_but_state_still_reported() async {
         let box = Box()
         let fan = FakeFan(); let relay = FakeRelay()
-        await relay.setPullThrows(true)     // e.g. helper too old -> notImplemented
+        await relay.setPullThrows(true)            // e.g. helper too old -> notImplemented
         let ex = makeExecutor(box, fan: fan, relay: relay)
         await ex.tick()
-        // report still happened (helper freshness); no crash; no completion
-        XCTAssertEqual(await relay.reports.count, 1)
-        XCTAssertTrue(await relay.completions.isEmpty)
+        let reportCount = await relay.reports.count
+        XCTAssertEqual(reportCount, 1)
+        let completions = await relay.completions
+        XCTAssertTrue(completions.isEmpty)
     }
 
     func test_stop_reverts_and_reports_off() async {
@@ -229,14 +281,26 @@ final class RemoteMachineExecutorTests: XCTestCase {
         let fan = FakeFan(); let relay = FakeRelay()
         await relay.enqueue(.init(id: "c1", kind: "set_fan_target", rpm: 4200, ttlSeconds: 900))
         let ex = makeExecutor(box, fan: fan, relay: relay)
-        await ex.tick()                     // boosting
+        await ex.tick()                           // boosting
         await ex.stop()
-        XCTAssertFalse(await ex.isBoosting)
-        XCTAssertGreaterThanOrEqual(await fan.revertCount, 1)
-        // final report announces controls off
+        let boosting = await ex.isBoosting
+        XCTAssertFalse(boosting)
+        let revertCount = await fan.revertCount
+        XCTAssertGreaterThanOrEqual(revertCount, 1)
         let last = await relay.reports.last
         XCTAssertEqual(last?.remoteFan, false)
         XCTAssertEqual(last?.boostActive, false)
+    }
+
+    func test_stopped_executor_does_not_execute_new_commands() async {
+        let box = Box()
+        let fan = FakeFan(); let relay = FakeRelay()
+        let ex = makeExecutor(box, fan: fan, relay: relay)
+        await ex.stop()                            // sets the stopped guard
+        await relay.enqueue(.init(id: "c1", kind: "set_fan_target", rpm: 4200, ttlSeconds: 900))
+        await ex.tick()                            // must not pull/execute after stop
+        let boostCalls = await fan.boostCalls
+        XCTAssertTrue(boostCalls.isEmpty)
     }
 }
 #endif

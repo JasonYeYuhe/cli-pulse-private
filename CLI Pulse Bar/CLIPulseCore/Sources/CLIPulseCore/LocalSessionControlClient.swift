@@ -587,8 +587,7 @@ public final class LocalSessionControlClient: SessionControlClient, MachineContr
                 kind: kind,
                 rpm: (payload["rpm"] as? NSNumber)?.intValue,
                 ttlSeconds: (payload["ttl_seconds"] as? NSNumber)?.intValue,
-                on: payload["on"] as? Bool,
-                createdAt: (row["created_at"] as? NSNumber)?.doubleValue
+                on: payload["on"] as? Bool
             )
         }
     }

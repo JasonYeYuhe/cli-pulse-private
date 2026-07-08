@@ -23,6 +23,11 @@
 
 import Foundation
 
+/// AppStorage/UserDefaults key gating remote machine control (default OFF).
+/// Declared OUTSIDE `#if os(macOS)` because AppState reads it via @AppStorage on
+/// every platform (watch/iOS/widgets), even though the executor is macOS-only.
+public let kRemoteMachineControlEnabledKey = "cli_pulse_remote_machine_control_enabled"
+
 #if os(macOS)
 
 /// One fan/LPM command drained from the helper relay.
@@ -32,12 +37,11 @@ public struct RemoteMachineCommand: Sendable, Equatable {
     public let rpm: Int?           // set_fan_target
     public let ttlSeconds: Int?    // set_fan_target (boost hold duration)
     public let on: Bool?           // set_low_power_mode
-    public let createdAt: Double?   // epoch seconds (server), for staleness defense-in-depth
 
     public init(id: String, kind: String, rpm: Int? = nil, ttlSeconds: Int? = nil,
-                on: Bool? = nil, createdAt: Double? = nil) {
+                on: Bool? = nil) {
         self.id = id; self.kind = kind; self.rpm = rpm
-        self.ttlSeconds = ttlSeconds; self.on = on; self.createdAt = createdAt
+        self.ttlSeconds = ttlSeconds; self.on = on
     }
 }
 
@@ -71,10 +75,12 @@ public protocol MachineControlRelaying: Sendable {
     func reportMachineControlState(_ state: RemoteMachineControlState) async throws
 }
 
-/// Default AppStorage/UserDefaults key gating remote machine control (default OFF).
-public let kRemoteMachineControlEnabledKey = "cli_pulse_remote_machine_control_enabled"
-
 public actor RemoteMachineExecutor {
+    // Local defense-in-depth ceilings (the server also validates, but the
+    // executor is the last line before real fan actuation).
+    static let maxRPM = 30000
+    static let minTTL: Double = 60
+    static let maxTTL: Double = 3600
     private let fan: FanControlling
     private let relay: MachineControlRelaying
     private let isEnabled: @Sendable () -> Bool
@@ -88,6 +94,7 @@ public actor RemoteMachineExecutor {
     private var boostTTL: Double?
 
     private var pollTask: Task<Void, Never>?
+    private var stopped = false
 
     public init(
         fan: FanControlling,
@@ -95,7 +102,12 @@ public actor RemoteMachineExecutor {
         isEnabled: @escaping @Sendable () -> Bool = {
             UserDefaults.standard.bool(forKey: kRemoteMachineControlEnabledKey)
         },
-        now: @escaping @Sendable () -> Double = { Date().timeIntervalSince1970 },
+        // MONOTONIC clock (seconds since boot, immune to NTP/manual clock steps),
+        // matching the root daemon's DeadMansSwitch. Wall time (Date) would let a
+        // backward clock jump hold a boost past its TTL — and the daemon dead-man
+        // can't rescue it, because the FanControlClient heartbeat keeps flowing
+        // while we hold. This TTL is the sole bound on the physical hold.
+        now: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime },
         pollIntervalNanos: UInt64 = 2_000_000_000
     ) {
         self.fan = fan
@@ -119,6 +131,7 @@ public actor RemoteMachineExecutor {
     }
 
     public func stop() async {
+        stopped = true
         pollTask?.cancel()
         pollTask = nil
         if boostActive { await revertBoost() }
@@ -160,11 +173,13 @@ public actor RemoteMachineExecutor {
         try? await relay.reportMachineControlState(state)
 
         guard available else { return }
+        guard !stopped else { return }   // stop() may have interleaved during an await
 
         // 4. Pull + execute. (The helper already dropped commands pulled >60 s ago;
-        //    we additionally never actuate — the server validated the payload.)
+        //    we additionally clamp the payload locally — last line before actuation.)
         let commands = (try? await relay.pullMachineCommands()) ?? []
         for cmd in commands {
+            if stopped { break }
             await execute(cmd)
         }
     }
@@ -174,15 +189,26 @@ public actor RemoteMachineExecutor {
     private func execute(_ cmd: RemoteMachineCommand) async {
         switch cmd.kind {
         case "set_fan_target":
-            guard let rpm = cmd.rpm else {
+            guard let rawRPM = cmd.rpm else {
                 await complete(cmd, status: "failed", error: "clamped"); return
             }
+            // Local defense-in-depth clamps (server already validated, but the
+            // executor is the last line before real fan actuation).
+            let rpm = min(max(rawRPM, 0), Self.maxRPM)
+            let ttl = min(max(Double(cmd.ttlSeconds ?? 900), Self.minTTL), Self.maxTTL)
             let (ok, err) = await fan.startBoost(targetRPM: rpm)
             if ok {
                 boostActive = true
                 boostTargetRPM = rpm
                 boostStartedAt = now()
-                boostTTL = Double(cmd.ttlSeconds ?? 900)
+                boostTTL = ttl
+                // stop() may have interleaved during the startBoost await — never
+                // leave an orphaned boost the (cancelled) poll loop can't revert.
+                if stopped {
+                    await revertBoost()
+                    await complete(cmd, status: "failed", error: "controls_disabled")
+                    return
+                }
                 await complete(cmd, status: "done", error: nil)
             } else {
                 await complete(cmd, status: "failed", error: err ?? "daemon_unavailable")
