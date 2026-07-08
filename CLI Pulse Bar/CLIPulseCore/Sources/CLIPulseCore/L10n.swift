@@ -131,6 +131,9 @@ public enum L10n {
         public static var lowPower: String { tr("machine.low_power") }
         public static var on: String { tr("machine.on") }
         public static var off: String { tr("machine.off") }
+        // v1.41 Mobile Machine (iOS read-only view).
+        public static var fanBoost: String { tr("machine.fan_boost") }
+        public static func lastUpdated(_ ago: String) -> String { tr("machine.last_updated_fmt", ago) }
     }
 
     // MARK: - Dashboard

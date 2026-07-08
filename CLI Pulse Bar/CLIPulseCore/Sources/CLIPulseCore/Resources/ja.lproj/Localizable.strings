@@ -866,6 +866,8 @@
 "machine.pressure_elevated" = "やや高い";
 "machine.pressure_high" = "高い";
 "machine.low_power" = "低電力モード";
+"machine.fan_boost" = "ファン増速";
+"machine.last_updated_fmt" = "%@に更新";
 "machine.on" = "オン";
 "machine.off" = "オフ";
 "machine.device_health" = "デバイスの状態";

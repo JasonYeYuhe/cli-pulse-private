@@ -864,6 +864,8 @@
 "machine.pressure_elevated" = "Elevated";
 "machine.pressure_high" = "High";
 "machine.low_power" = "Low Power Mode";
+"machine.fan_boost" = "Fan boost";
+"machine.last_updated_fmt" = "Updated %@";
 "machine.on" = "On";
 "machine.off" = "Off";
 "machine.device_health" = "Device Health";

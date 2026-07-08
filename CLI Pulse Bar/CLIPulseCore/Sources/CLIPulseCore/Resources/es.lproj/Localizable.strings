@@ -589,6 +589,8 @@
 "machine.pressure_elevated" = "Elevada";
 "machine.pressure_high" = "Alta";
 "machine.low_power" = "Modo de bajo consumo";
+"machine.fan_boost" = "Impulso del ventilador";
+"machine.last_updated_fmt" = "Actualizado %@";
 "machine.on" = "Activado";
 "machine.off" = "Desactivado";
 "machine.device_health" = "Estado del dispositivo";

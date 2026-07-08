@@ -589,6 +589,8 @@
 "machine.pressure_elevated" = "다소 높음";
 "machine.pressure_high" = "높음";
 "machine.low_power" = "저전력 모드";
+"machine.fan_boost" = "팬 부스트";
+"machine.last_updated_fmt" = "%@ 업데이트됨";
 "machine.on" = "켬";
 "machine.off" = "끔";
 "machine.device_health" = "기기 상태";

@@ -732,9 +732,38 @@ public struct DeviceRecord: Codable, Identifiable, Sendable {
     public let adapter_watts: Double?
     public let sensors_capability: [String: Bool]
     public let sensors_updated_at: String?
+    // v0.66 (Mobile Machine): the system block + Low Power Mode + executor-reported
+    // fan-boost state + the remote-control capability map. All nullable (NULL =
+    // not reported / not supported); rendered read-only by iOSMachineView.
+    public let uptime_seconds: Int?
+    public let load_avg_1m: Double?
+    public let load_avg_5m: Double?
+    public let load_avg_15m: Double?
+    public let memory_pressure: String?       // nominal | warn | critical
+    public let swap_used_bytes: Int?
+    public let swap_total_bytes: Int?
+    public let disk_free_bytes: Int?
+    public let disk_total_bytes: Int?
+    public let lpm_on: Bool?
+    public let fan_boost_active: Bool?
+    public let fan_boost_target_rpm: Int?
+    /// Which REMOTE controls this Mac will honor right now (e.g.
+    /// {"remote_fan":true,"remote_lpm":true}). Absent/false = hide the control.
+    public let machine_controls: [String: Bool]
 
     public var deviceStatus: DeviceStatus? {
         DeviceStatus(rawValue: status)
+    }
+
+    /// Honest remote-control capability check (feeds PR-6's control rendering).
+    public func remoteControlCan(_ key: String) -> Bool { machine_controls[key] == true }
+
+    /// True when a reading is older than `after` seconds (default 5 min) — the UI
+    /// greys stale sensor/system readings. Uses sensors_updated_at (bumped only
+    /// when the helper actually reports a metrics blob).
+    public func isReadingStale(after: TimeInterval = 300, now: Date = Date()) -> Bool {
+        guard let ts = sharedISO8601Parse(sensors_updated_at ?? "") else { return false }
+        return now.timeIntervalSince(ts) > after
     }
 
     /// True when this device has reported ANY machine-health sensors — the phone
@@ -742,6 +771,7 @@ public struct DeviceRecord: Codable, Identifiable, Sendable {
     public var hasDeviceHealth: Bool {
         sensors_updated_at != nil || !sensors_capability.isEmpty
             || cpu_temp_c != nil || fan_rpm != nil || battery_health_pct != nil
+            || uptime_seconds != nil || lpm_on != nil
     }
 
     /// Honest capability check (a fanless Air has no fans, a Mac mini no battery).
@@ -758,7 +788,13 @@ public struct DeviceRecord: Codable, Identifiable, Sendable {
         battery_charge_pct: Int? = nil, battery_state: String? = nil,
         battery_cycle_count: Int? = nil, battery_health_pct: Double? = nil,
         adapter_watts: Double? = nil, sensors_capability: [String: Bool] = [:],
-        sensors_updated_at: String? = nil
+        sensors_updated_at: String? = nil,
+        uptime_seconds: Int? = nil, load_avg_1m: Double? = nil, load_avg_5m: Double? = nil,
+        load_avg_15m: Double? = nil, memory_pressure: String? = nil,
+        swap_used_bytes: Int? = nil, swap_total_bytes: Int? = nil,
+        disk_free_bytes: Int? = nil, disk_total_bytes: Int? = nil,
+        lpm_on: Bool? = nil, fan_boost_active: Bool? = nil, fan_boost_target_rpm: Int? = nil,
+        machine_controls: [String: Bool] = [:]
     ) {
         self.id = id
         self.name = name
@@ -785,6 +821,19 @@ public struct DeviceRecord: Codable, Identifiable, Sendable {
         self.adapter_watts = adapter_watts
         self.sensors_capability = sensors_capability
         self.sensors_updated_at = sensors_updated_at
+        self.uptime_seconds = uptime_seconds
+        self.load_avg_1m = load_avg_1m
+        self.load_avg_5m = load_avg_5m
+        self.load_avg_15m = load_avg_15m
+        self.memory_pressure = memory_pressure
+        self.swap_used_bytes = swap_used_bytes
+        self.swap_total_bytes = swap_total_bytes
+        self.disk_free_bytes = disk_free_bytes
+        self.disk_total_bytes = disk_total_bytes
+        self.lpm_on = lpm_on
+        self.fan_boost_active = fan_boost_active
+        self.fan_boost_target_rpm = fan_boost_target_rpm
+        self.machine_controls = machine_controls
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -794,6 +843,9 @@ public struct DeviceRecord: Codable, Identifiable, Sendable {
         case fan_rpm, fan_max_rpm, thermal_state
         case battery_charge_pct, battery_state, battery_cycle_count, battery_health_pct
         case adapter_watts, sensors_capability, sensors_updated_at
+        case uptime_seconds, load_avg_1m, load_avg_5m, load_avg_15m, memory_pressure
+        case swap_used_bytes, swap_total_bytes, disk_free_bytes, disk_total_bytes
+        case lpm_on, fan_boost_active, fan_boost_target_rpm, machine_controls
     }
 
     // Defensive decode: every added field decodeIfPresent (default nil / [:]) so
@@ -825,6 +877,19 @@ public struct DeviceRecord: Codable, Identifiable, Sendable {
         adapter_watts = try c.decodeIfPresent(Double.self, forKey: .adapter_watts)
         sensors_capability = try c.decodeIfPresent([String: Bool].self, forKey: .sensors_capability) ?? [:]
         sensors_updated_at = try c.decodeIfPresent(String.self, forKey: .sensors_updated_at)
+        uptime_seconds = try c.decodeIfPresent(Int.self, forKey: .uptime_seconds)
+        load_avg_1m = try c.decodeIfPresent(Double.self, forKey: .load_avg_1m)
+        load_avg_5m = try c.decodeIfPresent(Double.self, forKey: .load_avg_5m)
+        load_avg_15m = try c.decodeIfPresent(Double.self, forKey: .load_avg_15m)
+        memory_pressure = try c.decodeIfPresent(String.self, forKey: .memory_pressure)
+        swap_used_bytes = try c.decodeIfPresent(Int.self, forKey: .swap_used_bytes)
+        swap_total_bytes = try c.decodeIfPresent(Int.self, forKey: .swap_total_bytes)
+        disk_free_bytes = try c.decodeIfPresent(Int.self, forKey: .disk_free_bytes)
+        disk_total_bytes = try c.decodeIfPresent(Int.self, forKey: .disk_total_bytes)
+        lpm_on = try c.decodeIfPresent(Bool.self, forKey: .lpm_on)
+        fan_boost_active = try c.decodeIfPresent(Bool.self, forKey: .fan_boost_active)
+        fan_boost_target_rpm = try c.decodeIfPresent(Int.self, forKey: .fan_boost_target_rpm)
+        machine_controls = try c.decodeIfPresent([String: Bool].self, forKey: .machine_controls) ?? [:]
     }
 
     /// True when a managed session for `provider` on this device would run
