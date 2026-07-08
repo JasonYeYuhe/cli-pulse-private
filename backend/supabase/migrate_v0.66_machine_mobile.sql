@@ -322,6 +322,8 @@ declare
   v_recent int;
   v_command_id uuid;
   v_payload jsonb := '{}'::jsonb;
+  v_rpm_num numeric;   -- validate as numeric BEFORE the ::int cast (no 22003)
+  v_ttl_num numeric;
   v_rpm int;
   v_ttl int;
   v_on boolean;
@@ -344,6 +346,11 @@ begin
     raise exception 'Device not found';
   end if;
 
+  -- Serialize this caller's concurrent sends so the rate-limit count+insert is
+  -- atomic (closes the TOCTOU where two parallel calls both read v_recent < 6).
+  -- Distinct advisory key (2) from the session pull (0) / machine pull (1).
+  perform pg_advisory_xact_lock(hashtextextended(v_user_id::text, 2));
+
   -- Rate limit: <= 6 machine commands per user per rolling minute.
   select count(*) into v_recent
   from public.machine_commands
@@ -353,23 +360,27 @@ begin
   end if;
 
   -- Server-side payload validation, per kind. NEVER trust the client's numbers.
+  -- Range-check the NUMERIC first, then cast — a huge JSON number (> 2^31) must
+  -- surface the friendly 'rpm out of range', not an opaque 22003 int-overflow.
   if p_kind = 'set_fan_target' then
     if jsonb_typeof(p_payload->'rpm') <> 'number' then
       raise exception 'set_fan_target requires numeric rpm';
     end if;
-    v_rpm := floor((p_payload->>'rpm')::numeric)::int;
-    if v_rpm < 0 or v_rpm > 30000 then
+    v_rpm_num := floor((p_payload->>'rpm')::numeric);
+    if v_rpm_num < 0 or v_rpm_num > 30000 then
       raise exception 'rpm out of range (0..30000)';
     end if;
-    v_ttl := 900;  -- default boost hold 15 minutes
+    v_rpm := v_rpm_num::int;
+    v_ttl_num := 900;  -- default boost hold 15 minutes
     if jsonb_typeof(p_payload->'ttl_seconds') = 'number' then
-      v_ttl := floor((p_payload->>'ttl_seconds')::numeric)::int;
+      v_ttl_num := floor((p_payload->>'ttl_seconds')::numeric);
     end if;
-    if v_ttl < 60 then
-      v_ttl := 60;
-    elsif v_ttl > 3600 then
-      v_ttl := 3600;
+    if v_ttl_num < 60 then
+      v_ttl_num := 60;
+    elsif v_ttl_num > 3600 then
+      v_ttl_num := 3600;
     end if;
+    v_ttl := v_ttl_num::int;
     v_payload := jsonb_build_object('rpm', v_rpm, 'ttl_seconds', v_ttl);
   elsif p_kind = 'set_low_power_mode' then
     if jsonb_typeof(p_payload->'on') <> 'boolean' then

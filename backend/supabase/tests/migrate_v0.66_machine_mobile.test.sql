@@ -29,7 +29,7 @@
 -- ============================================================
 
 begin;
-select plan(28);
+select plan(30);
 
 -- ---- fixtures (fixed uuids; rolled back) --------------------
 -- Inserting auth.users fires handle_new_user → profiles + user_settings.
