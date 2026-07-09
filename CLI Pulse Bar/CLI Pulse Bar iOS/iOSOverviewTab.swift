@@ -81,6 +81,12 @@ struct iOSOverviewTab: View {
                     if let dash = state.dashboard {
                         metricsGrid(dash)
 
+                        // v1.41: GitHub-style usage-activity heatmap (year of
+                        // daily cost/token intensity), cloud-hydrated. Mirrors
+                        // the macOS Overview's CompactUsageCard; taps drill into
+                        // the full iOSUsageDashboardView.
+                        iOSUsageHeatmapCard()
+
                         // Activity timeline sparkline
                         if !dash.trend.isEmpty {
                             activityTimeline(dash.trend)
