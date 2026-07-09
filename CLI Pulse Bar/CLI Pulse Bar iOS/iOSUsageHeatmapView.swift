@@ -166,14 +166,14 @@ struct iOSUsageDashboardView: View {
             (L10n.usageDashboard.activeDays, "\(DailyUsageStats.activeDays(archive))"),
             (L10n.usageDashboard.currentStreak, "\(DailyUsageStats.currentStreak(archive, todayKey: today))"),
             (L10n.usageDashboard.longestStreak, "\(DailyUsageStats.longestStreak(archive))"),
-            (L10n.usageDashboard.peakDay, CostFormatter.formatUsage(DailyUsageStats.peakDay(archive)?.tokens ?? 0)),
+            (L10n.usageDashboard.peakDay, CostFormatter.formatUsage(DailyUsageStats.peakDay(archive)?.tokens ?? 0))
         ]
         return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
-            ForEach(Array(tiles.enumerated()), id: \.offset) { _, t in
+            ForEach(Array(tiles.enumerated()), id: \.offset) { _, tile in
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(t.1).font(.system(size: 18, weight: .semibold)).monospacedDigit()
+                    Text(tile.1).font(.system(size: 18, weight: .semibold)).monospacedDigit()
                         .lineLimit(1).minimumScaleFactor(0.6)
-                    Text(t.0.uppercased()).font(.system(size: 9, weight: .medium))
+                    Text(tile.0.uppercased()).font(.system(size: 9, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
