@@ -108,9 +108,13 @@ def list_builds(platform_key: str) -> None:
         print(f"{b['id']}  build {a.get('version')}  {a.get('processingState')}  {a.get('uploadedDate')}")
 
 
-def submit(platform_key: str, build_id: str, version: str, whatsnew: str) -> bool:
+def submit(platform_key: str, build_id: str, version: str, whatsnew: str,
+           whatsnew_by_locale: dict[str, str] | None = None,
+           release_type: str = "MANUAL") -> bool:
     plat = PLATFORMS[platform_key]
     # 1. find-or-create the appStoreVersion row for this version+platform.
+    #    releaseType defaults MANUAL (v1.41 review): the owner releases in ASC
+    #    after approval — AFTER_APPROVAL would auto-publish on approval.
     r = _get(
         f"/apps/{APP_ID}/appStoreVersions"
         f"?filter[platform]={plat}&filter[versionString]={version}"
@@ -124,24 +128,29 @@ def submit(platform_key: str, build_id: str, version: str, whatsnew: str) -> boo
             "/appStoreVersions",
             {"data": {"type": "appStoreVersions",
                       "attributes": {"platform": plat, "versionString": version,
-                                     "releaseType": "AFTER_APPROVAL"},
+                                     "releaseType": release_type},
                       "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}}}},
         )
         if cr.status_code >= 300:
             print(f"[{plat}] CREATE version FAILED {cr.status_code}: {cr.text[:400]}")
             return False
         ver_id = cr.json()["data"]["id"]
-        print(f"[{plat}] created version {ver_id}")
+        print(f"[{plat}] created version {ver_id} (releaseType={release_type})")
 
-    # 2. set whatsNew on every localization.
+    # 2. set whatsNew on every localization. Per-locale texts win (v1.41 review:
+    #    a single text used to land ENGLISH notes on every storefront); the
+    #    plain `whatsnew` string is the fallback for unmapped locales.
     for loc in _get(f"/appStoreVersions/{ver_id}/appStoreVersionLocalizations").get("data", []):
         lid = loc["id"]
+        locale = loc["attributes"]["locale"]
+        text = (whatsnew_by_locale or {}).get(locale, whatsnew)
         pr = _patch(
             f"/appStoreVersionLocalizations/{lid}",
             {"data": {"type": "appStoreVersionLocalizations", "id": lid,
-                      "attributes": {"whatsNew": whatsnew}}},
+                      "attributes": {"whatsNew": text}}},
         )
-        print(f"[{plat}] whatsNew {loc['attributes']['locale']}: {pr.status_code}")
+        tag = "per-locale" if locale in (whatsnew_by_locale or {}) else "fallback"
+        print(f"[{plat}] whatsNew {locale} ({tag}): {pr.status_code}")
 
     # 3. attach the processed build.
     br = _patch(
@@ -198,7 +207,12 @@ def main() -> int:
     # No default on purpose: a hardcoded default silently attaches the next
     # train's build to the WRONG version row (2026-07-03 review).
     ap.add_argument("--version", help="marketing version string, e.g. 1.37.0")
-    ap.add_argument("--whatsnew", help="path to a whatsNew text file")
+    ap.add_argument("--whatsnew", help="path to the FALLBACK whatsNew text file")
+    ap.add_argument("--whatsnew-dir",
+                    help="dir of per-locale whatsNew files named <locale>.txt "
+                         "(e.g. zh-Hans.txt, en-US.txt); unmapped locales use --whatsnew")
+    ap.add_argument("--release-type", choices=["MANUAL", "AFTER_APPROVAL"], default="MANUAL",
+                    help="MANUAL (default): owner releases in ASC after approval")
     args = ap.parse_args()
 
     if args.list_builds:
@@ -214,7 +228,17 @@ def main() -> int:
             whatsnew = open(args.whatsnew).read().strip()
         if not whatsnew:
             return ap.error("--whatsnew <file> is required and must be non-empty")
-        return 0 if submit(args.submit, args.build, args.version, whatsnew) else 1
+        by_locale: dict[str, str] = {}
+        if args.whatsnew_dir:
+            for fn in os.listdir(args.whatsnew_dir):
+                if fn.endswith(".txt"):
+                    text = open(os.path.join(args.whatsnew_dir, fn)).read().strip()
+                    if text:
+                        by_locale[fn[:-4]] = text
+            print(f"per-locale whatsNew: {sorted(by_locale)}")
+        return 0 if submit(args.submit, args.build, args.version, whatsnew,
+                           whatsnew_by_locale=by_locale,
+                           release_type=args.release_type) else 1
     ap.print_help()
     return 0
 
