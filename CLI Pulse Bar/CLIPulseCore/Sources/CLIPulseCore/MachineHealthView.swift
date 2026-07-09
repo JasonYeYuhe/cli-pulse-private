@@ -28,6 +28,8 @@ public struct MachineHealthView: View {
     // remote executor drives). ObservedObject so remote flips repaint the card.
     @ObservedObject private var keepAwake: KeepAwakeController
     @AppStorage("cli_pulse_keep_awake_ttl_minutes") private var keepAwakeTTLMinutes = 0  // 0 = indefinite
+    // Lid-closed hold preference (PreventSystemSleep — effective on AC only).
+    @AppStorage("cli_pulse_keep_awake_lid") private var keepAwakeLidPref = false
 
     // Machine controls M1 + v1.38.1 (DEVID-only). Off by default; gates the
     // inline End Process / Suspend / Resume affordances. Shares one UserDefaults
@@ -119,7 +121,8 @@ public struct MachineHealthView: View {
                     get: { keepAwake.isActive },
                     set: { on in
                         if on {
-                            keepAwake.enable(ttlSeconds: keepAwakeTTLMinutes > 0 ? keepAwakeTTLMinutes * 60 : nil)
+                            keepAwake.enable(ttlSeconds: keepAwakeTTLMinutes > 0 ? keepAwakeTTLMinutes * 60 : nil,
+                                             preventLidSleep: keepAwakeLidPref)
                         } else {
                             keepAwake.disable()
                         }
@@ -153,6 +156,21 @@ public struct MachineHealthView: View {
                     StatusBadge(text: L10n.machine.keepAwakeOn, color: .teal)
                 }
             }
+            // Lid-closed hold (Amphetamine "Closed-Display Mode"): live-adjusts
+            // a running session; otherwise applied on the next enable. AC only —
+            // on battery macOS force-sleeps on lid close (root-only override).
+            Toggle(isOn: Binding(
+                get: { keepAwake.isActive ? keepAwake.lidSleepPrevented : keepAwakeLidPref },
+                set: { on in
+                    keepAwakeLidPref = on
+                    keepAwake.setPreventLidSleep(on)
+                }
+            )) {
+                Text(L10n.machine.keepAwakeLid)
+                    .font(.system(size: 10))
+            }
+            .toggleStyle(.checkbox)
+            .controlSize(.small)
             Text(L10n.machine.keepAwakeHint)
                 .font(.system(size: 9)).foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)

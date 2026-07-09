@@ -1287,12 +1287,14 @@ public actor APIClient {
         kind: String,
         rpm: Int? = nil,
         ttlSeconds: Int? = nil,
-        on: Bool? = nil
+        on: Bool? = nil,
+        preventLidSleep: Bool? = nil
     ) async throws -> String {
         struct Payload: Encodable {
             let rpm: Int?
             let ttl_seconds: Int?
             let on: Bool?
+            let prevent_lid_sleep: Bool?
         }
         struct Params: Encodable {
             let p_device_id: String
@@ -1304,7 +1306,8 @@ public actor APIClient {
         // the three top-level params (p_device_id/p_kind/p_payload), not the nested
         // payload keys. Encodable omits nil optionals, so {} / {"rpm":…,"ttl_seconds":…}
         // / {"on":…} are produced per kind.
-        let payload = Payload(rpm: rpm, ttl_seconds: ttlSeconds, on: on)
+        let payload = Payload(rpm: rpm, ttl_seconds: ttlSeconds, on: on,
+                              prevent_lid_sleep: preventLidSleep)
         let result: Result = try await rpc(
             "remote_app_send_machine_command",
             params: Params(p_device_id: deviceId, p_kind: kind, p_payload: payload)

@@ -587,7 +587,8 @@ public final class LocalSessionControlClient: SessionControlClient, MachineContr
                 kind: kind,
                 rpm: (payload["rpm"] as? NSNumber)?.intValue,
                 ttlSeconds: (payload["ttl_seconds"] as? NSNumber)?.intValue,
-                on: payload["on"] as? Bool
+                on: payload["on"] as? Bool,
+                lid: payload["prevent_lid_sleep"] as? Bool
             )
         }
     }
@@ -612,6 +613,7 @@ public final class LocalSessionControlClient: SessionControlClient, MachineContr
             "boost_active": state.boostActive,
             "keep_awake": state.keepAwake,
             "keep_awake_active": state.keepAwakeActive,
+            "keep_awake_lid_active": state.keepAwakeLidActive,
         ]
         if let rpm = state.boostTargetRPM { s["boost_target_rpm"] = rpm }
         _ = try await send(method: "report_machine_control_state", params: ["state": s])
