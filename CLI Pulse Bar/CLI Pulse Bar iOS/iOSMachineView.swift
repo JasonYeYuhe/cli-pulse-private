@@ -256,8 +256,11 @@ struct iOSMachineView: View {
     private func sendRevert(_ d: DeviceRecord) {
         fanRequested = false
         fanAuto = true   // optimistic: slider snaps back to the live/Auto point now
-        runCommand { try await state.api.remoteSendMachineCommand(
-            deviceId: d.id, kind: "revert_fan_auto") }
+        // Roll back on failure (mirrors sendBoost/sendLPM): otherwise a failed
+        // revert leaves the slider falsely "Auto" with Revert disabled while the
+        // Mac keeps boosting, and onChange can't fix it (no true→true transition).
+        runCommand({ try await state.api.remoteSendMachineCommand(
+            deviceId: d.id, kind: "revert_fan_auto") }, onError: { fanAuto = false })
     }
 
     private func sendLPM(_ d: DeviceRecord, on: Bool) {
