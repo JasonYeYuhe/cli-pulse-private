@@ -152,6 +152,7 @@ public enum L10n {
         public static var keepAwakeHint: String { tr("machine.keep_awake_hint") }
         public static var keepAwakeOn: String { tr("machine.keep_awake_on") }
         public static var keepAwakeIndefinite: String { tr("machine.keep_awake_indefinite") }
+        public static var keepAwakeLid: String { tr("machine.keep_awake_lid") }
         public static func keepAwakeEndsIn(_ span: String) -> String { tr("machine.keep_awake_ends_in_fmt", span) }
         public static var commandFailed: String { tr("machine.command_failed") }
         public static var noReadings: String { tr("machine.no_readings") }

@@ -32,7 +32,8 @@ class _FakeRPC:
 
 
 def _fresh_report(remote_fan=True, remote_lpm=True, boost_active=False, rpm=None,
-                  keep_awake=False, keep_awake_active=False) -> dict:
+                  keep_awake=False, keep_awake_active=False,
+                  keep_awake_lid_active=False) -> dict:
     return {
         "remote_fan": remote_fan,
         "remote_lpm": remote_lpm,
@@ -40,6 +41,7 @@ def _fresh_report(remote_fan=True, remote_lpm=True, boost_active=False, rpm=None
         "boost_target_rpm": rpm,
         "keep_awake": keep_awake,
         "keep_awake_active": keep_awake_active,
+        "keep_awake_lid_active": keep_awake_lid_active,
     }
 
 
@@ -148,6 +150,7 @@ class TestMachineCommandRelay(unittest.TestCase):
         self.assertEqual(frag["machine_controls"], {
             "remote_fan": True, "remote_lpm": False,
             "keep_awake": False, "keep_awake_active": False,
+            "keep_awake_lid_active": False,
         })
         self.assertTrue(frag["fan_boost_active"])
         self.assertEqual(frag["fan_boost_target_rpm"], 4200)
@@ -156,11 +159,13 @@ class TestMachineCommandRelay(unittest.TestCase):
         # v1.42: capability + live state ride machine_controls as booleans
         # (the heartbeat RPC folds every key per-key; no devices column).
         self.relay.report_control_state(
-            _fresh_report(keep_awake=True, keep_awake_active=True)
+            _fresh_report(keep_awake=True, keep_awake_active=True,
+                          keep_awake_lid_active=True)
         )
         frag = self.relay.heartbeat_metrics_fragment()
         self.assertTrue(frag["machine_controls"]["keep_awake"])
         self.assertTrue(frag["machine_controls"]["keep_awake_active"])
+        self.assertTrue(frag["machine_controls"]["keep_awake_lid_active"])
 
     def test_report_normalizes_non_bool_keep_awake(self):
         # Non-bool junk from a buggy app process → normalized to False.

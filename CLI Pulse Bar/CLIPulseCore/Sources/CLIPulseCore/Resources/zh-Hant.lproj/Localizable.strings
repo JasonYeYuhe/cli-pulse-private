@@ -881,9 +881,10 @@
 "machine.min_fmt" = "%@ 分鐘";
 "machine.hours_fmt" = "%@ 小時";
 "machine.keep_awake" = "保持喚醒";
-"machine.keep_awake_hint" = "螢幕可正常熄滅,系統保持執行;闔蓋仍會休眠。";
+"machine.keep_awake_hint" = "螢幕可正常熄滅,系統保持執行;使用電池時闔蓋仍會休眠。";
 "machine.keep_awake_on" = "喚醒中";
 "machine.keep_awake_indefinite" = "直到手動關閉";
+"machine.keep_awake_lid" = "闔蓋也不休眠(僅接通電源時生效)";
 "machine.keep_awake_ends_in_fmt" = "%@ 後結束";
 "machine.command_failed" = "指令傳送失敗，請重試。";
 "machine.no_readings" = "尚無讀數";

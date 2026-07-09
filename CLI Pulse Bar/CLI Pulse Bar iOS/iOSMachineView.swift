@@ -25,6 +25,7 @@ struct iOSMachineView: View {
     @State private var lpmPending: Bool?    // optimistic toggle value until the heartbeat confirms
     @State private var kaPending: Bool?     // v1.42 Keep Awake — same optimistic pattern
     @State private var kaTTLMinutes = 0     // 0 = indefinite (Amphetamine default)
+    @State private var kaLid = false        // also hold lid-closed (AC only)
     @State private var showBoostConfirm = false
     @State private var actionError: String?
 
@@ -271,6 +272,15 @@ struct iOSMachineView: View {
                     Text(L10n.machine.hours(8)).tag(480)
                 }
                 .pickerStyle(.segmented)
+                // Lid-closed hold (chosen BEFORE enabling, like the duration).
+                Toggle(isOn: $kaLid) {
+                    Text(L10n.machine.keepAwakeLid)
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .disabled(busy)
+            } else if d.machine_controls["keep_awake_lid_active"] == true {
+                Label(L10n.machine.keepAwakeLid, systemImage: "laptopcomputer.slash")
+                    .font(.caption2).foregroundStyle(.secondary)
             }
         }
     }
@@ -309,7 +319,8 @@ struct iOSMachineView: View {
         kaPending = on
         let ttl = (on && kaTTLMinutes > 0) ? kaTTLMinutes * 60 : nil
         runCommand({ try await state.api.remoteSendMachineCommand(
-            deviceId: d.id, kind: "set_keep_awake", ttlSeconds: ttl, on: on) },
+            deviceId: d.id, kind: "set_keep_awake", ttlSeconds: ttl, on: on,
+            preventLidSleep: (on && kaLid) ? true : nil) },
             onError: { kaPending = nil })
     }
 

@@ -881,9 +881,10 @@
 "machine.min_fmt" = "%@ 分钟";
 "machine.hours_fmt" = "%@ 小时";
 "machine.keep_awake" = "保持唤醒";
-"machine.keep_awake_hint" = "屏幕可正常熄灭,系统保持运行;合盖仍会休眠。";
+"machine.keep_awake_hint" = "屏幕可正常熄灭,系统保持运行;使用电池时合盖仍会休眠。";
 "machine.keep_awake_on" = "唤醒中";
 "machine.keep_awake_indefinite" = "直到手动关闭";
+"machine.keep_awake_lid" = "合盖也不休眠(仅接通电源时生效)";
 "machine.keep_awake_ends_in_fmt" = "%@ 后结束";
 "machine.command_failed" = "命令发送失败，请重试。";
 "machine.no_readings" = "暂无读数";

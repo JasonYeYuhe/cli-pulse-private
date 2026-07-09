@@ -37,11 +37,12 @@ public struct RemoteMachineCommand: Sendable, Equatable {
     public let rpm: Int?           // set_fan_target
     public let ttlSeconds: Int?    // set_fan_target / set_keep_awake (hold duration; keep-awake nil = indefinite)
     public let on: Bool?           // set_low_power_mode / set_keep_awake
+    public let lid: Bool?          // set_keep_awake: also hold PreventSystemSleep (lid-closed, AC only)
 
     public init(id: String, kind: String, rpm: Int? = nil, ttlSeconds: Int? = nil,
-                on: Bool? = nil) {
+                on: Bool? = nil, lid: Bool? = nil) {
         self.id = id; self.kind = kind; self.rpm = rpm
-        self.ttlSeconds = ttlSeconds; self.on = on
+        self.ttlSeconds = ttlSeconds; self.on = on; self.lid = lid
     }
 }
 
@@ -51,16 +52,19 @@ public struct RemoteMachineControlState: Sendable, Equatable {
     public let remoteLPM: Bool
     public let boostActive: Bool
     public let boostTargetRPM: Int?
-    /// v1.42 Keep Awake: capability + live state. Defaulted so the PR-4 call
-    /// sites/tests stay source-compatible.
+    /// v1.42 Keep Awake: capability + live state (+ lid-closed hold state).
+    /// Defaulted so the PR-4 call sites/tests stay source-compatible.
     public let keepAwake: Bool
     public let keepAwakeActive: Bool
+    public let keepAwakeLidActive: Bool
 
     public init(remoteFan: Bool, remoteLPM: Bool, boostActive: Bool, boostTargetRPM: Int?,
-                keepAwake: Bool = false, keepAwakeActive: Bool = false) {
+                keepAwake: Bool = false, keepAwakeActive: Bool = false,
+                keepAwakeLidActive: Bool = false) {
         self.remoteFan = remoteFan; self.remoteLPM = remoteLPM
         self.boostActive = boostActive; self.boostTargetRPM = boostTargetRPM
         self.keepAwake = keepAwake; self.keepAwakeActive = keepAwakeActive
+        self.keepAwakeLidActive = keepAwakeLidActive
     }
 }
 
@@ -202,11 +206,18 @@ public actor RemoteMachineExecutor {
         //    false so the phone hides them. Keep-awake needs no daemon — its
         //    capability is just "the controller exists" (all macOS builds).
         let kaActive: Bool
-        if let keepAwake { kaActive = await keepAwake.isKeepAwakeActive() } else { kaActive = false }
+        let kaLid: Bool
+        if let keepAwake {
+            kaActive = await keepAwake.isKeepAwakeActive()
+            kaLid = await keepAwake.isLidSleepPrevented()
+        } else {
+            kaActive = false; kaLid = false
+        }
         let state = RemoteMachineControlState(
             remoteFan: available, remoteLPM: available,
             boostActive: boostActive, boostTargetRPM: boostTargetRPM,
-            keepAwake: keepAwake != nil, keepAwakeActive: kaActive)
+            keepAwake: keepAwake != nil, keepAwakeActive: kaActive,
+            keepAwakeLidActive: kaLid)
         try? await relay.reportMachineControlState(state)
     }
 
@@ -261,7 +272,8 @@ public actor RemoteMachineExecutor {
                                error: keepAwake == nil ? "unavailable" : "clamped")
                 return
             }
-            let kaOK = await keepAwake.setKeepAwake(on, ttlSeconds: cmd.ttlSeconds)
+            let kaOK = await keepAwake.setKeepAwake(on, ttlSeconds: cmd.ttlSeconds,
+                                                    preventLidSleep: cmd.lid ?? false)
             await complete(cmd, status: kaOK ? "done" : "failed", error: kaOK ? nil : "assertion_failed")
 
         default:
