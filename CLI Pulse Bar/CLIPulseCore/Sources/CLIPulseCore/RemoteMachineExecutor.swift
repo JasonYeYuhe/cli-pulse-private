@@ -179,12 +179,17 @@ public actor RemoteMachineExecutor {
         //    so the phone hides the controls. No UDS traffic while off (the default).
         guard toggle else { return }   // feature off → idle (no UDS traffic)
 
-        // 3. Pull + execute FIRST (when the daemon is available), so the report in
-        //    step 4 reflects a boost armed THIS tick — the phone sees it on the
-        //    same heartbeat, not the next. The helper already dropped commands
-        //    pulled >60 s ago; we additionally clamp the payload locally.
+        // 3. Pull + execute FIRST (when ANY executable surface exists), so the
+        //    report in step 4 reflects a boost armed THIS tick — the phone sees
+        //    it on the same heartbeat, not the next. The helper already dropped
+        //    commands pulled >60 s ago; we additionally clamp the payload locally.
         //    stop() may have interleaved during an await → skip pulling then.
-        if available && !stopped {
+        //    v1.42 review HIGH: keep-awake needs NO daemon, so gating the pull on
+        //    `available` alone silently strands set_keep_awake on fanless /
+        //    daemonless Macs (capability advertised, command never drained). A
+        //    stray fan command while !available completes "failed" via the
+        //    daemon-unreachable path instead of expiring unpulled.
+        if (available || keepAwake != nil) && !stopped {
             let commands = (try? await relay.pullMachineCommands()) ?? []
             for cmd in commands {
                 if stopped { break }

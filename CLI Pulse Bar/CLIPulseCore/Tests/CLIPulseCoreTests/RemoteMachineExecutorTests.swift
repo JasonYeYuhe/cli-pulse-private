@@ -209,6 +209,27 @@ final class RemoteMachineExecutorTests: XCTestCase {
         XCTAssertEqual(completions[0].error, "unavailable")
     }
 
+    func test_keep_awake_executes_without_fan_daemon() async {
+        // v1.42 review HIGH: a fanless/daemonless Mac (fan.isAvailable()==false)
+        // still advertises + must EXECUTE keep-awake — the pull gate may not be
+        // fan-only, or the phone shows a toggle that silently does nothing.
+        let box = Box()
+        let fan = FakeFan(); await fan.setAvailable(false)
+        let relay = FakeRelay(); let ka = FakeKeepAwake()
+        await relay.enqueue(.init(id: "k1", kind: "set_keep_awake", on: true))
+        let ex = makeExecutor(box, fan: fan, relay: relay, keepAwake: ka)
+        await ex.tick()
+        let calls = await ka.calls
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(calls[0].on, true)
+        let completions = await relay.completions
+        XCTAssertEqual(completions.first?.status, "done")
+        let last = await relay.reports.last
+        XCTAssertEqual(last?.remoteFan, false)       // fan surface hidden
+        XCTAssertEqual(last?.keepAwake, true)        // keep-awake still honest
+        XCTAssertEqual(last?.keepAwakeActive, true)
+    }
+
     func test_report_carries_keep_awake_capability_and_state() async {
         let box = Box()
         let fan = FakeFan(); let relay = FakeRelay(); let ka = FakeKeepAwake()

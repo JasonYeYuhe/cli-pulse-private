@@ -14,8 +14,13 @@
 -- change and NO heartbeat re-emit.
 --
 -- The RPC body below is the LIVE PROD definition (pg_get_functiondef pulled
--- 2026-07-09 — zero drift vs migrate_v0.66) plus exactly: the whitelist entry
--- and the set_keep_awake payload branch.
+-- 2026-07-09 — zero drift vs migrate_v0.66) plus: the whitelist entry, the
+-- set_keep_awake payload branch, and ONE deliberate hardening (v1.42 review):
+-- `jsonb_typeof(p_payload->'missing_key')` is NULL, and `NULL <> 'x'` is NULL,
+-- so the "requires ..." guards never fired for an ABSENT key (benign — the
+-- executor fails such commands as "clamped" — but the validation was dead).
+-- All three payload guards now coalesce the typeof to '' so a missing key
+-- raises like a wrong-typed one. Real clients always send the keys.
 
 begin;
 
@@ -73,7 +78,7 @@ begin
   end if;
 
   if p_kind = 'set_fan_target' then
-    if jsonb_typeof(p_payload->'rpm') <> 'number' then
+    if coalesce(jsonb_typeof(p_payload->'rpm'), '') <> 'number' then
       raise exception 'set_fan_target requires numeric rpm';
     end if;
     v_rpm_num := floor((p_payload->>'rpm')::numeric);
@@ -93,7 +98,7 @@ begin
     v_ttl := v_ttl_num::int;
     v_payload := jsonb_build_object('rpm', v_rpm, 'ttl_seconds', v_ttl);
   elsif p_kind = 'set_low_power_mode' then
-    if jsonb_typeof(p_payload->'on') <> 'boolean' then
+    if coalesce(jsonb_typeof(p_payload->'on'), '') <> 'boolean' then
       raise exception 'set_low_power_mode requires boolean on';
     end if;
     v_on := (p_payload->>'on')::boolean;
@@ -103,7 +108,7 @@ begin
     -- enable = indefinite hold (bounded by the local Mac UI / app lifetime);
     -- ttl is dropped on disable. Range-check the NUMERIC before ::int
     -- (int-overflow-before-range — v0.66 review catch).
-    if jsonb_typeof(p_payload->'on') <> 'boolean' then
+    if coalesce(jsonb_typeof(p_payload->'on'), '') <> 'boolean' then
       raise exception 'set_keep_awake requires boolean on';
     end if;
     v_on := (p_payload->>'on')::boolean;
