@@ -49,6 +49,7 @@
 		A20013 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B20009 /* Assets.xcassets */; };
 		A20014 /* iOSRemoteApprovalsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20012 /* iOSRemoteApprovalsView.swift */; };
 		A20016 /* iOSMachineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20014 /* iOSMachineView.swift */; };
+		A20030 /* iOSUsageHeatmapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20030 /* iOSUsageHeatmapView.swift */; };
 		A20015 /* iOSAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20013 /* iOSAppDelegate.swift */; };
 		A20020 /* CLIPulseIntentCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20020 /* CLIPulseIntentCache.swift */; };
 		A20021 /* GetStatusIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20021 /* GetStatusIntent.swift */; };
@@ -230,6 +231,7 @@
 		B20011 /* CLI_Pulse_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CLI_Pulse_iOS.entitlements; sourceTree = "<group>"; };
 		B20012 /* iOSRemoteApprovalsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSRemoteApprovalsView.swift; sourceTree = "<group>"; };
 		B20014 /* iOSMachineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSMachineView.swift; sourceTree = "<group>"; };
+		B20030 /* iOSUsageHeatmapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSUsageHeatmapView.swift; sourceTree = "<group>"; };
 		B20013 /* iOSAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSAppDelegate.swift; sourceTree = "<group>"; };
 		B20020 /* CLIPulseIntentCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Intents/CLIPulseIntentCache.swift; sourceTree = "<group>"; };
 		B20021 /* GetStatusIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Intents/GetStatusIntent.swift; sourceTree = "<group>"; };
@@ -403,6 +405,7 @@
 				B20008 /* iOSSettingsTab.swift */,
 				B20012 /* iOSRemoteApprovalsView.swift */,
 				B20014 /* iOSMachineView.swift */,
+				B20030 /* iOSUsageHeatmapView.swift */,
 				B20013 /* iOSAppDelegate.swift */,
 				B20020 /* CLIPulseIntentCache.swift */,
 				B20021 /* GetStatusIntent.swift */,
@@ -742,6 +745,7 @@
 				A20012 /* iOSSettingsTab.swift in Sources */,
 				A20014 /* iOSRemoteApprovalsView.swift in Sources */,
 				A20016 /* iOSMachineView.swift in Sources */,
+				A20030 /* iOSUsageHeatmapView.swift in Sources */,
 				A20015 /* iOSAppDelegate.swift in Sources */,
 				A20020 /* CLIPulseIntentCache.swift in Sources */,
 				A20021 /* GetStatusIntent.swift in Sources */,

@@ -260,6 +260,35 @@ public final class AppState: ObservableObject {
     @Published public var costForecast: CostForecast?
     @Published public var dailyUsage: [DailyUsage] = []
 
+    // MARK: - Usage-activity heatmap (v1.41, iOS)
+    /// Cloud-hydrated daily archive powering the iOS usage-activity heatmap.
+    /// macOS builds its own archive from the authoritative local JSONL scan
+    /// (DailyUsageArchiveManager); iOS has no local scan, so this is cloud-only
+    /// fidelity — the same caveat the iOS cost forecast already carries. Rebuilt
+    /// from scratch on each refresh so the cloud stays authoritative (today's
+    /// growing total isn't frozen by fill-only merge semantics).
+    @Published public var usageArchive: DailyUsageArchive = DailyUsageArchive()
+    private var usageArchiveLoadedAt: Date?
+
+    /// Fetch up to a year of daily usage from Supabase and fold it into
+    /// `usageArchive`. Cheap-cached: within `ttl` of the last successful load it
+    /// no-ops (the heatmap is opened deliberately, not polled). A failed/empty
+    /// fetch leaves the previous archive intact.
+    public func refreshUsageArchive(days: Int = 365, ttl: TimeInterval = 300, force: Bool = false) async {
+        if !force, let at = usageArchiveLoadedAt, Date().timeIntervalSince(at) < ttl { return }
+        let rows = await api.fetchDailyUsage(days: days)
+        guard !rows.isEmpty else { return }
+        var a = DailyUsageArchive()
+        let entries = rows
+            .filter { $0.model != ScanEntry.messageBucketModel }
+            .map { CloudEntry(date: $0.date, provider: $0.provider, model: $0.model,
+                              inputTokens: $0.inputTokens, cachedTokens: $0.cachedTokens,
+                              outputTokens: $0.outputTokens, cost: $0.cost) }
+        a.mergeCloudDays(entries)
+        usageArchive = a
+        usageArchiveLoadedAt = Date()
+    }
+
     // MARK: - Yield Score
     @Published public var yieldScoreDailyRows: [YieldScoreRow] = []
     @Published public var yieldScoreRange: YieldScoreRange = .thirtyDays
