@@ -65,9 +65,24 @@ final class RemoteMachineExecutorTests: XCTestCase {
         }
     }
 
-    private func makeExecutor(_ box: Box, fan: FakeFan, relay: FakeRelay) -> RemoteMachineExecutor {
+    private actor FakeKeepAwake: KeepAwakeControlling {
+        private(set) var calls: [(on: Bool, ttl: Int?)] = []
+        var active = false
+        var ok = true
+        func setOK(_ b: Bool) { ok = b }
+        func setKeepAwake(_ on: Bool, ttlSeconds: Int?) async -> Bool {
+            calls.append((on, ttlSeconds))
+            if ok { active = on }
+            return ok
+        }
+        func isKeepAwakeActive() async -> Bool { active }
+    }
+
+    private func makeExecutor(_ box: Box, fan: FakeFan, relay: FakeRelay,
+                              keepAwake: FakeKeepAwake? = nil) -> RemoteMachineExecutor {
         RemoteMachineExecutor(
             fan: fan, relay: relay,
+            keepAwake: keepAwake,
             isEnabled: { box.enabled },
             now: { box.clock }
         )
@@ -162,6 +177,54 @@ final class RemoteMachineExecutorTests: XCTestCase {
         XCTAssertEqual(lpmCalls, [true])
         let completions = await relay.completions
         XCTAssertEqual(completions[0].status, "done")
+    }
+
+    // MARK: - Keep Awake (v1.42)
+
+    func test_set_keep_awake_on_and_off_ack_done() async {
+        let box = Box()
+        let fan = FakeFan(); let relay = FakeRelay(); let ka = FakeKeepAwake()
+        await relay.enqueue(.init(id: "k1", kind: "set_keep_awake", ttlSeconds: 3600, on: true))
+        await relay.enqueue(.init(id: "k2", kind: "set_keep_awake", on: false))
+        let ex = makeExecutor(box, fan: fan, relay: relay, keepAwake: ka)
+        await ex.tick()
+        let calls = await ka.calls
+        XCTAssertEqual(calls.count, 2)
+        XCTAssertEqual(calls[0].on, true)
+        XCTAssertEqual(calls[0].ttl, 3600)
+        XCTAssertEqual(calls[1].on, false)
+        XCTAssertNil(calls[1].ttl)
+        let completions = await relay.completions
+        XCTAssertEqual(completions.map(\.status), ["done", "done"])
+    }
+
+    func test_set_keep_awake_without_controller_fails_unavailable() async {
+        let box = Box()
+        let fan = FakeFan(); let relay = FakeRelay()
+        await relay.enqueue(.init(id: "k1", kind: "set_keep_awake", on: true))
+        let ex = makeExecutor(box, fan: fan, relay: relay)   // keepAwake: nil
+        await ex.tick()
+        let completions = await relay.completions
+        XCTAssertEqual(completions[0].status, "failed")
+        XCTAssertEqual(completions[0].error, "unavailable")
+    }
+
+    func test_report_carries_keep_awake_capability_and_state() async {
+        let box = Box()
+        let fan = FakeFan(); let relay = FakeRelay(); let ka = FakeKeepAwake()
+        await relay.enqueue(.init(id: "k1", kind: "set_keep_awake", on: true))
+        let ex = makeExecutor(box, fan: fan, relay: relay, keepAwake: ka)
+        await ex.tick()
+        let last = await relay.reports.last
+        XCTAssertEqual(last?.keepAwake, true)          // capability: controller present
+        XCTAssertEqual(last?.keepAwakeActive, true)    // executed THIS tick (report after execute)
+        // Without a controller the capability must report false.
+        let relay2 = FakeRelay()
+        let ex2 = makeExecutor(box, fan: fan, relay: relay2)
+        await ex2.tick()
+        let last2 = await relay2.reports.last
+        XCTAssertEqual(last2?.keepAwake, false)
+        XCTAssertEqual(last2?.keepAwakeActive, false)
     }
 
     // MARK: - TTL / revert matrix

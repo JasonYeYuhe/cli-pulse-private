@@ -610,6 +610,8 @@ public final class LocalSessionControlClient: SessionControlClient, MachineContr
             "remote_fan": state.remoteFan,
             "remote_lpm": state.remoteLPM,
             "boost_active": state.boostActive,
+            "keep_awake": state.keepAwake,
+            "keep_awake_active": state.keepAwakeActive,
         ]
         if let rpm = state.boostTargetRPM { s["boost_target_rpm"] = rpm }
         _ = try await send(method: "report_machine_control_state", params: ["state": s])

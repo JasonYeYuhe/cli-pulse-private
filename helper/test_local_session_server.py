@@ -1687,6 +1687,12 @@ _SWIFT_CLIENT_METHODS = frozenset({
     # `action` param). The Swift client's suspendProcess + resumeProcess both
     # send this single method literal.
     "signal_process",
+    # v1.41 Mobile Machine (PR-3/PR-4): the DEVID app executor's relay verbs.
+    # Added to the Swift client in PR-4 but missed here — Swift-only changes
+    # don't trigger Helper CI (path filter), so the drift surfaced only when
+    # the next helper/ change ran this suite (v1.42 Keep Awake).
+    "pull_machine_commands", "complete_machine_command",
+    "report_machine_control_state",
 })
 
 

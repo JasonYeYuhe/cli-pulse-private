@@ -33,10 +33,10 @@ public let kRemoteMachineControlEnabledKey = "cli_pulse_remote_machine_control_e
 /// One fan/LPM command drained from the helper relay.
 public struct RemoteMachineCommand: Sendable, Equatable {
     public let id: String
-    public let kind: String        // set_fan_target | revert_fan_auto | set_low_power_mode
+    public let kind: String        // set_fan_target | revert_fan_auto | set_low_power_mode | set_keep_awake
     public let rpm: Int?           // set_fan_target
-    public let ttlSeconds: Int?    // set_fan_target (boost hold duration)
-    public let on: Bool?           // set_low_power_mode
+    public let ttlSeconds: Int?    // set_fan_target / set_keep_awake (hold duration; keep-awake nil = indefinite)
+    public let on: Bool?           // set_low_power_mode / set_keep_awake
 
     public init(id: String, kind: String, rpm: Int? = nil, ttlSeconds: Int? = nil,
                 on: Bool? = nil) {
@@ -51,10 +51,16 @@ public struct RemoteMachineControlState: Sendable, Equatable {
     public let remoteLPM: Bool
     public let boostActive: Bool
     public let boostTargetRPM: Int?
+    /// v1.42 Keep Awake: capability + live state. Defaulted so the PR-4 call
+    /// sites/tests stay source-compatible.
+    public let keepAwake: Bool
+    public let keepAwakeActive: Bool
 
-    public init(remoteFan: Bool, remoteLPM: Bool, boostActive: Bool, boostTargetRPM: Int?) {
+    public init(remoteFan: Bool, remoteLPM: Bool, boostActive: Bool, boostTargetRPM: Int?,
+                keepAwake: Bool = false, keepAwakeActive: Bool = false) {
         self.remoteFan = remoteFan; self.remoteLPM = remoteLPM
         self.boostActive = boostActive; self.boostTargetRPM = boostTargetRPM
+        self.keepAwake = keepAwake; self.keepAwakeActive = keepAwakeActive
     }
 }
 
@@ -83,6 +89,9 @@ public actor RemoteMachineExecutor {
     static let maxTTL: Double = 3600
     private let fan: FanControlling
     private let relay: MachineControlRelaying
+    /// v1.42: keep-awake surface (no daemon needed — IOPM assertion in-process).
+    /// Optional so PR-4-era constructions/tests stay source-compatible.
+    private let keepAwake: KeepAwakeControlling?
     private let isEnabled: @Sendable () -> Bool
     private let now: @Sendable () -> Double
     private let pollIntervalNanos: UInt64
@@ -99,6 +108,7 @@ public actor RemoteMachineExecutor {
     public init(
         fan: FanControlling,
         relay: MachineControlRelaying,
+        keepAwake: KeepAwakeControlling? = nil,
         isEnabled: @escaping @Sendable () -> Bool = {
             UserDefaults.standard.bool(forKey: kRemoteMachineControlEnabledKey)
         },
@@ -112,6 +122,7 @@ public actor RemoteMachineExecutor {
     ) {
         self.fan = fan
         self.relay = relay
+        self.keepAwake = keepAwake
         self.isEnabled = isEnabled
         self.now = now
         self.pollIntervalNanos = pollIntervalNanos
@@ -135,7 +146,10 @@ public actor RemoteMachineExecutor {
         pollTask?.cancel()
         pollTask = nil
         if boostActive { await revertBoost() }
-        // Best-effort: tell the phone controls are gone (helper freshness also lapses in 15 s).
+        // Best-effort: tell the phone controls are gone (helper freshness also
+        // lapses in 15 s). A keep-awake hold is deliberately NOT released here —
+        // it's benign (no hardware actuation) and stays visible/cancellable in
+        // the local Machine tab; only the REMOTE surface goes away.
         try? await relay.reportMachineControlState(
             RemoteMachineControlState(remoteFan: false, remoteLPM: false, boostActive: false, boostTargetRPM: nil))
     }
@@ -180,10 +194,14 @@ public actor RemoteMachineExecutor {
 
         // 4. Report live state every tick (helper 15 s freshness) so the phone
         //    renders ONLY honorable controls. Daemon unavailable → remoteFan/LPM
-        //    false so the phone hides them.
+        //    false so the phone hides them. Keep-awake needs no daemon — its
+        //    capability is just "the controller exists" (all macOS builds).
+        let kaActive: Bool
+        if let keepAwake { kaActive = await keepAwake.isKeepAwakeActive() } else { kaActive = false }
         let state = RemoteMachineControlState(
             remoteFan: available, remoteLPM: available,
-            boostActive: boostActive, boostTargetRPM: boostTargetRPM)
+            boostActive: boostActive, boostTargetRPM: boostTargetRPM,
+            keepAwake: keepAwake != nil, keepAwakeActive: kaActive)
         try? await relay.reportMachineControlState(state)
     }
 
@@ -228,6 +246,18 @@ public actor RemoteMachineExecutor {
             }
             let ok = await fan.setLowPowerMode(on)
             await complete(cmd, status: ok ? "done" : "failed", error: ok ? nil : "daemon_unavailable")
+
+        case "set_keep_awake":
+            // v1.42: IOPM assertion — no daemon involved. The server already
+            // clamped ttl_seconds (60..86400) or omitted it (indefinite); the
+            // controller re-clamps as local defense-in-depth.
+            guard let keepAwake, let on = cmd.on else {
+                await complete(cmd, status: "failed",
+                               error: keepAwake == nil ? "unavailable" : "clamped")
+                return
+            }
+            let kaOK = await keepAwake.setKeepAwake(on, ttlSeconds: cmd.ttlSeconds)
+            await complete(cmd, status: kaOK ? "done" : "failed", error: kaOK ? nil : "assertion_failed")
 
         default:
             await complete(cmd, status: "failed", error: "unknown_kind")

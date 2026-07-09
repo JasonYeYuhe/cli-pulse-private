@@ -31,12 +31,15 @@ class _FakeRPC:
         return self.results.get(name, None)
 
 
-def _fresh_report(remote_fan=True, remote_lpm=True, boost_active=False, rpm=None) -> dict:
+def _fresh_report(remote_fan=True, remote_lpm=True, boost_active=False, rpm=None,
+                  keep_awake=False, keep_awake_active=False) -> dict:
     return {
         "remote_fan": remote_fan,
         "remote_lpm": remote_lpm,
         "boost_active": boost_active,
         "boost_target_rpm": rpm,
+        "keep_awake": keep_awake,
+        "keep_awake_active": keep_awake_active,
     }
 
 
@@ -142,9 +145,32 @@ class TestMachineCommandRelay(unittest.TestCase):
             _fresh_report(remote_fan=True, remote_lpm=False, boost_active=True, rpm=4200)
         )
         frag = self.relay.heartbeat_metrics_fragment()
-        self.assertEqual(frag["machine_controls"], {"remote_fan": True, "remote_lpm": False})
+        self.assertEqual(frag["machine_controls"], {
+            "remote_fan": True, "remote_lpm": False,
+            "keep_awake": False, "keep_awake_active": False,
+        })
         self.assertTrue(frag["fan_boost_active"])
         self.assertEqual(frag["fan_boost_target_rpm"], 4200)
+
+    def test_fragment_keep_awake_capability_and_state(self):
+        # v1.42: capability + live state ride machine_controls as booleans
+        # (the heartbeat RPC folds every key per-key; no devices column).
+        self.relay.report_control_state(
+            _fresh_report(keep_awake=True, keep_awake_active=True)
+        )
+        frag = self.relay.heartbeat_metrics_fragment()
+        self.assertTrue(frag["machine_controls"]["keep_awake"])
+        self.assertTrue(frag["machine_controls"]["keep_awake_active"])
+
+    def test_report_normalizes_non_bool_keep_awake(self):
+        # Non-bool junk from a buggy app process → normalized to False.
+        report = _fresh_report()
+        report["keep_awake"] = "yes"
+        report["keep_awake_active"] = 1
+        self.relay.report_control_state(report)
+        frag = self.relay.heartbeat_metrics_fragment()
+        self.assertFalse(frag["machine_controls"]["keep_awake"])
+        self.assertFalse(frag["machine_controls"]["keep_awake_active"])
 
     def test_fragment_stale_clears_controls(self):
         self.relay.report_control_state(_fresh_report(boost_active=True, rpm=4200))

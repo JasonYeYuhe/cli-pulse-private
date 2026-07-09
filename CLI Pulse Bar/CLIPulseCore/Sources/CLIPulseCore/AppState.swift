@@ -605,7 +605,10 @@ public final class AppState: ObservableObject {
     #if os(macOS) && DEVID_BUILD
     public let remoteMachineExecutor = RemoteMachineExecutor(
         fan: FanControlClient(),
-        relay: LocalSessionControlClient()
+        relay: LocalSessionControlClient(),
+        // v1.42: the SHARED keep-awake controller — the same IOPM assertion the
+        // local Machine-tab card drives, so remote + local are one source of truth.
+        keepAwake: KeepAwakeController.shared
     )
     #endif
 
