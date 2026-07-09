@@ -604,9 +604,10 @@
 "machine.min_fmt" = "%@분";
 "machine.hours_fmt" = "%@시간";
 "machine.keep_awake" = "잠자기 방지";
-"machine.keep_awake_hint" = "디스플레이가 꺼져도 시스템은 깨어 있습니다. 덮개를 닫으면 잠자기 상태가 됩니다.";
+"machine.keep_awake_hint" = "디스플레이가 꺼져도 시스템은 깨어 있습니다. 배터리 사용 중에는 덮개를 닫으면 잠자기 상태가 됩니다.";
 "machine.keep_awake_on" = "깨어 있음";
 "machine.keep_awake_indefinite" = "끌 때까지";
+"machine.keep_awake_lid" = "덮개를 닫아도 깨어 있기 (전원 연결 시에만)";
 "machine.keep_awake_ends_in_fmt" = "%@ 후 종료";
 "machine.command_failed" = "명령을 보내지 못했습니다. 다시 시도해 주세요.";
 "machine.no_readings" = "아직 데이터 없음";
