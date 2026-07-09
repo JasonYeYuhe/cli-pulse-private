@@ -146,6 +146,13 @@ public enum L10n {
         public static var boostConfirmButton: String { tr("machine.boost_confirm_button") }
         public static var requesting: String { tr("machine.requesting") }
         public static func minutes(_ n: Int) -> String { tr("machine.min_fmt", String(n)) }
+        // v1.42 Keep Awake (Mac card + iOS remote toggle).
+        public static func hours(_ n: Int) -> String { tr("machine.hours_fmt", String(n)) }
+        public static var keepAwake: String { tr("machine.keep_awake") }
+        public static var keepAwakeHint: String { tr("machine.keep_awake_hint") }
+        public static var keepAwakeOn: String { tr("machine.keep_awake_on") }
+        public static var keepAwakeIndefinite: String { tr("machine.keep_awake_indefinite") }
+        public static func keepAwakeEndsIn(_ span: String) -> String { tr("machine.keep_awake_ends_in_fmt", span) }
         public static var commandFailed: String { tr("machine.command_failed") }
         public static var noReadings: String { tr("machine.no_readings") }
     }

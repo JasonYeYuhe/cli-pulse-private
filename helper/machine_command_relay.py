@@ -182,12 +182,16 @@ class MachineCommandRelay:
 
     def report_control_state(self, state: dict) -> None:
         """Record the executor's live control state (called ~every 2 s). Only
-        the four known fields are kept; everything else is dropped."""
+        the known fields are kept; everything else is dropped."""
         normalized = {
             "remote_fan": _as_bool(state.get("remote_fan")),
             "remote_lpm": _as_bool(state.get("remote_lpm")),
             "boost_active": _as_bool(state.get("boost_active")),
             "boost_target_rpm": _as_pos_int(state.get("boost_target_rpm")),
+            # v1.42 Keep Awake: capability + live state (IOPM assertion in the
+            # app — no daemon involved; both ride machine_controls as booleans).
+            "keep_awake": _as_bool(state.get("keep_awake")),
+            "keep_awake_active": _as_bool(state.get("keep_awake_active")),
         }
         with self._lock:
             self._control_state = normalized
@@ -210,6 +214,11 @@ class MachineCommandRelay:
                 "machine_controls": {
                     "remote_fan": bool(st.get("remote_fan")),
                     "remote_lpm": bool(st.get("remote_lpm")),
+                    # v1.42 Keep Awake — the heartbeat RPC folds EVERY key in
+                    # machine_controls to boolean, so capability + live state
+                    # both ride here (no devices-schema change).
+                    "keep_awake": bool(st.get("keep_awake")),
+                    "keep_awake_active": bool(st.get("keep_awake_active")),
                 },
                 "fan_boost_active": bool(st.get("boost_active")),
             }

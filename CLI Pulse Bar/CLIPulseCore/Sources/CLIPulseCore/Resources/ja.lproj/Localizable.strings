@@ -879,6 +879,12 @@
 "machine.boost_confirm_button" = "増速";
 "machine.requesting" = "リクエスト済み — Mac は次回のチェックイン時に適用します";
 "machine.min_fmt" = "%@ 分";
+"machine.hours_fmt" = "%@ 時間";
+"machine.keep_awake" = "スリープ防止";
+"machine.keep_awake_hint" = "ディスプレイは消灯してもシステムは起動したまま。フタを閉じるとスリープします。";
+"machine.keep_awake_on" = "防止中";
+"machine.keep_awake_indefinite" = "オフにするまで";
+"machine.keep_awake_ends_in_fmt" = "残り %@";
 "machine.command_failed" = "コマンドを送信できませんでした。もう一度お試しください。";
 "machine.no_readings" = "データがありません";
 "machine.on" = "オン";
