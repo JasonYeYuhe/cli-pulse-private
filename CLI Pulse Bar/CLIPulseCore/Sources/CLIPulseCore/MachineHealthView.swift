@@ -24,6 +24,11 @@ public struct MachineHealthView: View {
     // the toggle (below) needs the root daemon + DEVID. Read every refresh.
     @State private var lowPowerOn = false
 
+    // v1.42 Keep Awake (all builds): the SHARED controller (same assertion the
+    // remote executor drives). ObservedObject so remote flips repaint the card.
+    @ObservedObject private var keepAwake: KeepAwakeController
+    @AppStorage("cli_pulse_keep_awake_ttl_minutes") private var keepAwakeTTLMinutes = 0  // 0 = indefinite
+
     // Machine controls M1 + v1.38.1 (DEVID-only). Off by default; gates the
     // inline End Process / Suspend / Resume affordances. Shares one UserDefaults
     // key with the Settings toggle so there's no drift.
@@ -58,7 +63,10 @@ public struct MachineHealthView: View {
     @State private var lpmBusy = false           // LPM toggle RPC in flight
     #endif
 
-    public init() {}
+    @MainActor
+    public init() {
+        _keepAwake = ObservedObject(wrappedValue: KeepAwakeController.shared)
+    }
 
     public var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
@@ -69,6 +77,12 @@ public struct MachineHealthView: View {
                     if snap.battery.hasBattery { batteryCard(snap.battery) }
                     sensorsSection(snap)
                     systemSection(snap)
+                    // v1.42 Keep Awake — IOPM assertion, no daemon/entitlement, so
+                    // it ships in EVERY build (MAS included) and is ALWAYS visible:
+                    // benign + reversible, unlike the consent-gated process/fan
+                    // controls (and the machine-controls Settings toggle is
+                    // DEVID-only, which would strand MAS users).
+                    keepAwakeCard
                     #if DEVID_BUILD
                     if machineControlsEnabled {
                         if fanAvailable { fanBoostCard }
@@ -90,6 +104,72 @@ public struct MachineHealthView: View {
             .padding(12)
         }
         .task { await refreshLoop() }
+    }
+
+    // MARK: - Keep Awake (v1.42 — Amphetamine-style, all builds)
+
+    /// One-click "don't idle-sleep" via KeepAwakeController.shared (the same
+    /// assertion the remote executor drives, so phone + Mac stay in sync). The
+    /// display may still sleep; closing the lid still sleeps — the hint says so.
+    private var keepAwakeCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader(title: L10n.machine.keepAwake, icon: "moon.zzz.fill")
+            HStack(spacing: 8) {
+                Toggle(isOn: Binding(
+                    get: { keepAwake.isActive },
+                    set: { on in
+                        if on {
+                            keepAwake.enable(ttlSeconds: keepAwakeTTLMinutes > 0 ? keepAwakeTTLMinutes * 60 : nil)
+                        } else {
+                            keepAwake.disable()
+                        }
+                    }
+                )) { EmptyView() }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+
+                if keepAwake.isActive {
+                    // 30s-tick countdown ("Ends in 42 min") or the indefinite label.
+                    TimelineView(.periodic(from: .now, by: 30)) { _ in
+                        Text(keepAwakeStatusText)
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                } else {
+                    Picker("", selection: $keepAwakeTTLMinutes) {
+                        Text(L10n.machine.keepAwakeIndefinite).tag(0)
+                        Text(L10n.machine.minutes(30)).tag(30)
+                        Text(L10n.machine.hours(1)).tag(60)
+                        Text(L10n.machine.hours(2)).tag(120)
+                        Text(L10n.machine.hours(8)).tag(480)
+                    }
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                Spacer()
+                if keepAwake.isActive {
+                    StatusBadge(text: L10n.machine.keepAwakeOn, color: .teal)
+                }
+            }
+            Text(L10n.machine.keepAwakeHint)
+                .font(.system(size: 9)).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PulseTheme.accent.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private var keepAwakeStatusText: String {
+        if let secs = keepAwake.remainingSeconds {
+            let mins = max(1, (secs + 59) / 60)
+            return L10n.machine.keepAwakeEndsIn(
+                mins >= 60 ? L10n.machine.hours(mins / 60) : L10n.machine.minutes(mins))
+        }
+        return L10n.machine.keepAwakeIndefinite
     }
 
     // MARK: - Header

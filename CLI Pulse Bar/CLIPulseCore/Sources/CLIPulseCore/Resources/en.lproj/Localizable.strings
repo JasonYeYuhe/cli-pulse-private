@@ -877,6 +877,12 @@
 "machine.boost_confirm_button" = "Boost";
 "machine.requesting" = "Requesting — the Mac applies it on its next check-in";
 "machine.min_fmt" = "%@ min";
+"machine.hours_fmt" = "%@ h";
+"machine.keep_awake" = "Keep Awake";
+"machine.keep_awake_hint" = "Keeps the Mac awake while the display can still sleep. Closing the lid still sleeps.";
+"machine.keep_awake_on" = "Awake";
+"machine.keep_awake_indefinite" = "Until turned off";
+"machine.keep_awake_ends_in_fmt" = "Ends in %@";
 "machine.command_failed" = "Couldn't send the command. Please try again.";
 "machine.no_readings" = "No readings yet";
 "machine.on" = "On";

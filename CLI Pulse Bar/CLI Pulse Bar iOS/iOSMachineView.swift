@@ -23,6 +23,8 @@ struct iOSMachineView: View {
     @State private var busy = false
     @State private var fanRequested = false
     @State private var lpmPending: Bool?    // optimistic toggle value until the heartbeat confirms
+    @State private var kaPending: Bool?     // v1.42 Keep Awake — same optimistic pattern
+    @State private var kaTTLMinutes = 0     // 0 = indefinite (Amphetamine default)
     @State private var showBoostConfirm = false
     @State private var actionError: String?
 
@@ -147,11 +149,13 @@ struct iOSMachineView: View {
         let live = d.deviceStatus == .online && !d.isReadingStale()
         let canFan = live && state.remoteControlEnabled && d.remoteControlCan("remote_fan")
         let canLPM = live && state.remoteControlEnabled && d.remoteControlCan("remote_lpm")
-        if canFan || canLPM {
+        let canKeepAwake = live && state.remoteControlEnabled && d.remoteControlCan("keep_awake")
+        if canFan || canLPM || canKeepAwake {
             VStack(alignment: .leading, spacing: 12) {
                 SectionHeader(title: L10n.machine.remoteControls, icon: "slider.horizontal.3")
                 if canFan { fanControl(d) }
                 if canLPM { lpmControl(d) }
+                if canKeepAwake { keepAwakeControl(d) }
                 if let actionError {
                     Text(actionError).font(.caption).foregroundStyle(.red)
                 }
@@ -240,6 +244,37 @@ struct iOSMachineView: View {
         .disabled(busy)
     }
 
+    /// v1.42 Keep Awake — Amphetamine-style "don't idle-sleep" on the Mac. Same
+    /// optimistic-pending pattern as LPM; live state rides the machine_controls
+    /// jsonb ("keep_awake_active"). Duration is chosen BEFORE enabling (segmented
+    /// picker hidden while a hold is running — the Mac card can always end it).
+    @ViewBuilder
+    private func keepAwakeControl(_ d: DeviceRecord) -> some View {
+        let isOn = kaPending ?? (d.machine_controls["keep_awake_active"] == true)
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: Binding(
+                get: { isOn },
+                set: { sendKeepAwake(d, on: $0) }
+            )) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(L10n.machine.keepAwake).font(.subheadline)
+                    Text(L10n.machine.keepAwakeHint)
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .disabled(busy)
+            if !isOn {
+                Picker(L10n.machine.holdDuration, selection: $kaTTLMinutes) {
+                    Text(L10n.machine.keepAwakeIndefinite).tag(0)
+                    Text(L10n.machine.hours(1)).tag(60)
+                    Text(L10n.machine.hours(8)).tag(480)
+                }
+                .pickerStyle(.segmented)
+            }
+        }
+    }
+
     // MARK: - control actions (send a REQUEST; the Mac executor applies + the
     // next heartbeat reflects it in the Power card — see plan §4 PR-6)
 
@@ -270,6 +305,14 @@ struct iOSMachineView: View {
             onError: { lpmPending = nil })
     }
 
+    private func sendKeepAwake(_ d: DeviceRecord, on: Bool) {
+        kaPending = on
+        let ttl = (on && kaTTLMinutes > 0) ? kaTTLMinutes * 60 : nil
+        runCommand({ try await state.api.remoteSendMachineCommand(
+            deviceId: d.id, kind: "set_keep_awake", ttlSeconds: ttl, on: on) },
+            onError: { kaPending = nil })
+    }
+
     private func runCommand(_ op: @escaping () async throws -> String,
                             onError: @escaping () -> Void = {}) {
         busy = true
@@ -290,6 +333,7 @@ struct iOSMachineView: View {
             try? await Task.sleep(nanoseconds: 150_000_000_000)
             fanRequested = false
             lpmPending = nil
+            kaPending = nil
         }
     }
 
