@@ -15,6 +15,10 @@ struct iOSMachineView: View {
     // v1.41 PR-6 remote controls.
     @AppStorage("cli_pulse_remote_fan_boost_confirmed") private var confirmedBoostBefore = false
     @State private var fanTargetRPM: Double = 0
+    /// True while the fan is in Auto: the slider tracks the live RPM and no
+    /// target is held. The first drag flips it off; Revert (and a Mac-side TTL
+    /// auto-revert seen via the heartbeat) flips it back on.
+    @State private var fanAuto = true
     @State private var ttlMinutes = 15
     @State private var busy = false
     @State private var fanRequested = false
@@ -170,14 +174,22 @@ struct iOSMachineView: View {
     @ViewBuilder
     private func fanControl(_ d: DeviceRecord) -> some View {
         let maxRPM = Double(max(d.fan_max_rpm ?? 6000, 1000))
-        VStack(alignment: .leading, spacing: 6) {
+        // In Auto the slider tracks the live fan RPM (clamped into range — the
+        // reported RPM can edge just past the advertised max), so the bar always
+        // shows where the fan actually is. Dragging leaves Auto and holds the
+        // target; Revert / TTL auto-revert return here.
+        let liveRPM = min(max(Double(d.fan_rpm ?? 0), 0), maxRPM)
+        return VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(L10n.machine.fanTarget).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Text(fanTargetRPM < 1 ? L10n.machine.auto : "\(Int(fanTargetRPM)) RPM")
+                Text(fanAuto ? "\(L10n.machine.auto) · \(Int(liveRPM)) RPM" : "\(Int(fanTargetRPM)) RPM")
                     .font(.caption.monospacedDigit())
             }
-            Slider(value: $fanTargetRPM, in: 0...maxRPM, step: 100)
+            Slider(value: Binding(
+                get: { fanAuto ? liveRPM : fanTargetRPM },
+                set: { fanAuto = false; fanTargetRPM = $0 }
+            ), in: 0...maxRPM, step: 100)
             Picker(L10n.machine.holdDuration, selection: $ttlMinutes) {
                 Text(L10n.machine.minutes(15)).tag(15)
                 Text(L10n.machine.minutes(30)).tag(30)
@@ -189,15 +201,28 @@ struct iOSMachineView: View {
                     if confirmedBoostBefore { sendBoost(d) } else { showBoostConfirm = true }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(busy || fanTargetRPM < 1)
+                .disabled(busy || fanAuto || fanTargetRPM < 1)
                 Button(L10n.machine.revertAuto) { sendRevert(d) }
                     .buttonStyle(.bordered)
-                    .disabled(busy)
+                    .disabled(busy || fanAuto)
             }
             // "Requesting…" until the next heartbeat reports the boost active.
             if fanRequested && d.fan_boost_active != true {
                 Label(L10n.machine.requesting, systemImage: "clock.arrow.circlepath")
                     .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        // Keep the slider honest with the Mac: sit at the target while a boost is
+        // engaged, snap back to Auto when it ends (Revert OR a TTL auto-revert the
+        // heartbeat reports). `initial` seeds the state if a boost is already live.
+        .onChange(of: d.fan_boost_active, initial: true) { _, active in
+            if active == true {
+                if let target = d.fan_boost_target_rpm {
+                    fanTargetRPM = min(max(Double(target), 0), maxRPM)
+                }
+                fanAuto = false
+            } else if active == false {
+                fanAuto = true
             }
         }
     }
@@ -230,8 +255,12 @@ struct iOSMachineView: View {
 
     private func sendRevert(_ d: DeviceRecord) {
         fanRequested = false
-        runCommand { try await state.api.remoteSendMachineCommand(
-            deviceId: d.id, kind: "revert_fan_auto") }
+        fanAuto = true   // optimistic: slider snaps back to the live/Auto point now
+        // Roll back on failure (mirrors sendBoost/sendLPM): otherwise a failed
+        // revert leaves the slider falsely "Auto" with Revert disabled while the
+        // Mac keeps boosting, and onChange can't fix it (no true→true transition).
+        runCommand({ try await state.api.remoteSendMachineCommand(
+            deviceId: d.id, kind: "revert_fan_auto") }, onError: { fanAuto = false })
     }
 
     private func sendLPM(_ d: DeviceRecord, on: Bool) {
