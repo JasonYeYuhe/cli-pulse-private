@@ -62,6 +62,7 @@ public enum L10n {
         public static var switchCompanion: String { tr("pet.switch_companion") }
         public static var whyHatched: String { tr("pet.why_hatched") }
         public static var locked: String { tr("pet.locked") }
+        public static var comingSoon: String { tr("pet.coming_soon") }
         public static func ownedOn(_ date: String) -> String { tr("pet.owned_on", date) }
         // Vitals
         public static var energy: String { tr("pet.energy") }

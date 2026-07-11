@@ -252,7 +252,8 @@ public struct PetTab: View {
                         Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                Text(entry.owned ? PetSettings.displayName(for: entry.form) : L10n.pet.locked)
+                Text(entry.owned ? PetSettings.displayName(for: entry.form)
+                     : (entry.form.isInHatchPool ? L10n.pet.locked : L10n.pet.comingSoon))
                     .font(.caption2).lineLimit(1)
                     .foregroundStyle(entry.owned ? .primary : .secondary)
             }
@@ -365,7 +366,8 @@ public struct PetTab: View {
         "\(PetSettings.displayName(for: form)) — \(vitalWord(vm.model.vitals.energy)), \(confidenceLine(vm.model.vitals))"
     }
     private func catteryVoiceOver(_ e: PetCatteryEntry) -> String {
-        e.owned ? "\(PetSettings.displayName(for: e.form))\(e.isActive ? ", active" : "")" : "\(L10n.pet.formName(e.form)), \(L10n.pet.locked)"
+        e.owned ? "\(PetSettings.displayName(for: e.form))\(e.isActive ? ", active" : "")"
+                : "\(L10n.pet.formName(e.form)), \(e.form.isInHatchPool ? L10n.pet.locked : L10n.pet.comingSoon)"
     }
     private var dietVoiceOver: String {
         vm.model.diet.map { "\($0.family.localizedName) \(Int($0.percent.rounded()))%" }.joined(separator: ", ")

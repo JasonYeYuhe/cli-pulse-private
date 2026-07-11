@@ -971,3 +971,11 @@
 "pet.form_pop" = "炸嘴貓";
 "pet.form_long" = "拉長貓";
 "pet.form_huh" = "歪頭疑惑貓";
+
+/* v1.42 Pulse Cat future-drop forms */
+"pet.coming_soon" = "即將登場";
+"pet.form_sulk" = "委屈嘟嘴貓";
+"pet.form_wail" = "抱頭驚叫貓";
+"pet.form_chonk" = "淡定墩墩貓";
+"pet.form_boss" = "嚴肅主管貓";
+"pet.form_smug" = "傲嬌千金貓";

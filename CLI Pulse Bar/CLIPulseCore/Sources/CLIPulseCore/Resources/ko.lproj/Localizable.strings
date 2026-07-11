@@ -694,3 +694,11 @@
 "pet.form_pop" = "뻥긋냥";
 "pet.form_long" = "쭉냥";
 "pet.form_huh" = "갸웃냥";
+
+/* v1.42 Pulse Cat future-drop forms */
+"pet.coming_soon" = "출시 예정";
+"pet.form_sulk" = "뾰로통냥";
+"pet.form_wail" = "머리감싸 절규냥";
+"pet.form_chonk" = "무표정 뚱냥";
+"pet.form_boss" = "엄격한 상사냥";
+"pet.form_smug" = "도도한 아가씨냥";

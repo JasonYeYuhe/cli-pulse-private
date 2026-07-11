@@ -694,3 +694,11 @@
 "pet.form_pop" = "Boca-Pop";
 "pet.form_long" = "Gato Estirado";
 "pet.form_huh" = "Ladeo ¿Eh?";
+
+/* v1.42 Pulse Cat future-drop forms */
+"pet.coming_soon" = "Próximamente";
+"pet.form_sulk" = "Puchero Ofendido";
+"pet.form_wail" = "Grito Agarracabeza";
+"pet.form_chonk" = "Gordito Impasible";
+"pet.form_boss" = "Jefe Severo";
+"pet.form_smug" = "Duquesa Presumida";

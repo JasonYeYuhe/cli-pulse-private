@@ -47,7 +47,7 @@ public struct PetCatteryEntry: Identifiable, Sendable, Equatable {
 }
 
 public enum PetCattery {
-    /// All 6 forms in canonical order, with owned/date/active flags — the
+    /// All forms in canonical order, with owned/date/active flags — the
     /// silhouette→color grid (locked forms show as silhouettes in the UI).
     public static func entries(state: PetState) -> [PetCatteryEntry] {
         PetForm.allCases.map { form in

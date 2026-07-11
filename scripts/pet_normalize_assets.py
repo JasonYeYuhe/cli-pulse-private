@@ -33,10 +33,11 @@ DEST = os.path.join(REPO, "CLI Pulse Bar", "CLIPulseCore", "Sources", "CLIPulseC
 
 CAT_STATES = {"idle_0", "idle_1", "active_0", "active_1", "sleep_0"}
 EGG_STATES = {"idle_0", "idle_1", "crack1", "crack2", "crack3", "hatch_burst"}
-FORMS = {"loaf", "polite", "smash", "pop", "long", "huh", "egg"}
+FORMS = {"loaf", "polite", "smash", "pop", "long", "huh",
+         "sulk", "wail", "chonk", "boss", "smug", "egg"}
 
 
-def white_to_alpha(im):
+def white_to_alpha(im, kernel=5):
     """STICKER-style background removal: only the OUTER white background (the
     region flood-connected to the image border) becomes transparent; whites
     INSIDE the subject (the cat's body) stay opaque. A globally white→alpha
@@ -55,7 +56,7 @@ def white_to_alpha(im):
     # 1. Close hairline gaps in the ink outline before flood filling: MinFilter(5)
     #    dilates dark lines ~2px, so the fill can't leak into the body through a
     #    1-4px break in a stroke (which turned whole cats transparent).
-    barrier = gray.filter(ImageFilter.MinFilter(5))
+    barrier = gray.filter(ImageFilter.MinFilter(kernel))
     # Pad with the SAMPLED corner shade (not hardcoded white) so an off-white
     #    backdrop still flood-connects to the padding ring (agy M3#2).
     padded = Image.new("RGB", (w + 4, h + 4), (corner, corner, corner))
@@ -69,7 +70,7 @@ def white_to_alpha(im):
     #    padded mask and slice afterwards — slicing first would drop the
     #    padding ring, the only background left beside a border-touching
     #    subject, leaving an opaque halo (agy M3#1).
-    grown = Image.fromarray((bg_small * 255).astype("uint8")).filter(ImageFilter.MaxFilter(5))
+    grown = Image.fromarray((bg_small * 255).astype("uint8")).filter(ImageFilter.MaxFilter(kernel))
     bg = np.array(grown)[2:-2, 2:-2] > 0
     # 3. …but never eat actual ink: dark pixels always stay opaque.
     bg &= np.array(gray) > 200
@@ -160,15 +161,26 @@ def main():
                 print(f"  skip (unrecognized name): {os.path.relpath(src, root)}")
                 continue
             form, state = tgt
+            # Adaptive gap-closing: sketchy/fluffy outlines have larger breaks
+            # than the default 2px closure; escalate the kernel until the fill
+            # stops leaking into the subject, and only then give up.
+            src_img = Image.open(src)
+            im = None
             try:
-                im = trim_and_center(white_to_alpha(Image.open(src)))
+                for kernel in (5, 7, 9, 11):
+                    candidate = trim_and_center(white_to_alpha(src_img, kernel=kernel))
+                    if not leaked(candidate, form, state):
+                        im = candidate
+                        if kernel > 5:
+                            print(f"  note: {form}_{state} needed kernel={kernel} gap-closing")
+                        break
             except ValueError as e:
                 print(f"  REJECT {form}_{state}: {e}")
                 bad += 1
                 continue
-            if leaked(im, form, state):
+            if im is None:
                 print(f"  REJECT {form}_{state}: flood fill leaked into the subject "
-                      f"(outline gap ≥5px?) — NOT writing a see-through frame")
+                      f"even with 11px gap-closing — NOT writing a see-through frame")
                 bad += 1
                 continue
             # 64-color palette quantization: line-art is black/white/gray, so this

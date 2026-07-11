@@ -45,4 +45,23 @@ final class PetRulesetTests: XCTestCase {
         XCTAssertTrue(PetRuleset.isActiveDay(tokens: 19_999, messages: 5))   // either suffices
         XCTAssertFalse(PetRuleset.isActiveDay(tokens: 19_999, messages: 4))  // neither
     }
+
+    func test_future_drop_forms_never_rule_hatch() {
+        // The v1 ruleset's range is EXACTLY the 6-form hatch pool: every
+        // (dominant, tempo) combination resolves inside it, so future-drop
+        // forms (sulk/wail/chonk/boss/smug) can never hatch until a ruleset
+        // revision maps them — they are "coming soon" collection teasers.
+        XCTAssertEqual(PetForm.v1HatchPool, [.loaf, .polite, .smash, .pop, .long, .huh])
+        for dominant in [PetFamily.anthropic, .openai, .google, .other] {
+            for tempo in PetTempo.allCases {
+                XCTAssertTrue(PetRuleset.resolveForm(dominant: dominant, tempo: tempo).isInHatchPool)
+            }
+        }
+        for tempo in PetTempo.allCases {
+            XCTAssertTrue(PetRuleset.resolveForm(dominant: nil, tempo: tempo).isInHatchPool)
+        }
+        for f in PetForm.allCases where !f.isInHatchPool {
+            XCTAssertEqual(f.family, .other, "future drops stay provider-neutral until mapped")
+        }
+    }
 }
