@@ -72,7 +72,7 @@ final class PetPresentationTests: XCTestCase {
     func test_cattery_reflects_ownership() {
         let state = PetState(ownedForms: ["loaf"], ownedDayKeys: ["loaf": "2026-07-01"], activeForm: "loaf")
         let entries = PetCattery.entries(state: state)
-        XCTAssertEqual(entries.count, 6)
+        XCTAssertEqual(entries.count, PetForm.allCases.count)
         let loaf = entries.first { $0.form == .loaf }
         XCTAssertEqual(loaf?.owned, true)
         XCTAssertEqual(loaf?.isActive, true)
@@ -89,7 +89,7 @@ final class PetPresentationTests: XCTestCase {
         let v = PetSampleData.vitals()
         XCTAssertEqual(v.confidence, .live)                  // sample is "fresh" by construction
         XCTAssertFalse(PetSampleData.diet().isEmpty)
-        XCTAssertEqual(PetSampleData.cattery().count, 6)
+        XCTAssertEqual(PetSampleData.cattery().count, PetForm.allCases.count)
         XCTAssertEqual(PetSampleData.diet().first?.family, .anthropic)   // Anthropic-leaning
     }
 }

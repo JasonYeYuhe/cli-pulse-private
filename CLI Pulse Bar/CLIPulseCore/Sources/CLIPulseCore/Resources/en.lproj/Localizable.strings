@@ -969,3 +969,11 @@
 "pet.form_pop" = "Pop-Mouth";
 "pet.form_long" = "Stretched Long";
 "pet.form_huh" = "Head-Tilt Huh?";
+
+/* v1.42 Pulse Cat future-drop forms */
+"pet.coming_soon" = "Coming soon";
+"pet.form_sulk" = "Sulky Pout";
+"pet.form_wail" = "Headclutch Wail";
+"pet.form_chonk" = "Deadpan Chonk";
+"pet.form_boss" = "Middle Manager";
+"pet.form_smug" = "Smug Duchess";
