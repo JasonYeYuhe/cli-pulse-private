@@ -976,3 +976,10 @@
 "pet.companion_toggle" = "デスクトップの相棒を表示";
 "pet.companion_clickthrough" = "相棒をクリックスルー";
 "pet.companion_clickthrough_hint" = "再び操作するにはここでオフにします。";
+/* v1.42 Pulse Cat future-drop forms */
+"pet.coming_soon" = "近日登場";
+"pet.form_sulk" = "しょんぼりむくれ猫";
+"pet.form_wail" = "頭かかえ絶叫猫";
+"pet.form_chonk" = "無表情もちもち猫";
+"pet.form_boss" = "きびしい上司猫";
+"pet.form_smug" = "ドヤ顔おじょう猫";

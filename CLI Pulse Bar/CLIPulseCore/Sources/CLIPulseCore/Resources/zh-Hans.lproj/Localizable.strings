@@ -976,3 +976,10 @@
 "pet.companion_toggle" = "显示桌面陪伴";
 "pet.companion_clickthrough" = "点击穿透陪伴";
 "pet.companion_clickthrough_hint" = "需要再次操作时在此关闭。";
+/* v1.42 Pulse Cat future-drop forms */
+"pet.coming_soon" = "即将登场";
+"pet.form_sulk" = "委屈嘟嘴猫";
+"pet.form_wail" = "抱头惊叫猫";
+"pet.form_chonk" = "淡定墩墩猫";
+"pet.form_boss" = "严肃主管猫";
+"pet.form_smug" = "傲娇千金猫";

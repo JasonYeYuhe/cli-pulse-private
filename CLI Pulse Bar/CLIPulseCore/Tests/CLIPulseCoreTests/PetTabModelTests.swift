@@ -13,7 +13,7 @@ final class PetTabModelTests: XCTestCase {
         XCTAssertEqual(m.activeForm, .loaf)
         if case .hasCompanion(let f) = m.hatchStatus { XCTAssertEqual(f, .loaf) } else { XCTFail("expected companion") }
         XCTAssertFalse(m.diet.isEmpty)
-        XCTAssertEqual(m.cattery.count, 6)
+        XCTAssertEqual(m.cattery.count, PetForm.allCases.count)
     }
 
     func test_fresh_qualifying_week_reads_ready_to_hatch() {

@@ -699,3 +699,10 @@
 "pet.companion_toggle" = "데스크톱 동료 표시";
 "pet.companion_clickthrough" = "동료 클릭 통과";
 "pet.companion_clickthrough_hint" = "다시 조작하려면 여기서 끄세요.";
+/* v1.42 Pulse Cat future-drop forms */
+"pet.coming_soon" = "출시 예정";
+"pet.form_sulk" = "뾰로통냥";
+"pet.form_wail" = "머리감싸 절규냥";
+"pet.form_chonk" = "무표정 뚱냥";
+"pet.form_boss" = "엄격한 상사냥";
+"pet.form_smug" = "도도한 아가씨냥";

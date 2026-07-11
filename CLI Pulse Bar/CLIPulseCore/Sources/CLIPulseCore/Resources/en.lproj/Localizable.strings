@@ -974,3 +974,10 @@
 "pet.companion_toggle" = "Show desktop companion";
 "pet.companion_clickthrough" = "Click through the companion";
 "pet.companion_clickthrough_hint" = "Turn this off here to interact with it again.";
+/* v1.42 Pulse Cat future-drop forms */
+"pet.coming_soon" = "Coming soon";
+"pet.form_sulk" = "Sulky Pout";
+"pet.form_wail" = "Headclutch Wail";
+"pet.form_chonk" = "Deadpan Chonk";
+"pet.form_boss" = "Middle Manager";
+"pet.form_smug" = "Smug Duchess";
