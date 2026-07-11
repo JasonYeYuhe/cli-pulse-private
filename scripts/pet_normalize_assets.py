@@ -36,15 +36,36 @@ FORMS = {"loaf", "polite", "smash", "pop", "long", "huh", "egg"}
 
 
 def white_to_alpha(im):
-    im = im.convert("RGBA")
-    px = im.load()
-    w, h = im.size
-    for y in range(h):
-        for x in range(w):
-            r, g, b, a = px[x, y]
-            if r >= WHITE_THRESHOLD and g >= WHITE_THRESHOLD and b >= WHITE_THRESHOLD:
-                px[x, y] = (r, g, b, 0)
-    return im
+    """STICKER-style background removal: only the OUTER white background (the
+    region flood-connected to the image border) becomes transparent; whites
+    INSIDE the subject (the cat's body) stay opaque. A globally white→alpha
+    pass made the body see-through, so black line-art vanished on dark
+    wallpapers / dark mode — the die-cut-sticker look keeps it legible anywhere.
+    """
+    from PIL import ImageDraw, ImageFilter
+    import numpy as np
+    rgb = im.convert("RGB")
+    w, h = rgb.size
+    gray = rgb.convert("L")
+    # 1. Close hairline gaps in the ink outline before flood filling: MinFilter(5)
+    #    dilates dark lines ~2px, so the fill can't leak into the body through a
+    #    1-4px break in a stroke (which turned whole cats transparent).
+    barrier = gray.filter(ImageFilter.MinFilter(5))
+    padded = Image.new("RGB", (w + 4, h + 4), (255, 255, 255))
+    padded.paste(Image.merge("RGB", (barrier, barrier, barrier)), (2, 2))
+    sentinel = (255, 0, 255)
+    ImageDraw.floodfill(padded, (0, 0), sentinel, thresh=256 - WHITE_THRESHOLD + 30)
+    arr = np.array(padded)[2:-2, 2:-2]
+    bg_small = (arr[:, :, 0] == 255) & (arr[:, :, 1] == 0) & (arr[:, :, 2] == 255)
+    # 2. Dilate the (conservatively small) background mask back out so the
+    #    transparent region hugs the true line edge again…
+    grown = Image.fromarray((bg_small * 255).astype("uint8")).filter(ImageFilter.MaxFilter(5))
+    bg = np.array(grown) > 0
+    # 3. …but never eat actual ink: dark pixels always stay opaque.
+    bg &= np.array(gray) > 200
+    out_arr = np.array(im.convert("RGBA"))
+    out_arr[bg] = (255, 255, 255, 0)
+    return Image.fromarray(out_arr, "RGBA")
 
 
 def trim_and_center(im):
@@ -116,10 +137,13 @@ def main():
                 continue
             form, state = tgt
             im = trim_and_center(white_to_alpha(Image.open(src)))
+            # 64-color palette quantization: line-art is black/white/gray, so this
+            # is visually lossless and ~10x smaller (3.9MB → 0.4MB for the set).
+            im = im.quantize(colors=64, method=Image.FASTOCTREE)
             # Flat <form>_<state>.png — SPM .process flattens basenames, so nested
             # names would collide (matches scripts/pet_art/export.sh).
             os.makedirs(DEST, exist_ok=True)
-            im.save(os.path.join(DEST, f"{form}_{state}.png"))
+            im.save(os.path.join(DEST, f"{form}_{state}.png"), optimize=True)
             print(f"  {form}_{state}.png")
             done += 1
     print(f"normalized {done} asset(s) → {DEST}")
