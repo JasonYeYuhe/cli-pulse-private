@@ -86,4 +86,4 @@ HelperSwift/Package.resolved
 
 # Gemini review raw dumps (provenance kept local; canonical record is the PLAN disposition tables)
 .gemini-review-*.txt
-art-src/
+/art-src/

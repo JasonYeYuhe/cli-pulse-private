@@ -19,9 +19,10 @@ names/likeness); this script only normalizes geometry, it does not create art.
 import os, sys, re
 
 try:
-    from PIL import Image
-except ImportError:
-    sys.exit("pet_normalize_assets: needs Pillow (pip install Pillow)")
+    from PIL import Image, ImageDraw, ImageFilter
+    import numpy as np
+except ImportError as e:
+    sys.exit(f"pet_normalize_assets: missing dependency ({e.name}) — pip install Pillow numpy")
 
 CANVAS = 512
 MARGIN = 40           # transparent margin around trimmed content
@@ -42,30 +43,52 @@ def white_to_alpha(im):
     pass made the body see-through, so black line-art vanished on dark
     wallpapers / dark mode — the die-cut-sticker look keeps it legible anywhere.
     """
-    from PIL import ImageDraw, ImageFilter
-    import numpy as np
     rgb = im.convert("RGB")
     w, h = rgb.size
     gray = rgb.convert("L")
+    # 0. The algorithm assumes a light background; a mid/dark backdrop can't be
+    #    told apart from ink, so refuse it loudly rather than emit garbage.
+    corners = [gray.getpixel(p) for p in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]]
+    corner = max(corners)
+    if corner < 200:
+        raise ValueError(f"background too dark (corner={corner}) — need light background")
     # 1. Close hairline gaps in the ink outline before flood filling: MinFilter(5)
     #    dilates dark lines ~2px, so the fill can't leak into the body through a
     #    1-4px break in a stroke (which turned whole cats transparent).
     barrier = gray.filter(ImageFilter.MinFilter(5))
-    padded = Image.new("RGB", (w + 4, h + 4), (255, 255, 255))
+    # Pad with the SAMPLED corner shade (not hardcoded white) so an off-white
+    #    backdrop still flood-connects to the padding ring (agy M3#2).
+    padded = Image.new("RGB", (w + 4, h + 4), (corner, corner, corner))
     padded.paste(Image.merge("RGB", (barrier, barrier, barrier)), (2, 2))
     sentinel = (255, 0, 255)
     ImageDraw.floodfill(padded, (0, 0), sentinel, thresh=256 - WHITE_THRESHOLD + 30)
-    arr = np.array(padded)[2:-2, 2:-2]
+    arr = np.array(padded)
     bg_small = (arr[:, :, 0] == 255) & (arr[:, :, 1] == 0) & (arr[:, :, 2] == 255)
     # 2. Dilate the (conservatively small) background mask back out so the
-    #    transparent region hugs the true line edge again…
+    #    transparent region hugs the true line edge again. Dilate on the FULL
+    #    padded mask and slice afterwards — slicing first would drop the
+    #    padding ring, the only background left beside a border-touching
+    #    subject, leaving an opaque halo (agy M3#1).
     grown = Image.fromarray((bg_small * 255).astype("uint8")).filter(ImageFilter.MaxFilter(5))
-    bg = np.array(grown) > 0
+    bg = np.array(grown)[2:-2, 2:-2] > 0
     # 3. …but never eat actual ink: dark pixels always stay opaque.
     bg &= np.array(gray) > 200
     out_arr = np.array(im.convert("RGBA"))
     out_arr[bg] = (255, 255, 255, 0)
     return Image.fromarray(out_arr, "RGBA")
+
+
+def leaked(im, form, state):
+    """Leak validation (codex M3#1): if the flood fill invaded the subject (an
+    outline gap ≥5px the MinFilter couldn't close), the CENTER of the frame goes
+    transparent. Detect that and refuse to write a destructive result. The
+    hatch-burst effect is legitimately hollow-centered — exempt."""
+    if state == "hatch_burst":
+        return False
+    a = np.array(im)[:, :, 3]
+    h, w = a.shape
+    center = a[int(h * 0.40):int(h * 0.65), int(w * 0.38):int(w * 0.62)]
+    return float((center == 0).mean()) > 0.5
 
 
 def trim_and_center(im):
@@ -126,6 +149,7 @@ def main():
         sys.exit(0 if _selftest() else 1)
     root = sys.argv[1]
     done = 0
+    bad = 0
     for dirpath, _, files in os.walk(root):
         for fn in files:
             if not fn.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
@@ -136,7 +160,17 @@ def main():
                 print(f"  skip (unrecognized name): {os.path.relpath(src, root)}")
                 continue
             form, state = tgt
-            im = trim_and_center(white_to_alpha(Image.open(src)))
+            try:
+                im = trim_and_center(white_to_alpha(Image.open(src)))
+            except ValueError as e:
+                print(f"  REJECT {form}_{state}: {e}")
+                bad += 1
+                continue
+            if leaked(im, form, state):
+                print(f"  REJECT {form}_{state}: flood fill leaked into the subject "
+                      f"(outline gap ≥5px?) — NOT writing a see-through frame")
+                bad += 1
+                continue
             # 64-color palette quantization: line-art is black/white/gray, so this
             # is visually lossless and ~10x smaller (3.9MB → 0.4MB for the set).
             im = im.quantize(colors=64, method=Image.FASTOCTREE)
@@ -147,6 +181,8 @@ def main():
             print(f"  {form}_{state}.png")
             done += 1
     print(f"normalized {done} asset(s) → {DEST}")
+    if bad:
+        sys.exit(f"pet_normalize_assets: {bad} asset(s) REJECTED — regenerate those frames")
 
 
 if __name__ == "__main__":
