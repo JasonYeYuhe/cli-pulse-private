@@ -164,6 +164,30 @@ public actor PetCoordinator {
         return true
     }
 
+    // MARK: - Debug helpers (DEBUG builds only — the M1 plan's debug-menu backend)
+
+    #if DEBUG
+    /// Force-hatch a form regardless of the window/timing rules (debug menu).
+    /// Appends a normal hatch event (no whySnapshot — it was not rule-derived).
+    @discardableResult
+    public func debugForceHatch(_ form: PetForm, dayKey: String, nowUnixMs: Int64) -> PetState {
+        let log = loadedEvents()
+        let state = PetCoordinator.rebuild(from: log)
+        guard !state.owns(form) else { return state }
+        let event = PetEvent(kind: .hatch, dayKey: dayKey, timestampUnixMs: nowUnixMs, form: form.rawValue)
+        guard commit(event, to: log) else { return state }
+        return PetCoordinator.rebuild(from: events ?? log)
+    }
+
+    /// Wipe the collection (event log + snapshot) — debug reset.
+    public func debugResetCollection() {
+        try? FileManager.default.removeItem(at: Self.eventsURL(root: root))
+        try? FileManager.default.removeItem(at: Self.snapshotURL(root: root))
+        events = []
+        NotificationCenter.default.post(name: .petStateDidChange, object: nil)
+    }
+    #endif
+
     // MARK: - IO (Application Support/CLIPulse)
 
     static let eventsFileName = "pet-events-v1.jsonl"

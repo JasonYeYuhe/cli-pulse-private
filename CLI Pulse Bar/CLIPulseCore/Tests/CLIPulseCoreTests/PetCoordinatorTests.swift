@@ -212,4 +212,24 @@ final class PetCoordinatorTests: XCTestCase {
         XCTAssertTrue(out.state.ownedForms.isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: PetCoordinator.eventsURL(root: root).path))
     }
+
+    func test_debug_force_hatch_and_reset() async {
+        // DEBUG-only affordances (tests always build DEBUG): unlock-all backend
+        // bypasses window/timing rules; reset wipes back to a fresh egg.
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coord = PetCoordinator(root: root)
+        var s = await coord.debugForceHatch(.pop, dayKey: "2026-07-01", nowUnixMs: 1)
+        s = await coord.debugForceHatch(.long, dayKey: "2026-07-08", nowUnixMs: 2)
+        XCTAssertEqual(s.ownedForms, ["pop", "long"])
+        XCTAssertEqual(s.activeForm, "pop")               // first stays active
+        // Idempotent on an owned form.
+        s = await coord.debugForceHatch(.pop, dayKey: "2026-07-09", nowUnixMs: 3)
+        XCTAssertEqual(s.ownedForms, ["pop", "long"])
+        // Reset wipes files + memory; a fresh coordinator sees nothing.
+        await coord.debugResetCollection()
+        let after = await coord.state()
+        XCTAssertTrue(after.ownedForms.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: PetCoordinator.eventsURL(root: root).path))
+    }
 }

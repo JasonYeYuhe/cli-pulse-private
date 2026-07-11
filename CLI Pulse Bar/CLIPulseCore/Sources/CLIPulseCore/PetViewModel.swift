@@ -132,4 +132,25 @@ public final class PetViewModel: ObservableObject {
         PetSettings.setName(name, for: form)
         objectWillChange.send()
     }
+
+    // MARK: - Debug (DEBUG builds only)
+
+    #if DEBUG && os(macOS)
+    /// Unlock every form (hatch dates spread over past weeks so the Cattery
+    /// reads naturally). Debug-menu affordance for testing the full collection.
+    public func debugUnlockAll() async {
+        let today = Self.todayKey()
+        for (i, form) in PetForm.allCases.enumerated() {
+            let day = DailyUsageStats.shift(today, byDays: -7 * (PetForm.allCases.count - 1 - i)) ?? today
+            _ = await PetCoordinator.shared.debugForceHatch(form, dayKey: day, nowUnixMs: PetLedgerManager.nowMs())
+        }
+        await reload()
+    }
+
+    /// Wipe the collection back to a fresh egg.
+    public func debugReset() async {
+        await PetCoordinator.shared.debugResetCollection()
+        await reload()
+    }
+    #endif
 }

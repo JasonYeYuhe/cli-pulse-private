@@ -318,6 +318,17 @@ public struct PetTab: View {
                 copySummary()
             } label: { Label(L10n.pet.copySummary, systemImage: "doc.on.doc") }
                 .buttonStyle(.plain).font(.callout)
+            #if DEBUG && os(macOS)
+            // Debug-build-only test affordances (the M1 plan's debug menu; not
+            // compiled into release builds, so English-only is fine).
+            Divider()
+            HStack(spacing: 14) {
+                Button("Debug: Unlock all cats") { Task { await vm.debugUnlockAll() } }
+                    .buttonStyle(.plain).font(.caption).foregroundStyle(.orange)
+                Button("Debug: Reset collection") { Task { await vm.debugReset() } }
+                    .buttonStyle(.plain).font(.caption).foregroundStyle(.orange)
+            }
+            #endif
         }
     }
 
