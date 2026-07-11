@@ -268,6 +268,11 @@ struct iPadSplitView: View {
             iOSSwarmTab()
         case .alerts:
             iOSAlertsTab()
+        case .pet:
+            // The Pet tab (floating companion + local ledger) is macOS-only in
+            // v1; iOS has no Pet sidebar button, so this arm is unreachable —
+            // fall back to the dashboard to satisfy the exhaustive switch.
+            iOSOverviewTab()
         case .settings:
             iOSSettingsTab()
         }

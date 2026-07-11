@@ -71,12 +71,38 @@ def parse_target(path, root):
             valid = EGG_STATES if form == "egg" else CAT_STATES
             if state in valid:
                 return form, state
+            # Accept the ART_ASSET_LIST single-frame egg names that carry a
+            # trailing "_0" (crack1_0, crack2_0, crack3_0, hatch_burst_0) which
+            # map to the frame-less runtime state (Codex M2#7).
+            if state.endswith("_0") and state[:-2] in valid:
+                return form, state[:-2]
     return None
+
+
+def _selftest():
+    cases = {
+        "egg/crack1_0.png": ("egg", "crack1"),
+        "egg/hatch_burst_0.png": ("egg", "hatch_burst"),
+        "egg/idle_1.png": ("egg", "idle_1"),
+        "loaf/active_0.png": ("loaf", "active_0"),
+        "pop_idle_0.png": ("pop", "idle_0"),
+        "unknown/thing.png": None,
+    }
+    ok = True
+    for rel, expect in cases.items():
+        got = parse_target(os.path.join("/in", rel), "/in")
+        status = "ok" if got == expect else "FAIL"
+        if got != expect: ok = False
+        print(f"  [{status}] {rel} -> {got} (expected {expect})")
+    print("selftest passed" if ok else "selftest FAILED")
+    return ok
 
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit("usage: pet_normalize_assets.py <input_dir>")
+        sys.exit("usage: pet_normalize_assets.py <input_dir> | --selftest")
+    if sys.argv[1] == "--selftest":
+        sys.exit(0 if _selftest() else 1)
     root = sys.argv[1]
     done = 0
     for dirpath, _, files in os.walk(root):

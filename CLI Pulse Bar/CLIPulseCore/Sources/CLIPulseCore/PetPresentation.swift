@@ -21,11 +21,14 @@ public enum PetUsageDiet {
     public static func compute(ledger: PetDailyLedger, todayKey: String) -> [PetDietSlice] {
         let keys = PetRuleset.windowKeys(endingAt: todayKey)
         let fam = ledger.familyRollup(forDays: keys)
-        let total = fam.values.reduce(Int64(0)) { PetSaturating.add($0, $1.weightedScore) }
-        guard total > 0 else { return [] }
+        // Percentages divide by a DOUBLE sum (not the saturating Int64 total) so
+        // adversarial/extreme scores don't all saturate to Int64.max and read as
+        // 100% each — the shares still sum to 100 (Codex M2#9).
+        let doubleTotal = fam.values.reduce(0.0) { $0 + Double($1.weightedScore) }
+        guard doubleTotal > 0 else { return [] }
         return fam.map { (family, roll) in
             PetDietSlice(family: family, weightedScore: roll.weightedScore,
-                         percent: Double(roll.weightedScore) / Double(total) * 100)
+                         percent: Double(roll.weightedScore) / doubleTotal * 100)
         }
         .filter { $0.weightedScore > 0 }
         .sorted { $0.weightedScore != $1.weightedScore ? $0.weightedScore > $1.weightedScore
@@ -67,9 +70,13 @@ public enum PetHatchStatus: Equatable, Sendable {
     case hasCompanion(form: PetForm)      // showing an owned active pet
 
     public static func from(decision: PetHatchDecision, state: PetState) -> PetHatchStatus {
+        // An active companion is the primary hero. A new hatch being ready is a
+        // SEPARATE prompt (decision.shouldHatch) the UI surfaces alongside — it
+        // must not replace the pet you already have. Only when there's no
+        // companion yet does the egg / hatch-ready / owned-wait state lead.
+        if let raw = state.activeForm, let f = PetForm(rawValue: raw) { return .hasCompanion(form: f) }
         if decision.shouldHatch, let f = decision.hatchedForm { return .readyToHatch(form: f) }
         if decision.alreadyOwnedThisWeek { return .ownedThisWeek(form: decision.profile.resolvedForm) }
-        if let raw = state.activeForm, let f = PetForm(rawValue: raw) { return .hasCompanion(form: f) }
         return .egg(stage: decision.eggStage)
     }
 }
