@@ -35,7 +35,55 @@ public enum L10n {
         public static var sessions: String { tr("tab.sessions") }
         public static var swarm: String { tr("tab.swarm") }
         public static var alerts: String { tr("tab.alerts") }
+        public static var pet: String { tr("tab.pet") }
         public static var settings: String { tr("tab.settings") }
+    }
+
+    // MARK: - Pet (Pulse Cat, v1.42)
+
+    public enum pet {
+        public static var title: String { tr("pet.title") }
+        public static var subtitle: String { tr("pet.subtitle") }
+        public static var enable: String { tr("pet.enable") }
+        public static var enabledToggle: String { tr("pet.enabled_toggle") }
+        public static var disabledBody: String { tr("pet.disabled_body") }
+        public static var sampleBadge: String { tr("pet.sample_badge") }
+        public static var eggTitle: String { tr("pet.egg_title") }
+        public static var eggBody: String { tr("pet.egg_body") }
+        public static func eggProgress(_ active: String, _ needed: String) -> String { tr("pet.egg_progress", active, needed) }
+        public static var hatchReady: String { tr("pet.hatch_ready") }
+        public static var hatchButton: String { tr("pet.hatch_button") }
+        public static var ownedThisWeek: String { tr("pet.owned_this_week") }
+        public static var nameItTitle: String { tr("pet.name_it_title") }
+        public static var namePlaceholder: String { tr("pet.name_placeholder") }
+        public static var cattery: String { tr("pet.cattery") }
+        public static func catteryCount(_ owned: String, _ total: String) -> String { tr("pet.cattery_count", owned, total) }
+        public static var usageDiet: String { tr("pet.usage_diet") }
+        public static var switchCompanion: String { tr("pet.switch_companion") }
+        public static var whyHatched: String { tr("pet.why_hatched") }
+        public static var locked: String { tr("pet.locked") }
+        public static func ownedOn(_ date: String) -> String { tr("pet.owned_on", date) }
+        // Vitals
+        public static var energy: String { tr("pet.energy") }
+        public static var hunger: String { tr("pet.hunger") }
+        public static var mood: String { tr("pet.mood") }
+        public static var vitalSleeping: String { tr("pet.vital_sleeping") }
+        public static var vitalIdle: String { tr("pet.vital_idle") }
+        public static var vitalWorking: String { tr("pet.vital_working") }
+        public static var vitalSprint: String { tr("pet.vital_sprint") }
+        public static var moodContent: String { tr("pet.mood_content") }
+        public static var moodWatchful: String { tr("pet.mood_watchful") }
+        public static var moodWindy: String { tr("pet.mood_windy") }
+        public static var confLive: String { tr("pet.conf_live") }
+        public static func confStale(_ ago: String) -> String { tr("pet.conf_stale", ago) }
+        public static var confUnavailable: String { tr("pet.conf_unavailable") }
+        public static var copySummary: String { tr("pet.copy_summary") }
+        // Family + form display names
+        public static var familyAnthropic: String { tr("pet.family_anthropic") }
+        public static var familyOpenAI: String { tr("pet.family_openai") }
+        public static var familyGoogle: String { tr("pet.family_google") }
+        public static var familyOther: String { tr("pet.family_other") }
+        public static func formName(_ form: PetForm) -> String { tr("pet.form_\(form.rawValue)") }
     }
 
     // MARK: - Machine (System Monitor)

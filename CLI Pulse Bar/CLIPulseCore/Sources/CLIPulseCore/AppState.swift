@@ -719,6 +719,7 @@ public final class AppState: ObservableObject {
         case sessions = "Sessions"
         case swarm = "Swarm"
         case alerts = "Alerts"
+        case pet = "Pet"
         case settings = "Settings"
 
         public var icon: String {
@@ -729,6 +730,7 @@ public final class AppState: ObservableObject {
             case .sessions: return "terminal"
             case .swarm: return "square.grid.3x3.fill"
             case .alerts: return "bell.badge"
+            case .pet: return "pawprint.fill"
             case .settings: return "gear"
             }
         }
@@ -741,6 +743,7 @@ public final class AppState: ObservableObject {
             case .sessions: return L10n.tab.sessions
             case .swarm: return L10n.tab.swarm
             case .alerts: return L10n.tab.alerts
+            case .pet: return L10n.tab.pet
             case .settings: return L10n.tab.settings
             }
         }
