@@ -493,6 +493,55 @@ def _swarm_heartbeat(config: "HelperConfig") -> None:
         logger.debug("swarm heartbeat soft-failed (S2 may be undeployed): %s", exc)
 
 
+# macOS 26.5 cold-login containermanagerd race — see
+# PROJECT_FIX_2026-07-11_helper-launchd-container-watchdog.md.
+# The app-group container (~/Library/Group Containers/group.yyh.CLI-Pulse/) is
+# vended by containermanagerd. When the LaunchAgent fires at LOGIN (RunAtLoad)
+# before containermanagerd has provisioned that container for this Developer-ID
+# (non-sandboxed) helper, the FIRST access — rotate_token()'s os.open — can
+# block INSIDE containermanagerd and never return. The daemon then hangs
+# silently: the UDS socket never binds, the app shows the helper "not
+# installed" forever, and KeepAlive can't help because a hung process never
+# exits. The app-group entitlement (shipped 1.18.1) fixed the older in-kernel
+# variant but does NOT cover this cold-login consult on 26.5. Guard the first
+# container touch with a watchdog: if it exceeds the ceiling, hard-exit so
+# launchd KeepAlive respawns us against a now-warmer containermanagerd.
+# Empirically the access completes in ~2s once warm, so the ceiling is a
+# generous multiple; this converts a permanent silent hang into a self-healing
+# respawn that clears within a few seconds of login.
+_CONTAINER_ACCESS_WATCHDOG_S = 12.0
+
+
+def _rotate_token_or_respawn(rotate_token, timeout: float = _CONTAINER_ACCESS_WATCHDOG_S) -> str:
+    """Call ``rotate_token()`` under a watchdog. If the app-group container
+    access hangs past ``timeout`` (macOS cold-login containermanagerd race),
+    hard-exit the process so the LaunchAgent's KeepAlive respawns it against a
+    warm container instead of hanging silently forever. Returns the rotated
+    token on success; re-raises any exception rotate_token itself raises.
+    """
+    def _bail() -> None:
+        logger.error(
+            "app-group container access exceeded %.0fs at startup (macOS "
+            "cold-login containermanagerd race) — exiting so launchd respawns "
+            "the helper against a warm container",
+            timeout,
+        )
+        for handler in list(logging.getLogger().handlers):
+            try:
+                handler.flush()
+            except Exception:  # noqa: BLE001 — best-effort flush before hard exit
+                pass
+        os._exit(75)  # EX_TEMPFAIL — LaunchAgent KeepAlive respawns us
+
+    watchdog = threading.Timer(timeout, _bail)
+    watchdog.daemon = True
+    watchdog.start()
+    try:
+        return rotate_token()
+    finally:
+        watchdog.cancel()
+
+
 def daemon(args: argparse.Namespace) -> None:
     """Run continuously: heartbeat + sync every interval seconds.
 
@@ -648,7 +697,10 @@ def daemon(args: argparse.Namespace) -> None:
         from local_auth_token import rotate_token, token_path
         from local_session_server import LocalSessionServer, default_socket_path
         try:
-            local_auth_token = rotate_token()
+            # Watchdog-guarded: a cold-login containermanagerd hang on the
+            # app-group container becomes a fast launchd respawn instead of a
+            # permanent silent hang (macOS 26.5). See _rotate_token_or_respawn.
+            local_auth_token = _rotate_token_or_respawn(rotate_token)
         except Exception as exc:  # noqa: BLE001
             # Token rotation is best-effort: `hello` is unauthenticated, so a
             # token failure must NOT stop the socket from binding (that would
