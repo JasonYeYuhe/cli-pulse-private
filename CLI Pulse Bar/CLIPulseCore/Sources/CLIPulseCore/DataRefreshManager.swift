@@ -269,6 +269,12 @@ internal final class DataRefreshManager {
                     await DailyUsageArchiveManager.shared.record(scanResult)
                     await DailyUsageArchiveManager.shared.runBackfillIfNeeded()
                 }
+                // v1.42 Pulse Cat M0: fold the same local scan into the pet
+                // ledger (high-confidence token history for the hatch engine).
+                // Stamp at scan-completion time so a stale overlapping refresh
+                // can't overwrite a fresher slice (Codex F3).
+                let scanAt = PetLedgerManager.nowMs()
+                Task { await PetLedgerManager.shared.record(scanResult, observedAtUnixMs: scanAt) }
             }
             #endif
 
@@ -589,6 +595,9 @@ internal final class DataRefreshManager {
                 await DailyUsageArchiveManager.shared.record(costScanResult)
                 await DailyUsageArchiveManager.shared.runBackfillIfNeeded()
             }
+            // v1.42 Pulse Cat M0: local-mode users feed the pet ledger too.
+            let scanAt = PetLedgerManager.nowMs()
+            Task { await PetLedgerManager.shared.record(costScanResult, observedAtUnixMs: scanAt) }
         }
         #endif
 
@@ -1939,6 +1948,14 @@ extension AppState {
     private func refreshCostForecast() async {
         let usage = await api.fetchDailyUsage(days: 30)
         dailyUsage = usage
+        // v1.42 Pulse Cat M0: fill the pet ledger's cloud-only families
+        // (Gemini etc. have no local JSONL) — medium confidence, never
+        // overwrites a higher-confidence local slice. Stamp at fetch-completion
+        // time so a stale overlapping fetch can't win the tie-break (Codex F3).
+        #if os(macOS)
+        let fetchedAt = PetLedgerManager.nowMs()
+        Task { await PetLedgerManager.shared.mergeCloud(usage, observedAtUnixMs: fetchedAt) }
+        #endif
         // Codex review on PR #17 manual verify: Forecast was
         // showing ~$8.6 spent so far / ~$37.4 month-end while
         // Today's actual cost was hundreds of dollars (the
