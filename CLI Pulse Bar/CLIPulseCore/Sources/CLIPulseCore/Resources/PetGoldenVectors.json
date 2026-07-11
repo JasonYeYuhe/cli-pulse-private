@@ -1,0 +1,1459 @@
+{
+  "_generatedBy": "scripts/pet_golden_oracle.py \u2014 DO NOT hand-edit; regenerate + diff",
+  "rulesetVersion": 1,
+  "weightTableVersion": 1,
+  "cases": [
+    {
+      "name": "anthropic_steady_loaf",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-05": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 10
+          }
+        },
+        "2026-07-06": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 10
+          }
+        },
+        "2026-07-07": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 10
+          }
+        },
+        "2026-07-08": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 10
+          }
+        },
+        "2026-07-09": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 10
+          }
+        },
+        "2026-07-10": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 10
+          }
+        },
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 10
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "anthropic",
+        "tempo": "steady",
+        "resolvedForm": "loaf",
+        "shouldHatch": true,
+        "hatchedForm": "loaf",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "anthropic_burst_polite",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-09": {
+          "Claude": {
+            "tokens": 100000,
+            "messages": 10
+          }
+        },
+        "2026-07-10": {
+          "Claude": {
+            "tokens": 100000,
+            "messages": 10
+          }
+        },
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 100000,
+            "messages": 10
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "anthropic",
+        "tempo": "burst",
+        "resolvedForm": "polite",
+        "shouldHatch": true,
+        "hatchedForm": "polite",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "openai_steady_smash",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-05": {
+          "Codex": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-06": {
+          "Codex": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-07": {
+          "Codex": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-08": {
+          "Codex": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-09": {
+          "Codex": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-10": {
+          "Codex": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-11": {
+          "Codex": {
+            "tokens": 20000
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "openai",
+        "tempo": "steady",
+        "resolvedForm": "smash",
+        "shouldHatch": true,
+        "hatchedForm": "smash",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "openai_burst_pop",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-09": {
+          "Codex": {
+            "tokens": 100000
+          }
+        },
+        "2026-07-10": {
+          "Codex": {
+            "tokens": 100000
+          }
+        },
+        "2026-07-11": {
+          "Codex": {
+            "tokens": 100000
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "openai",
+        "tempo": "burst",
+        "resolvedForm": "pop",
+        "shouldHatch": true,
+        "hatchedForm": "pop",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "google_steady_long",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-05": {
+          "Gemini": {
+            "tokens": 20000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-06": {
+          "Gemini": {
+            "tokens": 20000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-07": {
+          "Gemini": {
+            "tokens": 20000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-08": {
+          "Gemini": {
+            "tokens": 20000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-09": {
+          "Gemini": {
+            "tokens": 20000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-10": {
+          "Gemini": {
+            "tokens": 20000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-11": {
+          "Gemini": {
+            "tokens": 20000,
+            "confidence": "medium"
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "google",
+        "tempo": "steady",
+        "resolvedForm": "long",
+        "shouldHatch": true,
+        "hatchedForm": "long",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "google_burst_long",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-09": {
+          "Gemini": {
+            "tokens": 100000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-10": {
+          "Gemini": {
+            "tokens": 100000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-11": {
+          "Gemini": {
+            "tokens": 100000,
+            "confidence": "medium"
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "google",
+        "tempo": "burst",
+        "resolvedForm": "long",
+        "shouldHatch": true,
+        "hatchedForm": "long",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "mixed_no_dominant_huh",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-05": {
+          "Claude": {
+            "tokens": 20000
+          },
+          "Codex": {
+            "tokens": 20000
+          },
+          "Gemini": {
+            "tokens": 20000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-06": {
+          "Claude": {
+            "tokens": 20000
+          },
+          "Codex": {
+            "tokens": 20000
+          },
+          "Gemini": {
+            "tokens": 20000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-07": {
+          "Claude": {
+            "tokens": 20000
+          },
+          "Codex": {
+            "tokens": 20000
+          },
+          "Gemini": {
+            "tokens": 20000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-08": {
+          "Claude": {
+            "tokens": 20000
+          },
+          "Codex": {
+            "tokens": 20000
+          },
+          "Gemini": {
+            "tokens": 20000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-09": {
+          "Claude": {
+            "tokens": 20000
+          },
+          "Codex": {
+            "tokens": 20000
+          },
+          "Gemini": {
+            "tokens": 20000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-10": {
+          "Claude": {
+            "tokens": 20000
+          },
+          "Codex": {
+            "tokens": 20000
+          },
+          "Gemini": {
+            "tokens": 20000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 20000
+          },
+          "Codex": {
+            "tokens": 20000
+          },
+          "Gemini": {
+            "tokens": 20000,
+            "confidence": "medium"
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": null,
+        "tempo": "steady",
+        "resolvedForm": "huh",
+        "shouldHatch": true,
+        "hatchedForm": "huh",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "other_dominant_huh",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-05": {
+          "Cursor": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-06": {
+          "Cursor": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-07": {
+          "Cursor": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-08": {
+          "Cursor": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-09": {
+          "Cursor": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-10": {
+          "Cursor": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-11": {
+          "Cursor": {
+            "tokens": 30000
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": null,
+        "tempo": "steady",
+        "resolvedForm": "huh",
+        "shouldHatch": true,
+        "hatchedForm": "huh",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "owned_form_waits",
+      "todayKey": "2026-07-11",
+      "ownedForms": [
+        "loaf"
+      ],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-05": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 10
+          }
+        },
+        "2026-07-06": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 10
+          }
+        },
+        "2026-07-07": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 10
+          }
+        },
+        "2026-07-08": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 10
+          }
+        },
+        "2026-07-09": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 10
+          }
+        },
+        "2026-07-10": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 10
+          }
+        },
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 10
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "anthropic",
+        "tempo": "steady",
+        "resolvedForm": "loaf",
+        "shouldHatch": false,
+        "hatchedForm": null,
+        "alreadyOwned": true,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "unqualified_two_days",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-10": {
+          "Claude": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 30000
+          }
+        }
+      },
+      "expect": {
+        "qualified": false,
+        "timingAllows": true,
+        "dominantFamily": "anthropic",
+        "tempo": "burst",
+        "resolvedForm": "polite",
+        "shouldHatch": false,
+        "hatchedForm": null,
+        "alreadyOwned": false,
+        "eggStage": 2
+      }
+    },
+    {
+      "name": "timing_blocks_recent_hatch",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": "2026-07-08",
+      "days": {
+        "2026-07-05": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-06": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-07": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-08": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-09": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-10": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 20000
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": false,
+        "dominantFamily": "anthropic",
+        "tempo": "steady",
+        "resolvedForm": "loaf",
+        "shouldHatch": false,
+        "hatchedForm": null,
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "timing_allows_exactly_7d",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": "2026-07-04",
+      "days": {
+        "2026-07-05": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-06": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-07": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-08": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-09": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-10": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 20000
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "anthropic",
+        "tempo": "steady",
+        "resolvedForm": "loaf",
+        "shouldHatch": true,
+        "hatchedForm": "loaf",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "clock_rollback_no_hatch",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": "2026-07-20",
+      "days": {
+        "2026-07-05": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-06": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-07": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-08": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-09": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-10": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 20000
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": false,
+        "dominantFamily": "anthropic",
+        "tempo": "steady",
+        "resolvedForm": "loaf",
+        "shouldHatch": false,
+        "hatchedForm": null,
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "dst_spring_forward_loaf",
+      "todayKey": "2026-03-09",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-03-04": {
+          "Claude": {
+            "tokens": 25000
+          }
+        },
+        "2026-03-05": {
+          "Claude": {
+            "tokens": 25000
+          }
+        },
+        "2026-03-06": {
+          "Claude": {
+            "tokens": 25000
+          }
+        },
+        "2026-03-07": {
+          "Claude": {
+            "tokens": 25000
+          }
+        },
+        "2026-03-08": {
+          "Claude": {
+            "tokens": 25000
+          }
+        },
+        "2026-03-09": {
+          "Claude": {
+            "tokens": 25000
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "anthropic",
+        "tempo": "steady",
+        "resolvedForm": "loaf",
+        "shouldHatch": true,
+        "hatchedForm": "loaf",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "messages_only_not_qualified",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-09": {
+          "Claude": {
+            "tokens": 0,
+            "messages": 10
+          }
+        },
+        "2026-07-10": {
+          "Claude": {
+            "tokens": 0,
+            "messages": 10
+          }
+        },
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 0,
+            "messages": 10
+          }
+        }
+      },
+      "expect": {
+        "qualified": false,
+        "timingAllows": true,
+        "dominantFamily": null,
+        "tempo": "steady",
+        "resolvedForm": "huh",
+        "shouldHatch": false,
+        "hatchedForm": null,
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "empty_ledger_idle",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {},
+      "expect": {
+        "qualified": false,
+        "timingAllows": true,
+        "dominantFamily": null,
+        "tempo": "steady",
+        "resolvedForm": "huh",
+        "shouldHatch": false,
+        "hatchedForm": null,
+        "alreadyOwned": false,
+        "eggStage": 0
+      }
+    },
+    {
+      "name": "dominance_exactly_55_anthropic",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-09": {
+          "Claude": {
+            "tokens": 11000,
+            "messages": 10
+          },
+          "Gemini": {
+            "tokens": 27000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-10": {
+          "Claude": {
+            "tokens": 11000,
+            "messages": 10
+          },
+          "Gemini": {
+            "tokens": 27000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 11000,
+            "messages": 10
+          },
+          "Gemini": {
+            "tokens": 27000,
+            "confidence": "medium"
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "anthropic",
+        "tempo": "burst",
+        "resolvedForm": "polite",
+        "shouldHatch": true,
+        "hatchedForm": "polite",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "dominance_just_under_55_huh",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-09": {
+          "Claude": {
+            "tokens": 10900,
+            "messages": 10
+          },
+          "Gemini": {
+            "tokens": 27000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-10": {
+          "Claude": {
+            "tokens": 10900,
+            "messages": 10
+          },
+          "Gemini": {
+            "tokens": 27000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 10900,
+            "messages": 10
+          },
+          "Gemini": {
+            "tokens": 27000,
+            "confidence": "medium"
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": null,
+        "tempo": "burst",
+        "resolvedForm": "huh",
+        "shouldHatch": true,
+        "hatchedForm": "huh",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "tempo_exactly_60_burst",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-09": {
+          "Claude": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-10": {
+          "Claude": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-06": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-07": {
+          "Claude": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-08": {
+          "Claude": {
+            "tokens": 20000
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "anthropic",
+        "tempo": "burst",
+        "resolvedForm": "polite",
+        "shouldHatch": true,
+        "hatchedForm": "polite",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "tempo_just_under_60_steady",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-09": {
+          "Claude": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-10": {
+          "Claude": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-06": {
+          "Claude": {
+            "tokens": 21000
+          }
+        },
+        "2026-07-07": {
+          "Claude": {
+            "tokens": 21000
+          }
+        },
+        "2026-07-08": {
+          "Claude": {
+            "tokens": 21000
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "anthropic",
+        "tempo": "steady",
+        "resolvedForm": "loaf",
+        "shouldHatch": true,
+        "hatchedForm": "loaf",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "sparse_one_active_day",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 30000
+          }
+        }
+      },
+      "expect": {
+        "qualified": false,
+        "timingAllows": true,
+        "dominantFamily": "anthropic",
+        "tempo": "burst",
+        "resolvedForm": "polite",
+        "shouldHatch": false,
+        "hatchedForm": null,
+        "alreadyOwned": false,
+        "eggStage": 1
+      }
+    },
+    {
+      "name": "openai_high_plus_medium_admin",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-05": {
+          "Codex": {
+            "tokens": 15000,
+            "messages": 6
+          },
+          "OpenAI Admin": {
+            "tokens": 15000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-06": {
+          "Codex": {
+            "tokens": 15000,
+            "messages": 6
+          },
+          "OpenAI Admin": {
+            "tokens": 15000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-07": {
+          "Codex": {
+            "tokens": 15000,
+            "messages": 6
+          },
+          "OpenAI Admin": {
+            "tokens": 15000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-08": {
+          "Codex": {
+            "tokens": 15000,
+            "messages": 6
+          },
+          "OpenAI Admin": {
+            "tokens": 15000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-09": {
+          "Codex": {
+            "tokens": 15000,
+            "messages": 6
+          },
+          "OpenAI Admin": {
+            "tokens": 15000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-10": {
+          "Codex": {
+            "tokens": 15000,
+            "messages": 6
+          },
+          "OpenAI Admin": {
+            "tokens": 15000,
+            "confidence": "medium"
+          }
+        },
+        "2026-07-11": {
+          "Codex": {
+            "tokens": 15000,
+            "messages": 6
+          },
+          "OpenAI Admin": {
+            "tokens": 15000,
+            "confidence": "medium"
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "openai",
+        "tempo": "steady",
+        "resolvedForm": "smash",
+        "shouldHatch": true,
+        "hatchedForm": "smash",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "owned_loaf_new_smash_hatches",
+      "todayKey": "2026-07-11",
+      "ownedForms": [
+        "loaf"
+      ],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-05": {
+          "Codex": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-06": {
+          "Codex": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-07": {
+          "Codex": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-08": {
+          "Codex": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-09": {
+          "Codex": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-10": {
+          "Codex": {
+            "tokens": 20000
+          }
+        },
+        "2026-07-11": {
+          "Codex": {
+            "tokens": 20000
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "openai",
+        "tempo": "steady",
+        "resolvedForm": "smash",
+        "shouldHatch": true,
+        "hatchedForm": "smash",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "ollama_floor_other_huh",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-05": {
+          "Ollama": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-06": {
+          "Ollama": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-07": {
+          "Ollama": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-08": {
+          "Ollama": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-09": {
+          "Ollama": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-10": {
+          "Ollama": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-11": {
+          "Ollama": {
+            "tokens": 30000
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": null,
+        "tempo": "steady",
+        "resolvedForm": "huh",
+        "shouldHatch": true,
+        "hatchedForm": "huh",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "timezone_travel_frozen_keys",
+      "todayKey": "2026-03-21",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-03-17": {
+          "Claude": {
+            "tokens": 22000
+          }
+        },
+        "2026-03-18": {
+          "Claude": {
+            "tokens": 22000
+          }
+        },
+        "2026-03-19": {
+          "Claude": {
+            "tokens": 22000
+          }
+        },
+        "2026-03-20": {
+          "Claude": {
+            "tokens": 22000
+          }
+        },
+        "2026-03-21": {
+          "Claude": {
+            "tokens": 22000
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "anthropic",
+        "tempo": "burst",
+        "resolvedForm": "polite",
+        "shouldHatch": true,
+        "hatchedForm": "polite",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "steering_mid_week_to_anthropic",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-05": {
+          "Codex": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-06": {
+          "Codex": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-07": {
+          "Codex": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-09": {
+          "Claude": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-10": {
+          "Claude": {
+            "tokens": 30000
+          }
+        },
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 30000
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "anthropic",
+        "tempo": "steady",
+        "resolvedForm": "loaf",
+        "shouldHatch": true,
+        "hatchedForm": "loaf",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "unavailable_low_provider_ignored",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-05": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 6
+          },
+          "Gemini": {
+            "tokens": 500000,
+            "confidence": "low"
+          }
+        },
+        "2026-07-06": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 6
+          },
+          "Gemini": {
+            "tokens": 500000,
+            "confidence": "low"
+          }
+        },
+        "2026-07-07": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 6
+          },
+          "Gemini": {
+            "tokens": 500000,
+            "confidence": "low"
+          }
+        },
+        "2026-07-08": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 6
+          },
+          "Gemini": {
+            "tokens": 500000,
+            "confidence": "low"
+          }
+        },
+        "2026-07-09": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 6
+          },
+          "Gemini": {
+            "tokens": 500000,
+            "confidence": "low"
+          }
+        },
+        "2026-07-10": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 6
+          },
+          "Gemini": {
+            "tokens": 500000,
+            "confidence": "low"
+          }
+        },
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 20000,
+            "messages": 6
+          },
+          "Gemini": {
+            "tokens": 500000,
+            "confidence": "low"
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": "anthropic",
+        "tempo": "steady",
+        "resolvedForm": "loaf",
+        "shouldHatch": true,
+        "hatchedForm": "loaf",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    },
+    {
+      "name": "extreme_scale_no_false_dominance",
+      "todayKey": "2026-07-11",
+      "ownedForms": [],
+      "lastHatchDayKey": null,
+      "days": {
+        "2026-07-09": {
+          "Claude": {
+            "tokens": 333333333334
+          },
+          "Codex": {
+            "tokens": 333333333334
+          },
+          "Gemini": {
+            "tokens": 333333333334
+          }
+        },
+        "2026-07-10": {
+          "Claude": {
+            "tokens": 333333333334
+          },
+          "Codex": {
+            "tokens": 333333333334
+          },
+          "Gemini": {
+            "tokens": 333333333334
+          }
+        },
+        "2026-07-11": {
+          "Claude": {
+            "tokens": 333333333334
+          },
+          "Codex": {
+            "tokens": 333333333334
+          },
+          "Gemini": {
+            "tokens": 333333333334
+          }
+        }
+      },
+      "expect": {
+        "qualified": true,
+        "timingAllows": true,
+        "dominantFamily": null,
+        "tempo": "burst",
+        "resolvedForm": "huh",
+        "shouldHatch": true,
+        "hatchedForm": "huh",
+        "alreadyOwned": false,
+        "eggStage": 3
+      }
+    }
+  ]
+}
