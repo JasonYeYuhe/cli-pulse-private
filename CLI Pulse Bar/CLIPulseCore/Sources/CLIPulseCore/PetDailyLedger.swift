@@ -220,10 +220,20 @@ public struct PetDailyLedger: Codable, Sendable, Equatable {
         return out
     }
 
-    /// Day totals used by the engine's active-day + tempo tests (M1).
+    /// Day totals used by the engine's active-day gate (M1). The active-day
+    /// threshold (≥20k) is unaffected by a saturated platform-Int on 32-bit
+    /// watchOS (a saturated total is still ≥20k), so `Int` is fine here.
     public func dayTotals(_ dayKey: String) -> (tokens: Int, messages: Int) {
         guard let day = days[dayKey] else { return (0, 0) }
         return (day.tokens, day.messages)
+    }
+
+    /// Day total billable tokens as `Int64` — used by the tempo ratio, which
+    /// must be exact/deterministic across 32-bit watchOS (where a multi-provider
+    /// `Int` day-sum would saturate and change the burst verdict — Codex F6).
+    public func dayTokensInt64(_ dayKey: String) -> Int64 {
+        guard let day = days[dayKey] else { return 0 }
+        return day.providers.values.reduce(Int64(0)) { PetSaturating.add($0, Int64(max(0, $1.tokens))) }
     }
 }
 

@@ -128,4 +128,14 @@ public enum PetSaturating {
         let (r, o) = a.multipliedReportingOverflow(by: b)
         return o ? Int64.max : r   // pet weights/tokens are non-negative
     }
+
+    /// Exact `a*b >= c*d` for NON-NEGATIVE Int64, via 128-bit full-width
+    /// multiplication. Used for threshold ratio decisions (dominance ≥55%,
+    /// tempo ≥60%) so a saturated operand can never flip the verdict at extreme
+    /// scale — `mul` above must NOT be used for a decision comparison (Codex F1).
+    public static func productGE(_ a: Int64, _ b: Int64, _ c: Int64, _ d: Int64) -> Bool {
+        let l = UInt64(Swift.max(0, a)).multipliedFullWidth(by: UInt64(Swift.max(0, b)))
+        let r = UInt64(Swift.max(0, c)).multipliedFullWidth(by: UInt64(Swift.max(0, d)))
+        return l.high != r.high ? l.high > r.high : l.low >= r.low
+    }
 }
