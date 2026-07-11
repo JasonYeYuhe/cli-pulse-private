@@ -36,6 +36,9 @@ struct CLIPulseBarApp: App {
         // thread; the deferred, yielding async version keeps launch responsive.
         Task { @MainActor in
             await BookmarkManager.shared.resolveAllBookmarks()
+            // v1.42 Pulse Cat: re-show the floating companion at launch iff the
+            // user had it on + Pulse Cat is enabled (startup bootstrap, Codex M2b#6).
+            PetPanelController.shared.restoreIfNeeded()
         }
     }
 

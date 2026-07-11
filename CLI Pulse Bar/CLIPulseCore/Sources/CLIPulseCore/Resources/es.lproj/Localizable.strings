@@ -694,3 +694,8 @@
 "pet.form_pop" = "Boca-Pop";
 "pet.form_long" = "Gato Estirado";
 "pet.form_huh" = "Ladeo ¿Eh?";
+
+/* v1.42 Pulse Cat companion */
+"pet.companion_toggle" = "Mostrar compañero de escritorio";
+"pet.companion_clickthrough" = "Clic a través del compañero";
+"pet.companion_clickthrough_hint" = "Desactívalo aquí para volver a interactuar.";

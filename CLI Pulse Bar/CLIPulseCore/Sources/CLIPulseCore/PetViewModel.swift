@@ -93,7 +93,17 @@ public final class PetViewModel: ObservableObject {
         let outcome = await PetCoordinator.shared.evaluateAndHatch(
             ledger: ledger, todayKey: Self.todayKey(), nowUnixMs: PetLedgerManager.nowMs())
         await reload()
-        if let f = outcome.hatchEvent?.form.flatMap(PetForm.init(rawValue:)) { pendingReveal = f; return f }
+        if let f = outcome.hatchEvent?.form.flatMap(PetForm.init(rawValue:)) {
+            pendingReveal = f
+            // Auto-show the floating companion ONCE, right after the first hatch
+            // (opt-in default; dismissable) — §5.
+            if !PetSettings.didAutoShowCompanion {
+                PetSettings.didAutoShowCompanion = true
+                PetSettings.companionVisible = true
+                PetPanelController.shared.setVisible(true)
+            }
+            return f
+        }
         #endif
         return nil
     }
@@ -107,6 +117,14 @@ public final class PetViewModel: ObservableObject {
 
     public func setEnabled(_ on: Bool) async {
         PetSettings.isEnabled = on
+        #if os(macOS)
+        // The kill-switch hides + suppresses the floating companion too, not just
+        // the tab (Codex M2b#3).
+        if !on {
+            PetSettings.companionVisible = false
+            PetPanelController.shared.hide()
+        }
+        #endif
         await reload()
     }
 

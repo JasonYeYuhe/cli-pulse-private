@@ -971,3 +971,8 @@
 "pet.form_pop" = "ポップ口";
 "pet.form_long" = "のびのびネコ";
 "pet.form_huh" = "はてなネコ";
+
+/* v1.42 Pulse Cat companion */
+"pet.companion_toggle" = "デスクトップの相棒を表示";
+"pet.companion_clickthrough" = "相棒をクリックスルー";
+"pet.companion_clickthrough_hint" = "再び操作するにはここでオフにします。";

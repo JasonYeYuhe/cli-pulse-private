@@ -969,3 +969,8 @@
 "pet.form_pop" = "Pop-Mouth";
 "pet.form_long" = "Stretched Long";
 "pet.form_huh" = "Head-Tilt Huh?";
+
+/* v1.42 Pulse Cat companion */
+"pet.companion_toggle" = "Show desktop companion";
+"pet.companion_clickthrough" = "Click through the companion";
+"pet.companion_clickthrough_hint" = "Turn this off here to interact with it again.";

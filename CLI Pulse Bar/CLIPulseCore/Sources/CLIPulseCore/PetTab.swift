@@ -39,6 +39,10 @@ public struct PetTab: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showNameSheet = false
     @State private var nameDraft = ""
+    // Live-persisted (not a one-time snapshot) so an auto-show / relaunch is
+    // reflected in the toggle (Codex M2b#6). Keys match PetSettings.
+    @AppStorage("cli_pulse_pet_companion_visible") private var companionOn = false
+    @AppStorage("cli_pulse_pet_companion_clickthrough") private var clickThrough = false
 
     public init() {}
 
@@ -301,6 +305,15 @@ public struct PetTab: View {
             Toggle(L10n.pet.enabledToggle, isOn: Binding(
                 get: { vm.enabled },
                 set: { on in Task { await vm.setEnabled(on) } }))
+            #if os(macOS)
+            Toggle(L10n.pet.companionToggle, isOn: $companionOn)   // @AppStorage persists it
+                .onChange(of: companionOn) { on in PetPanelController.shared.setVisible(on) }
+            if companionOn {
+                Toggle(L10n.pet.companionClickThrough, isOn: $clickThrough)
+                    .onChange(of: clickThrough) { on in PetPanelController.shared.setClickThrough(on) }
+                Text(L10n.pet.companionClickThroughHint).font(.caption2).foregroundStyle(.tertiary)
+            }
+            #endif
             Button {
                 copySummary()
             } label: { Label(L10n.pet.copySummary, systemImage: "doc.on.doc") }

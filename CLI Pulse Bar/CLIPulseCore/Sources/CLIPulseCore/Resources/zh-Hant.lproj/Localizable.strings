@@ -971,3 +971,8 @@
 "pet.form_pop" = "炸嘴貓";
 "pet.form_long" = "拉長貓";
 "pet.form_huh" = "歪頭疑惑貓";
+
+/* v1.42 Pulse Cat companion */
+"pet.companion_toggle" = "顯示桌面陪伴";
+"pet.companion_clickthrough" = "點擊穿透陪伴";
+"pet.companion_clickthrough_hint" = "需要再次操作時在此關閉。";

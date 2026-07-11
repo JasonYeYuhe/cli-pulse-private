@@ -16,6 +16,14 @@
 
 import Foundation
 
+public extension Notification.Name {
+    /// Posted after the pet COLLECTION state changes (hatch / active-pet switch),
+    /// so the floating companion updates which form it shows (Codex M2b#4).
+    /// Declared here (cross-platform) because PetCoordinator posts it on all
+    /// platforms, unlike the macOS-only `.petLedgerDidChange`.
+    static let petStateDidChange = Notification.Name("cli_pulse_pet_state_did_change")
+}
+
 // MARK: - Event log
 
 public enum PetEventKind: String, Codable, Sendable {
@@ -150,6 +158,9 @@ public actor PetCoordinator {
         newLog.append(event)
         events = newLog
         Self.writeSnapshot(PetCoordinator.rebuild(from: newLog), root: root)  // best-effort
+        // Notify surfaces (the floating companion) that the collection / active
+        // pet changed, so they update which form they show (Codex M2b#4).
+        NotificationCenter.default.post(name: .petStateDidChange, object: nil)
         return true
     }
 

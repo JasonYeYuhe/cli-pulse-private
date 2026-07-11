@@ -78,6 +78,9 @@ public enum L10n {
         public static func confStale(_ ago: String) -> String { tr("pet.conf_stale", ago) }
         public static var confUnavailable: String { tr("pet.conf_unavailable") }
         public static var copySummary: String { tr("pet.copy_summary") }
+        public static var companionToggle: String { tr("pet.companion_toggle") }
+        public static var companionClickThrough: String { tr("pet.companion_clickthrough") }
+        public static var companionClickThroughHint: String { tr("pet.companion_clickthrough_hint") }
         // Family + form display names
         public static var familyAnthropic: String { tr("pet.family_anthropic") }
         public static var familyOpenAI: String { tr("pet.family_openai") }
