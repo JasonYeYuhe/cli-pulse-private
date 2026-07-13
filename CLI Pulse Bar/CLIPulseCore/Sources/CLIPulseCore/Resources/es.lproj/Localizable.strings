@@ -695,6 +695,10 @@
 "pet.form_long" = "Gato Estirado";
 "pet.form_huh" = "Ladeo ¿Eh?";
 
+/* v1.42 Pulse Cat companion */
+"pet.companion_toggle" = "Mostrar compañero de escritorio";
+"pet.companion_clickthrough" = "Clic a través del compañero";
+"pet.companion_clickthrough_hint" = "Desactívalo aquí para volver a interactuar.";
 /* v1.42 Pulse Cat future-drop forms */
 "pet.coming_soon" = "Próximamente";
 "pet.form_sulk" = "Puchero Ofendido";

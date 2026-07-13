@@ -39,6 +39,13 @@ public struct PetTab: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showNameSheet = false
     @State private var nameDraft = ""
+    // Live-persisted (not a one-time snapshot) so an auto-show / relaunch is
+    // reflected in the toggle (Codex M2b#6). Keys match PetSettings.
+    @AppStorage("cli_pulse_pet_companion_visible") private var companionOn = false
+    @AppStorage("cli_pulse_pet_companion_clickthrough") private var clickThrough = false
+    #if DEBUG
+    @AppStorage("cli_pulse_pet_debug_force_animate") private var debugForceAnimate = false
+    #endif
 
     public init() {}
 
@@ -302,10 +309,40 @@ public struct PetTab: View {
             Toggle(L10n.pet.enabledToggle, isOn: Binding(
                 get: { vm.enabled },
                 set: { on in Task { await vm.setEnabled(on) } }))
+            #if os(macOS)
+            Toggle(L10n.pet.companionToggle, isOn: $companionOn)   // @AppStorage persists it
+                .onChange(of: companionOn) { on in PetPanelController.shared.setVisible(on) }
+            if companionOn {
+                Toggle(L10n.pet.companionClickThrough, isOn: $clickThrough)
+                    .onChange(of: clickThrough) { on in PetPanelController.shared.setClickThrough(on) }
+                Text(L10n.pet.companionClickThroughHint).font(.caption2).foregroundStyle(.tertiary)
+            }
+            #endif
             Button {
                 copySummary()
             } label: { Label(L10n.pet.copySummary, systemImage: "doc.on.doc") }
                 .buttonStyle(.plain).font(.callout)
+            #if DEBUG && os(macOS)
+            // Debug-build-only test affordances (the M1 plan's debug menu; not
+            // compiled into release builds, so English-only is fine).
+            Divider()
+            HStack(spacing: 14) {
+                Button("Debug: Unlock all cats") { Task { await vm.debugUnlockAll() } }
+                    .buttonStyle(.plain).font(.caption).foregroundStyle(.orange)
+                Button("Debug: Reset collection") { Task { await vm.debugReset() } }
+                    .buttonStyle(.plain).font(.caption).foregroundStyle(.orange)
+            }
+            // The shipping cat only animates while you're actively using AI (fresh
+            // usage → non-sleeping bucket). This forces the floating companion to
+            // animate now so the motion can be verified without live token burn.
+            Button(debugForceAnimate ? "Debug: Stop forced animation" : "Debug: Animate companion now") {
+                debugForceAnimate.toggle()
+                companionOn = true                     // ensure the panel is up to see it
+                PetPanelController.shared.setVisible(true)
+                Task { await PetPanelController.shared.refresh() }
+            }
+            .buttonStyle(.plain).font(.caption).foregroundStyle(.orange)
+            #endif
         }
     }
 

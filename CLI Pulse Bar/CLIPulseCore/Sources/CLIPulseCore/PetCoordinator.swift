@@ -16,6 +16,14 @@
 
 import Foundation
 
+public extension Notification.Name {
+    /// Posted after the pet COLLECTION state changes (hatch / active-pet switch),
+    /// so the floating companion updates which form it shows (Codex M2b#4).
+    /// Declared here (cross-platform) because PetCoordinator posts it on all
+    /// platforms, unlike the macOS-only `.petLedgerDidChange`.
+    static let petStateDidChange = Notification.Name("cli_pulse_pet_state_did_change")
+}
+
 // MARK: - Event log
 
 public enum PetEventKind: String, Codable, Sendable {
@@ -150,8 +158,35 @@ public actor PetCoordinator {
         newLog.append(event)
         events = newLog
         Self.writeSnapshot(PetCoordinator.rebuild(from: newLog), root: root)  // best-effort
+        // Notify surfaces (the floating companion) that the collection / active
+        // pet changed, so they update which form they show (Codex M2b#4).
+        NotificationCenter.default.post(name: .petStateDidChange, object: nil)
         return true
     }
+
+    // MARK: - Debug helpers (DEBUG builds only — the M1 plan's debug-menu backend)
+
+    #if DEBUG
+    /// Force-hatch a form regardless of the window/timing rules (debug menu).
+    /// Appends a normal hatch event (no whySnapshot — it was not rule-derived).
+    @discardableResult
+    public func debugForceHatch(_ form: PetForm, dayKey: String, nowUnixMs: Int64) -> PetState {
+        let log = loadedEvents()
+        let state = PetCoordinator.rebuild(from: log)
+        guard !state.owns(form) else { return state }
+        let event = PetEvent(kind: .hatch, dayKey: dayKey, timestampUnixMs: nowUnixMs, form: form.rawValue)
+        guard commit(event, to: log) else { return state }
+        return PetCoordinator.rebuild(from: events ?? log)
+    }
+
+    /// Wipe the collection (event log + snapshot) — debug reset.
+    public func debugResetCollection() {
+        try? FileManager.default.removeItem(at: Self.eventsURL(root: root))
+        try? FileManager.default.removeItem(at: Self.snapshotURL(root: root))
+        events = []
+        NotificationCenter.default.post(name: .petStateDidChange, object: nil)
+    }
+    #endif
 
     // MARK: - IO (Application Support/CLIPulse)
 

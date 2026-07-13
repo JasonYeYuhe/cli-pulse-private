@@ -34,6 +34,37 @@ public enum PetSettings {
         set { defaults.set(newValue, forKey: autoShownKey) }
     }
 
+    /// Click-through (mouse events pass through the companion). Default OFF; the
+    /// settings toggle IS the documented recovery path (Flash F5).
+    public static var companionClickThrough: Bool {
+        get { defaults.bool(forKey: "cli_pulse_pet_companion_clickthrough") }
+        set { defaults.set(newValue, forKey: "cli_pulse_pet_companion_clickthrough") }
+    }
+
+    /// Set true after the one-time click-through recovery overlay is shown.
+    public static var didShowClickThroughHint: Bool {
+        get { defaults.bool(forKey: "cli_pulse_pet_clickthrough_hint_shown") }
+        set { defaults.set(newValue, forKey: "cli_pulse_pet_clickthrough_hint_shown") }
+    }
+
+    /// Persisted companion panel origin (so it stays where the user dragged it).
+    public static var companionOrigin: (x: Double, y: Double)? {
+        get {
+            guard defaults.object(forKey: "cli_pulse_pet_companion_x") != nil else { return nil }
+            return (defaults.double(forKey: "cli_pulse_pet_companion_x"),
+                    defaults.double(forKey: "cli_pulse_pet_companion_y"))
+        }
+        set {
+            if let v = newValue {
+                defaults.set(v.x, forKey: "cli_pulse_pet_companion_x")
+                defaults.set(v.y, forKey: "cli_pulse_pet_companion_y")
+            } else {
+                defaults.removeObject(forKey: "cli_pulse_pet_companion_x")
+                defaults.removeObject(forKey: "cli_pulse_pet_companion_y")
+            }
+        }
+    }
+
     // Cosmetic per-form names (form.rawValue → user name).
     public static func names() -> [String: String] {
         guard let data = defaults.data(forKey: namesKey),
@@ -55,4 +86,16 @@ public enum PetSettings {
     public static func displayName(for form: PetForm) -> String {
         name(for: form) ?? L10n.pet.formName(form)
     }
+
+    #if DEBUG
+    /// DEBUG-only: force the floating companion to animate (sprint bucket, data
+    /// treated as live, all environment pauses cleared) regardless of real usage,
+    /// so the animation can be verified on a display WITHOUT live token burn — the
+    /// shipping cat is intentionally static when there's nothing to reflect
+    /// (battery discipline + no-fake-liveness). Never compiled into release.
+    public static var debugForceAnimate: Bool {
+        get { defaults.bool(forKey: "cli_pulse_pet_debug_force_animate") }
+        set { defaults.set(newValue, forKey: "cli_pulse_pet_debug_force_animate") }
+    }
+    #endif
 }

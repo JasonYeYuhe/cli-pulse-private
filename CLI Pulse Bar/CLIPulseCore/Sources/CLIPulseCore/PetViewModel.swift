@@ -93,7 +93,17 @@ public final class PetViewModel: ObservableObject {
         let outcome = await PetCoordinator.shared.evaluateAndHatch(
             ledger: ledger, todayKey: Self.todayKey(), nowUnixMs: PetLedgerManager.nowMs())
         await reload()
-        if let f = outcome.hatchEvent?.form.flatMap(PetForm.init(rawValue:)) { pendingReveal = f; return f }
+        if let f = outcome.hatchEvent?.form.flatMap(PetForm.init(rawValue:)) {
+            pendingReveal = f
+            // Auto-show the floating companion ONCE, right after the first hatch
+            // (opt-in default; dismissable) — §5.
+            if !PetSettings.didAutoShowCompanion {
+                PetSettings.didAutoShowCompanion = true
+                PetSettings.companionVisible = true
+                PetPanelController.shared.setVisible(true)
+            }
+            return f
+        }
         #endif
         return nil
     }
@@ -107,6 +117,14 @@ public final class PetViewModel: ObservableObject {
 
     public func setEnabled(_ on: Bool) async {
         PetSettings.isEnabled = on
+        #if os(macOS)
+        // The kill-switch hides + suppresses the floating companion too, not just
+        // the tab (Codex M2b#3).
+        if !on {
+            PetSettings.companionVisible = false
+            PetPanelController.shared.hide()
+        }
+        #endif
         await reload()
     }
 
@@ -114,4 +132,25 @@ public final class PetViewModel: ObservableObject {
         PetSettings.setName(name, for: form)
         objectWillChange.send()
     }
+
+    // MARK: - Debug (DEBUG builds only)
+
+    #if DEBUG && os(macOS)
+    /// Unlock every form (hatch dates spread over past weeks so the Cattery
+    /// reads naturally). Debug-menu affordance for testing the full collection.
+    public func debugUnlockAll() async {
+        let today = Self.todayKey()
+        for (i, form) in PetForm.allCases.enumerated() {
+            let day = DailyUsageStats.shift(today, byDays: -7 * (PetForm.allCases.count - 1 - i)) ?? today
+            _ = await PetCoordinator.shared.debugForceHatch(form, dayKey: day, nowUnixMs: PetLedgerManager.nowMs())
+        }
+        await reload()
+    }
+
+    /// Wipe the collection back to a fresh egg.
+    public func debugReset() async {
+        await PetCoordinator.shared.debugResetCollection()
+        await reload()
+    }
+    #endif
 }

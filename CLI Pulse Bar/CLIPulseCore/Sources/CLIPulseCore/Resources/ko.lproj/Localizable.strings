@@ -695,6 +695,10 @@
 "pet.form_long" = "쭉냥";
 "pet.form_huh" = "갸웃냥";
 
+/* v1.42 Pulse Cat companion */
+"pet.companion_toggle" = "데스크톱 동료 표시";
+"pet.companion_clickthrough" = "동료 클릭 통과";
+"pet.companion_clickthrough_hint" = "다시 조작하려면 여기서 끄세요.";
 /* v1.42 Pulse Cat future-drop forms */
 "pet.coming_soon" = "출시 예정";
 "pet.form_sulk" = "뾰로통냥";
