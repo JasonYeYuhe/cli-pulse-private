@@ -18,24 +18,44 @@ final class PetAnimationPolicyTests: XCTestCase {
         XCTAssertLessThanOrEqual(PetAnimationBucket.sprint.fps, 8)
     }
 
-    func test_sleeping_bucket_is_static() {
-        XCTAssertEqual(PetAnimationPolicy.plan(PetAnimationConditions(bucket: .sleeping)), .staticFrame)
+    func test_sleeping_bucket_breathes() {
+        // A quiet pet RESTS and breathes (feels alive) — it is not fully static.
+        XCTAssertEqual(PetAnimationPolicy.plan(PetAnimationConditions(bucket: .sleeping)), .breathe)
     }
 
-    func test_every_pause_condition_forces_static() {
+    func test_hard_pause_forces_static_but_stale_only_rests() {
         let base = PetAnimationConditions(bucket: .working)   // would otherwise animate
-        let pausing: [(String, PetAnimationConditions)] = [
+        // The five HARD pauses (accessibility / battery-saver / not-visible) kill
+        // all motion — fully static, 0 Hz.
+        let hard: [(String, PetAnimationConditions)] = [
             ("reduceMotion", { var c = base; c.reduceMotion = true; return c }()),
             ("lowPower",     { var c = base; c.lowPower = true; return c }()),
             ("screenLocked", { var c = base; c.screenLocked = true; return c }()),
             ("displayAsleep",{ var c = base; c.displayAsleep = true; return c }()),
             ("occluded",     { var c = base; c.occludedOrHidden = true; return c }()),
-            ("dataStale",    { var c = base; c.dataStale = true; return c }()),
         ]
-        for (name, c) in pausing {
+        for (name, c) in hard {
             XCTAssertEqual(PetAnimationPolicy.plan(c), .staticFrame, "\(name) must force static")
             XCTAssertTrue(c.mustPause, "\(name) must set mustPause")
         }
+        // Stale data is NOT a hard pause: the pet keeps a gentle resting breath and
+        // never the ACTIVE frame-swap (honesty — stale must not read as live work).
+        let stale = { var c = base; c.dataStale = true; return c }()
+        XCTAssertEqual(PetAnimationPolicy.plan(stale), .breathe)
+        XCTAssertFalse(stale.mustPause)
+    }
+
+    func test_resting_breath_yields_to_hard_pause() {
+        // Reduce Motion / Low Power win over "feels alive" — they kill even the breath.
+        var rm = PetAnimationConditions(bucket: .sleeping); rm.reduceMotion = true
+        XCTAssertEqual(PetAnimationPolicy.plan(rm), .staticFrame)
+        var lp = PetAnimationConditions(bucket: .sleeping); lp.lowPower = true
+        XCTAssertEqual(PetAnimationPolicy.plan(lp), .staticFrame)
+        // The breath stays small + slow: reads as breathing, cheap on the compositor.
+        XCTAssertGreaterThan(PetAnimationPolicy.breatheScale, 1.0)
+        XCTAssertLessThanOrEqual(PetAnimationPolicy.breatheScale, 1.06)
+        XCTAssertGreaterThanOrEqual(PetAnimationPolicy.breathePeriodSec, 2.0)
+        XCTAssertLessThanOrEqual(PetAnimationPolicy.breathePeriodSec, 4.0)
     }
 
     func test_static_frame_name_per_bucket() {

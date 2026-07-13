@@ -159,7 +159,12 @@ public final class PetPanelController: NSObject {   // NSObject: selector-based 
         let conditions = computed
         #endif
         companion.render(content: content, conditions: conditions)
-        scheduleStaleExpiry(vitals: vitals, willAnimate: !conditions.mustPause, now: now)
+        // Only a LIVE active frame-swap needs a wake at the freshness boundary (so
+        // it downgrades to the resting breath when data goes stale). A resting or
+        // hard-paused plan has nothing to expire.
+        let activeNow: Bool
+        if case .animate = PetAnimationPolicy.plan(conditions) { activeNow = true } else { activeNow = false }
+        scheduleStaleExpiry(vitals: vitals, willAnimate: activeNow, now: now)
     }
 
     /// A SINGLE one-shot task that fires when a live animation would go stale (no

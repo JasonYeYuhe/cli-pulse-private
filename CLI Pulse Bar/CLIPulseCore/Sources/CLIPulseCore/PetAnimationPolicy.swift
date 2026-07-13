@@ -1,12 +1,18 @@
 // PetAnimationPolicy — v1.42 "Pulse Cat" M2 part 2 (battery discipline, pure).
 //
-// The single source of truth for WHEN the companion animates. Kept pure +
+// The single source of truth for WHEN and HOW the companion animates. Kept pure +
 // testable so the render-server pipeline's correctness doesn't depend on a
-// display: given the conditions, it returns either a static frame (no timer, no
-// CAAnimation — 0 Hz) or an animate plan at a capped fps. Any of the pause
-// conditions ⇒ static (plan §2.4):
-//   sleeping bucket · Reduce Motion · Low Power Mode · screen locked · display
-//   asleep · panel hidden/occluded/over-fullscreen · data stale.
+// display. Three tiers (plan §2.4):
+//   • STATIC (0 Hz, no CAAnimation) — a HARD pause: Reduce Motion · Low Power Mode
+//     · screen locked · display asleep · panel hidden/occluded/over-fullscreen.
+//     Accessibility, battery-saver, or nothing to see ⇒ don't move at all.
+//   • BREATHE — a RESTING pet: quiet (sleeping bucket) or stale data. A subtle
+//     render-server scale "breath" on the rest pose so the companion feels alive
+//     when you're not actively using AI, at negligible cost (GPU-composited, no
+//     per-frame app wakeups). Honesty (Codex F2): stale data NEVER drives the
+//     active frame-swap (which reads as live work) — it only gently breathes, and
+//     the vitals confidence line still states "last seen Xm ago".
+//   • ANIMATE — a live idle/working/sprint bucket: frame-swap at the capped fps.
 // The pet animation lifecycle is INDEPENDENT of the app's process-lifetime
 // BackgroundActivityAssertion (Codex F6) — nothing here holds an assertion.
 
@@ -34,10 +40,12 @@ public struct PetAnimationConditions: Equatable, Sendable {
         self.dataStale = dataStale
     }
 
-    /// True if any pause condition forces a static frame.
+    /// A HARD pause forces a fully static frame (0 Hz, no animation at all):
+    /// accessibility (Reduce Motion), battery-saver (Low Power Mode), or nothing
+    /// visible (locked / display asleep / occluded). A quiet or stale pet is NOT a
+    /// hard pause — it rests and breathes (see `PetAnimationPolicy.plan`).
     public var mustPause: Bool {
-        bucket.isStatic || reduceMotion || lowPower || screenLocked
-            || displayAsleep || occludedOrHidden || dataStale
+        reduceMotion || lowPower || screenLocked || displayAsleep || occludedOrHidden
     }
 
     #if DEBUG
@@ -60,8 +68,9 @@ public struct PetAnimationConditions: Equatable, Sendable {
 }
 
 public enum PetAnimationPlan: Equatable, Sendable {
-    case staticFrame                 // one frame, no animation, no timer
-    case animate(fps: Double)        // run the bucket frames at this fps
+    case staticFrame                 // one frame, no animation, no timer (0 Hz)
+    case breathe                     // rest pose + a subtle scale "breath" (resting)
+    case animate(fps: Double)        // run the bucket frames at this fps (active)
 }
 
 /// What the floating companion shows: the active cat, or — before anything has
@@ -72,8 +81,16 @@ public enum PetCompanionContent: Equatable, Sendable {
 }
 
 public enum PetAnimationPolicy {
+    /// The resting "breath": a subtle, slow scale pulse on the rest pose. Kept
+    /// tiny (a few percent, ~2–3 s per cycle) so it reads as breathing, never
+    /// clips the padded frame, and stays cheap on the compositor.
+    public static let breatheScale: Double = 1.03      // peak scale (1.0 → 1.03 → 1.0)
+    public static let breathePeriodSec: Double = 2.6   // one full in-and-out breath
+
     public static func plan(_ c: PetAnimationConditions) -> PetAnimationPlan {
-        c.mustPause ? .staticFrame : .animate(fps: c.bucket.fps)
+        if c.mustPause { return .staticFrame }              // hard pause ⇒ 0 Hz
+        if c.bucket.isStatic || c.dataStale { return .breathe }  // quiet/stale ⇒ rest
+        return .animate(fps: c.bucket.fps)                  // live ⇒ frame-swap
     }
 
     /// The frame shown when static: sleeping → the sleep frame; any other paused
