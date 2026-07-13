@@ -34,7 +34,10 @@ DEST = os.path.join(REPO, "CLI Pulse Bar", "CLIPulseCore", "Sources", "CLIPulseC
 CAT_STATES = {"idle_0", "idle_1", "active_0", "active_1", "sleep_0"}
 EGG_STATES = {"idle_0", "idle_1", "crack1", "crack2", "crack3", "hatch_burst"}
 FORMS = {"loaf", "polite", "smash", "pop", "long", "huh",
-         "sulk", "wail", "chonk", "boss", "smug", "egg"}
+         "sulk", "wail", "chonk", "boss", "smug",
+         # v1.44 drop pool (owner-directed 2026-07-13, generic archetypes):
+         "derp", "zoomies", "sleepy", "skept", "plead", "gasp", "love",
+         "mlem", "floof", "nap", "egg"}
 
 
 def white_to_alpha(im, kernel=5):
