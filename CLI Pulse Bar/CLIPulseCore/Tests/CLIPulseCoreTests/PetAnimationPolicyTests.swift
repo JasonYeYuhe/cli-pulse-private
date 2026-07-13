@@ -18,9 +18,9 @@ final class PetAnimationPolicyTests: XCTestCase {
         XCTAssertLessThanOrEqual(PetAnimationBucket.sprint.fps, 8)
     }
 
-    func test_sleeping_bucket_breathes() {
-        // A quiet pet RESTS and breathes (feels alive) — it is not fully static.
-        XCTAssertEqual(PetAnimationPolicy.plan(PetAnimationConditions(bucket: .sleeping)), .breathe)
+    func test_sleeping_bucket_rests() {
+        // A quiet pet RESTS (plays its signature idle motion) — not fully static.
+        XCTAssertEqual(PetAnimationPolicy.plan(PetAnimationConditions(bucket: .sleeping)), .rest)
     }
 
     func test_hard_pause_forces_static_but_stale_only_rests() {
@@ -38,24 +38,27 @@ final class PetAnimationPolicyTests: XCTestCase {
             XCTAssertEqual(PetAnimationPolicy.plan(c), .staticFrame, "\(name) must force static")
             XCTAssertTrue(c.mustPause, "\(name) must set mustPause")
         }
-        // Stale data is NOT a hard pause: the pet keeps a gentle resting breath and
-        // never the ACTIVE frame-swap (honesty — stale must not read as live work).
+        // Stale data is NOT a hard pause: the pet keeps resting and never does the
+        // ACTIVE frame-swap (honesty — stale must not read as live work).
         let stale = { var c = base; c.dataStale = true; return c }()
-        XCTAssertEqual(PetAnimationPolicy.plan(stale), .breathe)
+        XCTAssertEqual(PetAnimationPolicy.plan(stale), .rest)
         XCTAssertFalse(stale.mustPause)
     }
 
-    func test_resting_breath_yields_to_hard_pause() {
-        // Reduce Motion / Low Power win over "feels alive" — they kill even the breath.
+    func test_rest_yields_to_hard_pause() {
+        // Reduce Motion / Low Power win over "feels alive" — they kill even the rest motion.
         var rm = PetAnimationConditions(bucket: .sleeping); rm.reduceMotion = true
         XCTAssertEqual(PetAnimationPolicy.plan(rm), .staticFrame)
         var lp = PetAnimationConditions(bucket: .sleeping); lp.lowPower = true
         XCTAssertEqual(PetAnimationPolicy.plan(lp), .staticFrame)
-        // The breath stays small + slow: reads as breathing, cheap on the compositor.
-        XCTAssertGreaterThan(PetAnimationPolicy.breatheScale, 1.0)
-        XCTAssertLessThanOrEqual(PetAnimationPolicy.breatheScale, 1.06)
-        XCTAssertGreaterThanOrEqual(PetAnimationPolicy.breathePeriodSec, 2.0)
-        XCTAssertLessThanOrEqual(PetAnimationPolicy.breathePeriodSec, 4.0)
+    }
+
+    func test_rest_frame_is_the_upright_idle_pose() {
+        // Resting shows the idle (upright, alive) pose — NOT the curled sleep pose,
+        // which is reserved for a hard pause.
+        XCTAssertEqual(PetAnimationPolicy.restFrameName(content: .cat(.loaf)), "loaf_idle_0")
+        XCTAssertEqual(PetAnimationPolicy.restFrameName(content: .egg(stage: .crack2)), "egg_crack2")
+        XCTAssertEqual(PetAnimationPolicy.staticFrameName(content: .cat(.loaf), bucket: .sleeping), "loaf_sleep_0")
     }
 
     func test_static_frame_name_per_bucket() {

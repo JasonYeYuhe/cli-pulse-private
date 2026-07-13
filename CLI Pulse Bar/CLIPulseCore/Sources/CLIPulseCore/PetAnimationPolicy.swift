@@ -6,11 +6,12 @@
 //   • STATIC (0 Hz, no CAAnimation) — a HARD pause: Reduce Motion · Low Power Mode
 //     · screen locked · display asleep · panel hidden/occluded/over-fullscreen.
 //     Accessibility, battery-saver, or nothing to see ⇒ don't move at all.
-//   • BREATHE — a RESTING pet: quiet (sleeping bucket) or stale data. A subtle
-//     render-server scale "breath" on the rest pose so the companion feels alive
-//     when you're not actively using AI, at negligible cost (GPU-composited, no
-//     per-frame app wakeups). Honesty (Codex F2): stale data NEVER drives the
-//     active frame-swap (which reads as live work) — it only gently breathes, and
+//   • REST — a RESTING pet: quiet (sleeping bucket) or stale data. The upright
+//     idle pose plays the form's SIGNATURE idle motion (per-form personality —
+//     breathe / bob / sway / tilt / …, see PetMotion) so every cat feels alive and
+//     distinct when you're not actively using AI, at negligible cost (render-server
+//     transforms, no per-frame app wakeup). Honesty (Codex F2): stale data NEVER
+//     drives the active frame-swap (which reads as live work) — it only rests, and
 //     the vitals confidence line still states "last seen Xm ago".
 //   • ANIMATE — a live idle/working/sprint bucket: frame-swap at the capped fps.
 // The pet animation lifecycle is INDEPENDENT of the app's process-lifetime
@@ -69,7 +70,7 @@ public struct PetAnimationConditions: Equatable, Sendable {
 
 public enum PetAnimationPlan: Equatable, Sendable {
     case staticFrame                 // one frame, no animation, no timer (0 Hz)
-    case breathe                     // rest pose + a subtle scale "breath" (resting)
+    case rest                        // idle pose + the form's signature idle motion
     case animate(fps: Double)        // run the bucket frames at this fps (active)
 }
 
@@ -81,16 +82,22 @@ public enum PetCompanionContent: Equatable, Sendable {
 }
 
 public enum PetAnimationPolicy {
-    /// The resting "breath": a subtle, slow scale pulse on the rest pose. Kept
-    /// tiny (a few percent, ~2–3 s per cycle) so it reads as breathing, never
-    /// clips the padded frame, and stays cheap on the compositor.
-    public static let breatheScale: Double = 1.03      // peak scale (1.0 → 1.03 → 1.0)
-    public static let breathePeriodSec: Double = 2.6   // one full in-and-out breath
-
     public static func plan(_ c: PetAnimationConditions) -> PetAnimationPlan {
         if c.mustPause { return .staticFrame }              // hard pause ⇒ 0 Hz
-        if c.bucket.isStatic || c.dataStale { return .breathe }  // quiet/stale ⇒ rest
+        if c.bucket.isStatic || c.dataStale { return .rest }     // quiet/stale ⇒ rest
         return .animate(fps: c.bucket.fps)                  // live ⇒ frame-swap
+    }
+
+    /// The frame a RESTING pet shows: the upright idle pose (its signature idle
+    /// motion animates ON this pose) — so a quiet cat reads as awake-and-calm. A
+    /// HARD pause instead FREEZES the pose for the current bucket (`staticFrameName`:
+    /// a sleeping cat curls into `sleep_0`, a mid-work cat holds its working pose),
+    /// so "resting/alive" reads distinctly from "frozen/off".
+    public static func restFrameName(content: PetCompanionContent) -> String {
+        switch content {
+        case let .cat(form): return "\(form.rawValue)_idle_0"
+        case let .egg(stage): return PetAssets.eggFrames(stage: stage).first ?? "egg_idle_0"
+        }
     }
 
     /// The frame shown when static: sleeping → the sleep frame; any other paused
