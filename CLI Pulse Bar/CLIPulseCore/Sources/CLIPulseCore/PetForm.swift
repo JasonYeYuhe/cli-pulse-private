@@ -34,6 +34,18 @@ public enum PetForm: String, Codable, CaseIterable, Sendable {
     case chonk    // Deadpan Chonk      — future drop (named in the plan's pool)
     case boss     // Middle Manager     — future drop
     case smug     // Smug Duchess       — future drop
+    // v1.44 drop pool (owner-directed 2026-07-13, generic archetypes): APPENDED
+    // for rawValue stability; provider-neutral until a ruleset rev maps them.
+    case derp     // Derpy Blep         — future drop
+    case zoomies  // Zoomies Dash       — future drop
+    case sleepy   // Sleepy Yawn        — future drop
+    case skept    // Skeptical Squint   — future drop
+    case plead    // Pleading Kitten    — future drop
+    case gasp     // Wide-Eyed Gasp     — future drop
+    case love     // Heart-Eyes         — future drop
+    case mlem     // Mlem Lick          — future drop
+    case floof    // Spooked Floof      — future drop
+    case nap      // Belly-Up Nap       — future drop
 
     /// Canonical English pun name (display copy is localized in M2).
     public var punName: String {
@@ -49,6 +61,16 @@ public enum PetForm: String, Codable, CaseIterable, Sendable {
         case .chonk: return "Deadpan Chonk"
         case .boss: return "Middle Manager"
         case .smug: return "Smug Duchess"
+        case .derp: return "Derpy Blep"
+        case .zoomies: return "Zoomies Dash"
+        case .sleepy: return "Sleepy Yawn"
+        case .skept: return "Skeptical Squint"
+        case .plead: return "Pleading Kitten"
+        case .gasp: return "Wide-Eyed Gasp"
+        case .love: return "Heart-Eyes"
+        case .mlem: return "Mlem Lick"
+        case .floof: return "Spooked Floof"
+        case .nap: return "Belly-Up Nap"
         }
     }
 
@@ -59,7 +81,9 @@ public enum PetForm: String, Codable, CaseIterable, Sendable {
         case .loaf, .polite: return .anthropic
         case .smash, .pop: return .openai
         case .long: return .google
-        case .huh, .sulk, .wail, .chonk, .boss, .smug: return .other
+        case .huh, .sulk, .wail, .chonk, .boss, .smug,
+             .derp, .zoomies, .sleepy, .skept, .plead, .gasp, .love, .mlem, .floof, .nap:
+            return .other
         }
     }
 
