@@ -19,10 +19,15 @@ import AppKit
 @MainActor
 public final class PetCompanionView: NSView {
     private static let animKey = "petCompanionFrames"      // active frame-swap
-    private static let breatheKey = "petCompanionBreathe"  // resting scale breath
+    private static let maxMotionChannels = 4               // upper bound for key cleanup
+    private static func motionKey(_ i: Int) -> String { "petMotion\(i)" }
     private let contentLayer = CALayer()                   // owned: explicit centre anchor
     private var content: PetCompanionContent = .egg(stage: .idle)
     private var conditions = PetAnimationConditions()
+    // The motion identity (form.rawValue / "egg") the resting animation is built
+    // for — so a FORM switch restarts it, but a bare re-commit (display wake, egg
+    // stage change) keeps a live breath running without snapping.
+    private var restingMotionIdentity: String?
 
     public override init(frame: NSRect) {
         super.init(frame: frame)
@@ -70,33 +75,37 @@ public final class PetCompanionView: NSView {
         switch PetAnimationPolicy.plan(conditions) {
         case .staticFrame:
             contentLayer.removeAnimation(forKey: Self.animKey)
-            contentLayer.removeAnimation(forKey: Self.breatheKey)
+            removeRestingMotion()
             let name = PetAnimationPolicy.staticFrameName(content: content, bucket: conditions.bucket)
             contentLayer.contents = PetAssets.cgImage(name)
-        case .breathe:
-            // Resting: one rest-pose frame + a subtle scale "breath" (render-server,
-            // no per-frame app wakeup), mutually exclusive with the frame-swap.
+        case .rest:
+            // Resting: the upright idle pose playing the form's signature idle
+            // motion (per-form personality — render-server transforms, no per-frame
+            // app wakeup), mutually exclusive with the frame-swap.
             contentLayer.removeAnimation(forKey: Self.animKey)
-            let name = PetAnimationPolicy.staticFrameName(content: content, bucket: conditions.bucket)
-            contentLayer.contents = PetAssets.cgImage(name)
-            // Add the breath ONLY if one isn't already running: the breath's params
-            // are constant, so a re-commit (content/egg-stage change, display wake)
-            // must NOT restart it — re-adding with fromValue=1.0 would snap the
-            // scale back to 1.0 mid-breath (agy). A dropped animation reads as nil
-            // here, so recovery still re-adds it.
-            if contentLayer.animation(forKey: Self.breatheKey) == nil {
-                let breath = CABasicAnimation(keyPath: "transform.scale")
-                breath.fromValue = 1.0
-                breath.toValue = PetAnimationPolicy.breatheScale
-                breath.duration = PetAnimationPolicy.breathePeriodSec / 2   // autoreverse completes the cycle
-                breath.autoreverses = true
-                breath.repeatCount = .infinity
-                breath.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                breath.isRemovedOnCompletion = false
-                contentLayer.add(breath, forKey: Self.breatheKey)
+            contentLayer.contents = PetAssets.cgImage(PetAnimationPolicy.restFrameName(content: content))
+            let identity = Self.motionIdentity(for: content)
+            // Rebuild the motion only when the FORM changed or the animation was
+            // dropped (channel 0 absent). Motion params are constant per form, so a
+            // bare re-commit (display wake, egg stage change) must NOT restart it —
+            // re-adding would snap every channel back to its start mid-cycle (agy).
+            if restingMotionIdentity != identity || contentLayer.animation(forKey: Self.motionKey(0)) == nil {
+                removeRestingMotion()
+                for (i, ch) in PetMotion.channels(for: content).enumerated() where i < Self.maxMotionChannels {
+                    let a = CABasicAnimation(keyPath: ch.axis.rawValue)
+                    a.fromValue = ch.from
+                    a.toValue = ch.to
+                    a.duration = ch.periodSec / 2   // autoreverse completes the cycle
+                    a.autoreverses = true
+                    a.repeatCount = .infinity
+                    a.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    a.isRemovedOnCompletion = false
+                    contentLayer.add(a, forKey: Self.motionKey(i))
+                }
+                restingMotionIdentity = identity
             }
         case let .animate(fps):
-            contentLayer.removeAnimation(forKey: Self.breatheKey)   // active never breathes
+            removeRestingMotion()   // active never rests
             let images = PetAnimationPolicy.frameNames(content: content, bucket: conditions.bucket)
                 .compactMap { PetAssets.cgImage($0) }
             guard images.count > 1 else {   // nothing to animate → show the one frame
@@ -114,6 +123,22 @@ public final class PetCompanionView: NSView {
             anim.repeatCount = .infinity
             anim.isRemovedOnCompletion = false
             contentLayer.add(anim, forKey: Self.animKey)
+        }
+    }
+
+    /// Remove every resting-motion channel and forget its identity (so the next
+    /// `.rest` rebuilds fresh).
+    private func removeRestingMotion() {
+        for i in 0..<Self.maxMotionChannels { contentLayer.removeAnimation(forKey: Self.motionKey(i)) }
+        restingMotionIdentity = nil
+    }
+
+    /// What the resting motion is keyed to: the form (so a switch restarts it) or
+    /// "egg" (whose calm breath is stage-independent, so egg cracks don't restart).
+    private static func motionIdentity(for content: PetCompanionContent) -> String {
+        switch content {
+        case let .cat(form): return form.rawValue
+        case .egg: return "egg"
         }
     }
 
