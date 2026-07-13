@@ -128,6 +128,27 @@ public extension PetForm {
             return [.init(.translateX, from: -2.5, to: 2.5, periodSec: 1.6)]
         case .shush:                                  // a very quiet, secretive breath
             return [.init(.scale, from: 1.0, to: 1.02, periodSec: 3.0)]
+        case .grin:                                   // a giddy, scheming little bounce
+            return [.init(.translateY, from: -1.2, to: 1.2, periodSec: 1.3)]
+        case .weepy:                                  // a slow, mournful sway
+            return [.init(.translateX, from: -1.5, to: 1.5, periodSec: 3.0)]
+        case .think:                                  // a slow, pondering head tilt
+            return [.init(.rotation, from: 0, to: 0.045, periodSec: 3.2)]
+        case .cheer:                                  // an excited celebratory bounce
+            return [.init(.translateY, from: -3.0, to: 3.0, periodSec: 0.9)]
+        case .kiss:                                   // a soft, affectionate pulse
+            return [.init(.scale, from: 1.0, to: 1.035, periodSec: 1.5)]
+        case .drool:                                  // a mesmerized, hungry sway
+            return [.init(.translateX, from: -2.0, to: 2.0, periodSec: 2.0)]
+        case .flex:                                   // a showing-off flex pulse
+            return [.init(.scale, from: 1.0, to: 1.05, periodSec: 1.4)]
+        case .peek:                                   // a sneaky peeking sway
+            return [.init(.translateX, from: -1.5, to: 1.5, periodSec: 1.8)]
+        case .melt:                                   // a slow, floppy melt (squash)
+            return [.init(.scaleX, from: 1.0, to: 1.05, periodSec: 3.4),
+                    .init(.scaleY, from: 1.0, to: 0.96, periodSec: 3.4)]
+        case .roll:                                   // a giggly rolling wobble
+            return [.init(.rotation, from: -0.07, to: 0.07, periodSec: 1.2)]
         }
     }
 }
