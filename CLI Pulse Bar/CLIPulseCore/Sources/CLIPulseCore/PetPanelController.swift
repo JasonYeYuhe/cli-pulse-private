@@ -140,7 +140,7 @@ public final class PetPanelController: NSObject {   // NSObject: selector-based 
         let vitals = PetVitalsEngine.compute(ledger: ledger,
                                              todayKey: todayKey,
                                              nowUnixMs: now)
-        let conditions = PetAnimationConditions(
+        let computed = PetAnimationConditions(
             bucket: vitals.energy,
             reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
             lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled,
@@ -148,6 +148,16 @@ public final class PetPanelController: NSObject {   // NSObject: selector-based 
             displayAsleep: displayAsleep,
             occludedOrHidden: (panel?.occlusionState.contains(.visible) == false),
             dataStale: vitals.confidence != .live)
+        // Test affordance: let the owner verify the animation on a display without
+        // live token burn (the shipping cat is static when there's nothing to
+        // reflect). Only the environment/data pauses are overridden — the shown
+        // FORM/EGG content is untouched, so it stays honest about what's owned.
+        // Kept wholly in the DEBUG branch so release keeps an immutable `let`.
+        #if DEBUG
+        let conditions = PetSettings.debugForceAnimate ? computed.debugForcedAnimating() : computed
+        #else
+        let conditions = computed
+        #endif
         companion.render(content: content, conditions: conditions)
         scheduleStaleExpiry(vitals: vitals, willAnimate: !conditions.mustPause, now: now)
     }

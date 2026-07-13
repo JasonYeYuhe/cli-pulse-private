@@ -86,4 +86,16 @@ public enum PetSettings {
     public static func displayName(for form: PetForm) -> String {
         name(for: form) ?? L10n.pet.formName(form)
     }
+
+    #if DEBUG
+    /// DEBUG-only: force the floating companion to animate (sprint bucket, data
+    /// treated as live, all environment pauses cleared) regardless of real usage,
+    /// so the animation can be verified on a display WITHOUT live token burn — the
+    /// shipping cat is intentionally static when there's nothing to reflect
+    /// (battery discipline + no-fake-liveness). Never compiled into release.
+    public static var debugForceAnimate: Bool {
+        get { defaults.bool(forKey: "cli_pulse_pet_debug_force_animate") }
+        set { defaults.set(newValue, forKey: "cli_pulse_pet_debug_force_animate") }
+    }
+    #endif
 }

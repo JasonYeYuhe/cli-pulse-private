@@ -39,6 +39,24 @@ public struct PetAnimationConditions: Equatable, Sendable {
         bucket.isStatic || reduceMotion || lowPower || screenLocked
             || displayAsleep || occludedOrHidden || dataStale
     }
+
+    #if DEBUG
+    /// DEBUG-only: coerce to an always-animating plan (sprint fps, data live, every
+    /// environment pause cleared) so the companion animation can be exercised on a
+    /// display without live token usage. The shipping cat stays static when there
+    /// is nothing to reflect; this is a test affordance, never a release path.
+    public func debugForcedAnimating() -> PetAnimationConditions {
+        var c = self
+        c.bucket = .sprint
+        c.reduceMotion = false
+        c.lowPower = false
+        c.screenLocked = false
+        c.displayAsleep = false
+        c.occludedOrHidden = false
+        c.dataStale = false
+        return c
+    }
+    #endif
 }
 
 public enum PetAnimationPlan: Equatable, Sendable {

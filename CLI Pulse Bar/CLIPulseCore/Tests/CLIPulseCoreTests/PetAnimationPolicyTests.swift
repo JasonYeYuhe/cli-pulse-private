@@ -66,4 +66,19 @@ final class PetAnimationPolicyTests: XCTestCase {
         XCTAssertEqual(PetAnimationPolicy.loopDuration(frameCount: 2, fps: 0), 0)   // no div-by-zero
         XCTAssertEqual(PetAnimationPolicy.loopDuration(frameCount: 0, fps: 4), 0)
     }
+
+    #if DEBUG
+    func test_debug_force_animate_overrides_every_pause() {
+        // The most hostile input: sleeping bucket AND every environment pause set.
+        // The debug override must still yield an animating sprint plan so the owner
+        // can verify motion on a display without live token usage.
+        let worst = PetAnimationConditions(bucket: .sleeping, reduceMotion: true, lowPower: true,
+                                           screenLocked: true, displayAsleep: true,
+                                           occludedOrHidden: true, dataStale: true)
+        let forced = worst.debugForcedAnimating()
+        XCTAssertFalse(forced.mustPause)
+        XCTAssertEqual(forced.bucket, .sprint)
+        XCTAssertEqual(PetAnimationPolicy.plan(forced), .animate(fps: PetAnimationBucket.sprint.fps))
+    }
+    #endif
 }
