@@ -108,6 +108,26 @@ public extension PetForm {
             return [.init(.translateX, from: -1.3, to: 1.3, periodSec: 0.42)]
         case .nap:                                    // a deep, relaxed belly breath
             return [.init(.scale, from: 1.0, to: 1.03, periodSec: 3.6)]
+        case .wink:                                   // a quick, playful head tilt
+            return [.init(.rotation, from: 0, to: 0.05, periodSec: 1.4)]
+        case .shy:                                    // a small, timid sway
+            return [.init(.translateX, from: -1.0, to: 1.0, periodSec: 2.6)]
+        case .angry:                                  // a fuming vertical stomp
+            return [.init(.translateY, from: -2.0, to: 2.0, periodSec: 0.5)]
+        case .dizzy:                                  // a woozy side-to-side wobble
+            return [.init(.rotation, from: -0.06, to: 0.06, periodSec: 2.2)]
+        case .proud:                                  // a slow, chest-puffed swell
+            return [.init(.scale, from: 1.0, to: 1.04, periodSec: 2.8)]
+        case .sneeze:                                 // a build-and-achoo pop
+            return [.init(.scale, from: 1.0, to: 1.06, periodSec: 1.3)]
+        case .nom:                                    // a quick chewing bob
+            return [.init(.translateY, from: -1.0, to: 1.0, periodSec: 0.6)]
+        case .star:                                   // an excited sparkle pulse
+            return [.init(.scale, from: 1.0, to: 1.045, periodSec: 1.0)]
+        case .sing:                                   // a swaying-to-the-music sway
+            return [.init(.translateX, from: -2.5, to: 2.5, periodSec: 1.6)]
+        case .shush:                                  // a very quiet, secretive breath
+            return [.init(.scale, from: 1.0, to: 1.02, periodSec: 3.0)]
         }
     }
 }

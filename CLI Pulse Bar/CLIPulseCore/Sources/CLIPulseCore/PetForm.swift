@@ -46,6 +46,17 @@ public enum PetForm: String, Codable, CaseIterable, Sendable {
     case mlem     // Mlem Lick          — future drop
     case floof    // Spooked Floof      — future drop
     case nap      // Belly-Up Nap       — future drop
+    // v1.45 drop pool (owner-directed 2026-07-13, generic archetypes): APPENDED.
+    case wink     // Winky Wink         — future drop
+    case shy      // Bashful Blush      — future drop
+    case angry    // Hissy Fit          — future drop
+    case dizzy    // Dizzy Spiral       — future drop
+    case proud    // Proud Puff         — future drop
+    case sneeze   // Tiny Sneeze        — future drop
+    case nom      // Nom Nom            — future drop
+    case star     // Starry Eyes        — future drop
+    case sing     // Sing Song          — future drop
+    case shush    // Shush Secret       — future drop
 
     /// Canonical English pun name (display copy is localized in M2).
     public var punName: String {
@@ -71,6 +82,16 @@ public enum PetForm: String, Codable, CaseIterable, Sendable {
         case .mlem: return "Mlem Lick"
         case .floof: return "Spooked Floof"
         case .nap: return "Belly-Up Nap"
+        case .wink: return "Winky Wink"
+        case .shy: return "Bashful Blush"
+        case .angry: return "Hissy Fit"
+        case .dizzy: return "Dizzy Spiral"
+        case .proud: return "Proud Puff"
+        case .sneeze: return "Tiny Sneeze"
+        case .nom: return "Nom Nom"
+        case .star: return "Starry Eyes"
+        case .sing: return "Sing Song"
+        case .shush: return "Shush Secret"
         }
     }
 
@@ -82,7 +103,8 @@ public enum PetForm: String, Codable, CaseIterable, Sendable {
         case .smash, .pop: return .openai
         case .long: return .google
         case .huh, .sulk, .wail, .chonk, .boss, .smug,
-             .derp, .zoomies, .sleepy, .skept, .plead, .gasp, .love, .mlem, .floof, .nap:
+             .derp, .zoomies, .sleepy, .skept, .plead, .gasp, .love, .mlem, .floof, .nap,
+             .wink, .shy, .angry, .dizzy, .proud, .sneeze, .nom, .star, .sing, .shush:
             return .other
         }
     }
