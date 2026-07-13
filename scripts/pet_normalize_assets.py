@@ -37,7 +37,10 @@ FORMS = {"loaf", "polite", "smash", "pop", "long", "huh",
          "sulk", "wail", "chonk", "boss", "smug",
          # v1.44 drop pool (owner-directed 2026-07-13, generic archetypes):
          "derp", "zoomies", "sleepy", "skept", "plead", "gasp", "love",
-         "mlem", "floof", "nap", "egg"}
+         "mlem", "floof", "nap",
+         # v1.45 drop pool (owner-directed 2026-07-13, generic archetypes):
+         "wink", "shy", "angry", "dizzy", "proud", "sneeze", "nom",
+         "star", "sing", "shush", "egg"}
 
 
 def white_to_alpha(im, kernel=5):
