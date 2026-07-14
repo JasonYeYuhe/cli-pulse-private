@@ -165,6 +165,22 @@ mkdir -p "$APP_PATH/Contents/Helpers"
 cp "$HELPER_BIN" "$APP_PATH/Contents/Helpers/cli_pulse_helper"
 chmod +x "$APP_PATH/Contents/Helpers/cli_pulse_helper"
 
+# 3b. Embed the bundled tmux (M4.4b) if it has been built. External-session
+#     control needs tmux and clean Macs have none. The binary is a universal,
+#     Developer-ID-signed, hardened-runtime artifact produced by
+#     `CLI Pulse Bar/scripts/build-tmux-universal.sh` (git-ignored). Guarded so
+#     a build without it still succeeds (the binary is optional until the
+#     feature ships). Sits next to the helper so the helper resolves it via
+#     `shell_integration.resolve_tmux_bin()`.
+TMUX_BUNDLED="$PROJECT_ROOT/CLI Pulse Bar/Resources/bin/tmux"
+if [[ -f "$TMUX_BUNDLED" ]]; then
+    echo "==> [3b] Embedding bundled tmux at Contents/Helpers/tmux ..."
+    cp "$TMUX_BUNDLED" "$APP_PATH/Contents/Helpers/tmux"
+    chmod +x "$APP_PATH/Contents/Helpers/tmux"
+else
+    echo "    (no bundled tmux at $TMUX_BUNDLED — run scripts/build-tmux-universal.sh to include it)"
+fi
+
 # 4. Copy LaunchAgent plist into Contents/Library/LaunchAgents/.
 echo "==> [4/7] Embedding LaunchAgent plist at Contents/Library/LaunchAgents/ ..."
 mkdir -p "$APP_PATH/Contents/Library/LaunchAgents"

@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 
 MARKER_BEGIN = "# >>> cli-pulse shell integration >>>"
@@ -66,6 +67,41 @@ def init_path(home: str | None = None) -> str:
 
 def conf_path(home: str | None = None) -> str:
     return os.path.join(clipulse_dir(home), CONF_BASENAME)
+
+
+# --- tmux binary resolution (M4.4b: prefer the bundled signed tmux) --------
+
+def _bundled_tmux_path() -> str | None:
+    """Path to a tmux bundled ALONGSIDE the FROZEN helper executable, if present
+    + executable — `Contents/Helpers/tmux` in the shipped .app. `None` otherwise.
+
+    Only consulted when running as the PyInstaller-frozen helper (`sys.frozen`):
+      * in a dev checkout `sys.executable` is the python interpreter, whose dir
+        may hold a Homebrew tmux we'd WRONGLY claim as "bundled" (review: agy);
+      * `sys.argv[0]` is deliberately NOT used — it can point at an
+        attacker-writable CWD (e.g. running the helper from ~/Downloads), which
+        would let a planted `tmux` be executed (review: agy)."""
+    if not getattr(sys, "frozen", False):
+        return None
+    exe = getattr(sys, "executable", None)
+    if not exe:
+        return None
+    try:
+        cand = os.path.join(os.path.dirname(os.path.realpath(exe)), "tmux")
+    except (OSError, ValueError):
+        return None
+    if os.path.isfile(cand) and os.access(cand, os.X_OK):
+        return cand
+    return None
+
+
+def resolve_tmux_bin(explicit: str | None = None) -> str:
+    """Resolve which tmux to use, in priority order: an explicit path → the
+    bundled signed tmux next to the helper (shipped .app) → PATH → the Homebrew
+    fallback. Single source of truth for every tmux-touching entry point."""
+    if explicit:
+        return explicit
+    return _bundled_tmux_path() or shutil.which("tmux") or "/opt/homebrew/bin/tmux"
 
 
 # --- rendered file contents (pure) ----------------------------------------
@@ -179,7 +215,7 @@ def install(home: str | None = None, tmux_bin: str | None = None,
     marked block to the shell rc(s). Never call this except from an explicit
     user opt-in. Returns the resulting status."""
     h = _home(home)
-    tb = tmux_bin or shutil.which("tmux") or "/opt/homebrew/bin/tmux"
+    tb = resolve_tmux_bin(tmux_bin)
     d = clipulse_dir(h)
     os.makedirs(d, exist_ok=True)
     # 0700 — the dir holds the tmux CONTROL socket, which can inject input into
@@ -250,7 +286,11 @@ def status(home: str | None = None, tmux_bin: str | None = None,
     return IntegrationStatus(
         installed=bool(with_block) and os.path.exists(init_p),
         init_present=os.path.exists(init_p),
-        tmux_bin=(tmux_bin or shutil.which("tmux")),
+        # Report a tmux that ACTUALLY EXISTS — the bundled binary (clean Mac,
+        # no Homebrew) or one on PATH — but never the may-not-exist Homebrew
+        # fallback from resolve_tmux_bin, which would falsely read "installed"
+        # (review: codex). None → genuinely "tmux not found".
+        tmux_bin=(tmux_bin or _bundled_tmux_path() or shutil.which("tmux")),
         rc_files_with_block=with_block,
         sock=sock_path(h),
     )
@@ -259,7 +299,7 @@ def status(home: str | None = None, tmux_bin: str | None = None,
 def list_wrapped_sessions(tmux_bin: str | None = None, sock: str | None = None) -> list[str]:
     """Enumerate CLI-Pulse-wrapped tmux sessions (name starts with the prefix).
     Returns [] if the socket/server isn't up."""
-    tb = tmux_bin or shutil.which("tmux") or "/opt/homebrew/bin/tmux"
+    tb = resolve_tmux_bin(tmux_bin)
     sk = sock or sock_path()
     try:
         r = subprocess.run([tb, "-S", sk, "list-sessions", "-F", "#{session_name}"],
