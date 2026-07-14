@@ -1668,3 +1668,238 @@ def test_stop_session_flushes_and_forgets_broadcast():
     mgr.stop_session(sid)
     assert sid in pub.flushed
     assert sid in pub.forgotten  # per-session state purged on teardown
+
+
+# ── M4.4: attach EXTERNAL (shell-integration-wrapped) tmux sessions ───────
+
+class _FakeTmuxTransport(SessionTransport):
+    """Stand-in for TmuxTransport in attach tests — records I/O, never kills
+    (models the NON-OWNING attach: terminate/close must not touch the user's
+    real session)."""
+
+    def __init__(self, socket_path, tmux_bin=None, **kw):
+        self.socket_path = socket_path
+        self.tmux_bin = tmux_bin
+        self.attached: list[str] = []
+        self.stdin_log: list[bytes] = []
+        self.resized: list[tuple[int, int]] = []
+        self.closed = False
+        self.killed = False
+        self._alive = True
+
+    def attach_existing(self, session_id, tmux_session_name):
+        self.attached.append(tmux_session_name)
+        return SessionHandle(session_id=session_id, payload=FakeHandle())
+
+    def start(self, *a, **k):  # pragma: no cover - attach path must never spawn
+        raise AssertionError("attach_wrapped_session must not spawn a new session")
+
+    def write_stdin(self, handle, data):
+        self.stdin_log.append(data)
+        return len(data)
+
+    def read_stdout(self, handle, max_bytes=4096):
+        return b""
+
+    def interrupt(self, handle):
+        pass
+
+    def terminate(self, handle):
+        # NON-OWNING: attaching to a pre-existing session never kills it.
+        self.killed = True   # records the CALL; a real TmuxTransport no-ops it
+
+    def resize(self, handle, rows, cols):
+        self.resized.append((rows, cols))
+
+    def is_alive(self, handle):
+        return self._alive
+
+    def wait(self, handle, timeout=None):
+        return 0
+
+    def close(self, handle):
+        self.closed = True
+
+
+def test_attach_wrapped_session_routes_io_to_per_session_transport(monkeypatch):
+    mgr, shared, _rpc = _make_manager()
+    made: list[_FakeTmuxTransport] = []
+
+    def _factory(socket_path, tmux_bin=None, **kw):
+        t = _FakeTmuxTransport(socket_path, tmux_bin)
+        made.append(t)
+        return t
+
+    import transports.tmux as tmux_mod
+    monkeypatch.setattr(tmux_mod, "TmuxTransport", _factory)
+
+    ok = mgr.attach_wrapped_session(
+        "ext-1", "clipulse-claude-123", provider="claude",
+        socket_path="/tmp/x.sock",
+    )
+    assert ok is True
+    assert len(made) == 1
+    fake = made[0]
+    assert fake.socket_path == "/tmp/x.sock"
+    assert fake.attached == ["clipulse-claude-123"]
+
+    # Raw input + resize route to the PER-SESSION transport, not the shared one.
+    assert mgr.send_input_raw("ext-1", base64.b64encode(b"hi").decode()) is True
+    assert fake.stdin_log == [b"hi"]
+    assert mgr.resize_session("ext-1", 40, 100) is True
+    assert fake.resized == [(40, 100)]
+    assert not any(c[0] in ("write_stdin", "start") for c in shared.calls)
+
+    # Stopping detaches via the per-session transport (close), and drops the row.
+    mgr.stop_session("ext-1")
+    assert fake.closed is True
+    assert "ext-1" not in mgr._sessions
+
+
+def test_attach_wrapped_session_is_idempotent(monkeypatch):
+    mgr, _shared, _rpc = _make_manager()
+    import transports.tmux as tmux_mod
+    monkeypatch.setattr(tmux_mod, "TmuxTransport",
+                        lambda socket_path, tmux_bin=None, **kw: _FakeTmuxTransport(socket_path))
+    assert mgr.attach_wrapped_session("dup", "clipulse-claude-1", socket_path="/tmp/x") is True
+    # second attach with the same id is a no-op success (doesn't double-register)
+    assert mgr.attach_wrapped_session("dup", "clipulse-claude-1", socket_path="/tmp/x") is True
+    assert len(mgr._sessions) == 1
+
+
+def test_attach_wrapped_session_returns_false_on_transport_error(monkeypatch):
+    mgr, _shared, _rpc = _make_manager()
+
+    class _Boom(_FakeTmuxTransport):
+        def attach_existing(self, session_id, tmux_session_name):
+            raise TransportError("no such session")
+
+    import transports.tmux as tmux_mod
+    monkeypatch.setattr(tmux_mod, "TmuxTransport",
+                        lambda socket_path, tmux_bin=None, **kw: _Boom(socket_path))
+    assert mgr.attach_wrapped_session("bad", "clipulse-claude-9", socket_path="/tmp/x") is False
+    assert "bad" not in mgr._sessions
+
+
+def test_attach_wrapped_session_rejects_missing_tmux_session(monkeypatch):
+    # A wrapped session whose tmux server has no such session (stale/wrong name)
+    # must FAIL the attach (not register a doomed row), and must close the dead
+    # control client it spawned. Review: codex/agy M4.4a.
+    mgr, _shared, _rpc = _make_manager()
+
+    class _Gone(_FakeTmuxTransport):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self._alive = False   # has-session → not present
+
+    made: list[_Gone] = []
+
+    def _factory(socket_path, tmux_bin=None, **kw):
+        t = _Gone(socket_path, tmux_bin)
+        made.append(t)
+        return t
+
+    import transports.tmux as tmux_mod
+    monkeypatch.setattr(tmux_mod, "TmuxTransport", _factory)
+    ok = mgr.attach_wrapped_session("stale", "clipulse-claude-dead", socket_path="/tmp/x")
+    assert ok is False
+    assert "stale" not in mgr._sessions
+    assert made[0].closed is True, "must close the dead control client it spawned"
+
+
+def test_list_wrapped_sessions_delegates_to_shell_integration(monkeypatch):
+    mgr, _shared, _rpc = _make_manager()
+    import shell_integration as si
+    monkeypatch.setattr(si, "list_wrapped_sessions",
+                        lambda *a, **k: ["clipulse-claude-1", "clipulse-codex-2"])
+    assert mgr.list_wrapped_sessions() == ["clipulse-claude-1", "clipulse-codex-2"]
+
+
+def test_spawned_session_still_uses_shared_transport(monkeypatch):
+    # Regression: the per-session-transport plumbing must not change behaviour
+    # for manager-SPAWNED sessions — they still go through `self.transport`.
+    mgr, shared, _rpc = _make_manager()
+    sid = _spawn(mgr)
+    mgr.send_input_raw(sid, base64.b64encode(b"x").decode())
+    assert any(c[0] == "write_stdin" and c[1]["session_id"] == sid for c in shared.calls)
+
+
+import shutil as _shutil  # noqa: E402
+
+_HAS_TMUX = _shutil.which("tmux") is not None
+
+
+@pytest.mark.skipif(not _HAS_TMUX, reason="tmux not installed")
+def test_attach_wrapped_session_real_tmux_roundtrip_and_nonowning():
+    # The crown-jewel end-to-end: create a REAL tmux session (as if the user
+    # launched `claude` in their terminal, wrapped by the shell integration),
+    # attach it into the manager, drive it with remote input, read its output
+    # back through the normal tail surface, and prove stop() DETACHES without
+    # killing the user's real session (owns_session=False).
+    import subprocess
+    import tempfile
+    tmux = _shutil.which("tmux")
+    # Short socket dir — a UNIX socket path is capped at ~104 bytes on macOS, so
+    # pytest's deep tmp_path overflows it (mirrors the tmux transport test).
+    sock_dir = tempfile.mkdtemp(prefix="clip-", dir="/tmp")
+    sock = os.path.join(sock_dir, "t.sock")
+    name = "clipulse-claude-e2e"
+    subprocess.run([tmux, "-S", sock, "new-session", "-d", "-s", name,
+                    "-x", "80", "-y", "24", "cat"], check=True)
+    try:
+        mgr, _shared, _rpc = _make_manager()
+        ok = mgr.attach_wrapped_session(
+            "ext-real", name, provider="claude", tmux_bin=tmux, socket_path=sock,
+        )
+        assert ok is True
+
+        # remote input → the attached session; `cat` echoes it back
+        mgr.send_input_raw("ext-real", base64.b64encode(b"PING_42\n").decode())
+
+        # drain through the normal loop, then read the tail the app would see
+        got = b""
+        for _ in range(80):
+            mgr._drain_running_sessions_stdout()
+            snap = mgr.local_get_tail_snapshot("ext-real", 65536)
+            if snap and snap.get("bytes_base64"):
+                got = base64.b64decode(snap["bytes_base64"])
+                if b"PING_42" in got:
+                    break
+            time.sleep(0.05)
+        assert b"PING_42" in got, got
+
+        # stop() must DETACH, not kill — the user's real session survives.
+        mgr.stop_session("ext-real")
+        assert "ext-real" not in mgr._sessions
+        alive = subprocess.run([tmux, "-S", sock, "has-session", "-t", name])
+        assert alive.returncode == 0, "stop() killed the user's real session!"
+    finally:
+        subprocess.run([tmux, "-S", sock, "kill-server"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _shutil.rmtree(sock_dir, ignore_errors=True)
+
+
+@pytest.mark.skipif(not _HAS_TMUX, reason="tmux not installed")
+def test_attach_wrapped_session_real_tmux_nonexistent_name_fails():
+    # A REAL tmux server that is up but has NO session by the requested name →
+    # attach must return False (has-session guard), leaving nothing registered.
+    import subprocess
+    import tempfile
+    tmux = _shutil.which("tmux")
+    sock_dir = tempfile.mkdtemp(prefix="clip-", dir="/tmp")
+    sock = os.path.join(sock_dir, "t.sock")
+    # bring the server up with an unrelated session so the socket exists
+    subprocess.run([tmux, "-S", sock, "new-session", "-d", "-s", "other", "cat"],
+                   check=True)
+    try:
+        mgr, _shared, _rpc = _make_manager()
+        ok = mgr.attach_wrapped_session(
+            "ext-missing", "clipulse-claude-nope", provider="claude",
+            tmux_bin=tmux, socket_path=sock,
+        )
+        assert ok is False
+        assert "ext-missing" not in mgr._sessions
+    finally:
+        subprocess.run([tmux, "-S", sock, "kill-server"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _shutil.rmtree(sock_dir, ignore_errors=True)

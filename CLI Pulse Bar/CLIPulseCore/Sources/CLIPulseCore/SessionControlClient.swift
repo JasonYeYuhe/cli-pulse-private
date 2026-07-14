@@ -373,6 +373,13 @@ public enum SessionControlError: Error, Equatable, Sendable, CustomStringConvert
     /// Too many process actions in the helper's rate window — slow down.
     case rateLimited
 
+    /// M4.4: attaching to a shell-integration-wrapped external session failed —
+    /// the tmux session vanished (stale/wrong name) or the control client
+    /// couldn't spawn. Distinct from `sessionNotFound` (which is about the
+    /// managed/detected list): the UI should offer "re-scan wrapped sessions"
+    /// rather than treating it as an internal error.
+    case attachFailed
+
     public var description: String {
         switch self {
         case .helperNotRunning:    return "helper not running"
@@ -395,6 +402,7 @@ public enum SessionControlError: Error, Equatable, Sendable, CustomStringConvert
         case .processProtected:    return "process is protected"
         case .processNotPermitted: return "process owned by another user"
         case .rateLimited:         return "too many process actions"
+        case .attachFailed:        return "could not attach to the wrapped session"
         case .invalidResponse(let detail): return "invalid response: \(detail)"
         case .internalError(let detail):   return "internal error: \(detail)"
         }
@@ -432,6 +440,9 @@ public enum SessionControlErrorMapping {
         case "process_protected":     return .processProtected
         case "process_not_permitted": return .processNotPermitted
         case "rate_limited":          return .rateLimited
+        // M4.4: attaching a shell-integration-wrapped external session failed.
+        // Code emitted by local_session_server.py `attach_wrapped_session`.
+        case "attach_failed":         return .attachFailed
         default:                  return .internalError("\(code): \(message)")
         }
     }

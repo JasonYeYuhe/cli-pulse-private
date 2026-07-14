@@ -35,6 +35,16 @@ final class SessionControlIter2ATests: XCTestCase {
         )
     }
 
+    // M4.4: the attach_wrapped_session failure code must map to a TYPED error,
+    // not fall through to `.internalError` (which the UI renders as a scary
+    // "internal error" instead of an ordinary "couldn't attach — re-scan").
+    func testWireCodeMapping_attachFailed() {
+        XCTAssertEqual(
+            SessionControlErrorMapping.error(forWireCode: "attach_failed", message: "gone"),
+            .attachFailed
+        )
+    }
+
     // MARK: - Capability invariants
 
     func testIter2aLocalCapabilities_advertiseSendInputOnly() {
