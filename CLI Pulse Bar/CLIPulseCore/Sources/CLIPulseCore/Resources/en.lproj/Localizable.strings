@@ -1011,3 +1011,13 @@
 "pet.form_peek" = "Sneaky Peek";
 "pet.form_melt" = "Melty Puddle";
 "pet.form_roll" = "Rolly Giggle";
+"pet.form_wave" = "Friendly Wave";
+"pet.form_cold" = "Chilly Shiver";
+"pet.form_hot" = "Sweaty Pant";
+"pet.form_dance" = "Groovy Dance";
+"pet.form_fierce" = "Fired Up";
+"pet.form_bored" = "Bored Sigh";
+"pet.form_facepalm" = "Facepaw";
+"pet.form_stretch" = "Big Stretch";
+"pet.form_chill" = "Chill Lean";
+"pet.form_zen" = "Zen Meditate";

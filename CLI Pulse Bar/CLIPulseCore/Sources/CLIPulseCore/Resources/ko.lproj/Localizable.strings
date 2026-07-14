@@ -736,3 +736,13 @@
 "pet.form_peek" = "살금엿보냥";
 "pet.form_melt" = "녹아내린냥";
 "pet.form_roll" = "데굴깔깔냥";
+"pet.form_wave" = "반갑게손인사냥";
+"pet.form_cold" = "덜덜추워냥";
+"pet.form_hot" = "더워헥헥냥";
+"pet.form_dance" = "흥겨운댄스냥";
+"pet.form_fierce" = "투지불끈냥";
+"pet.form_bored" = "심심한숨냥";
+"pet.form_facepalm" = "어휴얼굴가림냥";
+"pet.form_stretch" = "쭉기지개냥";
+"pet.form_chill" = "느긋널브러냥";
+"pet.form_zen" = "좌선명상냥";
