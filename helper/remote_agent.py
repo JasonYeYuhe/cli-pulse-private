@@ -593,11 +593,12 @@ class RemoteAgentManager:
         try:
             import shell_integration as si
             sock = socket_path or si.sock_path()
+            resolved_tmux = si.resolve_tmux_bin(tmux_bin)  # prefer bundled tmux
         except Exception as exc:  # noqa: BLE001
             logger.warning("attach_wrapped_session(%s): no socket path: %s",
                            session_id, exc)
             return False
-        transport = TmuxTransport(socket_path=sock, tmux_bin=tmux_bin)
+        transport = TmuxTransport(socket_path=sock, tmux_bin=resolved_tmux)
         try:
             handle = transport.attach_existing(session_id, tmux_session_name)
         except TransportError as exc:

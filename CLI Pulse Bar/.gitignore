@@ -1,0 +1,3 @@
+
+# M4.4b: bundled tmux is a build artifact (built by scripts/build-tmux-universal.sh)
+Resources/bin/tmux

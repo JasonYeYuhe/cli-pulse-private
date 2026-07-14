@@ -1862,6 +1862,10 @@ _SWIFT_CLIENT_METHODS = frozenset({
     "hello", "start_session", "list_sessions", "stop_session",
     "send_input", "send_input_raw", "resize", "get_tail_snapshot",
     "subscribe_events", "approve_action", "install_claude_hook",
+    # M1c: the Swift client's uninstallClaudeHook() (added in PR #351, a Swift-
+    # only change → Helper CI's path filter skipped this suite until M4.4b's
+    # helper/ change ran it — same drift pattern as the relay verbs below).
+    "uninstall_claude_hook",
     "get_pending_approvals", "get_local_control_status",
     "set_local_control_enabled",
     # System Monitor S4: the macOS Machine tab's LocalSessionControlClient.

@@ -217,3 +217,65 @@ def test_install_locks_down_clipulse_dir(tmp_path):
     si.install(home=home, tmux_bin="/usr/bin/tmux", rc_files=[rc])
     mode = stat.S_IMODE(os.stat(si.clipulse_dir(home)).st_mode)
     assert mode == 0o700, oct(mode)
+
+
+# --- M4.4b: bundled-tmux resolution ---------------------------------------
+
+import sys as _sys  # noqa: E402
+
+
+def test_resolve_tmux_bin_prefers_explicit():
+    assert si.resolve_tmux_bin("/custom/path/tmux") == "/custom/path/tmux"
+
+
+def _fake_frozen(monkeypatch, exe_path):
+    # Simulate the PyInstaller-frozen helper: sys.frozen=True + sys.executable
+    # pointing at the (fake) frozen binary. NEVER sys.argv (hijack-safe).
+    monkeypatch.setattr(_sys, "frozen", True, raising=False)
+    monkeypatch.setattr(_sys, "executable", str(exe_path))
+
+
+def test_resolve_tmux_bin_prefers_bundled_sibling(tmp_path, monkeypatch):
+    # A tmux sibling of the FROZEN helper executable is preferred over PATH —
+    # this is Contents/Helpers/tmux in the shipped .app.
+    fake_helper = tmp_path / "cli_pulse_helper"
+    fake_helper.write_text("#!/bin/sh\n")
+    bundled = tmp_path / "tmux"
+    bundled.write_text("#!/bin/sh\n")
+    bundled.chmod(0o755)
+    _fake_frozen(monkeypatch, fake_helper)
+    assert si.resolve_tmux_bin() == str(bundled)
+
+
+def test_resolve_tmux_bin_ignores_sibling_when_not_frozen(tmp_path, monkeypatch):
+    # In a DEV checkout (not frozen), a tmux next to the python interpreter must
+    # NOT be treated as "bundled" — else a Homebrew tmux beside a Homebrew
+    # python3 would be wrongly claimed. (agy)
+    fake_helper = tmp_path / "python3"
+    fake_helper.write_text("#!/bin/sh\n")
+    bundled = tmp_path / "tmux"
+    bundled.write_text("#!/bin/sh\n")
+    bundled.chmod(0o755)
+    monkeypatch.setattr(_sys, "frozen", False, raising=False)
+    monkeypatch.setattr(_sys, "executable", str(fake_helper))
+    assert si.resolve_tmux_bin() != str(bundled)  # sibling ignored → PATH/fallback
+
+
+def test_resolve_tmux_bin_falls_back_when_no_bundle(tmp_path, monkeypatch):
+    # Frozen but no tmux sibling → falls through to PATH / homebrew fallback,
+    # never the nonexistent bundled path.
+    fake_helper = tmp_path / "cli_pulse_helper"
+    fake_helper.write_text("#!/bin/sh\n")
+    _fake_frozen(monkeypatch, fake_helper)
+    got = si.resolve_tmux_bin()
+    assert got != str(tmp_path / "tmux")
+    assert got  # non-empty
+
+
+def test_resolve_tmux_bin_ignores_non_executable_sibling(tmp_path, monkeypatch):
+    # A non-executable `tmux` sibling must be ignored (not a runnable binary).
+    fake_helper = tmp_path / "cli_pulse_helper"
+    fake_helper.write_text("#!/bin/sh\n")
+    (tmp_path / "tmux").write_text("not executable\n")  # no +x
+    _fake_frozen(monkeypatch, fake_helper)
+    assert si.resolve_tmux_bin() != str(tmp_path / "tmux")
