@@ -549,168 +549,90 @@ def recommended_hook_command(helper_path: Path, python_path: str | None = None) 
     return f"{py} {helper} remote-approval-hook --provider claude"
 
 
-def install_claude_hook(
-    helper_path: Path,
-    *,
-    settings_path: Path | None = None,
-    python_path: str | None = None,
-) -> dict[str, object]:
-    """Idempotently merge the CLI Pulse PermissionRequest hook into
-    `~/.claude/settings.json`, preserving every other key the user
-    has set.
+# M1: the CLI Pulse hook is installed under BOTH `PermissionRequest` (fires only
+# when a permission dialog would show) AND `PreToolUse` (fires for EVERY tool
+# call — the always-present lever on a broad-allowlist machine). The command +
+# entry shape is identical for both; only the event key differs. `remote_hook`
+# reads `hook_event_name` to emit the right output shape per event.
+_CLI_PULSE_HOOK_EVENTS = ("PermissionRequest", "PreToolUse")
 
-    Behaviour:
+# The marker `remote-approval-hook --provider claude` is unique to this codebase
+# — no other Claude hook would use both that subcommand AND that argument shape,
+# so matching on this string alone is specific enough without false positives.
+_HELPER_MARKER = "remote-approval-hook --provider claude"
 
-      - if the file is missing or empty → write a minimal settings
-        object containing just `hooks.PermissionRequest` with our
-        command.
-      - if the file is parse-broken JSON → raise `ValueError` (do
-        NOT clobber the user's data; the operator must fix the file
-        manually).
-      - if the file already contains `hooks.PermissionRequest` with
-        an entry whose `.command` resolves to our helper script →
-        no-op (idempotent).
-      - if the file contains `hooks.PermissionRequest` with OTHER
-        entries → append our entry (do not remove the user's other
-        hooks); this is documented as the unsupported case in the
-        original print-snippet flow but is the safe default here.
-      - otherwise create the missing keys and add our entry.
 
-    Returns a small status dict the CLI command renders for the user:
-    `{"settings_path", "action", "previous_command", "new_command"}`.
-    `action` is one of `"created" | "added" | "noop" | "replaced"`.
-    """
-    settings = settings_path or (Path.home() / ".claude" / "settings.json")
-    target_command = recommended_hook_command(
-        helper_path=helper_path, python_path=python_path,
+def _hook_has_marker(h: object) -> bool:
+    return (
+        isinstance(h, dict)
+        and isinstance(h.get("command"), str)
+        and _HELPER_MARKER in h["command"]
     )
 
-    # Load existing data if any.
-    if settings.exists() and settings.stat().st_size > 0:
-        try:
-            raw = settings.read_text(encoding="utf-8")
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"refusing to overwrite malformed JSON at {settings}: {exc.msg}. "
-                "Please fix the file by hand and rerun this command."
-            ) from exc
-        if not isinstance(data, dict):
-            raise ValueError(
-                f"refusing to overwrite non-object JSON at {settings} "
-                f"(got {type(data).__name__}). The file must be a JSON object."
-            )
-    else:
-        data = {}
 
-    # Locate / create hooks.PermissionRequest.
-    hooks = data.get("hooks")
-    if not isinstance(hooks, dict):
-        hooks = {}
-    pr = hooks.get("PermissionRequest")
-    if not isinstance(pr, list):
-        pr = []
+def _is_cli_pulse_legacy_entry(entry: object) -> bool:
+    """Legacy flat shape: top-level `command` field, no nested `hooks` array.
+    The whole entry IS our hook (no other hooks can be co-resident)."""
+    return (
+        isinstance(entry, dict)
+        and not isinstance(entry.get("hooks"), list)
+        and isinstance(entry.get("command"), str)
+        and _HELPER_MARKER in entry["command"]
+    )
 
-    # Detect existing CLI Pulse hook entries. The marker
-    # `remote-approval-hook --provider claude` is unique to this
-    # codebase — no other Claude PermissionRequest hook would use
-    # both that subcommand AND that argument shape, so matching on
-    # this string alone is specific enough without false positives.
-    #
-    # We probe BOTH schema shapes AND check matcher canonicality:
-    #
-    #   - **Current canonical (matcher: "" + nested hooks)**: each
-    #     PermissionRequest entry is `{"matcher": "", "hooks":
-    #     [{"type":"command","command":"..."}]}`. The empty-string
-    #     matcher means "fire on every PermissionRequest" — this is
-    #     the only shape that lets CLI Pulse intercept ALL tool
-    #     permission prompts (Bash + Read + Write + …). Anything
-    #     else is non-canonical even if the inner command matches
-    #     our marker.
-    #   - **Narrower matcher (matcher: "Bash" / "Read" / etc.)**:
-    #     same nested-hooks structure but the matcher would only
-    #     fire for one tool family, so the rest of the structured
-    #     approval routing stays broken. Codex iter6 finding: this
-    #     must be reported as `replaced`, NOT `noop`, even when the
-    #     inner command matches.
-    #   - **Legacy flat (no matcher, top-level command)**: each
-    #     entry is `{"type":"command","command":"..."}`. Older
-    #     versions of this codebase wrote this shape; Claude Code's
-    #     current `/doctor` rejects it as malformed (
-    #     `hooks.PermissionRequest.0.hooks: Expected array, but
-    #     received undefined`). Auto-heal lifts these into the
-    #     canonical matcher shape.
-    helper_marker = "remote-approval-hook --provider claude"
 
-    def _hook_has_marker(h: object) -> bool:
-        return (
-            isinstance(h, dict)
-            and isinstance(h.get("command"), str)
-            and helper_marker in h["command"]
-        )
+def _matcher_entry_has_our_hook(entry: object) -> bool:
+    """Matcher-shape entry whose nested `hooks` array contains our marker. The
+    entry MAY also contain other (non-CLI-Pulse) nested hooks — the mixed-entry
+    preservation path surgically removes only ours."""
+    if not isinstance(entry, dict):
+        return False
+    nested = entry.get("hooks")
+    if not isinstance(nested, list):
+        return False
+    return any(_hook_has_marker(h) for h in nested)
 
-    def _is_cli_pulse_legacy_entry(entry: object) -> bool:
-        """Legacy flat shape: top-level `command` field, no nested
-        `hooks` array. The whole entry IS our hook (no other hooks
-        can be co-resident in this shape).
-        """
-        return (
-            isinstance(entry, dict)
-            and not isinstance(entry.get("hooks"), list)
-            and isinstance(entry.get("command"), str)
-            and helper_marker in entry["command"]
-        )
 
-    def _matcher_entry_has_our_hook(entry: object) -> bool:
-        """Matcher-shape entry whose nested `hooks` array contains
-        our marker. The entry MAY also contain other (non-CLI-Pulse)
-        nested hooks — the mixed-entry preservation path below
-        surgically removes only our nested hook in that case.
-        """
-        if not isinstance(entry, dict):
-            return False
-        nested = entry.get("hooks")
-        if not isinstance(nested, list):
-            return False
-        return any(_hook_has_marker(h) for h in nested)
+def _is_canonical_matcher(entry: object) -> bool:
+    """Match-all matcher: exactly the empty string. Missing key / None / any
+    non-empty value is non-canonical (would only fire for a subset)."""
+    return isinstance(entry, dict) and entry.get("matcher") == ""
 
-    def _is_canonical_matcher(entry: object) -> bool:
-        """Match-all matcher: exactly the empty string `""`.
-        Missing key, `None`, or any non-empty value (`"Bash"`,
-        `"Read"`, regex-like strings, etc.) is non-canonical —
-        Codex iter6: those would only fire for a subset of
-        PermissionRequests and silently break structured approvals
-        for the rest, so installer must replace and detector must
-        report .notWired.
-        """
-        return isinstance(entry, dict) and entry.get("matcher") == ""
 
-    def _is_canonical_pure_cli_pulse_entry(entry: object) -> bool:
-        """Entry that is EXACTLY our canonical shape: matcher="",
-        hooks=[<single CLI Pulse hook>]. Used for the noop-eligibility
-        check — anything richer (extra nested hooks, narrower
-        matcher) needs auto-heal.
-        """
-        if not _is_canonical_matcher(entry):
-            return False
-        nested = entry.get("hooks")
-        if not isinstance(nested, list) or len(nested) != 1:
-            return False
-        return _hook_has_marker(nested[0])
+def _is_canonical_pure_cli_pulse_entry(entry: object) -> bool:
+    """Entry that is EXACTLY our canonical shape: matcher="", hooks=[<single CLI
+    Pulse hook>]. Used for the noop-eligibility check."""
+    if not _is_canonical_matcher(entry):
+        return False
+    nested = entry.get("hooks")
+    if not isinstance(nested, list) or len(nested) != 1:
+        return False
+    return _hook_has_marker(nested[0])
 
-    def _entry_command(entry: object) -> str | None:
-        """Pull the helper command string out of either schema shape."""
-        if _is_cli_pulse_legacy_entry(entry):
-            return entry["command"]
-        if _matcher_entry_has_our_hook(entry):
-            for h in entry["hooks"]:
-                if _hook_has_marker(h):
-                    return h["command"]
-        return None
 
-    # First-pass scan: count how many entries touch our marker
-    # (in either schema shape) and find the previous command (for
-    # the status-dict response).
+def _entry_command(entry: object) -> str | None:
+    """Pull the helper command string out of either schema shape."""
+    if _is_cli_pulse_legacy_entry(entry):
+        return entry["command"]
+    if _matcher_entry_has_our_hook(entry):
+        for h in entry["hooks"]:
+            if _hook_has_marker(h):
+                return h["command"]
+    return None
+
+
+def _merge_cli_pulse_event(
+    existing: object, target_command: str, *, file_had_data: bool,
+) -> tuple[list[Any], str, str | None]:
+    """Idempotently merge one CLI Pulse hook entry into a single event's list
+    (e.g. `hooks["PreToolUse"]`). Pure — returns `(new_list, action,
+    previous_command)`, mutating nothing. Same auto-heal semantics the shipped
+    PermissionRequest install had (Codex iter6 hardening): drop legacy flat
+    entries, surgically strip our nested hook from mixed matcher entries
+    (preserving the user's co-resident hooks), and append exactly one canonical
+    entry. `action` ∈ noop | replaced | added | created."""
+    pr = existing if isinstance(existing, list) else []
+
     cli_pulse_touched_count = sum(
         1 for entry in pr
         if _is_cli_pulse_legacy_entry(entry) or _matcher_entry_has_our_hook(entry)
@@ -722,117 +644,245 @@ def install_claude_hook(
             previous_command = cmd
             break
 
-    # Noop ONLY when the array contains exactly one CLI-Pulse-related
-    # entry AND that entry is the canonical pure shape with the
-    # exact target command. Anything else (narrower matcher, legacy
-    # shape, mixed nested hooks, duplicate entries, stale command)
-    # routes through the auto-heal rebuild path below.
     canonical_pure_indices = [
         i for i, entry in enumerate(pr)
         if _is_canonical_pure_cli_pulse_entry(entry)
         and entry["hooks"][0]["command"] == target_command
     ]
-    is_noop = (
-        cli_pulse_touched_count == 1
-        and len(canonical_pure_indices) == 1
-    )
-
+    is_noop = cli_pulse_touched_count == 1 and len(canonical_pure_indices) == 1
     had_unrelated_entries = any(
         not (_is_cli_pulse_legacy_entry(entry) or _matcher_entry_has_our_hook(entry))
         for entry in pr
     )
 
     if is_noop:
-        action = "noop"
-    else:
-        # Auto-heal rebuild path. Three guarantees:
-        #   1. **Drop legacy flat entries** — they have no nested
-        #      hooks list, the entire entry IS our hook, no user
-        #      data to preserve.
-        #   2. **Surgically remove our nested hook from mixed
-        #      matcher entries** — Codex iter6 finding: if the user
-        #      put another hook (e.g. an audit hook) in the SAME
-        #      matcher entry's nested hooks array as ours, replacing
-        #      the whole entry would silently delete their hook.
-        #      Instead we filter the nested array to exclude only
-        #      the marker-matching entries; if the cleaned array is
-        #      empty, the parent entry had nothing else and we drop
-        #      it; if non-empty, we preserve the parent entry with
-        #      the cleaned nested array (matcher key + any other
-        #      sibling keys preserved verbatim).
-        #   3. **Append exactly one canonical CLI Pulse entry** at
-        #      the end so detection lights up as `.wired` on the
-        #      next read.
-        new_pr: list[Any] = []
-        for entry in pr:
-            if _is_cli_pulse_legacy_entry(entry):
+        return list(pr), "noop", previous_command
+
+    new_pr: list[Any] = []
+    for entry in pr:
+        if _is_cli_pulse_legacy_entry(entry):
+            continue
+        if _matcher_entry_has_our_hook(entry):
+            cleaned_nested = [h for h in entry["hooks"] if not _hook_has_marker(h)]
+            if not cleaned_nested:
                 continue
-            if _matcher_entry_has_our_hook(entry):
-                cleaned_nested = [
-                    h for h in entry["hooks"] if not _hook_has_marker(h)
-                ]
-                if not cleaned_nested:
-                    # Whole nested array was CLI Pulse — drop entry.
-                    continue
-                # Mixed entry: preserve every key except `hooks`,
-                # which we replace with the cleaned (CLI-Pulse-free)
-                # array. `dict(entry)` shallow-copies so we don't
-                # mutate the caller's data.
-                preserved = dict(entry)
-                preserved["hooks"] = cleaned_nested
-                new_pr.append(preserved)
-            else:
-                # Entry doesn't touch our marker — leave verbatim.
-                new_pr.append(entry)
-        new_pr.append(_cli_pulse_hook_entry(target_command))
-        pr = new_pr
-
-        if previous_command is not None:
-            # Pre-existing CLI Pulse hook found in non-canonical
-            # form — covers narrower matcher, legacy flat schema,
-            # mixed nested, stale command, duplicate entries.
-            action = "replaced"
-        elif had_unrelated_entries or data:
-            # Existing settings file with other content but no
-            # CLI Pulse hook yet — we added alongside.
-            action = "added"
+            preserved = dict(entry)
+            preserved["hooks"] = cleaned_nested
+            new_pr.append(preserved)
         else:
-            action = "created"
+            new_pr.append(entry)
+    new_pr.append(_cli_pulse_hook_entry(target_command))
 
-    hooks["PermissionRequest"] = pr
-    data["hooks"] = hooks
+    if previous_command is not None:
+        action = "replaced"
+    elif had_unrelated_entries or file_had_data:
+        action = "added"
+    else:
+        action = "created"
+    return new_pr, action, previous_command
 
-    if action != "noop":
-        # Atomic write — temp file in same dir, then rename.
-        # Mode handling (P2 fix from Codex review on 7528084):
-        # preserve the existing file's mode if it was already on
-        # disk (a 0600 settings.json must NOT be widened to 0644
-        # by our install). New files default to 0600 — settings
-        # often contain machine-readable hook commands referencing
-        # paths under $HOME, and on multi-user systems the
-        # safer default is owner-only.
-        mode_to_set = 0o600
+
+def _strip_cli_pulse_from_event(existing: object) -> tuple[list[Any], int]:
+    """Remove every CLI Pulse hook from one event's list (uninstall). Preserves
+    the user's co-resident hooks in mixed matcher entries. Returns `(new_list,
+    removed_count)`."""
+    pr = existing if isinstance(existing, list) else []
+    new_pr: list[Any] = []
+    removed = 0
+    for entry in pr:
+        if _is_cli_pulse_legacy_entry(entry):
+            removed += 1
+            continue
+        if _matcher_entry_has_our_hook(entry):
+            cleaned_nested = [h for h in entry["hooks"] if not _hook_has_marker(h)]
+            removed += len(entry["hooks"]) - len(cleaned_nested)
+            if not cleaned_nested:
+                continue
+            preserved = dict(entry)
+            preserved["hooks"] = cleaned_nested
+            new_pr.append(preserved)
+        else:
+            new_pr.append(entry)
+    return new_pr, removed
+
+
+def _write_settings_atomic(settings: Path, data: dict[str, Any]) -> None:
+    """Atomic settings write preserving the existing file's mode (a 0600
+    settings.json must NOT be widened); new files default to 0600."""
+    mode_to_set = 0o600
+    try:
+        mode_to_set = settings.stat().st_mode & 0o777
+    except FileNotFoundError:
+        pass
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    tmp = settings.with_suffix(settings.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    os.chmod(tmp, mode_to_set)
+    tmp.replace(settings)
+    os.chmod(settings, mode_to_set)
+
+
+def _load_settings_or_raise(settings: Path) -> dict[str, Any]:
+    """Load a settings.json object, or {} if absent/empty. Raises ValueError on
+    malformed / non-object JSON (NEVER clobbers the user's data)."""
+    if settings.exists() and settings.stat().st_size > 0:
         try:
-            existing_stat = settings.stat()
-            mode_to_set = existing_stat.st_mode & 0o777
-        except FileNotFoundError:
-            pass
-        settings.parent.mkdir(parents=True, exist_ok=True)
-        tmp = settings.with_suffix(settings.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        os.chmod(tmp, mode_to_set)
-        tmp.replace(settings)
-        # `replace` may preserve the destination's mode on some
-        # POSIX implementations (it's syscall-level rename, but
-        # mode is on the inode being-replaced, not the new one).
-        # Re-chmod the final path to be defensive — same
-        # idempotent-mode pattern `local_auth_token.rotate_token`
-        # uses for the same reason.
-        os.chmod(settings, mode_to_set)
+            data = json.loads(settings.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"refusing to overwrite malformed JSON at {settings}: {exc.msg}. "
+                "Please fix the file by hand and rerun this command."
+            ) from exc
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"refusing to overwrite non-object JSON at {settings} "
+                f"(got {type(data).__name__}). The file must be a JSON object."
+            )
+        return data
+    return {}
+
+
+def _aggregate_action(actions: list[str], *, file_had_data: bool) -> str:
+    """Combine per-event actions into one status for the UI."""
+    s = set(actions)
+    if s == {"noop"}:
+        return "noop"
+    if "replaced" in s:
+        return "replaced"
+    if not file_had_data and "added" not in s and "noop" not in s:
+        return "created"
+    return "added"
+
+
+def install_claude_hook(
+    helper_path: Path,
+    *,
+    settings_path: Path | None = None,
+    python_path: str | None = None,
+) -> dict[str, object]:
+    """Idempotently merge the CLI Pulse hook into BOTH `hooks.PermissionRequest`
+    AND `hooks.PreToolUse` in `~/.claude/settings.json`, preserving every other
+    key the user has set. (M1: PreToolUse is the always-present lever — it fires
+    for every tool call even when a broad allowlist suppresses PermissionRequest.
+    Both events run the same command; `remote_hook` reads `hook_event_name` to
+    emit the right shape.)
+
+    Behaviour (applied per event):
+
+      - missing/empty file → create it with both events wired.
+      - parse-broken JSON → raise `ValueError` (never clobber the user's data).
+      - an event already wired with our EXACT canonical entry → that event is a
+        no-op; the OTHER event is still added if missing.
+      - an event with OTHER entries → append ours (preserve the user's hooks).
+      - a stale / narrower-matcher / legacy-flat CLI Pulse entry → auto-heal
+        (surgically strip ours from mixed entries, then append one canonical).
+
+    Returns `{"settings_path", "action", "previous_command", "new_command",
+    "events": {<event>: <per-event action>}}`. `action` is the aggregate
+    (`"created" | "added" | "noop" | "replaced"`); `events` gives the detail.
+    """
+    settings = settings_path or (Path.home() / ".claude" / "settings.json")
+    target_command = recommended_hook_command(
+        helper_path=helper_path, python_path=python_path,
+    )
+
+    data = _load_settings_or_raise(settings)   # raises on malformed/non-object
+    file_had_data = bool(data)
+
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        hooks = {}
+
+    # Merge our canonical entry into BOTH events (PermissionRequest + PreToolUse)
+    # with the same auto-heal / mixed-entry-preservation semantics.
+    actions: list[str] = []
+    previous_command: str | None = None
+    for event in _CLI_PULSE_HOOK_EVENTS:
+        new_list, action, prev = _merge_cli_pulse_event(
+            hooks.get(event), target_command, file_had_data=file_had_data,
+        )
+        hooks[event] = new_list
+        actions.append(action)
+        # Report `previous` ONLY from an event we actually REPLACED — a no-op
+        # event also returns its (current, matching) command as `prev`, which
+        # would misreport the current command as "previous" when the aggregate
+        # is "replaced" because of the OTHER event (review: codex).
+        if action == "replaced" and prev is not None and previous_command is None:
+            previous_command = prev
+
+    data["hooks"] = hooks
+    aggregate = _aggregate_action(actions, file_had_data=file_had_data)
+
+    if aggregate != "noop":
+        _write_settings_atomic(settings, data)
 
     return {
         "settings_path": str(settings),
-        "action": action,
+        "action": aggregate,
         "previous_command": previous_command,
         "new_command": target_command,
+        "events": {ev: actions[i] for i, ev in enumerate(_CLI_PULSE_HOOK_EVENTS)},
+    }
+
+
+def uninstall_claude_hook(
+    *, settings_path: Path | None = None,
+) -> dict[str, object]:
+    """Remove EVERY CLI Pulse hook (both PermissionRequest and PreToolUse) from
+    `~/.claude/settings.json`, preserving the user's own hooks. The reversible
+    other half of the opt-in (design-doc M1: "one-click uninstall, never
+    silent"). Idempotent — a `noop` when nothing is installed.
+
+      - malformed / non-object JSON → `ValueError` (never clobber).
+      - surgically strips our marker from mixed matcher entries (keeps the
+        user's co-resident hooks); drops an event array that becomes empty, and
+        the `hooks` key if it becomes empty.
+
+    Returns `{"settings_path", "action", "removed", "events"}` where `action`
+    is `"removed" | "noop"` and `removed` is the total hook count deleted.
+    """
+    settings = settings_path or (Path.home() / ".claude" / "settings.json")
+    if not (settings.exists() and settings.stat().st_size > 0):
+        return {"settings_path": str(settings), "action": "noop", "removed": 0,
+                "events": {}}
+
+    data = _load_settings_or_raise(settings)
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return {"settings_path": str(settings), "action": "noop", "removed": 0,
+                "events": {}}
+
+    per_event: dict[str, int] = {}
+    total_removed = 0
+    for event in _CLI_PULSE_HOOK_EVENTS:
+        if event not in hooks:
+            continue
+        new_list, removed = _strip_cli_pulse_from_event(hooks.get(event))
+        if removed == 0:
+            continue
+        per_event[event] = removed
+        total_removed += removed
+        if new_list:
+            hooks[event] = new_list
+        else:
+            # Event array is now empty (only held our hooks) → drop the key so
+            # we don't leave `"PreToolUse": []` litter behind.
+            del hooks[event]
+
+    if total_removed == 0:
+        return {"settings_path": str(settings), "action": "noop", "removed": 0,
+                "events": {}}
+
+    if hooks:
+        data["hooks"] = hooks
+    else:
+        # Whole hooks object was ours → drop it entirely.
+        data.pop("hooks", None)
+    _write_settings_atomic(settings, data)
+
+    return {
+        "settings_path": str(settings),
+        "action": "removed",
+        "removed": total_removed,
+        "events": per_event,
     }

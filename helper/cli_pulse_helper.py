@@ -1291,6 +1291,17 @@ def main() -> None:
     )
     ra_install_parser.set_defaults(func=_remote_approvals_install_hook_cmd)
 
+    ra_uninstall_parser = remote_subparsers.add_parser(
+        "uninstall-claude-hook",
+        help="remove the CLI Pulse hooks (PermissionRequest + PreToolUse) from "
+             "~/.claude/settings.json, preserving your own hooks (idempotent)",
+    )
+    ra_uninstall_parser.add_argument(
+        "--settings", default=None,
+        help="override target settings file (default: ~/.claude/settings.json)",
+    )
+    ra_uninstall_parser.set_defaults(func=_remote_approvals_uninstall_hook_cmd)
+
     ra_diagnose_parser = remote_subparsers.add_parser(
         "diagnose-claude-permissions",
         help="diagnose Claude Code permission rules + hook wiring (read-only)",
@@ -1437,6 +1448,33 @@ def _remote_approvals_install_hook_cmd(args: argparse.Namespace) -> None:
     else:
         print()
         print("# Restart Claude Code so it picks up the new hook entry.")
+
+
+def _remote_approvals_uninstall_hook_cmd(args: argparse.Namespace) -> None:
+    """Remove the CLI Pulse hooks (PermissionRequest + PreToolUse) from
+    `~/.claude/settings.json`, preserving the user's own hooks. The reversible
+    other half of the opt-in."""
+    import permissions_diagnose
+
+    settings_path: Path | None = None
+    if getattr(args, "settings", None):
+        settings_path = Path(args.settings).expanduser().resolve()
+
+    try:
+        result = permissions_diagnose.uninstall_claude_hook(settings_path=settings_path)
+    except ValueError as exc:
+        print(f"uninstall-claude-hook: error: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+    print(f"settings_path: {result['settings_path']}")
+    print(f"action:        {result['action']}")
+    print(f"removed:       {result['removed']}")
+    if result["action"] == "noop":
+        print()
+        print("# No CLI Pulse hooks were installed. Nothing to do.")
+    else:
+        print()
+        print("# Restart Claude Code so it stops invoking the removed hooks.")
 
 
 def _remote_approvals_diagnose_cmd(args: argparse.Namespace) -> None:
