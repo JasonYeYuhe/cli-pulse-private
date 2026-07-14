@@ -179,10 +179,12 @@ def _emit_raw_deny_fallback() -> None:
         pass
 
 
+# Provider-NEUTRAL crash-deny reason (never names a specific provider — used for
+# both claude and codex managed crash-denies).
 _CRASH_DENY_REASON = (
     "CLI Pulse remote-approval-hook crashed. If this persists, open CLI Pulse "
-    "→ Settings → Privacy and turn off Remote Control so the local "
-    "Claude permission prompt runs on your next attempt."
+    "→ Settings → Privacy and turn off Remote Control so your local approval "
+    "prompt runs on your next attempt."
 )
 
 
@@ -190,40 +192,24 @@ def _emit_last_resort_fallback(provider: str, raw: dict[str, Any] | None) -> Non
     """Event- and origin-aware last-resort output when run_hook's body raised
     before it could emit — the M1 upgrade of `_emit_raw_deny_fallback`.
 
-    A crash during an EXTERNAL Claude PreToolUse must still emit the PreToolUse-
-    shaped `permissionDecision:"ask"` (never a mismatched PermissionRequest deny
-    that would both confuse Claude and brick the terminal); a MANAGED session
-    still fails closed. Only `claude` has a live, event-shaped hook — other
-    providers keep the constant Claude-deny (their unchanged pre-M1 behavior).
-    Bulletproof: ANY failure building the correct shape falls through to the
-    constant raw-deny string so a managed call's stdout is never left empty.
+    DELEGATES to the provider adapter's fallback so the output is shaped
+    correctly per event AND provider: an EXTERNAL Claude PreToolUse crash emits
+    "ask", an EXTERNAL Codex PreToolUse crash ABSTAINS (empty output — Codex has
+    no "ask"), an EXTERNAL PermissionRequest abstains, and a MANAGED session
+    fails closed (deny). Providers without a live adapter (shell) keep the
+    constant Claude-deny. Bulletproof: ANY failure building the correct shape
+    (e.g. provider_adapters unimportable) falls through to the constant raw-deny
+    string so a managed call's stdout is never left empty.
     """
     try:
-        if provider != "claude":
+        if provider not in ("claude", "codex"):
             _emit_raw_deny_fallback()
             return
-        raw = raw or {}
-        event = ("PreToolUse" if str(raw.get("hook_event_name") or "") == "PreToolUse"
-                 else "PermissionRequest")
-        is_managed = bool(
-            os.environ.get(REMOTE_SESSION_ID_ENV) or os.environ.get(_LOCAL_SESSION_ENV)
-        )
-        fail_open = not is_managed
-        if event == "PreToolUse":
-            pd = "ask" if fail_open else "deny"
-            out: dict[str, Any] = {
-                "hookSpecificOutput": {"hookEventName": "PreToolUse",
-                                       "permissionDecision": pd}
-            }
-            if pd == "deny":
-                out["hookSpecificOutput"]["permissionDecisionReason"] = _CRASH_DENY_REASON
-            _emit(out)
-            return
-        # PermissionRequest: EXTERNAL → abstain (empty output → Claude's own
-        # local prompt); MANAGED → the constant fail-closed deny.
-        if fail_open:
-            return
-        _emit_raw_deny_fallback()
+        from provider_adapters import adapter_for
+        adapter = adapter_for(provider)
+        parsed = _safe_parse(adapter, raw or {}, None)
+        _apply_event_policy(parsed, raw or {}, HookConfig())
+        _emit(adapter.emit_local_fallback(parsed, _CRASH_DENY_REASON))
     except Exception:
         _emit_raw_deny_fallback()
 

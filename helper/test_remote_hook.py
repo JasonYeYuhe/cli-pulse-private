@@ -25,7 +25,7 @@ HELPER_DIR = Path(__file__).resolve().parent
 if str(HELPER_DIR) not in sys.path:
     sys.path.insert(0, str(HELPER_DIR))
 
-from provider_adapters import ClaudeAdapter, AdapterRisk, adapter_for  # noqa: E402
+from provider_adapters import ClaudeAdapter, CodexAdapter, AdapterRisk, adapter_for  # noqa: E402
 from provider_adapters.base import AdapterDecision  # noqa: E402
 import remote_hook  # noqa: E402
 import swarm  # noqa: E402
@@ -512,28 +512,33 @@ def test_run_hook_create_failure_falls_back(monkeypatch):
     assert out["hookSpecificOutput"]["decision"]["message"]
 
 
-def test_run_hook_codex_provider_emits_raw_deny_fallback(monkeypatch):
-    # Codex adapter is a Phase 2 stub: parse_hook_input raises
-    # NotImplementedError. The TOP-LEVEL run_hook wrapper must catch that and
-    # emit a hardcoded JSON deny to stdout — leaving stdout empty would let
-    # Claude/Codex hang opaquely (Gemini 3.1 Pro review P0 #2).
-    # Per official docs, PermissionRequest only supports "allow" / "deny" so
-    # the raw fallback is deny+message, not "ask".
+def test_run_hook_codex_permission_request_approve_allows(monkeypatch):
+    # M2: the codex provider now flows through the normal path (no longer a
+    # NotImplementedError stub). A managed codex PermissionRequest the remote
+    # user approves emits the Claude-compatible PermissionRequest allow shape.
     buf = _capture_stdout(monkeypatch)
+    _mark_managed(monkeypatch)
+
+    def fake_rpc(name, params, **_kwargs):
+        if name == "remote_helper_create_permission_request":
+            assert params["p_provider"] == "codex"
+            return {"request_id": params["p_request_id"], "status": "pending"}
+        return {"status": "approved", "decision": "approve", "scope": "once"}
+
     rc = remote_hook.run_hook(
         "codex",
-        config=remote_hook.HookConfig(timeout_s=0.05, poll_interval_s=0.01),
-        stdin_payload={"tool_name": "Bash", "tool_input": {"command": "ls"}},
+        config=remote_hook.HookConfig(timeout_s=1.0, poll_interval_s=0.01),
+        stdin_payload={"tool_name": "Bash", "tool_input": {"command": "ls"},
+                       "cwd": "/Users/dev/x"},
         helper_config=_StubHelperConfig(),
-        rpc_caller=lambda _n, _p: {},
+        rpc_caller=fake_rpc,
         user_secret_loader=lambda: "x",
         sleep_fn=lambda _s: None,
     )
     assert rc == 0
     out = json.loads(buf.getvalue())
     assert out["hookSpecificOutput"]["hookEventName"] == "PermissionRequest"
-    assert out["hookSpecificOutput"]["decision"]["behavior"] == "deny"
-    assert out["hookSpecificOutput"]["decision"]["message"]
+    assert out["hookSpecificOutput"]["decision"]["behavior"] == "allow"
 
 
 def test_run_hook_unexpected_crash_emits_raw_deny_fallback(monkeypatch):
@@ -1420,7 +1425,7 @@ def test_crash_fallback_non_claude_provider_still_raw_denies(monkeypatch):
     buf = _capture_stdout(monkeypatch)
     _mark_external(monkeypatch)
     rc = remote_hook.run_hook(
-        "codex",  # CodexAdapter.parse raises NotImplementedError → crash path
+        "shell",  # ShellAdapter.parse raises NotImplementedError → crash path
         stdin_payload={"tool_name": "Read", "tool_input": {}, "cwd": "/x"},
         helper_config=_StubHelperConfig(),
         rpc_caller=lambda _n, _p, **_k: {},
@@ -1430,3 +1435,165 @@ def test_crash_fallback_non_claude_provider_still_raw_denies(monkeypatch):
     assert rc == 0
     out = json.loads(buf.getvalue())
     assert out["hookSpecificOutput"]["decision"]["behavior"] == "deny"
+
+
+# ── M2: CodexAdapter (Claude-compatible; PreToolUse has no "ask") ───────────
+
+def _codex_ptu(**over):
+    p = {"tool_name": "Bash", "tool_input": {"command": "ls"},
+         "cwd": "/Users/dev/x", "hook_event_name": "PreToolUse"}
+    p.update(over)
+    return p
+
+
+def test_codex_adapter_reuses_claude_parse_and_redaction():
+    a = CodexAdapter()
+    parsed = a.parse_hook_input(
+        {"tool_name": "Bash",
+         "tool_input": {"command": "curl -H 'Authorization: Bearer sk-ant-secret123' x"},
+         "cwd": "/Users/dev/proj", "hook_event_name": "PreToolUse"},
+        cwd_hmac=None)
+    assert parsed.provider == "codex"
+    assert parsed.event_name == "PreToolUse"
+    assert parsed.cwd_basename == "proj"
+    # redaction inherited from Claude
+    assert "sk-ant-secret123" not in json.dumps(parsed.payload)
+
+
+def test_codex_permission_request_shape_matches_claude():
+    a = CodexAdapter()
+    parsed = a.parse_hook_input(
+        {"tool_name": "Read", "tool_input": {"file_path": "/x"}}, cwd_hmac=None)  # PermissionRequest
+    allow = a.emit_hook_output(AdapterDecision(decision="approve"), parsed)
+    deny = a.emit_hook_output(AdapterDecision(decision="deny"), parsed)
+    assert allow["hookSpecificOutput"] == {"hookEventName": "PermissionRequest",
+                                           "decision": {"behavior": "allow"}}
+    assert deny["hookSpecificOutput"]["decision"]["behavior"] == "deny"
+
+
+def test_codex_pretooluse_allow_deny_no_ask():
+    a = CodexAdapter()
+    parsed = a.parse_hook_input(_codex_ptu(), cwd_hmac=None)
+    allow = a.emit_hook_output(AdapterDecision(decision="approve"), parsed)
+    deny = a.emit_hook_output(AdapterDecision(decision="deny", reason="no"), parsed)
+    assert allow["hookSpecificOutput"] == {"hookEventName": "PreToolUse",
+                                           "permissionDecision": "allow"}
+    assert deny["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert deny["hookSpecificOutput"]["permissionDecisionReason"] == "no"
+
+
+def test_codex_pretooluse_external_fallback_abstains_not_asks():
+    # Codex PreToolUse has NO "ask" — external fail-open ABSTAINS (empty) so the
+    # terminal Codex falls through to its own approval flow (never bricked).
+    a = CodexAdapter()
+    parsed = a.parse_hook_input(_codex_ptu(), cwd_hmac=None)
+    parsed.fail_open = True
+    assert a.emit_local_fallback(parsed, "down") == {}
+
+
+def test_codex_pretooluse_managed_fallback_denies():
+    a = CodexAdapter()
+    parsed = a.parse_hook_input(_codex_ptu(), cwd_hmac=None)
+    parsed.fail_open = False
+    out = a.emit_local_fallback(parsed, "down")
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_run_hook_codex_pretooluse_external_timeout_abstains(monkeypatch):
+    # End-to-end: an external codex PreToolUse whose remote poll times out emits
+    # EMPTY stdout (abstain), never a deny.
+    buf = _capture_stdout(monkeypatch)
+    _mark_external(monkeypatch)
+
+    def fake_rpc(name, params, **_kwargs):
+        if name == "remote_helper_create_permission_request":
+            return {"request_id": params["p_request_id"], "status": "pending"}
+        return {"status": "pending"}
+
+    rc = remote_hook.run_hook(
+        "codex",
+        config=remote_hook.HookConfig(timeout_s=0.05, poll_interval_s=0.01),
+        stdin_payload=_codex_ptu(),
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        user_secret_loader=lambda: "x",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    assert buf.getvalue() == ""
+
+
+def test_run_hook_codex_pretooluse_managed_timeout_denies(monkeypatch):
+    buf = _capture_stdout(monkeypatch)
+    _mark_managed(monkeypatch)
+
+    def fake_rpc(name, params, **_kwargs):
+        if name == "remote_helper_create_permission_request":
+            return {"request_id": params["p_request_id"], "status": "pending"}
+        return {"status": "pending"}
+
+    rc = remote_hook.run_hook(
+        "codex",
+        config=remote_hook.HookConfig(timeout_s=0.05, poll_interval_s=0.01),
+        stdin_payload=_codex_ptu(),
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        user_secret_loader=lambda: "x",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_crash_fallback_external_codex_pretooluse_abstains(monkeypatch):
+    # M2 review (codex): a crash during an EXTERNAL codex PreToolUse must abstain
+    # (empty stdout), NOT emit a mismatched Claude PermissionRequest deny.
+    buf = _capture_stdout(monkeypatch)
+    _mark_external(monkeypatch)
+
+    class _BoomConfig:
+        @property
+        def device_id(self):
+            raise RuntimeError("boom")
+        helper_secret = "x"
+
+    rc = remote_hook.run_hook(
+        "codex",
+        config=remote_hook.HookConfig(timeout_s=0.05, poll_interval_s=0.01),
+        stdin_payload=_codex_ptu(),
+        helper_config=_BoomConfig(),
+        rpc_caller=lambda _n, _p, **_k: {},
+        user_secret_loader=lambda: "x",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    assert buf.getvalue() == ""
+
+
+def test_crash_fallback_managed_codex_pretooluse_denies(monkeypatch):
+    # MANAGED codex PreToolUse crash → fail CLOSED (deny), codex-shaped.
+    buf = _capture_stdout(monkeypatch)
+    _mark_managed(monkeypatch)
+
+    class _BoomConfig:
+        @property
+        def device_id(self):
+            raise RuntimeError("boom")
+        helper_secret = "x"
+
+    rc = remote_hook.run_hook(
+        "codex",
+        config=remote_hook.HookConfig(timeout_s=0.05, poll_interval_s=0.01),
+        stdin_payload=_codex_ptu(),
+        helper_config=_BoomConfig(),
+        rpc_caller=lambda _n, _p, **_k: {},
+        user_secret_loader=lambda: "x",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    # provider-neutral reason (no "Claude" mention)
+    assert "Claude" not in out["hookSpecificOutput"]["permissionDecisionReason"]
