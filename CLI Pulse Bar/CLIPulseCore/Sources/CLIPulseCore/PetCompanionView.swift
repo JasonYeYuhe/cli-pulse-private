@@ -20,7 +20,9 @@ import AppKit
 public final class PetCompanionView: NSView {
     private static let animKey = "petCompanionFrames"      // active frame-swap
     private static let maxMotionChannels = 4               // upper bound for key cleanup
+    private static let maxFlourishChannels = 2             // upper bound for flourish keys
     private static func motionKey(_ i: Int) -> String { "petMotion\(i)" }
+    private static func flourishKey(_ i: Int) -> String { "petFlourish\(i)" }
     private let contentLayer = CALayer()                   // owned: explicit centre anchor
     private var content: PetCompanionContent = .egg(stage: .idle)
     private var conditions = PetAnimationConditions()
@@ -28,6 +30,14 @@ public final class PetCompanionView: NSView {
     // for — so a FORM switch restarts it, but a bare re-commit (display wake, egg
     // stage change) keeps a live breath running without snapping.
     private var restingMotionIdentity: String?
+    // A flourish is a brief one-shot reaction; while it plays the idle motion is
+    // suppressed (they share transform key paths) and restored on completion.
+    private var isFlourishing = false
+    // Bumped whenever a flourish starts OR is cancelled, so a stale CATransaction
+    // completion block (which still fires even after the animation is removed)
+    // can't clear isFlourishing / re-commit under a newer flourish (agy).
+    private var flourishGeneration = 0
+    private var flourishIndex = 0
 
     public override init(frame: NSRect) {
         super.init(frame: frame)
@@ -36,6 +46,12 @@ public final class PetCompanionView: NSView {
         contentLayer.magnificationFilter = .linear
         contentLayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)  // scale about the CENTRE
         layoutContentLayer()
+        // A CLICK plays a flourish. A GestureRecognizer (not a mouseDown override)
+        // so it only fires on a genuine click and a drag still moves the panel via
+        // the window's isMovableByWindowBackground (no interference with drag).
+        let click = NSClickGestureRecognizer(target: self, action: #selector(handleClick))
+        click.delaysPrimaryMouseButtonEvents = false   // don't delay the window's drag-to-move
+        addGestureRecognizer(click)
     }
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
@@ -76,6 +92,7 @@ public final class PetCompanionView: NSView {
         case .staticFrame:
             contentLayer.removeAnimation(forKey: Self.animKey)
             removeRestingMotion()
+            removeFlourish()   // a hard pause (Reduce Motion / Low Power) stops it too
             let name = PetAnimationPolicy.staticFrameName(content: content, bucket: conditions.bucket)
             contentLayer.contents = PetAssets.cgImage(name)
         case .rest:
@@ -89,7 +106,9 @@ public final class PetCompanionView: NSView {
             // dropped (channel 0 absent). Motion params are constant per form, so a
             // bare re-commit (display wake, egg stage change) must NOT restart it —
             // re-adding would snap every channel back to its start mid-cycle (agy).
-            if restingMotionIdentity != identity || contentLayer.animation(forKey: Self.motionKey(0)) == nil {
+            // Don't add the idle motion while a flourish owns the transform — the
+            // flourish's completion re-commits and restores it.
+            if !isFlourishing && (restingMotionIdentity != identity || contentLayer.animation(forKey: Self.motionKey(0)) == nil) {
                 removeRestingMotion()
                 for (i, ch) in PetMotion.channels(for: content).enumerated() where i < Self.maxMotionChannels {
                     let a = CABasicAnimation(keyPath: ch.axis.rawValue)
@@ -140,6 +159,56 @@ public final class PetCompanionView: NSView {
         case let .cat(form): return form.rawValue
         case .egg: return "egg"
         }
+    }
+
+    // MARK: - Flourishes (one-shot reactions)
+
+    @objc private func handleClick() { playNextFlourish() }
+
+    /// Play the next flourish in rotation, so repeated clicks feel varied.
+    public func playNextFlourish() {
+        let all = PetFlourish.allCases
+        guard !all.isEmpty else { return }
+        flourishIndex = (flourishIndex + 1) % all.count
+        playFlourish(all[flourishIndex])
+    }
+
+    /// Play a one-shot flourish. No-op while hard-paused (Reduce Motion / Low Power
+    /// / not visible) — reactions respect the same accessibility/battery gate as
+    /// every other motion. Suppresses the idle motion for its duration, then
+    /// re-commits to restore the resting/active plan.
+    public func playFlourish(_ flourish: PetFlourish) {
+        guard layer != nil, !conditions.mustPause else { return }
+        layoutContentLayer()
+        removeFlourish()          // cancel any in-flight flourish first (bumps generation)
+        removeRestingMotion()     // the flourish owns the transform for its duration
+        isFlourishing = true
+        flourishGeneration += 1
+        let generation = flourishGeneration
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self else { return }
+            // Ignore a stale completion from a flourish that was superseded/cancelled.
+            guard self.flourishGeneration == generation else { return }
+            self.isFlourishing = false
+            self.commit()         // restore the resting/active plan (idle motion back)
+        }
+        for (i, ch) in flourish.channels.enumerated() where i < Self.maxFlourishChannels {
+            let a = CAKeyframeAnimation(keyPath: ch.axis.rawValue)
+            a.values = ch.keyframes
+            if let kt = ch.keyTimes { a.keyTimes = kt.map { NSNumber(value: $0) } }
+            a.duration = flourish.durationSec
+            a.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            a.isRemovedOnCompletion = true
+            contentLayer.add(a, forKey: Self.flourishKey(i))
+        }
+        CATransaction.commit()
+    }
+
+    private func removeFlourish() {
+        for i in 0..<Self.maxFlourishChannels { contentLayer.removeAnimation(forKey: Self.flourishKey(i)) }
+        isFlourishing = false
+        flourishGeneration += 1   // invalidate any pending completion block
     }
 
     /// Force a re-commit regardless of the change-check — used by the controller
