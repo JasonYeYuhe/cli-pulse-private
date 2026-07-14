@@ -149,6 +149,27 @@ public extension PetForm {
                     .init(.scaleY, from: 1.0, to: 0.96, periodSec: 3.4)]
         case .roll:                                   // a giggly rolling wobble
             return [.init(.rotation, from: -0.07, to: 0.07, periodSec: 1.2)]
+        case .wave:                                   // a cheerful greeting bob
+            return [.init(.translateY, from: -1.2, to: 1.2, periodSec: 1.1)]
+        case .cold:                                   // a fast, freezing shiver
+            return [.init(.translateX, from: -1.0, to: 1.0, periodSec: 0.35)]
+        case .hot:                                    // a weary, overheated fanning sway
+            return [.init(.translateX, from: -1.5, to: 1.5, periodSec: 2.2)]
+        case .dance:                                  // a rhythmic dancing sway
+            return [.init(.translateX, from: -3.0, to: 3.0, periodSec: 0.8)]
+        case .fierce:                                 // a fired-up, determined pulse
+            return [.init(.scale, from: 1.0, to: 1.05, periodSec: 0.9)]
+        case .bored:                                  // a listless, slow sway
+            return [.init(.translateX, from: -1.2, to: 1.2, periodSec: 3.4)]
+        case .facepalm:                               // a slow, disbelieving head shake
+            return [.init(.rotation, from: -0.05, to: 0.05, periodSec: 2.0)]
+        case .stretch:                                // a slow full-body stretch (taller/narrower)
+            return [.init(.scaleY, from: 1.0, to: 1.04, periodSec: 3.0),
+                    .init(.scaleX, from: 1.0, to: 0.98, periodSec: 3.0)]
+        case .chill:                                  // a laid-back, mellow sway
+            return [.init(.translateX, from: -1.5, to: 1.5, periodSec: 3.2)]
+        case .zen:                                    // an ultra-slow, serene meditation breath
+            return [.init(.scale, from: 1.0, to: 1.025, periodSec: 3.8)]
         }
     }
 }

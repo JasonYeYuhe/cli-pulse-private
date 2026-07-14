@@ -1013,3 +1013,13 @@
 "pet.form_peek" = "こっそりのぞき猫";
 "pet.form_melt" = "とろけデロン猫";
 "pet.form_roll" = "ごろごろ大笑い猫";
+"pet.form_wave" = "やあ手ふり猫";
+"pet.form_cold" = "ぶるぶる寒がり猫";
+"pet.form_hot" = "あつ〜ハアハア猫";
+"pet.form_dance" = "ノリノリダンス猫";
+"pet.form_fierce" = "やる気まんまん猫";
+"pet.form_bored" = "たいくつため息猫";
+"pet.form_facepalm" = "やれやれ顔おおい猫";
+"pet.form_stretch" = "うーんと伸び猫";
+"pet.form_chill" = "まったりゆるり猫";
+"pet.form_zen" = "ざぜん瞑想猫";

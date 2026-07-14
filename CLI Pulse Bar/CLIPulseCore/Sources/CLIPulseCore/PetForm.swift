@@ -68,6 +68,17 @@ public enum PetForm: String, Codable, CaseIterable, Sendable {
     case peek     // Sneaky Peek        — future drop
     case melt     // Melty Puddle       — future drop
     case roll     // Rolly Giggle       — future drop
+    // v1.47 drop pool (owner-directed 2026-07-13, generic archetypes): APPENDED.
+    case wave     // Friendly Wave      — future drop
+    case cold     // Chilly Shiver      — future drop
+    case hot      // Sweaty Pant        — future drop
+    case dance    // Groovy Dance       — future drop
+    case fierce   // Fired Up           — future drop
+    case bored    // Bored Sigh         — future drop
+    case facepalm // Facepaw            — future drop
+    case stretch  // Big Stretch        — future drop
+    case chill    // Chill Lean         — future drop
+    case zen      // Zen Meditate       — future drop
 
     /// Canonical English pun name (display copy is localized in M2).
     public var punName: String {
@@ -113,6 +124,16 @@ public enum PetForm: String, Codable, CaseIterable, Sendable {
         case .peek: return "Sneaky Peek"
         case .melt: return "Melty Puddle"
         case .roll: return "Rolly Giggle"
+        case .wave: return "Friendly Wave"
+        case .cold: return "Chilly Shiver"
+        case .hot: return "Sweaty Pant"
+        case .dance: return "Groovy Dance"
+        case .fierce: return "Fired Up"
+        case .bored: return "Bored Sigh"
+        case .facepalm: return "Facepaw"
+        case .stretch: return "Big Stretch"
+        case .chill: return "Chill Lean"
+        case .zen: return "Zen Meditate"
         }
     }
 
@@ -126,7 +147,8 @@ public enum PetForm: String, Codable, CaseIterable, Sendable {
         case .huh, .sulk, .wail, .chonk, .boss, .smug,
              .derp, .zoomies, .sleepy, .skept, .plead, .gasp, .love, .mlem, .floof, .nap,
              .wink, .shy, .angry, .dizzy, .proud, .sneeze, .nom, .star, .sing, .shush,
-             .grin, .weepy, .think, .cheer, .kiss, .drool, .flex, .peek, .melt, .roll:
+             .grin, .weepy, .think, .cheer, .kiss, .drool, .flex, .peek, .melt, .roll,
+             .wave, .cold, .hot, .dance, .fierce, .bored, .facepalm, .stretch, .chill, .zen:
             return .other
         }
     }

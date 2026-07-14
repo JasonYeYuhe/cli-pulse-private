@@ -736,3 +736,13 @@
 "pet.form_peek" = "Espía Curioso";
 "pet.form_melt" = "Charco Derretido";
 "pet.form_roll" = "Rueda y Ríe";
+"pet.form_wave" = "Saludo Amistoso";
+"pet.form_cold" = "Escalofrío Helado";
+"pet.form_hot" = "Jadeo Acalorado";
+"pet.form_dance" = "Baile Marchoso";
+"pet.form_fierce" = "Motivado a Tope";
+"pet.form_bored" = "Suspiro Aburrido";
+"pet.form_facepalm" = "Cara de Palma";
+"pet.form_stretch" = "Gran Estirón";
+"pet.form_chill" = "Relajado Total";
+"pet.form_zen" = "Meditación Zen";
