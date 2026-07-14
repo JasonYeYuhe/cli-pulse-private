@@ -220,6 +220,12 @@ class ClaudeAdapter(ProviderAdapter):
         risk = _classify_risk(tool_name, tool_input)
         summary = _summary_for(tool_name, tool_input)
 
+        # M1: which hook event fired ("PreToolUse" vs "PermissionRequest").
+        # Claude passes it as `hook_event_name`; only "PreToolUse" gets the
+        # PreToolUse output shape, everything else the PermissionRequest shape.
+        event_name = "PreToolUse" if str(raw.get("hook_event_name") or "") == "PreToolUse" \
+            else "PermissionRequest"
+
         # Minimised, REDACTED payload for upload. We deliberately drop large
         # fields and never include the transcript / message history.
         redacted_input: dict[str, Any] = {}
@@ -252,43 +258,55 @@ class ClaudeAdapter(ProviderAdapter):
             risk=risk,
             cwd_basename=cwd_basename[:255],
             cwd_hmac=cwd_hmac,
+            event_name=event_name,
         )
 
+    # Fallback message shown when the remote channel is unreachable and we must
+    # fail CLOSED (managed sessions). External sessions fail OPEN instead (defer
+    # to Claude's own prompt) and never see this.
+    _UNAVAILABLE_MSG = (
+        "Remote approval unavailable. If this keeps happening, "
+        "open CLI Pulse → Settings → Privacy and turn off "
+        "Remote Control; the local Claude permission prompt "
+        "will then run on your next attempt."
+    )
+
     def emit_hook_output(self, decision: AdapterDecision, parsed: ParsedHookInput) -> dict[str, Any]:
+        # M1: the SAME hook binary is invoked for both the PreToolUse and the
+        # PermissionRequest event (Claude passes `hook_event_name`); the output
+        # SHAPE differs, so dispatch on the parsed event.
+        if parsed.event_name == "PreToolUse":
+            return self._emit_pre_tool_use(decision, parsed)
+        return self._emit_permission_request(decision, parsed)
+
+    def _emit_permission_request(
+        self, decision: AdapterDecision, parsed: ParsedHookInput
+    ) -> dict[str, Any]:
         # PermissionRequest only supports allow/deny per official docs. There
-        # is no "ask" or "abstain" — the only documented fail-closed path is
-        # deny+message. Fallback / unknown decisions therefore deny with an
-        # explanation directing the user to retry locally so Claude's own
-        # permission prompt fires on the next attempt.
+        # is no "ask" or "abstain" value.
         #
         # Per docs `message` is "For deny only" — allow responses must NOT
         # include it (Codex review iter5 P2). The shape branches accordingly.
-        decision_obj: dict[str, Any]
         if decision.decision == "approve":
-            decision_obj = {"behavior": "allow"}
+            decision_obj: dict[str, Any] = {"behavior": "allow"}
         elif decision.decision == "deny":
             decision_obj = {
                 "behavior": "deny",
                 "message": decision.reason or "Denied remotely via CLI Pulse",
             }
+        elif parsed.fail_open:
+            # M1: EXTERNAL session, remote channel unavailable → fail OPEN.
+            # PermissionRequest has no "ask", so the way to defer to Claude's
+            # own permission prompt is to emit NO decision (empty output). A
+            # network blip must never brick a hand-launched terminal Claude.
+            return {}
         else:
-            # fallback / unknown → deny with an explanation. PermissionRequest
-            # has no "ask" value, and there is no documented "delegate to local"
-            # shape. The honest path:
-            #   * tell the user we couldn't reach the remote channel
-            #   * tell them what to do — turn Remote Control off if it's
-            #     persistently broken, otherwise re-run the command
-            # Phrasing avoids implying that a single retry will magically make
-            # the local prompt appear (it won't if Remote Control is still on
-            # and the helper is still unreachable).
+            # Managed session fallback → fail CLOSED (deny + guidance). The
+            # phrasing avoids implying a single retry fixes it while Remote
+            # Control is still on and the helper is still unreachable.
             decision_obj = {
                 "behavior": "deny",
-                "message": decision.reason or (
-                    "Remote approval unavailable. If this keeps happening, "
-                    "open CLI Pulse → Settings → Privacy and turn off "
-                    "Remote Control; the local Claude permission prompt "
-                    "will then run on your next attempt."
-                ),
+                "message": decision.reason or self._UNAVAILABLE_MSG,
             }
 
         # Phase 1: NEVER emit permissionUpdates. Always-Allow surface is
@@ -299,3 +317,27 @@ class ClaudeAdapter(ProviderAdapter):
                 "decision": decision_obj,
             }
         }
+
+    def _emit_pre_tool_use(
+        self, decision: AdapterDecision, parsed: ParsedHookInput
+    ) -> dict[str, Any]:
+        # PreToolUse output uses `permissionDecision` ∈ allow | deny | ask
+        # (ask = show Claude's own prompt / apply its own rules). This is the
+        # ALWAYS-PRESENT lever: PreToolUse fires for every tool call even when a
+        # broad allowlist would suppress PermissionRequest.
+        out: dict[str, Any] = {"hookEventName": "PreToolUse"}
+        if decision.decision == "approve":
+            out["permissionDecision"] = "allow"
+        elif decision.decision == "deny":
+            out["permissionDecision"] = "deny"
+            out["permissionDecisionReason"] = decision.reason or "Denied remotely via CLI Pulse"
+        elif parsed.fail_open:
+            # EXTERNAL session, remote unavailable → fail OPEN: "ask" hands the
+            # decision back to Claude's normal prompt/rules (never a hard deny).
+            out["permissionDecision"] = "ask"
+            out["permissionDecisionReason"] = decision.reason or "Remote approval unavailable — asking locally"
+        else:
+            # Managed session fallback → fail CLOSED (deny + guidance).
+            out["permissionDecision"] = "deny"
+            out["permissionDecisionReason"] = decision.reason or self._UNAVAILABLE_MSG
+        return {"hookSpecificOutput": out}
