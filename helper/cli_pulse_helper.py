@@ -1272,6 +1272,25 @@ def main() -> None:
     )
     ra_diagnose_parser.set_defaults(func=_remote_approvals_diagnose_cmd)
 
+    # Opt-in shell integration — wrap future claude/codex launches into a
+    # CLI-Pulse tmux so the app can stream I/O + inject remote input (M4.3).
+    # WRITES the user's shell rc → only ever run from an explicit user opt-in.
+    si_parser = subparsers.add_parser(
+        "shell-integration",
+        help="opt-in: wrap future claude/codex launches into a CLI-Pulse tmux (writes shell rc)",
+    )
+    si_sub = si_parser.add_subparsers(dest="si_subcmd", required=True,
+                                      title="shell-integration subcommands")
+    si_status = si_sub.add_parser("status", help="print whether the shell integration is installed")
+    si_status.add_argument("--json", action="store_true")
+    si_status.set_defaults(func=_shell_integration_status_cmd)
+    si_install = si_sub.add_parser("install", help="install the wrap shim (idempotent; writes shell rc)")
+    si_install.set_defaults(func=_shell_integration_install_cmd)
+    si_uninstall = si_sub.add_parser("uninstall", help="remove the wrap shim from the shell rc")
+    si_uninstall.set_defaults(func=_shell_integration_uninstall_cmd)
+    si_print = si_sub.add_parser("print", help="print the shim init script WITHOUT writing anything")
+    si_print.set_defaults(func=_shell_integration_print_cmd)
+
     args = parser.parse_args()
     args.func(args)
 
@@ -1411,6 +1430,54 @@ def _remote_approvals_diagnose_cmd(args: argparse.Namespace) -> None:
         print(json.dumps(report.to_json(), indent=2))
     else:
         print(permissions_diagnose.render_text_report(report))
+
+
+def _shell_integration_status_cmd(args: argparse.Namespace) -> None:
+    import shell_integration as si
+
+    st = si.status()
+    if getattr(args, "json", False):
+        print(json.dumps({
+            "installed": st.installed,
+            "init_present": st.init_present,
+            "tmux_bin": st.tmux_bin,
+            "rc_files_with_block": st.rc_files_with_block,
+            "sock": st.sock,
+            "wrapped_sessions": si.list_wrapped_sessions(sock=st.sock),
+        }, indent=2))
+    else:
+        print(f"shell integration: {'INSTALLED' if st.installed else 'not installed'}")
+        print(f"  tmux:  {st.tmux_bin or '(not found — wrap will fail open to the real binary)'}")
+        print(f"  init:  {'present' if st.init_present else 'missing'}")
+        print(f"  rc:    {', '.join(st.rc_files_with_block) or '(none)'}")
+        print(f"  sock:  {st.sock}")
+
+
+def _shell_integration_install_cmd(_: argparse.Namespace) -> None:
+    import shell_integration as si
+
+    st = si.install()
+    print("shell integration installed. Wrapped: " + ", ".join(si.WRAPPED_PROVIDERS))
+    print(f"  rc files: {', '.join(st.rc_files_with_block)}")
+    print("  Open a NEW terminal (or `source` your rc) for it to take effect.")
+    if not st.tmux_bin:
+        print("  NOTE: tmux not found — the shim will run the real binary until tmux is available.")
+
+
+def _shell_integration_uninstall_cmd(_: argparse.Namespace) -> None:
+    import shell_integration as si
+
+    si.uninstall()
+    print("shell integration removed. Open a NEW terminal for it to take effect.")
+
+
+def _shell_integration_print_cmd(_: argparse.Namespace) -> None:
+    import shutil
+
+    import shell_integration as si
+
+    tb = shutil.which("tmux") or "/opt/homebrew/bin/tmux"
+    print(si.render_shell_init(tb, si.sock_path(), si.conf_path()))
 
 
 if __name__ == "__main__":
