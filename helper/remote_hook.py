@@ -66,6 +66,13 @@ class HookConfig:
     # If True, high-risk requests skip the remote round-trip and immediately
     # fall back to local prompt. Phase 1 default = True (fail closed).
     fail_closed_on_high_risk: bool = True
+    # M1: when True, EXTERNAL (hand-launched, non-managed) sessions fail OPEN —
+    # a remote-channel timeout/outage defers to Claude's own local prompt
+    # ("ask" for PreToolUse, empty decision for PermissionRequest) instead of a
+    # hard deny, so a network blip never bricks someone's terminal Claude.
+    # Managed (CLI-Pulse-spawned) sessions ALWAYS keep failing closed regardless
+    # of this flag — it only affects the external path. Default True.
+    fail_open_external: bool = True
 
 
 def _read_stdin_json() -> dict[str, Any]:
@@ -91,9 +98,42 @@ def _hmac_path(secret: bytes | str, path: str) -> str | None:
 
 
 def _emit(output: dict[str, Any]) -> None:
+    # M1: an EMPTY dict is the "abstain" sentinel — the canonical way to defer a
+    # PermissionRequest to Claude's own interactive prompt is exit 0 with NO
+    # output (per the hooks docs), so we write nothing rather than `{}`.
+    if not output:
+        return
     sys.stdout.write(json.dumps(output))
     sys.stdout.write("\n")
     sys.stdout.flush()
+
+
+def _apply_event_policy(parsed: Any, raw: dict[str, Any], cfg: "HookConfig") -> Any:
+    """Stamp the per-request event type + fail-open policy onto a ParsedHookInput.
+
+    Applied to EVERY parsed object before any fallback is emitted — including the
+    early helper-unavailable / not-paired exits — so an EXTERNAL session fails
+    OPEN there too (an external PreToolUse must 'ask', not deny). Depends only on
+    `raw` + env + cfg, never the adapter, so it is safe on the `_safe_parse`
+    default fallback.
+      * event_name → the OUTPUT SHAPE (PreToolUse `permissionDecision` vs
+        PermissionRequest `decision`).
+      * fail_open → a session is MANAGED iff the helper injected its session env;
+        hand-launched terminal Claude has neither, so it is EXTERNAL and defers
+        to the local prompt instead of a hard deny that would brick the terminal.
+    """
+    try:
+        parsed.event_name = (
+            "PreToolUse" if str(raw.get("hook_event_name") or "") == "PreToolUse"
+            else "PermissionRequest"
+        )
+        is_managed = bool(
+            os.environ.get(REMOTE_SESSION_ID_ENV) or os.environ.get(_LOCAL_SESSION_ENV)
+        )
+        parsed.fail_open = bool(cfg.fail_open_external) and not is_managed
+    except Exception:  # noqa: BLE001 — policy stamping must never break the hook
+        pass
+    return parsed
 
 
 # Hardcoded last-resort hook output. Used by the top-level except in run_hook
@@ -139,6 +179,55 @@ def _emit_raw_deny_fallback() -> None:
         pass
 
 
+_CRASH_DENY_REASON = (
+    "CLI Pulse remote-approval-hook crashed. If this persists, open CLI Pulse "
+    "→ Settings → Privacy and turn off Remote Control so the local "
+    "Claude permission prompt runs on your next attempt."
+)
+
+
+def _emit_last_resort_fallback(provider: str, raw: dict[str, Any] | None) -> None:
+    """Event- and origin-aware last-resort output when run_hook's body raised
+    before it could emit — the M1 upgrade of `_emit_raw_deny_fallback`.
+
+    A crash during an EXTERNAL Claude PreToolUse must still emit the PreToolUse-
+    shaped `permissionDecision:"ask"` (never a mismatched PermissionRequest deny
+    that would both confuse Claude and brick the terminal); a MANAGED session
+    still fails closed. Only `claude` has a live, event-shaped hook — other
+    providers keep the constant Claude-deny (their unchanged pre-M1 behavior).
+    Bulletproof: ANY failure building the correct shape falls through to the
+    constant raw-deny string so a managed call's stdout is never left empty.
+    """
+    try:
+        if provider != "claude":
+            _emit_raw_deny_fallback()
+            return
+        raw = raw or {}
+        event = ("PreToolUse" if str(raw.get("hook_event_name") or "") == "PreToolUse"
+                 else "PermissionRequest")
+        is_managed = bool(
+            os.environ.get(REMOTE_SESSION_ID_ENV) or os.environ.get(_LOCAL_SESSION_ENV)
+        )
+        fail_open = not is_managed
+        if event == "PreToolUse":
+            pd = "ask" if fail_open else "deny"
+            out: dict[str, Any] = {
+                "hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                       "permissionDecision": pd}
+            }
+            if pd == "deny":
+                out["hookSpecificOutput"]["permissionDecisionReason"] = _CRASH_DENY_REASON
+            _emit(out)
+            return
+        # PermissionRequest: EXTERNAL → abstain (empty output → Claude's own
+        # local prompt); MANAGED → the constant fail-closed deny.
+        if fail_open:
+            return
+        _emit_raw_deny_fallback()
+    except Exception:
+        _emit_raw_deny_fallback()
+
+
 def run_hook(
     provider: str,
     config: HookConfig | None = None,
@@ -156,10 +245,18 @@ def run_hook(
 
     Defence in depth: the entire body is wrapped so that ANY unhandled
     exception (NotImplementedError from the codex/shell stubs, missing
-    provider_adapters package, KeyboardInterrupt, etc.) still emits a
-    hardcoded "ask" JSON to stdout. Without this, Claude Code sees an empty
-    stdout from the hook and either hangs or fails opaquely.
+    provider_adapters package, KeyboardInterrupt, etc.) still emits an
+    EVENT-CORRECT last-resort decision to stdout. Without this, Claude Code
+    sees an empty stdout from the hook and either hangs or fails opaquely.
     """
+    # M1: read stdin ONCE up front (unless the caller injected it) so the
+    # last-resort crash handler below can still emit an event- and origin-aware
+    # fallback — an external PreToolUse crash must "ask", not deny.
+    if stdin_payload is None:
+        try:
+            stdin_payload = _read_stdin_json()
+        except Exception:
+            stdin_payload = {}
     try:
         return _run_hook_inner(
             provider, config,
@@ -171,7 +268,7 @@ def run_hook(
         )
     except Exception as exc:
         logger.error("remote-approval-hook crashed: %s", exc, exc_info=True)
-        _emit_raw_deny_fallback()
+        _emit_last_resort_fallback(provider, stdin_payload)
         return 0
 
 
@@ -200,6 +297,7 @@ def _run_hook_inner(
             from provider_adapters import adapter_for
             adapter = adapter_for(provider)
             parsed = _safe_parse(adapter, raw, None)
+            _apply_event_policy(parsed, raw, cfg)  # external here still fails open
             _emit(adapter.emit_local_fallback(parsed, "helper not available"))
             return 0
     else:
@@ -214,6 +312,7 @@ def _run_hook_inner(
             from provider_adapters import adapter_for
             adapter = adapter_for(provider)
             parsed = _safe_parse(adapter, raw, None)
+            _apply_event_policy(parsed, raw, cfg)  # external here still fails open
             _emit(adapter.emit_local_fallback(parsed, "helper not paired"))
             return 0
 
@@ -229,6 +328,7 @@ def _run_hook_inner(
     cwd = str(raw.get("cwd") or "")
     cwd_hmac = _hmac_path(user_path_secret or "", cwd) if cwd else None
     parsed = _safe_parse(adapter, raw, cwd_hmac)
+    _apply_event_policy(parsed, raw, cfg)
 
     # S1 (v1.22) — swarm tagging. The hook is the ONLY ingestion path
     # that knows the agent's real worktree (managed sessions run at

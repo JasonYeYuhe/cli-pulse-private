@@ -34,6 +34,17 @@ class ParsedHookInput:
     risk: str = AdapterRisk.MEDIUM
     cwd_basename: str = ""
     cwd_hmac: str | None = None
+    # M1: which Claude hook event fired. "PermissionRequest" (fires only when a
+    # permission dialog WOULD show — i.e. not pre-approved by the allowlist) or
+    # "PreToolUse" (fires for EVERY tool call, the always-present lever on a
+    # broad-allowlist machine). Drives the OUTPUT SHAPE the adapter emits.
+    event_name: str = "PermissionRequest"
+    # M1: policy — fail OPEN (defer to Claude's own local prompt) instead of
+    # fail CLOSED (deny) when the remote channel is unavailable / times out.
+    # Set True for EXTERNAL (hand-launched) sessions so a network blip never
+    # bricks someone's terminal Claude; managed (CLI-Pulse-spawned) sessions
+    # keep failing closed. Set by the hook loop after parse, from the env.
+    fail_open: bool = False
 
 
 @dataclass

@@ -179,6 +179,23 @@ def _capture_stdout(monkeypatch):
     return buf
 
 
+def _mark_managed(monkeypatch):
+    """Simulate a CLI-Pulse-SPAWNED (managed) session by setting the session
+    env the helper injects on spawn. Managed sessions fail CLOSED (deny) when
+    the remote channel is unavailable; EXTERNAL sessions (no env) fail OPEN
+    (M1). Setting only the session id (not sock/token) leaves the UDS fast-path
+    inert — it needs all three — so the Supabase path still runs."""
+    monkeypatch.setenv("CLI_PULSE_LOCAL_SESSION_ID", "managed-session-1")
+
+
+def _mark_external(monkeypatch):
+    """Simulate a hand-launched (external) terminal Claude — none of the
+    managed session env vars are set, so the hook fails OPEN."""
+    for var in ("CLI_PULSE_REMOTE_SESSION_ID", "CLI_PULSE_LOCAL_SESSION_ID",
+                "CLI_PULSE_LOCAL_HELPER_SOCK", "CLI_PULSE_LOCAL_HOOK_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+
+
 # ── Iter 2B: local-first hook + fallback policy ──────────────
 
 
@@ -232,6 +249,7 @@ def test_local_first_resolved_local_fallback_emits_local_not_supabase(monkeypatc
     request after the user already saw the local one.
     """
     buf = _capture_stdout(monkeypatch)
+    _mark_managed(monkeypatch)  # local-UDS sentinel path is inherently managed
     monkeypatch.setattr(
         remote_hook, "_try_local_uds_hook",
         lambda *args, **kwargs: remote_hook._LOCAL_FALLBACK_SENTINEL,
@@ -335,6 +353,7 @@ def test_local_first_none_falls_through_to_supabase(monkeypatch):
 
 def test_run_hook_high_risk_short_circuits_to_local_fallback(monkeypatch):
     buf = _capture_stdout(monkeypatch)
+    _mark_managed(monkeypatch)  # managed session → high-risk fails CLOSED (deny)
     rpc_called = []
 
     def fake_rpc(name, params, **_kwargs):
@@ -365,6 +384,7 @@ def test_run_hook_high_risk_short_circuits_to_local_fallback(monkeypatch):
 
 def test_run_hook_timeout_emits_fallback(monkeypatch):
     buf = _capture_stdout(monkeypatch)
+    _mark_managed(monkeypatch)  # managed session → timeout fails CLOSED (deny)
     rpc_calls = []
 
     def fake_rpc(name, params, **_kwargs):
@@ -465,6 +485,7 @@ def test_run_hook_deny_round_trip(monkeypatch):
 
 def test_run_hook_create_failure_falls_back(monkeypatch):
     buf = _capture_stdout(monkeypatch)
+    _mark_managed(monkeypatch)  # managed session → create failure fails CLOSED
 
     def fake_rpc(name, params, **_kwargs):
         if name == "remote_helper_create_permission_request":
@@ -522,6 +543,7 @@ def test_run_hook_unexpected_crash_emits_raw_deny_fallback(monkeypatch):
     # Claude doesn't hang. Simulate by passing a helper_config that crashes
     # on attribute access — that path runs after the high-risk shortcut.
     buf = _capture_stdout(monkeypatch)
+    _mark_managed(monkeypatch)  # managed session → mid-run crash fails CLOSED
 
     class _BoomConfig:
         @property
@@ -1113,3 +1135,298 @@ def test_swarm_mark_running_after_remote_approval(monkeypatch):
     )
     assert rc == 0
     assert marks == ["awaiting-approval", "running"]
+
+
+# ── M1: PreToolUse event shape + external fail-open vs managed fail-closed ──
+
+def _ptu(**over):
+    p = {"tool_name": "Read", "tool_input": {"file_path": "/etc/hosts"},
+         "cwd": "/Users/dev/x", "hook_event_name": "PreToolUse"}
+    p.update(over)
+    return p
+
+
+def test_adapter_parses_pretooluse_event_name():
+    parsed = ClaudeAdapter().parse_hook_input(_ptu(), cwd_hmac=None)
+    assert parsed.event_name == "PreToolUse"
+
+
+def test_adapter_defaults_to_permission_request_without_event_name():
+    raw = {"tool_name": "Read", "tool_input": {}, "cwd": "/x"}  # no hook_event_name
+    parsed = ClaudeAdapter().parse_hook_input(raw, cwd_hmac=None)
+    assert parsed.event_name == "PermissionRequest"
+
+
+def test_adapter_pretooluse_allow_shape():
+    parsed = ClaudeAdapter().parse_hook_input(_ptu(), cwd_hmac=None)
+    out = ClaudeAdapter().emit_hook_output(AdapterDecision(decision="approve"), parsed)
+    hso = out["hookSpecificOutput"]
+    assert hso["hookEventName"] == "PreToolUse"
+    assert hso["permissionDecision"] == "allow"
+    assert "permissionDecisionReason" not in hso  # allow carries no reason
+
+
+def test_adapter_pretooluse_deny_shape():
+    parsed = ClaudeAdapter().parse_hook_input(_ptu(), cwd_hmac=None)
+    out = ClaudeAdapter().emit_hook_output(
+        AdapterDecision(decision="deny", reason="nope"), parsed)
+    hso = out["hookSpecificOutput"]
+    assert hso["permissionDecision"] == "deny"
+    assert hso["permissionDecisionReason"] == "nope"
+
+
+def test_adapter_pretooluse_fallback_external_asks():
+    # EXTERNAL (fail_open) PreToolUse fallback → "ask" (defer to local prompt),
+    # NEVER a hard deny that would brick the terminal.
+    parsed = ClaudeAdapter().parse_hook_input(_ptu(), cwd_hmac=None)
+    parsed.fail_open = True
+    out = ClaudeAdapter().emit_local_fallback(parsed, "channel down")
+    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_adapter_pretooluse_fallback_managed_denies():
+    # MANAGED (fail_closed) PreToolUse fallback → deny.
+    parsed = ClaudeAdapter().parse_hook_input(_ptu(), cwd_hmac=None)
+    parsed.fail_open = False
+    out = ClaudeAdapter().emit_local_fallback(parsed, "channel down")
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_adapter_permission_request_fallback_external_defers_empty():
+    # EXTERNAL PermissionRequest fallback → {} (no decision → Claude's own
+    # prompt runs). PermissionRequest has no "ask" value.
+    raw = {"tool_name": "Read", "tool_input": {}, "cwd": "/x"}
+    parsed = ClaudeAdapter().parse_hook_input(raw, cwd_hmac=None)
+    parsed.fail_open = True
+    out = ClaudeAdapter().emit_local_fallback(parsed, "channel down")
+    assert out == {}
+
+
+def test_run_hook_pretooluse_external_timeout_asks(monkeypatch):
+    # End-to-end: a hand-launched (external) PreToolUse whose remote poll times
+    # out must emit permissionDecision "ask" — never bricks the terminal.
+    buf = _capture_stdout(monkeypatch)
+    _mark_external(monkeypatch)
+
+    def fake_rpc(name, params, **_kwargs):
+        if name == "remote_helper_create_permission_request":
+            return {"request_id": params["p_request_id"], "status": "pending"}
+        return {"status": "pending"}  # never resolves → timeout
+
+    rc = remote_hook.run_hook(
+        "claude",
+        config=remote_hook.HookConfig(timeout_s=0.05, poll_interval_s=0.01),
+        stdin_payload=_ptu(),
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        user_secret_loader=lambda: "user-hmac-secret",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_run_hook_pretooluse_managed_timeout_denies(monkeypatch):
+    # A MANAGED PreToolUse whose remote poll times out fails CLOSED (deny).
+    buf = _capture_stdout(monkeypatch)
+    _mark_managed(monkeypatch)
+
+    def fake_rpc(name, params, **_kwargs):
+        if name == "remote_helper_create_permission_request":
+            return {"request_id": params["p_request_id"], "status": "pending"}
+        return {"status": "pending"}
+
+    rc = remote_hook.run_hook(
+        "claude",
+        config=remote_hook.HookConfig(timeout_s=0.05, poll_interval_s=0.01),
+        stdin_payload=_ptu(),
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        user_secret_loader=lambda: "user-hmac-secret",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_run_hook_permission_request_external_timeout_defers(monkeypatch):
+    # An external PermissionRequest (no event_name) timing out → {} (defer to
+    # Claude's own prompt).
+    buf = _capture_stdout(monkeypatch)
+    _mark_external(monkeypatch)
+
+    def fake_rpc(name, params, **_kwargs):
+        if name == "remote_helper_create_permission_request":
+            return {"request_id": params["p_request_id"], "status": "pending"}
+        return {"status": "pending"}
+
+    rc = remote_hook.run_hook(
+        "claude",
+        config=remote_hook.HookConfig(timeout_s=0.05, poll_interval_s=0.01),
+        stdin_payload={"tool_name": "Read", "tool_input": {"file_path": "/x"},
+                       "cwd": "/Users/dev/x"},  # no hook_event_name
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        user_secret_loader=lambda: "user-hmac-secret",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    # Canonical abstain = EMPTY stdout (exit 0, no JSON) → Claude's own prompt.
+    assert buf.getvalue() == ""
+
+
+def test_run_hook_pretooluse_external_approve_allows(monkeypatch):
+    # External PreToolUse the remote user APPROVES → permissionDecision allow.
+    buf = _capture_stdout(monkeypatch)
+    _mark_external(monkeypatch)
+
+    def fake_rpc(name, params, **_kwargs):
+        if name == "remote_helper_create_permission_request":
+            return {"request_id": params["p_request_id"], "status": "pending"}
+        return {"status": "approved", "decision": "approve", "scope": "once"}
+
+    rc = remote_hook.run_hook(
+        "claude",
+        config=remote_hook.HookConfig(timeout_s=1.0, poll_interval_s=0.01),
+        stdin_payload=_ptu(),
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        user_secret_loader=lambda: "user-hmac-secret",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+
+def test_fail_open_external_config_off_denies(monkeypatch):
+    # With fail_open_external=False, even an external session fails CLOSED.
+    buf = _capture_stdout(monkeypatch)
+    _mark_external(monkeypatch)
+
+    def fake_rpc(name, params, **_kwargs):
+        if name == "remote_helper_create_permission_request":
+            return {"request_id": params["p_request_id"], "status": "pending"}
+        return {"status": "pending"}
+
+    rc = remote_hook.run_hook(
+        "claude",
+        config=remote_hook.HookConfig(timeout_s=0.05, poll_interval_s=0.01,
+                                      fail_open_external=False),
+        stdin_payload=_ptu(),
+        helper_config=_StubHelperConfig(),
+        rpc_caller=fake_rpc,
+        user_secret_loader=lambda: "user-hmac-secret",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+# ── M1 review (codex): early-exit + crash fallbacks are event/origin-aware ──
+
+def test_run_hook_not_paired_external_pretooluse_asks(monkeypatch):
+    # codex P1 #2: the "helper not paired" early exit must still fail OPEN for an
+    # external PreToolUse (ask), not emit a fail-closed deny.
+    buf = _capture_stdout(monkeypatch)
+    _mark_external(monkeypatch)
+    import cli_pulse_helper
+
+    def _boom():
+        raise RuntimeError("not paired")
+
+    monkeypatch.setattr(cli_pulse_helper, "load_config", _boom)
+    rc = remote_hook.run_hook("claude", stdin_payload=_ptu(), sleep_fn=lambda _s: None)
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_run_hook_not_paired_managed_pretooluse_denies(monkeypatch):
+    # Same early exit, MANAGED session → fail CLOSED (deny).
+    buf = _capture_stdout(monkeypatch)
+    _mark_managed(monkeypatch)
+    import cli_pulse_helper
+
+    def _boom():
+        raise RuntimeError("not paired")
+
+    monkeypatch.setattr(cli_pulse_helper, "load_config", _boom)
+    rc = remote_hook.run_hook("claude", stdin_payload=_ptu(), sleep_fn=lambda _s: None)
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_crash_fallback_external_pretooluse_asks(monkeypatch):
+    # codex P1 #3: a crash in the hook body during an external PreToolUse must
+    # emit the PreToolUse-shaped "ask", not a mismatched PermissionRequest deny.
+    buf = _capture_stdout(monkeypatch)
+    _mark_external(monkeypatch)
+
+    class _BoomConfig:
+        @property
+        def device_id(self):
+            raise RuntimeError("boom")
+        helper_secret = "x"
+
+    rc = remote_hook.run_hook(
+        "claude",
+        config=remote_hook.HookConfig(timeout_s=0.05, poll_interval_s=0.01),
+        stdin_payload=_ptu(),
+        helper_config=_BoomConfig(),
+        rpc_caller=lambda _n, _p, **_k: {},
+        user_secret_loader=lambda: "x",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_crash_fallback_external_permission_request_abstains(monkeypatch):
+    # A crash during an external PermissionRequest → empty stdout (abstain).
+    buf = _capture_stdout(monkeypatch)
+    _mark_external(monkeypatch)
+
+    class _BoomConfig:
+        @property
+        def device_id(self):
+            raise RuntimeError("boom")
+        helper_secret = "x"
+
+    rc = remote_hook.run_hook(
+        "claude",
+        config=remote_hook.HookConfig(timeout_s=0.05, poll_interval_s=0.01),
+        stdin_payload={"tool_name": "Read", "tool_input": {"file_path": "/x"},
+                       "cwd": "/Users/dev/x"},  # PermissionRequest (no event name)
+        helper_config=_BoomConfig(),
+        rpc_caller=lambda _n, _p, **_k: {},
+        user_secret_loader=lambda: "x",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    assert buf.getvalue() == ""
+
+
+def test_crash_fallback_non_claude_provider_still_raw_denies(monkeypatch):
+    # Non-claude providers keep the constant Claude-deny last resort (unchanged).
+    buf = _capture_stdout(monkeypatch)
+    _mark_external(monkeypatch)
+    rc = remote_hook.run_hook(
+        "codex",  # CodexAdapter.parse raises NotImplementedError → crash path
+        stdin_payload={"tool_name": "Read", "tool_input": {}, "cwd": "/x"},
+        helper_config=_StubHelperConfig(),
+        rpc_caller=lambda _n, _p, **_k: {},
+        user_secret_loader=lambda: "x",
+        sleep_fn=lambda _s: None,
+    )
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["hookSpecificOutput"]["decision"]["behavior"] == "deny"
