@@ -72,11 +72,23 @@ final class ClaudeHookDetectorTests: XCTestCase {
         // detector matched the legacy flat shape; that surface
         // is now correctly reported as `.notWired` (see
         // `testReturnsNotWiredForLegacyFlatSchemaEntry` below).
+        // M1: wired requires the canonical entry in BOTH events.
         let url = tmpSettingsURL()
         let json = #"""
         {
           "hooks": {
             "PermissionRequest": [
+              {
+                "matcher": "",
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "python3 /path/to/cli_pulse_helper.py remote-approval-hook --provider claude"
+                  }
+                ]
+              }
+            ],
+            "PreToolUse": [
               {
                 "matcher": "",
                 "hooks": [
@@ -115,12 +127,73 @@ final class ClaudeHookDetectorTests: XCTestCase {
                   }
                 ]
               }
+            ],
+            "PreToolUse": [
+              {
+                "matcher": "",
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "python3 /Users/me/repo/helper/cli_pulse_helper.py remote-approval-hook --provider claude"
+                  }
+                ]
+              }
             ]
           }
         }
         """#
         try json.write(to: url, atomically: true, encoding: .utf8)
         XCTAssertEqual(ClaudeHookDetector.currentStatus(at: url), .wired)
+    }
+
+    func testReturnsNotWiredWhenOnlyPermissionRequestWired() throws {
+        // M1: an install from an OLDER helper wrote only PermissionRequest (no
+        // PreToolUse). That's degraded — PreToolUse is the always-present lever
+        // — so report .notWired to nudge a re-install (which auto-heals both).
+        let url = tmpSettingsURL()
+        let json = #"""
+        {
+          "hooks": {
+            "PermissionRequest": [
+              {
+                "matcher": "",
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "python3 /p/cli_pulse_helper.py remote-approval-hook --provider claude"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """#
+        try json.write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertEqual(ClaudeHookDetector.currentStatus(at: url), .notWired)
+    }
+
+    func testReturnsNotWiredWhenOnlyPreToolUseWired() throws {
+        // Symmetric: PreToolUse present but PermissionRequest missing → notWired.
+        let url = tmpSettingsURL()
+        let json = #"""
+        {
+          "hooks": {
+            "PreToolUse": [
+              {
+                "matcher": "",
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "python3 /p/cli_pulse_helper.py remote-approval-hook --provider claude"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """#
+        try json.write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertEqual(ClaudeHookDetector.currentStatus(at: url), .notWired)
     }
 
     /// Codex iter6 finding: even when the inner command matches

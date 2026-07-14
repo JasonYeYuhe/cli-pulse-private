@@ -165,6 +165,23 @@ public struct InstallClaudeHookResult: Sendable, Equatable {
     }
 }
 
+/// M1c: result of removing the CLI Pulse approval hooks (both events) from
+/// `~/.claude/settings.json`. Mirrors the helper `uninstall_claude_hook`.
+public struct UninstallClaudeHookResult: Sendable, Equatable {
+    /// `"removed"` when hooks were stripped, `"noop"` when none were installed.
+    public let action: String
+    /// Total hook entries removed across both events.
+    public let removed: Int
+    /// Absolute path of the settings file.
+    public let settingsPath: String
+
+    public init(action: String, removed: Int, settingsPath: String) {
+        self.action = action
+        self.removed = removed
+        self.settingsPath = settingsPath
+    }
+}
+
 /// Wire-level event coming off the helper's `subscribe_events` stream.
 /// Decoded by `LocalSessionControlClient.subscribeEvents`. The macOS
 /// app's per-row task drains the stream and updates AppState.
@@ -915,6 +932,26 @@ public final class LocalSessionControlClient: SessionControlClient, MachineContr
             previousCommand: result["previous_command"] as? String,
             newCommand: newCommand,
             settingsPath: settingsPath
+        )
+    }
+
+    /// M1c: ask the helper to REMOVE the CLI Pulse approval hooks (both events)
+    /// from `~/.claude/settings.json`, preserving the user's own hooks. The
+    /// reversible other half of the opt-in — wraps the `uninstall_claude_hook`
+    /// UDS verb (→ `permissions_diagnose.uninstall_claude_hook`).
+    public func uninstallClaudeHook() async throws -> UninstallClaudeHookResult {
+        let result = try await send(method: "uninstall_claude_hook", params: [:])
+        guard
+            let action = result["action"] as? String,
+            let removed = result["removed"] as? Int,
+            let settingsPath = result["settings_path"] as? String
+        else {
+            throw SessionControlError.invalidResponse(
+                "uninstall_claude_hook: missing action / removed / settings_path"
+            )
+        }
+        return UninstallClaudeHookResult(
+            action: action, removed: removed, settingsPath: settingsPath
         )
     }
 

@@ -953,6 +953,28 @@ extension AppState {
         }
     }
 
+    /// M1c: ask the helper to REMOVE the CLI Pulse approval hooks (both events)
+    /// from `~/.claude/settings.json`. The reversible other half of the opt-in.
+    /// Returns nil (and records `localHelperError`) if unreachable / gated off.
+    public func uninstallClaudeHookViaHelper() async -> UninstallClaudeHookResult? {
+        guard localHelperReachable, localControlEnabled else {
+            self.localHelperError = "uninstallClaudeHookViaHelper: helper not reachable or local control disabled"
+            return nil
+        }
+        let client = LocalSessionControlClient()
+        do {
+            let result = try await client.uninstallClaudeHook()
+            self.localHelperError = nil
+            return result
+        } catch {
+            Self.localStateLogger.warning(
+                "uninstall_claude_hook failed: \(String(describing: error), privacy: .public)"
+            )
+            self.localHelperError = String(describing: error)
+            return nil
+        }
+    }
+
     /// Phase 4 helper-bundling: re-read the on-disk
     /// `~/.claude/settings.json` and update
     /// `claudeApprovalHookStatus`. Called by the SessionsTab "Install
