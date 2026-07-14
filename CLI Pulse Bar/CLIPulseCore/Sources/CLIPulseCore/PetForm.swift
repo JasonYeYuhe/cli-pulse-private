@@ -90,6 +90,17 @@ public enum PetForm: String, Codable, CaseIterable, Sendable {
     case whistle  // Innocent Whistle   — future drop
     case clap     // Clap Clap          — future drop
     case peace    // Peace Out          — future drop
+    // v1.49 drop pool (owner-directed 2026-07-14, generic archetypes): APPENDED.
+    case hug      // Self Hug           — future drop
+    case dream    // Daydream           — future drop
+    case hiccup   // Hiccup             — future drop
+    case oops     // Sheepish Oops      — future drop
+    case point    // Point Ahead        — future drop
+    case phew     // Phew Relief        — future drop
+    case sniff    // Sniff Sniff        — future drop
+    case huff     // Hmph Huff          — future drop
+    case ouch     // Ouch Wince         — future drop
+    case flop     // Dramatic Flop      — future drop
 
     /// Canonical English pun name (display copy is localized in M2).
     public var punName: String {
@@ -155,6 +166,16 @@ public enum PetForm: String, Codable, CaseIterable, Sendable {
         case .whistle: return "Innocent Whistle"
         case .clap: return "Clap Clap"
         case .peace: return "Peace Out"
+        case .hug: return "Self Hug"
+        case .dream: return "Daydream"
+        case .hiccup: return "Hiccup"
+        case .oops: return "Sheepish Oops"
+        case .point: return "Point Ahead"
+        case .phew: return "Phew Relief"
+        case .sniff: return "Sniff Sniff"
+        case .huff: return "Hmph Huff"
+        case .ouch: return "Ouch Wince"
+        case .flop: return "Dramatic Flop"
         }
     }
 
@@ -170,7 +191,8 @@ public enum PetForm: String, Codable, CaseIterable, Sendable {
              .wink, .shy, .angry, .dizzy, .proud, .sneeze, .nom, .star, .sing, .shush,
              .grin, .weepy, .think, .cheer, .kiss, .drool, .flex, .peek, .melt, .roll,
              .wave, .cold, .hot, .dance, .fierce, .bored, .facepalm, .stretch, .chill, .zen,
-             .salute, .shrug, .pray, .laugh, .nervous, .tada, .queasy, .whistle, .clap, .peace:
+             .salute, .shrug, .pray, .laugh, .nervous, .tada, .queasy, .whistle, .clap, .peace,
+             .hug, .dream, .hiccup, .oops, .point, .phew, .sniff, .huff, .ouch, .flop:
             return .other
         }
     }

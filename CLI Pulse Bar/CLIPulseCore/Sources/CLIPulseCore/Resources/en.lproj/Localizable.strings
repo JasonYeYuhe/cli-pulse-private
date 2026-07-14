@@ -1031,3 +1031,13 @@
 "pet.form_whistle" = "Innocent Whistle";
 "pet.form_clap" = "Clap Clap";
 "pet.form_peace" = "Peace Out";
+"pet.form_hug" = "Self Hug";
+"pet.form_dream" = "Daydream";
+"pet.form_hiccup" = "Hiccup";
+"pet.form_oops" = "Sheepish Oops";
+"pet.form_point" = "Point Ahead";
+"pet.form_phew" = "Phew Relief";
+"pet.form_sniff" = "Sniff Sniff";
+"pet.form_huff" = "Hmph Huff";
+"pet.form_ouch" = "Ouch Wince";
+"pet.form_flop" = "Dramatic Flop";
