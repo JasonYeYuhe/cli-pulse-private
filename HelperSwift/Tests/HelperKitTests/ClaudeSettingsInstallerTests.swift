@@ -315,4 +315,181 @@ final class ClaudeSettingsInstallerTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - M1: both events (PermissionRequest + PreToolUse) + uninstall
+
+    private func canonicalCmd(_ data: [String: Any], event: String) -> String? {
+        let hooks = data["hooks"] as? [String: Any] ?? [:]
+        guard let entries = hooks[event] as? [[String: Any]], entries.count == 1 else { return nil }
+        return ClaudeSettingsInstaller.entryCommand(entries[0])
+    }
+
+    func testInstallWiresBothEvents() throws {
+        let result = try ClaudeSettingsInstaller.install(
+            helperPath: "/usr/local/bin/cli_pulse_helper", settingsPath: settingsPath)
+        let data = try read()
+        for event in ["PermissionRequest", "PreToolUse"] {
+            XCTAssertNotNil(canonicalCmd(data, event: event), "\(event) not wired")
+        }
+        XCTAssertEqual(result.events, ["PermissionRequest": .created, "PreToolUse": .created])
+        XCTAssertEqual(result.action, .created)
+    }
+
+    func testInstallNoopOnlyWhenBothWired() throws {
+        try ClaudeSettingsInstaller.install(helperPath: "/h", settingsPath: settingsPath)
+        let result = try ClaudeSettingsInstaller.install(helperPath: "/h", settingsPath: settingsPath)
+        XCTAssertEqual(result.action, .noop)
+        XCTAssertEqual(result.events, ["PermissionRequest": .noop, "PreToolUse": .noop])
+    }
+
+    func testInstallAddsPreToolUseToPermissionRequestOnlyFile() throws {
+        // The SHIPPED state: only PermissionRequest wired. Re-install ADDS
+        // PreToolUse without disturbing PermissionRequest.
+        let cmd = ClaudeSettingsInstaller.recommendedHookCommand(helperPath: "/h")
+        let seed: [String: Any] = ["hooks": ["PermissionRequest": [
+            ["matcher": "", "hooks": [["type": "command", "command": cmd]]]]]]
+        try FileManager.default.createDirectory(
+            at: settingsPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: seed).write(to: settingsPath)
+        let result = try ClaudeSettingsInstaller.install(helperPath: "/h", settingsPath: settingsPath)
+        XCTAssertEqual(result.events, ["PermissionRequest": .noop, "PreToolUse": .added])
+        XCTAssertEqual(result.action, .added)
+        XCTAssertNotNil(canonicalCmd(try read(), event: "PreToolUse"))
+    }
+
+    func testInstallPreviousCommandFromReplacedEventNotNoop() throws {
+        // PermissionRequest current (noop) + PreToolUse stale → aggregate
+        // .replaced, previousCommand = the STALE PreToolUse command.
+        let current = ClaudeSettingsInstaller.recommendedHookCommand(helperPath: "/h")
+        let stale = "/old/cli_pulse_helper remote-approval-hook --provider claude"
+        let seed: [String: Any] = ["hooks": [
+            "PermissionRequest": [["matcher": "", "hooks": [["type": "command", "command": current]]]],
+            "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": stale]]]]]]
+        try FileManager.default.createDirectory(
+            at: settingsPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: seed).write(to: settingsPath)
+        let result = try ClaudeSettingsInstaller.install(helperPath: "/h", settingsPath: settingsPath)
+        XCTAssertEqual(result.action, .replaced)
+        XCTAssertEqual(result.previousCommand, stale)
+    }
+
+    func testUninstallRemovesBothEvents() throws {
+        try ClaudeSettingsInstaller.install(helperPath: "/h", settingsPath: settingsPath)
+        let result = try ClaudeSettingsInstaller.uninstall(settingsPath: settingsPath)
+        XCTAssertEqual(result.action, "removed")
+        XCTAssertEqual(result.removed, 2)
+        let data = try read()
+        let hooks = data["hooks"] as? [String: Any] ?? [:]
+        XCTAssertNil(hooks["PermissionRequest"])
+        XCTAssertNil(hooks["PreToolUse"])
+    }
+
+    func testUninstallNoopWhenNothingInstalled() throws {
+        try FileManager.default.createDirectory(
+            at: settingsPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: ["model": "opus"]).write(to: settingsPath)
+        let result = try ClaudeSettingsInstaller.uninstall(settingsPath: settingsPath)
+        XCTAssertEqual(result.action, "noop")
+        XCTAssertEqual(try read()["model"] as? String, "opus")
+    }
+
+    func testUninstallNoopWhenFileMissing() throws {
+        let result = try ClaudeSettingsInstaller.uninstall(settingsPath: settingsPath)
+        XCTAssertEqual(result.action, "noop")
+        XCTAssertEqual(result.removed, 0)
+    }
+
+    func testUninstallPreservesUserHooks() throws {
+        // Our hook co-resident with a user hook in the SAME PreToolUse matcher
+        // entry, plus a standalone user PermissionRequest hook — both survive.
+        let cmd = ClaudeSettingsInstaller.recommendedHookCommand(helperPath: "/h")
+        let userHook: [String: Any] = ["type": "command", "command": "my-audit-logger"]
+        let seed: [String: Any] = ["hooks": [
+            "PreToolUse": [["matcher": "", "hooks": [userHook, ["type": "command", "command": cmd]]]],
+            "PermissionRequest": [["matcher": "Bash", "hooks": [["type": "command", "command": "user-pr"]]]]]]
+        try FileManager.default.createDirectory(
+            at: settingsPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: seed).write(to: settingsPath)
+        let result = try ClaudeSettingsInstaller.uninstall(settingsPath: settingsPath)
+        XCTAssertEqual(result.action, "removed")
+        let data = try read()
+        let hooks = data["hooks"] as! [String: Any]
+        let ptu = hooks["PreToolUse"] as! [[String: Any]]
+        // our hook stripped, user's audit hook preserved
+        let nested = ptu[0]["hooks"] as! [[String: Any]]
+        XCTAssertEqual(nested.count, 1)
+        XCTAssertEqual(nested[0]["command"] as? String, "my-audit-logger")
+        // user's own PermissionRequest hook untouched
+        XCTAssertNotNil(hooks["PermissionRequest"])
+    }
+
+    func testUninstallRefusesMalformedJSON() throws {
+        try FileManager.default.createDirectory(
+            at: settingsPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "{not json".data(using: .utf8)!.write(to: settingsPath)
+        XCTAssertThrowsError(try ClaudeSettingsInstaller.uninstall(settingsPath: settingsPath))
+    }
+
+    func testInstallPreservesNonObjectArrayElements() throws {
+        // A hooks array with a NON-object element (Python treats as list[Any]).
+        // Install must preserve it verbatim, not clobber the whole array
+        // (review: codex P1).
+        let seed: [String: Any] = ["hooks": ["PermissionRequest": [
+            "weird-string-element",
+            ["matcher": "Bash", "hooks": [["type": "command", "command": "user-hook"]]]]]]
+        try FileManager.default.createDirectory(
+            at: settingsPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: seed).write(to: settingsPath)
+        try ClaudeSettingsInstaller.install(helperPath: "/h", settingsPath: settingsPath)
+        let data = try read()
+        let pr = (data["hooks"] as! [String: Any])["PermissionRequest"] as! [Any]
+        XCTAssertTrue(pr.contains { ($0 as? String) == "weird-string-element" },
+                      "non-object user element must survive install")
+        // our canonical entry is also present
+        XCTAssertTrue(pr.contains { ClaudeSettingsInstaller.matcherEntryHasOurHook(($0 as? [String: Any]) ?? [:]) })
+    }
+
+    func testUninstallDetectsHookInHeterogeneousNestedArray() throws {
+        // Our hook co-resident with a non-object element in the nested `hooks`
+        // array — must still be detected + removed, non-object preserved.
+        let cmd = ClaudeSettingsInstaller.recommendedHookCommand(helperPath: "/h")
+        let seed: [String: Any] = ["hooks": ["PreToolUse": [
+            ["matcher": "", "hooks": [42, ["type": "command", "command": cmd]]]]]]
+        try FileManager.default.createDirectory(
+            at: settingsPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: seed).write(to: settingsPath)
+        let result = try ClaudeSettingsInstaller.uninstall(settingsPath: settingsPath)
+        XCTAssertEqual(result.action, "removed")
+        XCTAssertEqual(result.removed, 1)
+        let ptu = (try read()["hooks"] as! [String: Any])["PreToolUse"] as! [Any]
+        let nested = (ptu[0] as! [String: Any])["hooks"] as! [Any]
+        XCTAssertEqual(nested.count, 1)
+        XCTAssertEqual(nested[0] as? Int, 42)  // non-object preserved, our hook gone
+    }
+
+    func testInstallEmptyObjectFileReportsCreated() throws {
+        // A `{}` file has bytes but is an empty object → .created (matches Python
+        // bool(data)), not .added (review: codex P2).
+        try FileManager.default.createDirectory(
+            at: settingsPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "{}".data(using: .utf8)!.write(to: settingsPath)
+        let result = try ClaudeSettingsInstaller.install(helperPath: "/h", settingsPath: settingsPath)
+        XCTAssertEqual(result.action, .created)
+    }
+
+    func testInstallUninstallRoundTripRestoresUserContent() throws {
+        let original: [String: Any] = ["model": "opus", "hooks": ["Stop": [
+            ["matcher": "", "hooks": [["type": "command", "command": "notify"]]]]]]
+        try FileManager.default.createDirectory(
+            at: settingsPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: original).write(to: settingsPath)
+        try ClaudeSettingsInstaller.install(helperPath: "/h", settingsPath: settingsPath)
+        try ClaudeSettingsInstaller.uninstall(settingsPath: settingsPath)
+        let data = try read()
+        XCTAssertEqual(data["model"] as? String, "opus")
+        let hooks = data["hooks"] as! [String: Any]
+        XCTAssertNotNil(hooks["Stop"])
+        XCTAssertNil(hooks["PreToolUse"])
+        XCTAssertNil(hooks["PermissionRequest"])
+    }
 }
