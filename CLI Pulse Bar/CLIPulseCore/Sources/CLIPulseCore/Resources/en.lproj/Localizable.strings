@@ -1021,3 +1021,13 @@
 "pet.form_stretch" = "Big Stretch";
 "pet.form_chill" = "Chill Lean";
 "pet.form_zen" = "Zen Meditate";
+"pet.form_salute" = "Salute";
+"pet.form_shrug" = "Shrug Dunno";
+"pet.form_pray" = "Wishful Pray";
+"pet.form_laugh" = "Belly Laugh";
+"pet.form_nervous" = "Nervous Wreck";
+"pet.form_tada" = "Ta-Da";
+"pet.form_queasy" = "Queasy Ugh";
+"pet.form_whistle" = "Innocent Whistle";
+"pet.form_clap" = "Clap Clap";
+"pet.form_peace" = "Peace Out";
