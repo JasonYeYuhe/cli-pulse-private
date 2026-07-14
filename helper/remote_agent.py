@@ -604,6 +604,21 @@ class RemoteAgentManager:
             logger.warning("attach_wrapped_session(%s): attach failed: %s",
                            session_id, exc)
             return False
+        # Verify the tmux session actually EXISTS (has-session). attach_existing
+        # spawns a control client for ANY name — a stale / wrong / already-exited
+        # session yields a control client that dies immediately. Without this
+        # guard we'd register a doomed row that the reaper drops one tick later
+        # (looks like "attached then instantly stopped"); instead we close the
+        # dead control client we just spawned and report a clean attach failure.
+        try:
+            present = transport.is_alive(handle)
+        except TransportError:
+            present = False
+        if not present:
+            transport.close(handle)
+            logger.info("attach_wrapped_session(%s): tmux session %r not present",
+                        session_id, tmux_session_name)
+            return False
         params = SessionStartParams(
             session_id=session_id, provider=provider, client_label=client_label,
             # UNKNOWN-privacy for the cloud plane → never mint / broadcast until

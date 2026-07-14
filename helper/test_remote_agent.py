@@ -1781,6 +1781,32 @@ def test_attach_wrapped_session_returns_false_on_transport_error(monkeypatch):
     assert "bad" not in mgr._sessions
 
 
+def test_attach_wrapped_session_rejects_missing_tmux_session(monkeypatch):
+    # A wrapped session whose tmux server has no such session (stale/wrong name)
+    # must FAIL the attach (not register a doomed row), and must close the dead
+    # control client it spawned. Review: codex/agy M4.4a.
+    mgr, _shared, _rpc = _make_manager()
+
+    class _Gone(_FakeTmuxTransport):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self._alive = False   # has-session → not present
+
+    made: list[_Gone] = []
+
+    def _factory(socket_path, tmux_bin=None, **kw):
+        t = _Gone(socket_path, tmux_bin)
+        made.append(t)
+        return t
+
+    import transports.tmux as tmux_mod
+    monkeypatch.setattr(tmux_mod, "TmuxTransport", _factory)
+    ok = mgr.attach_wrapped_session("stale", "clipulse-claude-dead", socket_path="/tmp/x")
+    assert ok is False
+    assert "stale" not in mgr._sessions
+    assert made[0].closed is True, "must close the dead control client it spawned"
+
+
 def test_list_wrapped_sessions_delegates_to_shell_integration(monkeypatch):
     mgr, _shared, _rpc = _make_manager()
     import shell_integration as si
@@ -1847,6 +1873,32 @@ def test_attach_wrapped_session_real_tmux_roundtrip_and_nonowning():
         assert "ext-real" not in mgr._sessions
         alive = subprocess.run([tmux, "-S", sock, "has-session", "-t", name])
         assert alive.returncode == 0, "stop() killed the user's real session!"
+    finally:
+        subprocess.run([tmux, "-S", sock, "kill-server"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _shutil.rmtree(sock_dir, ignore_errors=True)
+
+
+@pytest.mark.skipif(not _HAS_TMUX, reason="tmux not installed")
+def test_attach_wrapped_session_real_tmux_nonexistent_name_fails():
+    # A REAL tmux server that is up but has NO session by the requested name →
+    # attach must return False (has-session guard), leaving nothing registered.
+    import subprocess
+    import tempfile
+    tmux = _shutil.which("tmux")
+    sock_dir = tempfile.mkdtemp(prefix="clip-", dir="/tmp")
+    sock = os.path.join(sock_dir, "t.sock")
+    # bring the server up with an unrelated session so the socket exists
+    subprocess.run([tmux, "-S", sock, "new-session", "-d", "-s", "other", "cat"],
+                   check=True)
+    try:
+        mgr, _shared, _rpc = _make_manager()
+        ok = mgr.attach_wrapped_session(
+            "ext-missing", "clipulse-claude-nope", provider="claude",
+            tmux_bin=tmux, socket_path=sock,
+        )
+        assert ok is False
+        assert "ext-missing" not in mgr._sessions
     finally:
         subprocess.run([tmux, "-S", sock, "kill-server"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
