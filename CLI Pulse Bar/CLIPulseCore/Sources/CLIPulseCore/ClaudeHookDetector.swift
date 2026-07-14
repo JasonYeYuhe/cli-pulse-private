@@ -82,8 +82,29 @@ public enum ClaudeHookDetector {
         guard let hooks = dict["hooks"] as? [String: Any] else {
             return .notWired
         }
-        guard let pr = hooks["PermissionRequest"] as? [[String: Any]] else {
-            return .notWired
+        // M1: CLI Pulse now wires BOTH events — PermissionRequest (fires only
+        // when a permission dialog would show) AND PreToolUse (fires for EVERY
+        // tool call, the always-present lever a broad allowlist otherwise
+        // suppresses). "Fully wired" requires the canonical entry in BOTH; if
+        // only one is present (e.g. an install from an older helper that wrote
+        // only PermissionRequest), report `.notWired` so the banner nudges a
+        // re-install — which auto-heals to both events.
+        let bothWired = Self.wiredEvents.allSatisfy { event in
+            Self.eventHasCanonicalCliPulseEntry(hooks, event: event)
+        }
+        return bothWired ? .wired : .notWired
+    }
+
+    /// Events CLI Pulse wires the approval hook into (matches the helper-side
+    /// `_CLI_PULSE_HOOK_EVENTS`).
+    static let wiredEvents = ["PermissionRequest", "PreToolUse"]
+
+    /// True iff `hooks[event]` contains our CANONICAL entry: an outer
+    /// `matcher: ""` (match-all) whose nested `hooks` array carries our marker.
+    /// Mirrors the helper-side `install_claude_hook` detection.
+    static func eventHasCanonicalCliPulseEntry(_ hooks: [String: Any], event: String) -> Bool {
+        guard let entries = hooks[event] as? [[String: Any]] else {
+            return false
         }
         // Probe both schema shapes AND check matcher canonicality
         // (mirrors the helper-side `install_claude_hook` detection):
@@ -117,7 +138,7 @@ public enum ClaudeHookDetector {
         // contains our marker count as `.wired`. Anything else is
         // silently dead from Claude Code's runtime point of view,
         // so reporting it as wired would mislead the user.
-        let hasCanonicalCliPulseEntry = pr.contains { entry in
+        return entries.contains { entry in
             // Canonical match-all matcher is exactly `""`. A
             // missing key, `nil`, or any non-empty string is
             // non-canonical.
@@ -136,10 +157,9 @@ public enum ClaudeHookDetector {
                 return false
             }
         }
-        return hasCanonicalCliPulseEntry ? .wired : .notWired
     }
 
-    /// CLI command the user runs once to install the hook. The
+    /// CLI command the user runs once to install the hook (both events). The
     /// `<helper-path>` placeholder is filled in by the user; we
     /// don't try to discover the helper checkout from inside the
     /// sandboxed Mac app (it can live anywhere the user cloned
@@ -149,5 +169,11 @@ public enum ClaudeHookDetector {
     /// puts this exact string on the clipboard.
     public static let installCommandTemplate: String =
         "python3 <path-to-helper>/cli_pulse_helper.py remote-approvals install-claude-hook"
+
+    /// CLI command to REMOVE the hooks (both events), preserving the user's own
+    /// hooks. Mirrors the helper `uninstall-claude-hook` subcommand + the
+    /// `uninstall_claude_hook` UDS verb.
+    public static let uninstallCommandTemplate: String =
+        "python3 <path-to-helper>/cli_pulse_helper.py remote-approvals uninstall-claude-hook"
 }
 #endif
