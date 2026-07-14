@@ -27,6 +27,11 @@ public final class PetPanelController: NSObject {   // NSObject: selector-based 
     private var screenLocked = false
     private var displayAsleep = false
     private var staleTask: Task<Void, Never>?
+    // The cat form last shown — a change to a NEW cat (a hatch, or a switch in the
+    // Cattery) plays a one-shot flourish. nil until the first render so launch
+    // doesn't flourish.
+    private var lastFlourishForm: String?
+    private var hasRenderedOnce = false
     public var isVisible: Bool { panel != nil }
 
     private let panelSize = NSSize(width: 140, height: 140)
@@ -159,6 +164,16 @@ public final class PetPanelController: NSObject {   // NSObject: selector-based 
         let conditions = computed
         #endif
         companion.render(content: content, conditions: conditions)
+        // A NEW cat (a hatch egg→cat, or a Cattery switch cat→cat) greets you with
+        // a one-shot flourish. Only cats flourish (never the egg), and not on the
+        // very first render (launch). The view itself no-ops the flourish when
+        // hard-paused, so accessibility/battery still win.
+        let flourishForm: String? = { if case let .cat(f) = content { return f.rawValue } else { return nil } }()
+        if hasRenderedOnce, let flourishForm, flourishForm != lastFlourishForm {
+            companion.playNextFlourish()
+        }
+        lastFlourishForm = flourishForm
+        hasRenderedOnce = true
         // Only a LIVE active frame-swap needs a wake at the freshness boundary (so
         // it downgrades to the resting breath when data goes stale). A resting or
         // hard-paused plan has nothing to expire.
