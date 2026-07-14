@@ -814,6 +814,30 @@ def daemon(args: argparse.Namespace) -> None:
                 logger.warning("detected-session collector failed: %s", exc)
                 return []
 
+        def _list_wrapped_local() -> list[str]:
+            # M4.4: names of shell-integration-wrapped external sessions (a
+            # `claude`/`codex` the user launched in their OWN terminal). Read-
+            # only enumerate — `[]` when the integration isn't installed / the
+            # helper isn't paired.
+            if remote_agent_manager is None:
+                return []
+            return remote_agent_manager.list_wrapped_sessions()
+
+        def _attach_wrapped_local(
+            session_id: str, tmux_session_name: str, provider: str,
+            client_label: str | None,
+        ) -> bool:
+            # M4.4: attach one wrapped external session so the app's terminal
+            # surface drives it. NON-OWNING — detach never kills the real
+            # session. Adapts the UDS positional call to the manager's kw-only
+            # provider/client_label.
+            if remote_agent_manager is None:
+                raise RuntimeError("helper not paired — managed sessions unavailable until pairing completes")
+            return remote_agent_manager.attach_wrapped_session(
+                session_id, tmux_session_name,
+                provider=provider, client_label=client_label,
+            )
+
         def _machine_snapshot_local() -> dict:
             # System Monitor S2/S3: rich LOCAL machine-health snapshot (per-process
             # table + memory detail + battery/thermal + native temps/fans/power +
@@ -903,6 +927,10 @@ def daemon(args: argparse.Namespace) -> None:
             resize=_resize_local,
             get_tail_snapshot=_get_tail_snapshot_local,
             list_detected_sessions=_list_detected_local,
+            # M4.4 external-session control: enumerate + attach shell-integration-
+            # wrapped sessions into the manager's normal terminal surface.
+            list_wrapped_sessions=_list_wrapped_local,
+            attach_wrapped_session=_attach_wrapped_local,
             get_machine_snapshot=_machine_snapshot_local,
             kill_process=_kill_process_local,
             signal_process=_signal_process_local,

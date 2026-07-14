@@ -212,6 +212,8 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
                  pull_machine_commands: object | None = None,
                  complete_machine_command: object | None = None,
                  report_machine_control_state: object | None = None,
+                 list_wrapped_sessions: object | None = None,
+                 attach_wrapped_session: object | None = None,
                  ) -> tuple[LocalSessionServer, FakeManager, dict]:
     """Spin up a server bound to a tmp socket. Returns (server, manager,
     state-dict-for-toggle-introspection).
@@ -249,6 +251,8 @@ def _make_server(sock_dir: Path, *, token: str = "T", enabled: bool = True,
         pull_machine_commands=pull_machine_commands,
         complete_machine_command=complete_machine_command,
         report_machine_control_state=report_machine_control_state,
+        list_wrapped_sessions=list_wrapped_sessions,
+        attach_wrapped_session=attach_wrapped_session,
     )
     server.start()
     return server, mgr, state
@@ -1556,6 +1560,123 @@ def test_resize_rejects_non_int(short_sock_dir):
         })
         assert reply["ok"] is False
         assert reply["error"]["code"] == "bad_request"
+    finally:
+        server.stop()
+
+
+# ── M4.4: list / attach wrapped external sessions ─────────────────────────
+
+def test_list_wrapped_sessions_returns_names(short_sock_dir):
+    server, _mgr, _state = _make_server(
+        short_sock_dir,
+        list_wrapped_sessions=lambda: ["clipulse-claude-1", "clipulse-codex-2"])
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "list_wrapped_sessions", "auth_token": "T",
+            "params": {},
+        })
+        assert reply["ok"] is True
+        assert reply["result"]["sessions"] == ["clipulse-claude-1", "clipulse-codex-2"]
+    finally:
+        server.stop()
+
+
+def test_list_wrapped_sessions_not_implemented_when_unwired(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir)  # no list_wrapped_sessions
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "list_wrapped_sessions", "auth_token": "T",
+            "params": {},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "not_implemented"
+    finally:
+        server.stop()
+
+
+def test_attach_wrapped_session_forwards_args(short_sock_dir):
+    calls: list = []
+
+    def _attach(sid, tmux_name, provider, client_label):
+        calls.append((sid, tmux_name, provider, client_label))
+        return True
+
+    server, _mgr, _state = _make_server(short_sock_dir, attach_wrapped_session=_attach)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "attach_wrapped_session", "auth_token": "T",
+            "params": {"session_id": "ext-1", "tmux_session_name": "clipulse-claude-9",
+                       "provider": "claude", "client_label": "my term"},
+        })
+        assert reply["ok"] is True
+        assert reply["result"] == {"attached": True, "session_id": "ext-1"}
+        assert calls == [("ext-1", "clipulse-claude-9", "claude", "my term")]
+    finally:
+        server.stop()
+
+
+def test_attach_wrapped_session_defaults_provider_and_label(short_sock_dir):
+    calls: list = []
+    server, _mgr, _state = _make_server(
+        short_sock_dir,
+        attach_wrapped_session=lambda *a: (calls.append(a) or True))
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "attach_wrapped_session", "auth_token": "T",
+            "params": {"session_id": "ext-2", "tmux_session_name": "clipulse-codex-3"},
+        })
+        assert reply["ok"] is True
+        # provider defaults to "claude", client_label to None
+        assert calls == [("ext-2", "clipulse-codex-3", "claude", None)]
+    finally:
+        server.stop()
+
+
+def test_attach_wrapped_session_rejects_missing_name(short_sock_dir):
+    server, _mgr, _state = _make_server(
+        short_sock_dir, attach_wrapped_session=lambda *a: True)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "attach_wrapped_session", "auth_token": "T",
+            "params": {"session_id": "ext-3"},   # no tmux_session_name
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "bad_request"
+    finally:
+        server.stop()
+
+
+def test_attach_wrapped_session_reports_attach_failure(short_sock_dir):
+    server, _mgr, _state = _make_server(
+        short_sock_dir, attach_wrapped_session=lambda *a: False)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "attach_wrapped_session", "auth_token": "T",
+            "params": {"session_id": "ext-4", "tmux_session_name": "clipulse-claude-x"},
+        })
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "attach_failed"
+    finally:
+        server.stop()
+
+
+def test_wrapped_session_verbs_gated_by_local_control(short_sock_dir):
+    # Both verbs are session-control surface → blocked when local_control is OFF.
+    server, _mgr, _state = _make_server(
+        short_sock_dir, enabled=False,
+        list_wrapped_sessions=lambda: ["clipulse-claude-1"],
+        attach_wrapped_session=lambda *a: True)
+    try:
+        for method, params in (
+            ("list_wrapped_sessions", {}),
+            ("attach_wrapped_session",
+             {"session_id": "e", "tmux_session_name": "clipulse-claude-1"}),
+        ):
+            reply = _client_call(server._socket_path, {
+                "id": "1", "method": method, "auth_token": "T", "params": params,
+            })
+            assert reply["ok"] is False, method
+            assert reply["error"]["code"] == "local_control_off", reply
     finally:
         server.stop()
 

@@ -140,6 +140,15 @@ SUPPORTED_METHODS = (
     "resize",
     # v-next P1-2: reattach repaint — tail of the per-session raw output ring.
     "get_tail_snapshot",
+    # M4.4: external-session control. `list_wrapped_sessions` enumerates the
+    # tmux sessions the opt-in shell integration wrapped (a `claude`/`codex` the
+    # user launched in their OWN terminal); `attach_wrapped_session` attaches one
+    # into the manager so the app's normal terminal surface (send_input_raw /
+    # resize / get_tail_snapshot / subscribe_events) drives it. Both local-
+    # control-gated like the other session verbs; attach is NON-OWNING (detach
+    # never kills the user's real session).
+    "list_wrapped_sessions",
+    "attach_wrapped_session",
     # System Monitor S2: read-only machine-health snapshot (per-process CPU/mem,
     # battery health, thermal state; S3 adds native temps/fans/power).
     "get_machine_snapshot",
@@ -383,6 +392,12 @@ class LocalSessionServer:
         resize: Callable[[str, int, int], bool] | None = None,
         get_tail_snapshot: Callable[[str, int], dict | None] | None = None,
         list_detected_sessions: Callable[[], list[dict]] | None = None,
+        # M4.4 external-session control. None ⇒ the verbs reply `not_implemented`
+        # (older wiring / unit tests). `attach_wrapped_session` takes
+        # (session_id, tmux_session_name, provider, client_label) and returns
+        # bool; `list_wrapped_sessions` returns tmux session names.
+        list_wrapped_sessions: Callable[[], list[str]] | None = None,
+        attach_wrapped_session: Callable[[str, str, str, str | None], bool] | None = None,
         get_machine_snapshot: Callable[[], dict] | None = None,
         kill_process: Callable[[int], dict] | None = None,
         signal_process: Callable[[int, str], dict] | None = None,
@@ -436,6 +451,10 @@ class LocalSessionServer:
         # surface — see module docstring for the controllability
         # boundary. Optional so unit tests can omit it.
         self._list_detected_sessions = list_detected_sessions
+        # M4.4: enumerate + attach shell-integration-wrapped external sessions.
+        # None ⇒ `not_implemented` (older wiring / unit tests that omit them).
+        self._list_wrapped_sessions = list_wrapped_sessions
+        self._attach_wrapped_session = attach_wrapped_session
         # System Monitor S2: read-only machine-health snapshot (process table +
         # battery/thermal + capability). None ⇒ the UDS method replies
         # `not_implemented` (older wiring / unit tests that omit it).
@@ -1355,6 +1374,39 @@ class LocalSessionServer:
                 raise _RequestError("session_not_found",
                                     f"no managed session with id {session_id!r}")
             return result
+
+        if method == "list_wrapped_sessions":
+            # M4.4: read-only enumerate of shell-integration-wrapped external
+            # sessions (a `claude`/`codex` the user launched in their terminal).
+            if self._list_wrapped_sessions is None:
+                raise _RequestError("not_implemented",
+                                    "list_wrapped_sessions unavailable on this helper")
+            names = self._list_wrapped_sessions()
+            return {"sessions": list(names or [])}
+
+        if method == "attach_wrapped_session":
+            # M4.4: attach one wrapped external session so the normal terminal
+            # surface drives it. NON-OWNING — detach never kills the real session.
+            session_id = params.get("session_id")
+            tmux_name = params.get("tmux_session_name")
+            provider = params.get("provider", "claude")
+            client_label = params.get("client_label")
+            if not isinstance(session_id, str) or not session_id:
+                raise _RequestError("bad_request", "'session_id' must be a non-empty string")
+            if not isinstance(tmux_name, str) or not tmux_name:
+                raise _RequestError("bad_request", "'tmux_session_name' must be a non-empty string")
+            if not isinstance(provider, str) or not provider:
+                raise _RequestError("bad_request", "'provider' must be a non-empty string")
+            if client_label is not None and not isinstance(client_label, str):
+                raise _RequestError("bad_request", "'client_label' must be a string or null")
+            if self._attach_wrapped_session is None:
+                raise _RequestError("not_implemented",
+                                    "attach_wrapped_session unavailable on this helper")
+            ok = self._attach_wrapped_session(session_id, tmux_name, provider, client_label)
+            if ok is False:
+                raise _RequestError("attach_failed",
+                                    f"could not attach wrapped session {tmux_name!r}")
+            return {"attached": True, "session_id": session_id}
 
         if method == "get_machine_snapshot":
             # System Monitor S2: read-only machine-health snapshot. Rich, LOCAL

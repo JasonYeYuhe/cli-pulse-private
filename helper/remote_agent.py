@@ -165,6 +165,12 @@ class _ManagedSession:
     params: SessionStartParams
     handle: SessionHandle
     spawned_at: float
+    # M4.4: transport that owns THIS session's I/O. None → the manager's shared
+    # `self.transport` (the common case: sessions the manager spawned). A session
+    # ATTACHED to an external tmux (`attach_wrapped_session`) carries its own
+    # `TmuxTransport` here so one manager can drive heterogeneous sessions
+    # (PTY-spawned + tmux-attached) through the same drain / input / reap loops.
+    transport: SessionTransport | None = None
     # iter-2: hold the un-uploaded tail in memory while the batcher fills.
     # On each tick we add freshly-read PTY bytes to the batcher and only
     # drain into `stdout_buffer` if the upload itself failed (so the
@@ -339,6 +345,14 @@ class RemoteAgentManager:
         if self._executor is None:
             return fn(*args, **kwargs)
         return self._executor.submit_and_wait(fn, *args, **kwargs)
+
+    def _sess_transport(self, sess: "_ManagedSession") -> SessionTransport:
+        """The transport that owns `sess`'s I/O — its per-session override if it
+        has one (a tmux-attached external session), else the shared transport
+        (manager-spawned sessions). Every `sess.handle`-scoped transport call
+        goes through this so attached + spawned sessions share the drain / input
+        / reap loops."""
+        return sess.transport or self.transport
 
     # ── lifecycle ────────────────────────────────────────────
 
@@ -534,6 +548,90 @@ class RemoteAgentManager:
             )
         return True
 
+    # ── attach to EXTERNAL (shell-integration-wrapped) sessions (M4.4) ──
+
+    def list_wrapped_sessions(self) -> list[str]:
+        """tmux session names for CLI-Pulse-wrapped external agents — `claude`/
+        `codex` the user launched in their OWN terminal with the opt-in shell
+        integration installed. Read-only enumerate (never attaches / mutates);
+        `[]` when the integration isn't installed or no tmux server is up."""
+        try:
+            import shell_integration as si
+            return si.list_wrapped_sessions()
+        except Exception as exc:  # noqa: BLE001 — discovery is best-effort
+            logger.debug("list_wrapped_sessions failed: %s", exc)
+            return []
+
+    def attach_wrapped_session(
+        self, session_id: str, tmux_session_name: str, *,
+        provider: str = "claude", client_label: str | None = None,
+        tmux_bin: str | None = None, socket_path: str | None = None,
+    ) -> bool:
+        return self._dispatch(
+            self._attach_wrapped_session_impl, session_id, tmux_session_name,
+            provider, client_label, tmux_bin, socket_path,
+        )
+
+    def _attach_wrapped_session_impl(
+        self, session_id: str, tmux_session_name: str, provider: str,
+        client_label: str | None, tmux_bin: str | None, socket_path: str | None,
+    ) -> bool:
+        """Attach to an external wrapped tmux session and register it so the
+        app's EXISTING terminal surface (subscribe_events / send_input_raw /
+        resize / get_tail_snapshot) drives it verbatim — no new I/O path.
+
+        The attach is NON-OWNING: the registered `_ManagedSession` carries its
+        own `TmuxTransport`, and `TmuxTransport.terminate`/`close` no-op the
+        `kill-session` when `owns_session=False`, so stopping / detaching NEVER
+        kills the user's real `claude`. Unlike a spawn, we do NOT inject auth,
+        mint a capability token, or write a cloud row here — this is a local
+        attach; the phone plane opts the session in separately (M4.4d)."""
+        if session_id in self._sessions:
+            logger.info("attach_wrapped_session(%s): already attached", session_id)
+            return True
+        from transports.tmux import TmuxTransport
+        try:
+            import shell_integration as si
+            sock = socket_path or si.sock_path()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("attach_wrapped_session(%s): no socket path: %s",
+                           session_id, exc)
+            return False
+        transport = TmuxTransport(socket_path=sock, tmux_bin=tmux_bin)
+        try:
+            handle = transport.attach_existing(session_id, tmux_session_name)
+        except TransportError as exc:
+            logger.warning("attach_wrapped_session(%s): attach failed: %s",
+                           session_id, exc)
+            return False
+        params = SessionStartParams(
+            session_id=session_id, provider=provider, client_label=client_label,
+            # UNKNOWN-privacy for the cloud plane → never mint / broadcast until
+            # the phone plane opts it in (M4.4d).
+            realtime_private=None,
+        )
+        now = time.monotonic()
+        self._sessions[session_id] = _ManagedSession(
+            params=params, handle=handle, transport=transport,
+            spawned_at=now, last_activity_at=now,
+        )
+        if self._event_broker is not None:
+            try:
+                self._event_broker.publish({
+                    "event": "session_started",
+                    "session_id": session_id,
+                    "provider": provider,
+                    "client_label": client_label,
+                    "attached": True,
+                })
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("broker session_started(attach) publish failed: %s", exc)
+        logger.info(
+            "attach_wrapped_session(%s): attached tmux=%s provider=%s",
+            session_id, tmux_session_name, provider,
+        )
+        return True
+
     def stop_session(self, session_id: str) -> None:
         return self._dispatch(self._stop_session_impl, session_id)
 
@@ -542,10 +640,11 @@ class RemoteAgentManager:
         sess = self._sessions.get(session_id)
         if sess is None:
             return
+        transport = self._sess_transport(sess)
         try:
-            self.transport.terminate(sess.handle)
+            transport.terminate(sess.handle)
         finally:
-            self.transport.close(sess.handle)
+            transport.close(sess.handle)
         # Post BEFORE removing the session entry so `_next_seq` still
         # finds the per-session counter; otherwise the lifecycle event
         # would land with seq=0 (the missing-session fallback) instead
@@ -589,7 +688,7 @@ class RemoteAgentManager:
         sess = self._sessions.get(session_id)
         if sess is None:
             return
-        self.transport.interrupt(sess.handle)
+        self._sess_transport(sess).interrupt(sess.handle)
         sess.last_activity_at = time.monotonic()  # P1-6: user activity
 
     def write_to_session(self, session_id: str, payload: str) -> bool:
@@ -630,7 +729,7 @@ class RemoteAgentManager:
             "write_to_session(%s): writing %d bytes (payload chars=%d)",
             session_id, len(body), len(payload),
         )
-        written = self.transport.write_stdin(sess.handle, body)
+        written = self._sess_transport(sess).write_stdin(sess.handle, body)
         if written <= 0:
             logger.warning(
                 "write_to_session(%s) wrote 0 bytes — child likely exited",
@@ -674,7 +773,7 @@ class RemoteAgentManager:
             return False
         if not raw:
             return True
-        written = self.transport.write_stdin(sess.handle, raw)
+        written = self._sess_transport(sess).write_stdin(sess.handle, raw)
         if written > 0:
             sess.last_activity_at = time.monotonic()  # P1-6 idle reaper
         return written > 0
@@ -687,7 +786,7 @@ class RemoteAgentManager:
         sess = self._sessions.get(session_id)
         if sess is None:
             return False
-        self.transport.resize(sess.handle, rows, cols)
+        self._sess_transport(sess).resize(sess.handle, rows, cols)
         sess.last_activity_at = time.monotonic()  # P1-6: user presence
         return True
 
@@ -1124,7 +1223,7 @@ class RemoteAgentManager:
         total = 0
         for session_id, sess in list(self._sessions.items()):
             try:
-                chunk = self.transport.read_stdout(sess.handle, max_bytes=4096)
+                chunk = self._sess_transport(sess).read_stdout(sess.handle, max_bytes=4096)
             except TransportError as exc:
                 logger.warning("read_stdout(%s) failed: %s", session_id, exc)
                 continue
@@ -1152,7 +1251,8 @@ class RemoteAgentManager:
     def _observe_exits(self) -> int:
         exited = 0
         for session_id, sess in list(self._sessions.items()):
-            if self.transport.is_alive(sess.handle):
+            transport = self._sess_transport(sess)
+            if transport.is_alive(sess.handle):
                 continue
             # Final stdout drain: the child may have written one last
             # batch on its way out (e.g. an error message before exit).
@@ -1161,8 +1261,8 @@ class RemoteAgentManager:
             # naturally (last lines of output → exit code → status).
             self._flush_session_batcher(session_id, sess)
 
-            code = self.transport.wait(sess.handle, timeout=0)
-            self.transport.close(sess.handle)
+            code = transport.wait(sess.handle, timeout=0)
+            transport.close(sess.handle)
             if code == 0:
                 self._post_status(session_id, "stopped")
             else:
