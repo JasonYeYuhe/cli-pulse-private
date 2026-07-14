@@ -190,6 +190,26 @@ public extension PetForm {
             return [.init(.translateY, from: -1.2, to: 1.2, periodSec: 0.55)]
         case .peace:                                  // a cool, easy head tilt
             return [.init(.rotation, from: 0, to: 0.05, periodSec: 1.8)]
+        case .hug:                                    // a cozy, rocking self-hug sway
+            return [.init(.translateX, from: -1.0, to: 1.0, periodSec: 2.6)]
+        case .dream:                                  // a dreamy, floating drift
+            return [.init(.translateY, from: -1.2, to: 1.2, periodSec: 3.0)]
+        case .hiccup:                                 // a small periodic hiccup jolt
+            return [.init(.scale, from: 1.0, to: 1.04, periodSec: 0.7)]
+        case .oops:                                   // a sheepish little sway
+            return [.init(.translateX, from: -1.2, to: 1.2, periodSec: 1.8)]
+        case .point:                                  // a firm, assertive bob
+            return [.init(.translateY, from: -1.2, to: 1.2, periodSec: 1.3)]
+        case .phew:                                   // a relieved, slow breath
+            return [.init(.scale, from: 1.0, to: 1.03, periodSec: 2.6)]
+        case .sniff:                                  // a curious, quick sniffing tilt
+            return [.init(.rotation, from: 0, to: 0.05, periodSec: 1.0)]
+        case .huff:                                   // an indignant, turned-away tilt
+            return [.init(.rotation, from: 0, to: -0.05, periodSec: 2.4)]
+        case .ouch:                                   // a wincing pain tremor
+            return [.init(.translateX, from: -1.0, to: 1.0, periodSec: 0.5)]
+        case .flop:                                   // a limp, floppy wobble
+            return [.init(.rotation, from: -0.05, to: 0.05, periodSec: 2.8)]
         }
     }
 }
