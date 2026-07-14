@@ -746,3 +746,13 @@
 "pet.form_stretch" = "Gran Estirón";
 "pet.form_chill" = "Relajado Total";
 "pet.form_zen" = "Meditación Zen";
+"pet.form_salute" = "Saludo Militar";
+"pet.form_shrug" = "Encogido de Hombros";
+"pet.form_pray" = "Deseo con Manitas";
+"pet.form_laugh" = "Carcajada";
+"pet.form_nervous" = "Manojo de Nervios";
+"pet.form_tada" = "¡Ta-Chán!";
+"pet.form_queasy" = "Náuseas Uf";
+"pet.form_whistle" = "Silbido Inocente";
+"pet.form_clap" = "Aplauso Aplauso";
+"pet.form_peace" = "Paz y Amor";

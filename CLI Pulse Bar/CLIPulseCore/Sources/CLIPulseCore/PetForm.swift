@@ -79,6 +79,17 @@ public enum PetForm: String, Codable, CaseIterable, Sendable {
     case stretch  // Big Stretch        — future drop
     case chill    // Chill Lean         — future drop
     case zen      // Zen Meditate       — future drop
+    // v1.48 drop pool (owner-directed 2026-07-14, generic archetypes): APPENDED.
+    case salute   // Salute             — future drop
+    case shrug    // Shrug Dunno        — future drop
+    case pray     // Wishful Pray       — future drop
+    case laugh    // Belly Laugh        — future drop
+    case nervous  // Nervous Wreck      — future drop
+    case tada     // Ta-Da              — future drop
+    case queasy   // Queasy Ugh         — future drop
+    case whistle  // Innocent Whistle   — future drop
+    case clap     // Clap Clap          — future drop
+    case peace    // Peace Out          — future drop
 
     /// Canonical English pun name (display copy is localized in M2).
     public var punName: String {
@@ -134,6 +145,16 @@ public enum PetForm: String, Codable, CaseIterable, Sendable {
         case .stretch: return "Big Stretch"
         case .chill: return "Chill Lean"
         case .zen: return "Zen Meditate"
+        case .salute: return "Salute"
+        case .shrug: return "Shrug Dunno"
+        case .pray: return "Wishful Pray"
+        case .laugh: return "Belly Laugh"
+        case .nervous: return "Nervous Wreck"
+        case .tada: return "Ta-Da"
+        case .queasy: return "Queasy Ugh"
+        case .whistle: return "Innocent Whistle"
+        case .clap: return "Clap Clap"
+        case .peace: return "Peace Out"
         }
     }
 
@@ -148,7 +169,8 @@ public enum PetForm: String, Codable, CaseIterable, Sendable {
              .derp, .zoomies, .sleepy, .skept, .plead, .gasp, .love, .mlem, .floof, .nap,
              .wink, .shy, .angry, .dizzy, .proud, .sneeze, .nom, .star, .sing, .shush,
              .grin, .weepy, .think, .cheer, .kiss, .drool, .flex, .peek, .melt, .roll,
-             .wave, .cold, .hot, .dance, .fierce, .bored, .facepalm, .stretch, .chill, .zen:
+             .wave, .cold, .hot, .dance, .fierce, .bored, .facepalm, .stretch, .chill, .zen,
+             .salute, .shrug, .pray, .laugh, .nervous, .tada, .queasy, .whistle, .clap, .peace:
             return .other
         }
     }
