@@ -971,3 +971,154 @@ def test_install_claude_hook_noop_does_not_touch_mode(tmp_path):
         "noop install path must NOT rewrite the file"
     )
     assert (pre_stat.st_mode & 0o777) == (post_stat.st_mode & 0o777)
+
+
+# ── M1b: install wires BOTH events (PermissionRequest + PreToolUse) + uninstall
+
+def _canonical_cmd(entries) -> str | None:
+    if not isinstance(entries, list) or len(entries) != 1:
+        return None
+    return _cli_pulse_command_in(entries[0])
+
+
+def test_install_wires_both_permission_request_and_pretooluse(tmp_path):
+    helper, settings = _install_paths(tmp_path)
+    result = pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    written = json.loads(settings.read_text())
+    hooks = written["hooks"]
+    for event in ("PermissionRequest", "PreToolUse"):
+        cmd = _canonical_cmd(hooks[event])
+        assert cmd is not None and str(helper) in cmd, event
+        assert hooks[event][0]["matcher"] == ""  # match-all
+    # per-event detail is surfaced
+    assert result["events"] == {"PermissionRequest": "created", "PreToolUse": "created"}
+    assert result["action"] == "created"
+
+
+def test_install_is_noop_only_when_both_events_wired(tmp_path):
+    helper, settings = _install_paths(tmp_path)
+    pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    result = pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    assert result["action"] == "noop"
+    assert result["events"] == {"PermissionRequest": "noop", "PreToolUse": "noop"}
+
+
+def test_install_adds_pretooluse_to_permission_request_only_file(tmp_path):
+    # The SHIPPED state: a user already has only the PermissionRequest hook.
+    # Re-running install must ADD PreToolUse without disturbing PermissionRequest.
+    helper, settings = _install_paths(tmp_path)
+    cmd = pd.recommended_hook_command(helper_path=helper)
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({
+        "hooks": {"PermissionRequest": [
+            {"matcher": "", "hooks": [{"type": "command", "command": cmd}]}
+        ]}
+    }), encoding="utf-8")
+    result = pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    assert result["events"] == {"PermissionRequest": "noop", "PreToolUse": "added"}
+    assert result["action"] == "added"
+    written = json.loads(settings.read_text())
+    assert _canonical_cmd(written["hooks"]["PreToolUse"]) is not None
+    assert len(written["hooks"]["PermissionRequest"]) == 1
+
+
+def test_uninstall_removes_both_events(tmp_path):
+    helper, settings = _install_paths(tmp_path)
+    pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    result = pd.uninstall_claude_hook(settings_path=settings)
+    assert result["action"] == "removed"
+    assert result["removed"] == 2
+    written = json.loads(settings.read_text())
+    # both events (and the now-empty hooks key) are gone
+    assert "PermissionRequest" not in written.get("hooks", {})
+    assert "PreToolUse" not in written.get("hooks", {})
+
+
+def test_uninstall_is_noop_when_nothing_installed(tmp_path):
+    _helper, settings = _install_paths(tmp_path)
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({"model": "opus"}), encoding="utf-8")
+    result = pd.uninstall_claude_hook(settings_path=settings)
+    assert result["action"] == "noop"
+    assert json.loads(settings.read_text()) == {"model": "opus"}
+
+
+def test_uninstall_noop_when_file_missing(tmp_path):
+    _helper, settings = _install_paths(tmp_path)
+    result = pd.uninstall_claude_hook(settings_path=settings)
+    assert result["action"] == "noop" and result["removed"] == 0
+
+
+def test_uninstall_preserves_user_hooks(tmp_path):
+    # A user PreToolUse hook co-resident in the SAME matcher entry as ours, plus
+    # a standalone user PermissionRequest hook, must both survive uninstall.
+    helper, settings = _install_paths(tmp_path)
+    cmd = pd.recommended_hook_command(helper_path=helper)
+    user_hook = {"type": "command", "command": "my-audit-logger"}
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({
+        "hooks": {
+            "PreToolUse": [
+                {"matcher": "", "hooks": [
+                    user_hook, {"type": "command", "command": cmd}]}
+            ],
+            "PermissionRequest": [
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": "user-pr"}]}
+            ],
+        }
+    }), encoding="utf-8")
+    result = pd.uninstall_claude_hook(settings_path=settings)
+    assert result["action"] == "removed"
+    written = json.loads(settings.read_text())
+    # our hook stripped, user's audit hook preserved in the mixed entry
+    ptu = written["hooks"]["PreToolUse"]
+    assert ptu == [{"matcher": "", "hooks": [user_hook]}]
+    # the user's own PermissionRequest hook is untouched
+    assert written["hooks"]["PermissionRequest"] == [
+        {"matcher": "Bash", "hooks": [{"type": "command", "command": "user-pr"}]}]
+
+
+def test_uninstall_refuses_malformed_json(tmp_path):
+    _helper, settings = _install_paths(tmp_path)
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError):
+        pd.uninstall_claude_hook(settings_path=settings)
+
+
+def test_install_uninstall_round_trip_restores_user_content(tmp_path):
+    helper, settings = _install_paths(tmp_path)
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    original = {"model": "opus", "hooks": {"Stop": [{"matcher": "", "hooks": [
+        {"type": "command", "command": "notify"}]}]}}
+    settings.write_text(json.dumps(original), encoding="utf-8")
+    pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    pd.uninstall_claude_hook(settings_path=settings)
+    written = json.loads(settings.read_text())
+    # our two events gone; the user's model + Stop hook survive intact
+    assert written["model"] == "opus"
+    assert written["hooks"]["Stop"] == original["hooks"]["Stop"]
+    assert "PreToolUse" not in written["hooks"]
+    assert "PermissionRequest" not in written["hooks"]
+
+
+def test_install_previous_command_reflects_replaced_event_not_noop(tmp_path):
+    # codex M1b: PermissionRequest already current (noop) + PreToolUse stale
+    # → aggregate "replaced" and `previous_command` must be the STALE PreToolUse
+    # command, NOT the current PermissionRequest command.
+    helper, settings = _install_paths(tmp_path)
+    current = pd.recommended_hook_command(helper_path=helper)
+    stale = "python3 /old/cli_pulse_helper.py remote-approval-hook --provider claude"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({
+        "hooks": {
+            "PermissionRequest": [
+                {"matcher": "", "hooks": [{"type": "command", "command": current}]}],
+            "PreToolUse": [
+                {"matcher": "", "hooks": [{"type": "command", "command": stale}]}],
+        }
+    }), encoding="utf-8")
+    result = pd.install_claude_hook(helper_path=helper, settings_path=settings)
+    assert result["action"] == "replaced"
+    assert result["events"] == {"PermissionRequest": "noop", "PreToolUse": "replaced"}
+    assert result["previous_command"] == stale

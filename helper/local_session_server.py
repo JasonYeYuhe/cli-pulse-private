@@ -179,6 +179,10 @@ SUPPORTED_METHODS = (
     # and reports the action / previous_command / new_command back
     # to the app for UI rendering.
     "install_claude_hook",
+    # M1b: reversible other half of the opt-in — remove the CLI Pulse hooks
+    # (PermissionRequest + PreToolUse) from ~/.claude/settings.json, preserving
+    # the user's own hooks. App-auth-gated (like install_claude_hook).
+    "uninstall_claude_hook",
     # v1.41 machine-mobile relay (Track B): the Mac app executor drains queued
     # fan/LPM commands, reports typed completions, and reports its live control
     # state. App-auth-gated but NOT local_control-gated (Machine tab, like
@@ -1576,6 +1580,25 @@ class LocalSessionServer:
             except ValueError as exc:
                 # Malformed / non-object settings.json — surface so
                 # the app can show a "fix file by hand" banner.
+                raise _RequestError("settings_malformed", str(exc)) from exc
+            return dict(result)
+
+        if method == "uninstall_claude_hook":
+            # M1b: the reversible other half of the opt-in — remove the CLI
+            # Pulse hooks (PermissionRequest + PreToolUse) from the global
+            # ~/.claude/settings.json, preserving the user's own hooks. No
+            # helper_path needed (removal is by marker). Same anti-clobber
+            # ValueError → settings_malformed contract as install.
+            try:
+                from permissions_diagnose import uninstall_claude_hook  # type: ignore
+            except ImportError as exc:  # pragma: no cover — module always present
+                raise _RequestError(
+                    "internal_error",
+                    f"permissions_diagnose import failed: {exc}",
+                ) from exc
+            try:
+                result = uninstall_claude_hook()
+            except ValueError as exc:
                 raise _RequestError("settings_malformed", str(exc)) from exc
             return dict(result)
 

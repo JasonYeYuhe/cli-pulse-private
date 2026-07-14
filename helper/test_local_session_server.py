@@ -1482,6 +1482,70 @@ def test_install_claude_hook_blocked_when_gate_off(short_sock_dir, tmp_path):
         server.stop()
 
 
+# ── M1b: uninstall_claude_hook UDS method ─────────────────────────────
+
+def test_uninstall_claude_hook_round_trip(short_sock_dir, tmp_path, monkeypatch):
+    fake_settings = tmp_path / "settings.json"
+    fake_helper = tmp_path / "cli_pulse_helper.py"
+    fake_helper.write_text("# stub")
+    import permissions_diagnose as pd
+    # install first (into the tmp settings), then uninstall via the UDS verb.
+    pd.install_claude_hook(helper_path=fake_helper.resolve(), settings_path=fake_settings)
+    real_uninstall = pd.uninstall_claude_hook
+    monkeypatch.setattr(
+        pd, "uninstall_claude_hook",
+        lambda **kw: real_uninstall(settings_path=fake_settings, **kw))
+    server, _mgr, _state = _make_server(short_sock_dir, token="T", enabled=True)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "uninstall_claude_hook",
+            "auth_token": "T", "params": {},
+        })
+        assert reply["ok"] is True
+        assert reply["result"]["action"] == "removed"
+        assert reply["result"]["removed"] == 2
+        import json
+        written = json.loads(fake_settings.read_text())
+        assert "PreToolUse" not in written.get("hooks", {})
+        assert "PermissionRequest" not in written.get("hooks", {})
+    finally:
+        server.stop()
+
+
+def test_uninstall_claude_hook_requires_auth(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir, token="T", enabled=True)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "x", "method": "uninstall_claude_hook", "params": {},  # no token
+        })
+        assert reply["error"]["code"] == "unauthenticated"
+    finally:
+        server.stop()
+
+
+def test_uninstall_claude_hook_blocked_when_gate_off(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir, token="T", enabled=False)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "x", "method": "uninstall_claude_hook",
+            "auth_token": "T", "params": {},
+        })
+        assert reply["error"]["code"] == "local_control_off"
+    finally:
+        server.stop()
+
+
+def test_uninstall_claude_hook_advertised_in_hello(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "hello",
+            "params": {"client_protocol_version": PROTOCOL_VERSION},
+        })
+        assert "uninstall_claude_hook" in set(reply["result"]["supported_methods"])
+    finally:
+        server.stop()
+
 
 # ── v1.30.x in-app terminal: send_input_raw + resize ──────────────────
 
