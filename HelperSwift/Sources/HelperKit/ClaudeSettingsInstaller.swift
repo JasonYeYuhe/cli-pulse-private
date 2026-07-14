@@ -36,6 +36,12 @@ public enum ClaudeSettingsInstaller {
     /// string alone is specific without false positives.
     public static let helperMarker = "remote-approval-hook --provider claude"
 
+    /// M1: the events CLI Pulse wires the hook into. PreToolUse fires for EVERY
+    /// tool call (the always-present lever a broad allowlist would otherwise
+    /// suppress); PermissionRequest fires only when a permission dialog would
+    /// show. Mirrors the Python `_CLI_PULSE_HOOK_EVENTS`.
+    public static let hookEvents = ["PermissionRequest", "PreToolUse"]
+
     public enum Action: String, Sendable, Equatable {
         case created    // file didn't exist; we wrote a fresh minimal one
         case added      // file existed with other keys/hooks; we appended ours
@@ -45,12 +51,26 @@ public enum ClaudeSettingsInstaller {
 
     public struct InstallResult: Sendable, Equatable {
         public let settingsPath: String
+        /// Aggregate across both events.
         public let action: Action
         /// Was previously in the file (pre-install) — useful for
         /// the "Last install: replaced from <prev>" UX.
         public let previousCommand: String?
         /// What the file holds after install. Always populated.
         public let newCommand: String
+        /// M1: per-event action detail (PermissionRequest / PreToolUse).
+        public let events: [String: Action]
+    }
+
+    /// M1: result of removing the CLI Pulse hooks from both events.
+    public struct UninstallResult: Sendable, Equatable {
+        public let settingsPath: String
+        /// `"removed"` when hooks were stripped, `"noop"` when none were present.
+        public let action: String
+        /// Total hook entries removed across both events.
+        public let removed: Int
+        /// Per-event removed counts.
+        public let events: [String: Int]
     }
 
     public enum InstallError: Error, Equatable {
@@ -106,7 +126,6 @@ public enum ClaudeSettingsInstaller {
             do {
                 let raw = try Data(contentsOf: target)
                 if !raw.isEmpty {
-                    fileHadContent = true
                     let parsed = try JSONSerialization.jsonObject(with: raw, options: [])
                     guard let dict = parsed as? [String: Any] else {
                         throw InstallError.malformedSettings(
@@ -114,6 +133,9 @@ public enum ClaudeSettingsInstaller {
                         )
                     }
                     data = dict
+                    // Match Python's `bool(data)`: a `{}` file has content bytes
+                    // but is an EMPTY object → still a "created" (review: codex).
+                    fileHadContent = !dict.isEmpty
                 }
             } catch let installErr as InstallError {
                 throw installErr
@@ -124,15 +146,59 @@ public enum ClaudeSettingsInstaller {
             }
         }
 
-        // Locate / create hooks.PermissionRequest.
+        // M1: merge our canonical entry into BOTH events (PermissionRequest +
+        // PreToolUse) with the same auto-heal / mixed-entry-preservation.
         var hooks = (data["hooks"] as? [String: Any]) ?? [:]
-        var pr = (hooks["PermissionRequest"] as? [[String: Any]]) ?? []
+        var actions: [Action] = []
+        var eventActions: [String: Action] = [:]
+        var previousCommand: String? = nil
+        for event in Self.hookEvents {
+            let (newList, action, prev) = mergeCliPulseEvent(
+                existing: hooks[event] as? [Any],
+                targetCommand: targetCommand,
+                fileHadContent: fileHadContent
+            )
+            hooks[event] = newList
+            actions.append(action)
+            eventActions[event] = action
+            // Adopt `prev` ONLY from a .replaced event — a noop event returns
+            // its current (matching) command, which would misreport the live
+            // command as "previous" when the aggregate is .replaced because of
+            // the OTHER event (Codex-review catch, mirrored from the Python).
+            if action == .replaced, let p = prev, previousCommand == nil {
+                previousCommand = p
+            }
+        }
+        data["hooks"] = hooks
+        let aggregate = Self.aggregateAction(actions, fileHadContent: fileHadContent)
 
-        // Pass 1: classify entries + find previous_command.
+        if aggregate != .noop {
+            try writeAtomically(data: data, to: target)
+        }
+
+        return InstallResult(
+            settingsPath: target.path,
+            action: aggregate,
+            previousCommand: previousCommand,
+            newCommand: targetCommand,
+            events: eventActions
+        )
+    }
+
+    /// Idempotently merge one CLI Pulse entry into a SINGLE event's list. Pure —
+    /// returns (newList, action, previousCommand), mirrors the Python
+    /// `_merge_cli_pulse_event`. Same auto-heal semantics: drop legacy-flat
+    /// entries, surgically strip our nested hook from mixed matcher entries
+    /// (preserving the user's co-resident hooks), append one canonical entry.
+    static func mergeCliPulseEvent(
+        existing: [Any]?, targetCommand: String, fileHadContent: Bool
+    ) -> (newList: [Any], action: Action, previousCommand: String?) {
+        let pr = existing ?? []
         var previousCommand: String? = nil
         var cliPulseTouchedCount = 0
         var canonicalPureMatchingIndices: [Int] = []
-        for (idx, entry) in pr.enumerated() {
+        for (idx, element) in pr.enumerated() {
+            guard let entry = element as? [String: Any] else { continue }  // non-object → unrelated
             if isCliPulseLegacyEntry(entry) || matcherEntryHasOurHook(entry) {
                 cliPulseTouchedCount += 1
             }
@@ -140,76 +206,151 @@ public enum ClaudeSettingsInstaller {
                 previousCommand = cmd
             }
             if isCanonicalPureCliPulseEntry(entry),
-               let nested = entry["hooks"] as? [[String: Any]],
+               let nested = entry["hooks"] as? [Any],
                nested.count == 1,
-               let cmd = nested[0]["command"] as? String,
+               let cmd = (nested[0] as? [String: Any])?["command"] as? String,
                cmd == targetCommand {
                 canonicalPureMatchingIndices.append(idx)
             }
         }
         let isNoop = cliPulseTouchedCount == 1 && canonicalPureMatchingIndices.count == 1
-
-        let action: Action
         if isNoop {
-            action = .noop
-        } else {
-            // Auto-heal rebuild: surgical removal of our hook from
-            // every entry, then append exactly one canonical
-            // CLI Pulse entry.
-            var newPr: [[String: Any]] = []
-            var hadUnrelated = false
-            for entry in pr {
-                if isCliPulseLegacyEntry(entry) {
-                    // Pure CLI Pulse legacy → drop wholesale.
-                    continue
-                }
-                if matcherEntryHasOurHook(entry) {
-                    let nested = entry["hooks"] as? [[String: Any]] ?? []
-                    let cleanedNested = nested.filter { !hookHasMarker($0) }
-                    if cleanedNested.isEmpty {
-                        // Entire nested array was CLI Pulse → drop entry.
-                        continue
-                    }
-                    var preserved = entry
-                    preserved["hooks"] = cleanedNested
-                    newPr.append(preserved)
-                    hadUnrelated = true
-                } else {
-                    newPr.append(entry)
-                    hadUnrelated = true
-                }
+            return (pr, .noop, previousCommand)
+        }
+        var newPr: [Any] = []
+        var hadUnrelated = false
+        for element in pr {
+            guard let entry = element as? [String: Any] else {
+                newPr.append(element); hadUnrelated = true; continue  // preserve non-object verbatim
             }
-            newPr.append(canonicalHookEntry(command: targetCommand))
-            pr = newPr
-
-            if previousCommand != nil {
-                action = .replaced
-            } else if hadUnrelated || fileHadContent {
-                action = .added
+            if isCliPulseLegacyEntry(entry) { continue }
+            if matcherEntryHasOurHook(entry) {
+                let nested = entry["hooks"] as? [Any] ?? []
+                let cleanedNested = nested.filter { !hookHasMarker($0) }
+                if cleanedNested.isEmpty { continue }
+                var preserved = entry
+                preserved["hooks"] = cleanedNested
+                newPr.append(preserved)
+                hadUnrelated = true
             } else {
-                action = .created
+                newPr.append(entry)
+                hadUnrelated = true
             }
         }
-
-        hooks["PermissionRequest"] = pr
-        data["hooks"] = hooks
-
-        if action != .noop {
-            try writeAtomically(data: data, to: target)
+        newPr.append(canonicalHookEntry(command: targetCommand))
+        let action: Action
+        if previousCommand != nil {
+            action = .replaced
+        } else if hadUnrelated || fileHadContent {
+            action = .added
+        } else {
+            action = .created
         }
+        return (newPr, action, previousCommand)
+    }
 
-        return InstallResult(
-            settingsPath: target.path,
-            action: action,
-            previousCommand: previousCommand,
-            newCommand: targetCommand
-        )
+    /// Combine per-event actions into one aggregate for the UI. Mirrors the
+    /// Python `_aggregate_action`.
+    static func aggregateAction(_ actions: [Action], fileHadContent: Bool) -> Action {
+        let s = Set(actions)
+        if s == [.noop] { return .noop }
+        if s.contains(.replaced) { return .replaced }
+        if !fileHadContent && !s.contains(.added) && !s.contains(.noop) { return .created }
+        return .added
+    }
+
+    /// Remove EVERY CLI Pulse hook from a single event's list (uninstall).
+    /// Preserves the user's co-resident hooks in mixed matcher entries. Mirrors
+    /// the Python `_strip_cli_pulse_from_event`.
+    static func stripCliPulseFromEvent(
+        _ existing: [Any]?
+    ) -> (newList: [Any], removed: Int) {
+        let pr = existing ?? []
+        var newPr: [Any] = []
+        var removed = 0
+        for element in pr {
+            guard let entry = element as? [String: Any] else {
+                newPr.append(element); continue  // preserve non-object verbatim
+            }
+            if isCliPulseLegacyEntry(entry) { removed += 1; continue }
+            if matcherEntryHasOurHook(entry) {
+                let nested = entry["hooks"] as? [Any] ?? []
+                let cleaned = nested.filter { !hookHasMarker($0) }
+                removed += nested.count - cleaned.count
+                if cleaned.isEmpty { continue }
+                var preserved = entry
+                preserved["hooks"] = cleaned
+                newPr.append(preserved)
+            } else {
+                newPr.append(entry)
+            }
+        }
+        return (newPr, removed)
+    }
+
+    /// Remove the CLI Pulse hooks (both events) from `~/.claude/settings.json`,
+    /// preserving the user's own hooks. The reversible other half of the opt-in.
+    /// Mirrors the Python `uninstall_claude_hook`. Idempotent.
+    @discardableResult
+    public static func uninstall(
+        settingsPath: URL? = nil
+    ) throws -> UninstallResult {
+        let target = settingsPath ?? defaultSettingsPath()
+        let noop = UninstallResult(settingsPath: target.path, action: "noop",
+                                   removed: 0, events: [:])
+        guard FileManager.default.fileExists(atPath: target.path) else { return noop }
+        let raw: Data
+        do { raw = try Data(contentsOf: target) } catch { return noop }
+        if raw.isEmpty { return noop }
+        let parsed: Any
+        do {
+            parsed = try JSONSerialization.jsonObject(with: raw, options: [])
+        } catch {
+            throw InstallError.malformedSettings(
+                "refusing to overwrite malformed JSON at \(target.path): \(error.localizedDescription). Fix the file by hand and retry."
+            )
+        }
+        guard var data = parsed as? [String: Any] else {
+            throw InstallError.malformedSettings(
+                "refusing to overwrite non-object JSON at \(target.path) (got \(type(of: parsed))). The file must be a JSON object."
+            )
+        }
+        guard var hooks = data["hooks"] as? [String: Any] else { return noop }
+
+        var perEvent: [String: Int] = [:]
+        var totalRemoved = 0
+        for event in Self.hookEvents {
+            guard hooks[event] != nil else { continue }
+            let (newList, removed) = stripCliPulseFromEvent(hooks[event] as? [Any])
+            if removed == 0 { continue }
+            perEvent[event] = removed
+            totalRemoved += removed
+            if newList.isEmpty {
+                // Drop an emptied event array so we don't leave `"PreToolUse": []`.
+                hooks.removeValue(forKey: event)
+            } else {
+                hooks[event] = newList
+            }
+        }
+        if totalRemoved == 0 { return noop }
+
+        if hooks.isEmpty {
+            data.removeValue(forKey: "hooks")
+        } else {
+            data["hooks"] = hooks
+        }
+        try writeAtomically(data: data, to: target)
+        return UninstallResult(settingsPath: target.path, action: "removed",
+                               removed: totalRemoved, events: perEvent)
     }
 
     // MARK: - shape predicates
 
-    static func hookHasMarker(_ h: [String: Any]) -> Bool {
-        guard let cmd = h["command"] as? String else { return false }
+    static func hookHasMarker(_ h: Any) -> Bool {
+        // Accepts Any so a nested `hooks` array containing a non-object element
+        // (Python treats these arrays as list[Any]) doesn't fail a whole-array
+        // cast and silently drop the user's data (review: codex).
+        guard let d = h as? [String: Any], let cmd = d["command"] as? String else { return false }
         return cmd.contains(helperMarker)
     }
 
@@ -221,7 +362,10 @@ public enum ClaudeSettingsInstaller {
     }
 
     static func matcherEntryHasOurHook(_ entry: [String: Any]) -> Bool {
-        guard let nested = entry["hooks"] as? [[String: Any]] else { return false }
+        // `hooks` is treated as [Any] so a non-object element can't fail the cast
+        // and hide our marker (which would duplicate on install + leak on
+        // uninstall) (review: codex).
+        guard let nested = entry["hooks"] as? [Any] else { return false }
         return nested.contains { hookHasMarker($0) }
     }
 
