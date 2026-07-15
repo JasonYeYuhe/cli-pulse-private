@@ -17,8 +17,9 @@ func usage() -> Never {
                               [--cloud-pull-max N]
                               [--legacy-python]
       cli_pulse_helper version
-      cli_pulse_helper remote-approval-hook --provider claude
-      cli_pulse_helper remote-approvals install-claude-hook
+      cli_pulse_helper remote-approval-hook --provider {claude|codex}
+      cli_pulse_helper remote-approvals {install,uninstall}-claude-hook
+      cli_pulse_helper remote-approvals {install,uninstall}-codex-hook
 
     Phase 4E Slice 4: `daemon` now drives RemoteAgentCloud cloud
     sync alongside the local UDS server. `--legacy-python` opts
@@ -87,39 +88,79 @@ case "remote-approval-hook":
     exit(code)
 
 case "remote-approvals":
-    // Phase 4D iter10 (Codex P1③.A): `install-claude-hook` is now
-    // a deprecation no-op. The hook is no longer installed in the
-    // user's `~/.claude/settings.json` because that breaks every
-    // terminal-launched Claude session. Instead managed sessions
-    // get the hook via spawn-time `claude --settings <inline-json>`
-    // injection in `ManagedSessionManager.startSession`. Power
-    // users who ran this subcommand pre-iter10 can clean up by
-    // removing any `remote-approval-hook --provider claude` entry
-    // from their settings.json.
-    if args.count >= 2 && args[1] == "install-claude-hook" {
-        FileHandle.standardError.write(Data("""
-        cli_pulse_helper remote-approvals install-claude-hook (deprecated)
+    // M2p2 codex-Swift port: these were a Phase 4D iter10 deprecation no-op
+    // ("global install breaks terminal Claude"). #18b/#18c REVERSED that stance
+    // (owner-approved): the M1a runtime made external sessions fail OPEN
+    // (ask/abstain — never auto-approve, never brick), so the global install is
+    // now the deliberate opt-in path for controlling EXTERNAL sessions. The old
+    // no-op text actively told users to REMOVE the hook — actively wrong post-
+    // #18c. CLI parity with the Python helper's `remote-approvals` subcommands.
+    // Exactly one verb, NO trailing arguments (review: codex P2). The Python
+    // twin supports `--settings <path>`; this Swift CLI deliberately does not
+    // (the UDS verbs' path override is a helper-side test seam only), so a
+    // trailing `--settings /tmp/x` silently IGNORED would write the REAL
+    // ~/.codex/hooks.json — and even an accidental `--help` would become a
+    // live install. Reject anything unexpected instead.
+    guard args.count == 2 else { usage() }
 
-        Phase 4D iter10 retired the global hook install in
-        ~/.claude/settings.json. The PermissionRequest hook is now
-        injected at managed-session spawn time so terminal-launched
-        Claude is unaffected.
+    /// Shared printer for install results (mirrors the Python CLI output).
+    func printInstall(_ result: ClaudeSettingsInstaller.InstallResult, provider: String) {
+        print("settings_path: \(result.settingsPath)")
+        print("action:        \(result.action.rawValue)")
+        if let prev = result.previousCommand, result.action != .noop {
+            print("previous:      \(prev)")
+        }
+        print("new_command:   \(result.newCommand)")
+        print("")
+        if provider == "codex" {
+            if result.action == .noop {
+                print("# Hook already wired correctly in ~/.codex/hooks.json.")
+            } else {
+                print("# Wrote the CLI Pulse hook into ~/.codex/hooks.json.")
+            }
+            // ALWAYS surface the one-time trust step — even on noop the user
+            // may not have completed it; the hook is inert until they do.
+            print("# ONE-TIME STEP: in a Codex TUI, run `/hooks`, review the CLI Pulse")
+            print("# command hook, and Trust it. Codex hash-pins the command and will")
+            print("# SKIP an untrusted hook silently — this cannot be automated.")
+        } else if result.action == .noop {
+            print("# Hook already wired correctly. Nothing to do.")
+        } else {
+            print("# Restart Claude Code so it picks up the new hook entry.")
+        }
+    }
 
-          - Managed sessions: hook is set via `claude --settings
-            <inline-json>` automatically; no action required.
-          - Terminal-launched Claude: removes the hook entry
-            yourself if you have a stale one. Run:
-              sed-i-equivalent or hand-edit ~/.claude/settings.json
-              to drop any `remote-approval-hook --provider claude`
-              entry.
+    func printUninstall(_ result: ClaudeSettingsInstaller.UninstallResult) {
+        print("settings_path: \(result.settingsPath)")
+        print("action:        \(result.action)")
+        print("removed:       \(result.removed)")
+    }
 
-        This subcommand is retained for backward compatibility but
-        does NOTHING. v1.14 removes it entirely.
-        \n
-        """.utf8))
-        exit(0)
-    } else {
-        usage()
+    guard let selfPath = ExecutablePath.current() else {
+        FileHandle.standardError.write(Data("error: could not resolve helper executable path\n".utf8))
+        exit(2)
+    }
+    do {
+        switch args[1] {
+        case "install-claude-hook":
+            printInstall(try ClaudeSettingsInstaller.install(helperPath: selfPath), provider: "claude")
+        case "uninstall-claude-hook":
+            printUninstall(try ClaudeSettingsInstaller.uninstall())
+        case "install-codex-hook":
+            printInstall(try ClaudeSettingsInstaller.install(helperPath: selfPath, provider: "codex"),
+                         provider: "codex")
+        case "uninstall-codex-hook":
+            printUninstall(try ClaudeSettingsInstaller.uninstall(provider: "codex"))
+        default:
+            usage()
+        }
+    } catch let err as ClaudeSettingsInstaller.InstallError {
+        if case .malformedSettings(let msg) = err {
+            FileHandle.standardError.write(Data("error: \(msg)\n".utf8))
+        } else {
+            FileHandle.standardError.write(Data("error: \(err)\n".utf8))
+        }
+        exit(2)
     }
 
 case "daemon":

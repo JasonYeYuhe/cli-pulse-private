@@ -375,4 +375,81 @@ final class HookAdapterTests: XCTestCase {
         unsetenv("CLI_PULSE_REMOTE_SESSION_ID")
         XCTAssertFalse(HookAdapter.isManagedSession())
     }
+
+    // MARK: - M2 codex-Swift port: codex provider semantics
+
+    func testCodexPreToolUseExternalFallbackAbstains() {
+        // Codex PreToolUse is allow|deny ONLY — no "ask". An EXTERNAL (fail-
+        // open) fallback must ABSTAIN (nil → nothing written → Codex's normal
+        // approval flow), never Claude's "ask" (which Codex would reject) and
+        // NEVER a hard deny that bricks a hand-launched terminal Codex.
+        // Mirrors the Python CodexAdapter._emit_pre_tool_use.
+        XCTAssertNil(HookAdapter.preToolUseOutput(
+            decision(.fallback), failOpen: true, provider: "codex"))
+    }
+
+    func testCodexPreToolUseManagedFallbackDeniesWithCodexWording() {
+        let out = HookAdapter.preToolUseOutput(
+            decision(.fallback), failOpen: false, provider: "codex")!
+        let hso = out["hookSpecificOutput"] as! [String: Any]
+        XCTAssertEqual(hso["permissionDecision"] as? String, "deny")
+        let reason = hso["permissionDecisionReason"] as! String
+        XCTAssertTrue(reason.contains("Codex's local approval prompt"), reason)
+        XCTAssertFalse(reason.contains("Claude"), reason)
+    }
+
+    func testClaudePreToolUseExternalFallbackStillAsks() {
+        // Claude keeps "ask" — the codex branch must not leak into claude.
+        let out = HookAdapter.preToolUseOutput(
+            decision(.fallback), failOpen: true, provider: "claude")!
+        let hso = out["hookSpecificOutput"] as! [String: Any]
+        XCTAssertEqual(hso["permissionDecision"] as? String, "ask")
+    }
+
+    func testCodexPreToolUseAllowDenyShapesAreClaudeCompatible() {
+        // allow / definitive-deny are byte-identical across providers (Codex
+        // hooks are Claude-compatible) — only fallback resolution differs.
+        let allow = HookAdapter.preToolUseOutput(decision(.allow), failOpen: true, provider: "codex")!
+        XCTAssertEqual((allow["hookSpecificOutput"] as! [String: Any])["permissionDecision"] as? String,
+                       "allow")
+        let deny = HookAdapter.preToolUseOutput(decision(.deny, "no"), failOpen: true, provider: "codex")!
+        let hso = deny["hookSpecificOutput"] as! [String: Any]
+        XCTAssertEqual(hso["permissionDecision"] as? String, "deny")
+        XCTAssertEqual(hso["permissionDecisionReason"] as? String, "no")
+    }
+
+    func testCodexPermissionRequestFallbackMatchesClaude() {
+        // PermissionRequest is fully Claude-compatible: external abstain (nil),
+        // managed deny — with codex wording.
+        XCTAssertNil(HookAdapter.permissionRequestOutput(
+            decision(.fallback), failOpen: true, provider: "codex"))
+        let managed = HookAdapter.permissionRequestOutput(
+            decision(.fallback), failOpen: false, provider: "codex")!
+        let d = ((managed["hookSpecificOutput"] as! [String: Any])["decision"]) as! [String: Any]
+        XCTAssertEqual(d["behavior"] as? String, "deny")
+        XCTAssertTrue((d["message"] as! String).contains("Codex"), "\(d)")
+    }
+
+    func testCodexFallbackNeverAutoApproves() {
+        // Extend the safety invariant to the codex provider path.
+        for failOpen in [true, false] {
+            if let pr = HookAdapter.permissionRequestOutput(
+                decision(.fallback), failOpen: failOpen, provider: "codex") {
+                let d = (pr["hookSpecificOutput"] as! [String: Any])["decision"] as! [String: Any]
+                XCTAssertNotEqual(d["behavior"] as? String, "allow")
+            }
+            if let ptu = HookAdapter.preToolUseOutput(
+                decision(.fallback), failOpen: failOpen, provider: "codex") {
+                let hso = ptu["hookSpecificOutput"] as! [String: Any]
+                XCTAssertNotEqual(hso["permissionDecision"] as? String, "allow")
+            }
+        }
+    }
+
+    func testUnavailableMessageProviderWording() {
+        XCTAssertTrue(HookAdapter.unavailableMessage(provider: "codex").contains("Codex"))
+        XCTAssertTrue(HookAdapter.unavailableMessage(provider: "claude").contains("Claude"))
+        // Unknown providers get the generic claude wording, never crash.
+        XCTAssertFalse(HookAdapter.unavailableMessage(provider: "other").isEmpty)
+    }
 }

@@ -1547,6 +1547,85 @@ def test_uninstall_claude_hook_advertised_in_hello(short_sock_dir):
         server.stop()
 
 
+# ── M2p2: install/uninstall_codex_hook UDS verbs (wire-level) ──────────
+#
+# Mirror the claude round-trips above. These verbs are EXCLUDED from the
+# generic live-handler sweep (they write real user config), so the wire-level
+# coverage lives here, redirected to tmp via monkeypatch.
+
+
+def test_install_codex_hook_round_trip(short_sock_dir, tmp_path, monkeypatch):
+    fake_helper = tmp_path / "cli_pulse_helper.py"
+    fake_helper.write_text("# stub")
+    fake_settings = tmp_path / "hooks.json"
+    server, _mgr, _state = _make_server(
+        short_sock_dir, token="T", enabled=True,
+        helper_argv0=str(fake_helper),
+    )
+    import permissions_diagnose as pd
+    real_install = pd.install_codex_hook
+    def _install(helper_path, **kwargs):
+        kwargs.setdefault("settings_path", fake_settings)
+        return real_install(helper_path=helper_path, **kwargs)
+    monkeypatch.setattr(pd, "install_codex_hook", _install)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "install_codex_hook",
+            "auth_token": "T", "params": {},
+        })
+        assert reply["ok"] is True, reply
+        assert reply["result"]["action"] == "created"
+        # The self-describing trust payload must survive the wire.
+        assert reply["result"]["requires_manual_trust"] is True
+        assert reply["result"]["trust_command"] == "/hooks"
+        import json
+        written = json.loads(fake_settings.read_text())
+        for event in ("PermissionRequest", "PreToolUse"):
+            cmd = written["hooks"][event][0]["hooks"][0]["command"]
+            assert "remote-approval-hook --provider codex" in cmd
+            assert str(fake_helper) in cmd
+    finally:
+        server.stop()
+
+
+def test_uninstall_codex_hook_round_trip(short_sock_dir, tmp_path, monkeypatch):
+    fake_settings = tmp_path / "hooks.json"
+    fake_helper = tmp_path / "cli_pulse_helper.py"
+    fake_helper.write_text("# stub")
+    import permissions_diagnose as pd
+    pd.install_codex_hook(helper_path=fake_helper.resolve(), settings_path=fake_settings)
+    real_uninstall = pd.uninstall_codex_hook
+    monkeypatch.setattr(
+        pd, "uninstall_codex_hook",
+        lambda **kw: real_uninstall(settings_path=fake_settings, **kw))
+    server, _mgr, _state = _make_server(short_sock_dir, token="T", enabled=True)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "uninstall_codex_hook",
+            "auth_token": "T", "params": {},
+        })
+        assert reply["ok"] is True
+        assert reply["result"]["action"] == "removed"
+        assert reply["result"]["removed"] == 2
+    finally:
+        server.stop()
+
+
+def test_codex_hook_verbs_gated_like_claude(short_sock_dir):
+    # unauthenticated + gate-off both reject, exactly like the claude verbs.
+    server, _mgr, _state = _make_server(short_sock_dir, token="T", enabled=False)
+    try:
+        no_auth = _client_call(server._socket_path, {
+            "id": "x", "method": "install_codex_hook", "params": {}})
+        assert no_auth["error"]["code"] == "unauthenticated"
+        gate_off = _client_call(server._socket_path, {
+            "id": "y", "method": "uninstall_codex_hook",
+            "auth_token": "T", "params": {}})
+        assert gate_off["error"]["code"] == "local_control_off"
+    finally:
+        server.stop()
+
+
 # ── v1.30.x in-app terminal: send_input_raw + resize ──────────────────
 
 def test_send_input_raw_passes_bytes_verbatim(short_sock_dir):
@@ -1866,6 +1945,10 @@ _SWIFT_CLIENT_METHODS = frozenset({
     # only change → Helper CI's path filter skipped this suite until M4.4b's
     # helper/ change ran it — same drift pattern as the relay verbs below).
     "uninstall_claude_hook",
+    # M2p2 codex-Swift port: installCodexHook()/uninstallCodexHook() — the
+    # external-Codex approve/deny opt-in (→ ~/.codex/hooks.json).
+    "install_codex_hook",
+    "uninstall_codex_hook",
     "get_pending_approvals", "get_local_control_status",
     "set_local_control_enabled",
     # System Monitor S4: the macOS Machine tab's LocalSessionControlClient.
@@ -2059,10 +2142,18 @@ def test_every_swift_client_method_has_a_live_handler(short_sock_dir):
     try:
         # hello is unauthenticated; the rest carry the token. We don't care
         # about the result, only that the method is recognised + dispatched.
-        # install_claude_hook is excluded from the LIVE call (it writes to
-        # ~/.claude/settings.json) — it's still covered by the
-        # SUPPORTED_METHODS contract test above + its own dedicated tests.
-        for method in _SWIFT_CLIENT_METHODS - {"install_claude_hook"}:
+        # The four hook install/uninstall verbs are excluded from the LIVE
+        # call: they read/WRITE the REAL ~/.claude/settings.json and
+        # ~/.codex/hooks.json (the handlers take no path override), so a live
+        # uninstall on a dev machine with the hook installed would silently
+        # STRIP the user's real hook (M2p2 review catch — the uninstalls were
+        # previously live-called). All four are still covered by the
+        # SUPPORTED_METHODS contract test above + their own dedicated tests.
+        _WRITES_REAL_USER_CONFIG = {
+            "install_claude_hook", "uninstall_claude_hook",
+            "install_codex_hook", "uninstall_codex_hook",
+        }
+        for method in _SWIFT_CLIENT_METHODS - _WRITES_REAL_USER_CONFIG:
             body = {"id": method, "method": method, "params": {}}
             if method != "hello":
                 body["auth_token"] = "T"
