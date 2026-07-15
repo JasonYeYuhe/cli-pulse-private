@@ -38,6 +38,14 @@ public final class ManagedSessionManager: @unchecked Sendable {
 
     private let config: Config
     private let transport: PtyTransport
+    /// M4.4a: the transport that owns a record's handle — the per-session
+    /// override (an attached tmux `TmuxTransport`) if set, else the shared
+    /// `PtyTransport` (spawned sessions). Every handle-scoped I/O call routes
+    /// through this so attached + spawned sessions share the same drain / input
+    /// / reap loops. Mirrors Python `_sess_transport`.
+    private func sessTransport(_ rec: ManagedSessionRecord) -> any SessionTransport {
+        rec.transportOverride ?? transport
+    }
     private let registry: ApprovalRegistry?
     private let broker: EventBroker?
     /// v1.24 Phase 2c slice 2: optional terminal Broadcast publisher.
@@ -86,7 +94,13 @@ public final class ManagedSessionManager: @unchecked Sendable {
         let sessionId: String
         let provider: String
         let clientLabel: String?
-        let handle: PtyTransport.Handle
+        let handle: SessionHandle
+        /// M4.4a: per-session transport override. `nil` ⇒ the manager's shared
+        /// `PtyTransport` (spawned sessions). An ATTACHED tmux-wrapped session
+        /// carries its own `TmuxTransport` here so every handle-scoped I/O call
+        /// routes to the right transport (`_sessTransport`). Mirrors Python
+        /// `_ManagedSession.transport`.
+        let transportOverride: (any SessionTransport)?
         let spawnedAtMono: TimeInterval
         /// R0 (S2): the session's `realtime_private` from the cloud start
         /// payload — `false` = positively public, `true` = private, `nil` =
@@ -121,7 +135,8 @@ public final class ManagedSessionManager: @unchecked Sendable {
             sessionId: String,
             provider: String,
             clientLabel: String?,
-            handle: PtyTransport.Handle,
+            handle: SessionHandle,
+            transportOverride: (any SessionTransport)? = nil,
             spawnedAtMono: TimeInterval,
             realtimePrivate: Bool?
         ) {
@@ -129,6 +144,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
             self.provider = provider
             self.clientLabel = clientLabel
             self.handle = handle
+            self.transportOverride = transportOverride
             self.spawnedAtMono = spawnedAtMono
             self.realtimePrivate = realtimePrivate
         }
@@ -245,8 +261,9 @@ public final class ManagedSessionManager: @unchecked Sendable {
         sessions.removeAll()
         lock.unlock()
         for rec in snapshot {
-            transport.terminate(rec.handle)
-            transport.close(rec.handle)
+            let t = sessTransport(rec)
+            t.terminate(rec.handle)
+            t.close(rec.handle)
             registry?.unregisterSession(rec.sessionId)
         }
     }
@@ -413,7 +430,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
         let rec = sessions.removeValue(forKey: sessionId)
         lock.unlock()
         guard let rec else { return false }
-        transport.terminate(rec.handle)
+        sessTransport(rec).terminate(rec.handle)
         // Drain loop notices the close and exits; the close()
         // call happens there so we don't double-close.
         registry?.unregisterSession(sessionId)
@@ -436,7 +453,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
         let rec = sessions[sessionId]
         lock.unlock()
         guard let rec else { return false }
-        transport.interrupt(rec.handle)
+        sessTransport(rec).interrupt(rec.handle)
         return true
     }
 
@@ -475,7 +492,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
         }
         let n: Int
         do {
-            n = try transport.writeStdin(rec.handle, body)
+            n = try sessTransport(rec).writeStdin(rec.handle, body)
         } catch {
             throw ManagerError.writeFailed("\(error)")
         }
@@ -500,7 +517,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
         guard !bytes.isEmpty else { return true }
         let n: Int
         do {
-            n = try transport.writeStdin(rec.handle, bytes)
+            n = try sessTransport(rec).writeStdin(rec.handle, bytes)
         } catch {
             throw ManagerError.writeFailed("\(error)")
         }
@@ -519,7 +536,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
         lock.unlock()
         guard let rec else { return false }
         do {
-            try transport.setWinsize(rec.handle, cols: cols, rows: rows)
+            try sessTransport(rec).setWinsize(rec.handle, cols: cols, rows: rows)
             return true
         } catch {
             return false
@@ -593,6 +610,9 @@ public final class ManagedSessionManager: @unchecked Sendable {
 
     private func drainLoop(record: ManagedSessionRecord) {
         let intervalNs = UInt32(config.drainIntervalMs * 1000)
+        // M4.4a: resolve the record's transport ONCE — an attached tmux session
+        // reads/reaps through its TmuxTransport, a spawned one through the PTY.
+        let t = sessTransport(record)
         while !stopFlag.get() {
             // Has the session been removed from the map (stop
             // called)? Drain a final chunk + exit.
@@ -603,7 +623,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
                 break
             }
             do {
-                let chunk = try transport.readStdout(record.handle, maxBytes: config.drainChunkBytes)
+                let chunk = try t.readStdout(record.handle, maxBytes: config.drainChunkBytes)
                 if !chunk.isEmpty {
                     // v1.24 Phase 2c slice 1: feed the tail buffer
                     // for get_tail_snapshot foreground-recovery.
@@ -638,13 +658,13 @@ public final class ManagedSessionManager: @unchecked Sendable {
                 // Drain errors typically mean the child went away
                 // mid-read; let the next isAlive check confirm.
             }
-            if !transport.isAlive(record.handle) {
+            if !t.isAlive(record.handle) {
                 // Phase 4E Slice 3: capture exit code so
                 // RemoteAgentCloud can decide stopped vs errored
                 // status. `waitChild(timeoutSec: 0)` is a poll —
                 // returns nil if reaping isn't possible (already
                 // reaped / errno=ECHILD).
-                let exitStatus = transport.waitChild(record.handle, timeoutSec: 0)
+                let exitStatus = t.waitChild(record.handle, timeoutSec: 0)
                 let exitCode: Int32? = exitStatus.map { (status: Int32) -> Int32 in
                     // POSIX wstatus → exit code if normal exit.
                     if (status & 0x7f) == 0 {
@@ -671,6 +691,6 @@ public final class ManagedSessionManager: @unchecked Sendable {
             }
             usleep(intervalNs)
         }
-        transport.close(record.handle)
+        t.close(record.handle)
     }
 }
