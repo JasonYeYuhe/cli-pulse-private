@@ -28,6 +28,7 @@ struct SessionsTab: View {
     /// the user sees that something actually changed instead of
     /// only the banner disappearing.
     @State private var lastInstallHookResult: InstallClaudeHookResult?
+    @State private var lastUninstallHookResult: UninstallClaudeHookResult?
     /// Remote-routed start ids that may disappear from the active
     /// sessions RPC if the helper immediately marks them errored.
     /// Keep them long enough to fetch and render the helper's info
@@ -384,19 +385,11 @@ struct SessionsTab: View {
             // JSON anyway).
             if shouldShowApprovalHookInstallBanner {
                 approvalHookNotWiredBanner
-            } else if shouldShowApprovalHookStaleCleanupBanner {
-                // Phase 4D iter12 (Codex P2⑤): pre-iter10
-                // CLI Pulse versions wrote a global hook into
-                // ~/.claude/settings.json. iter10 retired global
-                // install in favour of spawn-time `--settings`
-                // injection, but a leftover entry from an older
-                // CLI Pulse will keep firing for terminal-launched
-                // Claude — and the new HookAdapter fail-closed
-                // path will deny every Bash/Read/etc with a
-                // diagnostic message, breaking the user's terminal
-                // workflow. The banner offers a one-click cleanup
-                // command they can paste into a terminal.
-                approvalHookStaleCleanupBanner
+            } else if shouldShowApprovalHookInstalledBanner {
+                // M1c: hook wired (the desired external-approve/deny state) —
+                // show an "installed → Remove" affordance so the opt-in is
+                // reversible in-app.
+                approvalHookInstalledBanner
             } else if shouldShowApprovalHookFixSettingsBanner {
                 approvalHookFixSettingsBanner
             }
@@ -1643,34 +1636,29 @@ struct SessionsTab: View {
     /// CLI Pulse install (those entries no longer trigger the
     /// hook on managed sessions but DO break terminal-launched
     /// Claude — the fail-closed deny path in HookAdapter).
+    /// M1c: RE-ENABLED (owner-approved reversal of the iter10 disable). External
+    /// approve/deny needs the global ~/.claude/settings.json hook, so nudge the
+    /// user to install it when it's NOT wired (or the file's missing). `.wired`
+    /// (both events + our marker) is the desired state → no banner.
     private var shouldShowApprovalHookInstallBanner: Bool {
-        // Always false. Replaced by the stale-cleanup banner
-        // for the only state where action is needed.
-        return false
-    }
-
-    /// Phase 4D iter11 (Codex P2④): if the user has an old hook
-    /// entry sitting in `~/.claude/settings.json` from a pre-
-    /// iter10 install, terminal-launched Claude will hit the
-    /// hook AND fail-closed (because the hook adapter denies
-    /// without managed-session env vars). That's worse than no
-    /// hook at all. This banner surfaces ONLY in that state and
-    /// offers a one-click "Remove stale hook entry" action — UI
-    /// next iter; for now the banner is informational so
-    /// reviewers can see it's surfaced for the right state.
-    private var shouldShowApprovalHookStaleCleanupBanner: Bool {
         guard approvalHookBannerBaseGate else { return false }
-        // `wired` here means the user has our marker in their
-        // global settings.json. Pre-iter10 that was the desired
-        // state; iter10+ this is an "old install needs cleanup"
-        // signal. We do NOT show the banner for `.notWired` /
-        // `.settingsMissing` — those are the expected happy-path.
         switch state.claudeApprovalHookStatus {
-        case .wired:
+        case .notWired, .settingsMissing:
             return true
-        case .notWired, .settingsMissing, .parseError, .none:
+        case .wired, .parseError, .none:
             return false
         }
+    }
+
+    /// M1c: when the hook IS wired (`.wired` — the desired state), surface a
+    /// subtle "installed → Remove" affordance so the opt-in is reversible in-app
+    /// (the reversible other half). Replaces the retired iter10 "stale cleanup"
+    /// banner, whose premise (a wired hook is stale) is reversed now that the
+    /// global install is the intended external-approve/deny path.
+    private var shouldShowApprovalHookInstalledBanner: Bool {
+        guard approvalHookBannerBaseGate else { return false }
+        if case .wired = state.claudeApprovalHookStatus { return true }
+        return false
     }
 
     /// "Settings malformed" fix-it banner — shown when the
@@ -1738,99 +1726,44 @@ struct SessionsTab: View {
     /// call with a diagnostic message. Bad UX. The banner gives
     /// the user a copy-paste command that surgically removes the
     /// stale entry.
-    private var approvalHookStaleCleanupBanner: some View {
+    private var approvalHookInstalledBanner: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
+                Image(systemName: "checkmark.shield.fill")
                     .font(.system(size: 12))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.green)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Old CLI Pulse hook in your Claude settings")
+                    Text("External approval hook active")
                         .font(.system(size: 11, weight: .semibold))
-                    Text("Earlier versions of CLI Pulse wrote a PermissionRequest hook into ~/.claude/settings.json. Recent versions inject the hook at managed-session spawn time instead, so the old entry is no longer needed AND it breaks Claude when you launch it from Terminal (the hook fails closed without managed-session env vars).")
+                    Text("Terminal-launched Claude routes its tool permissions through CLI Pulse, so you can Approve / Reject them here or from your phone. Remove to stop instrumenting terminal Claude — your own hooks and other Claude settings stay intact.")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("Click the button to copy a one-line jq command. Paste into a terminal to remove the stale entry. Your other Claude settings stay intact.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    // Show the INSTALL result here — after a successful install
+                    // the detector flips to .wired and THIS installed banner is
+                    // what remains on screen (review: codex).
+                    if let lastInstall = lastInstallHookResult {
+                        Text("Installed: \(lastInstall.action) — \(lastInstall.settingsPath)")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Spacer()
-                Button("Copy cleanup command") {
-                    let pasteboard = NSPasteboard.general
-                    pasteboard.clearContents()
-                    pasteboard.setString(
-                        Self.staleHookCleanupCommand,
-                        forType: .string
-                    )
+                Button("Remove") {
+                    Task { await uninstallClaudeHookFromBanner() }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .controlSize(.small)
-                .help("Copies a `jq` filter to your clipboard. The filter strips every PermissionRequest entry containing CLI Pulse's marker (\"remote-approval-hook --provider claude\") and writes the result back to ~/.claude/settings.json atomically. Your model / permissions / other hooks survive verbatim.")
+                .disabled(installHookInFlight)
+                .help("Asks the helper to remove CLI Pulse's PermissionRequest + PreToolUse hooks from ~/.claude/settings.json. Your own hooks and other settings are preserved. Restart Claude afterwards.")
             }
         }
         .padding(10)
-        .background(Color.orange.opacity(0.10))
+        .background(Color.green.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
-
-    /// Cleanup command put on the clipboard by the stale-hook
-    /// banner. Uses bundled-on-macOS Python rather than jq because:
-    ///
-    ///   1. Atomic write semantics (tmp + os.rename + mode 0600)
-    ///      match the same care `permissions_diagnose.py` takes
-    ///      with the same file. jq's `>` redirect leaves a window
-    ///      where the file is partially written.
-    ///   2. Surgical removal — strips ONLY entries that contain
-    ///      our `remote-approval-hook --provider claude` marker.
-    ///      Top-level keys (model, permissions, other hook
-    ///      events) and unrelated PermissionRequest entries stay
-    ///      verbatim.
-    ///   3. Cleaner shell quoting — `Color.staleHookCleanupCommand`
-    ///      embeds in a clipboard, then a terminal paste; the
-    ///      multi-line Python heredoc survives a shell paste
-    ///      better than a one-line jq filter with nested quotes.
-    ///
-    /// Documented as a constant for testability — Codex review on
-    /// PR #18 hardened every settings.json write path against
-    /// accidental data loss; same care here.
-    static let staleHookCleanupCommand: String = {
-        return #"""
-        python3 - <<'PYEOF'
-        import json, os, tempfile
-        p = os.path.expanduser("~/.claude/settings.json")
-        data = json.loads(open(p).read())
-        hooks = data.get("hooks", {})
-        pr = hooks.get("PermissionRequest", [])
-        marker = "remote-approval-hook --provider claude"
-        new_pr = []
-        for entry in pr:
-            if isinstance(entry.get("command"), str) and marker in entry["command"]:
-                continue
-            if isinstance(entry.get("hooks"), list) and any(
-                isinstance(h.get("command"), str) and marker in h["command"]
-                for h in entry["hooks"]
-            ):
-                continue
-            new_pr.append(entry)
-        if new_pr:
-            hooks["PermissionRequest"] = new_pr
-        elif "PermissionRequest" in hooks:
-            del hooks["PermissionRequest"]
-        if hooks:
-            data["hooks"] = hooks
-        elif "hooks" in data:
-            del data["hooks"]
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p))
-        with os.fdopen(fd, "w") as f:
-            f.write(json.dumps(data, indent=2) + "\n")
-        os.chmod(tmp, 0o600)
-        os.rename(tmp, p)
-        print(f"cleaned {p}: PermissionRequest entries={len(new_pr)}")
-        PYEOF
-        """#
-    }()
 
     /// Detail string from the detector's `.parseError(...)` case.
     /// Returns empty string for any non-parse-error state (the
@@ -1861,18 +1794,17 @@ struct SessionsTab: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Approval hook not wired")
+                    Text("Approve terminal Claude remotely")
                         .font(.system(size: 11, weight: .semibold))
-                    Text("Claude isn't routing permission requests through CLI Pulse, so structured Approve / Reject controls in Sessions stay inactive. Click Install hook to wire it up and restart Claude.")
+                    Text("Install the approval hook so a Claude you launch in any Terminal routes its tool permissions through CLI Pulse — Approve / Reject from here or your phone. Writes ~/.claude/settings.json (both events); reversible any time. Restart Claude after installing.")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let lastInstall = lastInstallHookResult {
-                        // Phase 4 inline confirmation: shows the
-                        // `action: <verb>` from the helper after a
-                        // successful click so the user sees that
-                        // something actually changed.
-                        Text("Last install: \(lastInstall.action) — \(lastInstall.settingsPath)")
+                    // Show the REMOVE result here — after a successful uninstall
+                    // the detector flips to .notWired and THIS install banner is
+                    // what remains on screen (review: codex).
+                    if let lastUninstall = lastUninstallHookResult {
+                        Text("Removed: \(lastUninstall.action) (\(lastUninstall.removed) hooks) — \(lastUninstall.settingsPath)")
                             .font(.system(size: 9))
                             .foregroundStyle(.tertiary)
                             .lineLimit(2)
@@ -1919,6 +1851,18 @@ struct SessionsTab: View {
             // would see the green-checked confirmation but the
             // banner would stay until the next polling tick of
             // `claudeApprovalHookStatus`.
+            await state.refreshClaudeApprovalHookStatus()
+        }
+    }
+
+    @MainActor
+    private func uninstallClaudeHookFromBanner() async {
+        installHookInFlight = true
+        defer { installHookInFlight = false }
+        let result = await state.uninstallClaudeHookViaHelper()
+        if let result {
+            lastUninstallHookResult = result
+            // Flip the detector immediately so the "installed" banner clears.
             await state.refreshClaudeApprovalHookStatus()
         }
     }
