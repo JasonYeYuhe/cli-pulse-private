@@ -1122,3 +1122,233 @@ def test_install_previous_command_reflects_replaced_event_not_noop(tmp_path):
     assert result["action"] == "replaced"
     assert result["events"] == {"PermissionRequest": "noop", "PreToolUse": "replaced"}
     assert result["previous_command"] == stale
+
+
+# ── M2 part 2: install_codex_hook / uninstall_codex_hook ─────────────
+#
+# Codex hooks are Claude-compatible — ~/.codex/hooks.json has the byte-identical
+# `{"hooks": {<event>: [...]}}` structure — so install_codex_hook reuses the exact
+# claude machinery, scoped to the `--provider codex` marker. The tests below focus
+# on what's DIFFERENT: the codex marker in the command, and full isolation between
+# the claude and codex installs when they land in the same file.
+
+
+def _codex_settings(tmp_path):
+    return tmp_path / ".codex" / "hooks.json"
+
+
+def _codex_cmd_in(entry: dict) -> str | None:
+    inner = entry.get("hooks")
+    if isinstance(inner, list):
+        for h in inner:
+            if isinstance(h, dict) and isinstance(h.get("command"), str):
+                if "remote-approval-hook --provider codex" in h["command"]:
+                    return h["command"]
+    return None
+
+
+def test_marker_for_distinguishes_providers():
+    assert pd._marker_for("claude") == "remote-approval-hook --provider claude"
+    assert pd._marker_for("codex") == "remote-approval-hook --provider codex"
+
+
+def test_recommended_hook_command_provider_codex():
+    cmd = pd.recommended_hook_command(helper_path=Path("/abs/helper.py"), provider="codex")
+    assert cmd == "python3 /abs/helper.py remote-approval-hook --provider codex"
+
+
+def test_install_codex_hook_creates_when_missing(tmp_path):
+    helper, _ = _install_paths(tmp_path)
+    settings = _codex_settings(tmp_path)
+    assert not settings.exists()
+
+    result = pd.install_codex_hook(helper_path=helper, settings_path=settings)
+
+    assert result["action"] == "created"
+    written = json.loads(settings.read_text())
+    for event in ("PermissionRequest", "PreToolUse"):
+        entries = written["hooks"][event]
+        assert len(entries) == 1
+        assert entries[0]["matcher"] == ""
+        inner = entries[0]["hooks"][0]
+        assert "remote-approval-hook --provider codex" in inner["command"]
+        assert str(helper) in inner["command"]
+
+
+def test_install_codex_hook_noop_when_already_wired(tmp_path):
+    helper, _ = _install_paths(tmp_path)
+    settings = _codex_settings(tmp_path)
+    pd.install_codex_hook(helper_path=helper, settings_path=settings)
+    again = pd.install_codex_hook(helper_path=helper, settings_path=settings)
+    assert again["action"] == "noop"
+
+
+def test_install_codex_and_claude_coexist_in_same_file(tmp_path):
+    # The critical marker-isolation guarantee: if both providers somehow install
+    # into the SAME file, each keeps its own canonical entry — neither replaces
+    # nor dedups the other (different markers ⇒ different, non-conflicting hooks).
+    helper, _ = _install_paths(tmp_path)
+    shared = tmp_path / "shared.json"
+    pd.install_claude_hook(helper_path=helper, settings_path=shared)
+    result = pd.install_codex_hook(helper_path=helper, settings_path=shared)
+    # codex APPENDS alongside claude (the file already had our claude data, so a
+    # brand-new codex entry in each event is an "added", not "created").
+    assert result["action"] == "added"
+
+    written = json.loads(shared.read_text())
+    for event in ("PermissionRequest", "PreToolUse"):
+        entries = written["hooks"][event]
+        # exactly one claude entry + one codex entry survive together
+        claude_cmds = [_cli_pulse_command_in(e) for e in entries]
+        codex_cmds = [_codex_cmd_in(e) for e in entries]
+        assert any(c and "--provider claude" in c for c in claude_cmds)
+        assert any(c and "--provider codex" in c for c in codex_cmds)
+
+
+def test_uninstall_codex_leaves_claude_untouched(tmp_path):
+    # Removing the codex install from a shared file must NOT touch claude's hooks.
+    helper, _ = _install_paths(tmp_path)
+    shared = tmp_path / "shared.json"
+    pd.install_claude_hook(helper_path=helper, settings_path=shared)
+    pd.install_codex_hook(helper_path=helper, settings_path=shared)
+
+    result = pd.uninstall_codex_hook(settings_path=shared)
+    assert result["action"] == "removed"
+    assert result["removed"] == 2  # one codex hook per event
+
+    written = json.loads(shared.read_text())
+    for event in ("PermissionRequest", "PreToolUse"):
+        entries = written["hooks"][event]
+        # claude survives, codex is gone
+        assert any(_cli_pulse_command_in(e) for e in entries)
+        assert not any(_codex_cmd_in(e) for e in entries)
+
+
+def test_uninstall_codex_removes_both_events(tmp_path):
+    helper, _ = _install_paths(tmp_path)
+    settings = _codex_settings(tmp_path)
+    pd.install_codex_hook(helper_path=helper, settings_path=settings)
+    result = pd.uninstall_codex_hook(settings_path=settings)
+    assert result["action"] == "removed"
+    assert result["removed"] == 2
+    written = json.loads(settings.read_text())
+    assert "PermissionRequest" not in written.get("hooks", {})
+    assert "PreToolUse" not in written.get("hooks", {})
+
+
+def test_uninstall_codex_noop_when_file_missing(tmp_path):
+    settings = _codex_settings(tmp_path)
+    result = pd.uninstall_codex_hook(settings_path=settings)
+    assert result["action"] == "noop" and result["removed"] == 0
+
+
+def test_uninstall_codex_refuses_malformed_json(tmp_path):
+    settings = _codex_settings(tmp_path)
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError):
+        pd.uninstall_codex_hook(settings_path=settings)
+
+
+def test_uninstall_claude_leaves_codex_untouched(tmp_path):
+    # Symmetric guarantee: removing claude from a shared file leaves codex intact.
+    helper, _ = _install_paths(tmp_path)
+    shared = tmp_path / "shared.json"
+    pd.install_claude_hook(helper_path=helper, settings_path=shared)
+    pd.install_codex_hook(helper_path=helper, settings_path=shared)
+
+    pd.uninstall_claude_hook(settings_path=shared)
+    written = json.loads(shared.read_text())
+    for event in ("PermissionRequest", "PreToolUse"):
+        entries = written["hooks"][event]
+        assert not any(_cli_pulse_command_in(e) for e in entries)
+        assert any(_codex_cmd_in(e) for e in entries)
+
+
+def test_install_codex_result_surfaces_manual_trust(tmp_path):
+    # codex review P1a: the codex install payload must be self-describing about the
+    # one-time `/hooks` trust so the UDS/CLI/future Swift client render it without
+    # out-of-band docs. Claude (no trust step) must NOT carry the field.
+    helper, _ = _install_paths(tmp_path)
+    codex_result = pd.install_codex_hook(helper_path=helper, settings_path=_codex_settings(tmp_path))
+    assert codex_result["requires_manual_trust"] is True
+    assert codex_result["trust_command"] == "/hooks"
+
+    claude_result = pd.install_claude_hook(helper_path=helper, settings_path=tmp_path / ".claude" / "settings.json")
+    assert "requires_manual_trust" not in claude_result
+    assert "trust_command" not in claude_result
+
+
+# ── codex review P2: canonical noop must require type=="command" ──────
+# A marker-bearing entry with a non-command handler (Claude/Codex only run
+# `command` hooks) is INERT; reinstall must HEAL it, not report noop.
+
+
+@pytest.mark.parametrize("provider,install,cmd_of", [
+    ("claude", pd.install_claude_hook, _cli_pulse_command_in),
+    ("codex", pd.install_codex_hook, _codex_cmd_in),
+])
+def test_install_heals_inert_non_command_type_entry(tmp_path, provider, install, cmd_of):
+    helper, _ = _install_paths(tmp_path)
+    settings = tmp_path / "s.json"
+    cmd = pd.recommended_hook_command(helper_path=helper, provider=provider)
+    # Correct marker + command, but a hand-edited/legacy non-command type → inert.
+    settings.write_text(json.dumps({
+        "hooks": {ev: [{"matcher": "", "hooks": [{"type": "prompt", "command": cmd}]}]
+                  for ev in ("PermissionRequest", "PreToolUse")}
+    }), encoding="utf-8")
+
+    result = install(helper_path=helper, settings_path=settings)
+    assert result["action"] == "replaced", "inert type=prompt entry must be healed, not noop"
+    written = json.loads(settings.read_text())
+    for ev in ("PermissionRequest", "PreToolUse"):
+        entries = written["hooks"][ev]
+        # exactly one canonical command entry survives per event
+        assert len(entries) == 1
+        assert entries[0]["hooks"][0]["type"] == "command"
+        assert cmd_of(entries[0]) == cmd
+
+
+# ── codex review P1b: anti-clobber for structurally malformed hooks ───
+# A present-but-malformed `hooks` (or event value) may hold real user data;
+# install must REFUSE rather than silently coerce-and-overwrite it.
+
+
+@pytest.mark.parametrize("install", [pd.install_claude_hook, pd.install_codex_hook])
+def test_install_refuses_non_dict_hooks_that_may_hold_user_data(tmp_path, install):
+    helper, _ = _install_paths(tmp_path)
+    settings = tmp_path / "s.json"
+    # A user who mis-nested the event array directly at `hooks` — real hook data
+    # that a silent `{}` coercion would DISCARD.
+    settings.write_text(json.dumps({
+        "hooks": [{"matcher": "", "hooks": [{"type": "command", "command": "user-audit"}]}]
+    }), encoding="utf-8")
+    before = settings.read_text()
+    with pytest.raises(ValueError):
+        install(helper_path=helper, settings_path=settings)
+    # File must be untouched (never clobbered).
+    assert settings.read_text() == before
+
+
+@pytest.mark.parametrize("install", [pd.install_claude_hook, pd.install_codex_hook])
+def test_install_refuses_non_list_event_value(tmp_path, install):
+    helper, _ = _install_paths(tmp_path)
+    settings = tmp_path / "s.json"
+    settings.write_text(json.dumps({
+        "hooks": {"PreToolUse": "not-an-array"}
+    }), encoding="utf-8")
+    before = settings.read_text()
+    with pytest.raises(ValueError):
+        install(helper_path=helper, settings_path=settings)
+    assert settings.read_text() == before
+
+
+@pytest.mark.parametrize("install", [pd.install_claude_hook, pd.install_codex_hook])
+def test_install_still_creates_when_hooks_absent(tmp_path, install):
+    # Guard the fix's boundary: a MISSING hooks key is NOT malformed — still create.
+    helper, _ = _install_paths(tmp_path)
+    settings = tmp_path / "s.json"
+    settings.write_text(json.dumps({"model": "opus"}), encoding="utf-8")
+    result = install(helper_path=helper, settings_path=settings)
+    assert result["action"] == "added"
+    assert json.loads(settings.read_text())["model"] == "opus"
