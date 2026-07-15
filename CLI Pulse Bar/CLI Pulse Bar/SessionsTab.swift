@@ -84,6 +84,9 @@ struct SessionsTab: View {
                    state.localCapabilities?.approvals == true {
                     await state.refreshLocalPendingApprovals(sessionId: nil)
                 }
+                // M4.4c: keep the shell-integration toggle + wrapped-session
+                // list fresh (best-effort; self-guards on reachable/enabled).
+                await state.refreshWrappedSessionState()
                 if showOutput, let sid = selectedManagedSessionId {
                     // Remote-routed rows pull events from the Supabase
                     // tail. Local-routed rows are driven exclusively
@@ -439,7 +442,137 @@ struct SessionsTab: View {
                 }
             }
             detectedLocalSessionsSection
+            wrappedSessionsSection
         }
+    }
+
+    // MARK: - M4.4c: shell integration + wrapped sessions
+
+    /// The UDS verbs the socket-owner helper must advertise for this section to
+    /// function — else an OLDER helper would only error on click (review: codex).
+    private static let wrappedRequiredMethods: Set<String> = [
+        "list_wrapped_sessions", "attach_wrapped_session",
+        "shell_integration_status", "shell_integration_install", "shell_integration_uninstall",
+    ]
+
+    /// Opt-in toggle + attach list for EXTERNALLY-launched claude/codex that the
+    /// shell integration wrapped into a CLI-Pulse tmux. Gated (review: codex) on:
+    ///   * local fast path usable (helper reachable + local control on),
+    ///   * `canHostInAppTerminal` — the whole point is to ATTACH + drive the
+    ///     session in the in-app terminal, which is DEVID-only; a MAS build can't
+    ///     host it, so wrapping there would be a dead end (hide, don't tease),
+    ///   * the socket-owner helper actually advertising the 5 verbs (an older
+    ///     helper → hide rather than error on click).
+    @ViewBuilder
+    private var wrappedSessionsSection: some View {
+        if localUIAvailable, state.localHelperReachable, state.localControlEnabled,
+           MASSandboxGate.canHostInAppTerminal,
+           state.localSupportedMethods.isSuperset(of: Self.wrappedRequiredMethods) {
+            VStack(alignment: .leading, spacing: 6) {
+                Divider().padding(.vertical, 2)
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.triangle.2.circlepath.circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                    Text("Wrap terminal sessions")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                shellIntegrationToggleRow
+                let wrapped = state.wrappedSessions
+                if !wrapped.isEmpty {
+                    ForEach(wrapped, id: \.self) { name in
+                        wrappedSessionRow(name)
+                    }
+                } else if state.shellIntegrationStatus?.installed == true {
+                    Text("No wrapped sessions yet. Open a new terminal and run `claude` or `codex` — it'll appear here to attach.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private var shellIntegrationToggleRow: some View {
+        let installed = state.shellIntegrationStatus?.installed ?? false
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: installed ? "checkmark.seal.fill" : "seal")
+                .font(.system(size: 12))
+                .foregroundStyle(installed ? Color.green : Color.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(installed ? "Shell integration on" : "Shell integration off")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(installed
+                     ? "Future `claude` / `codex` launches run inside a CLI-Pulse tmux so you can stream + drive them here. Restart your shell (or open a new terminal) for changes to take effect."
+                     : "Turn on to wrap future `claude` / `codex` launches so CLI Pulse can attach to them. Edits your shell rc (\(state.shellIntegrationStatus?.rcFilesWithBlock.first.map { ($0 as NSString).lastPathComponent } ?? "~/.zshrc")); reversible — already-open shells need a restart after either toggle.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button {
+                Task {
+                    if installed { _ = await state.uninstallShellIntegrationViaHelper() }
+                    else { _ = await state.installShellIntegrationViaHelper() }
+                    await state.refreshWrappedSessionState()
+                }
+            } label: {
+                Text(installed ? "Turn Off" : "Turn On")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func wrappedSessionRow(_ tmuxName: String) -> some View {
+        // Provider from the wrapped session name `clipulse-<provider>-<pid>` —
+        // match the EXACT provider prefix, not a substring (review: codex — a
+        // stray `-codex-` elsewhere shouldn't misbrand). The shell integration
+        // only ever wraps `claude`/`codex`, so any non-codex `clipulse-` name is
+        // claude. `clipulse-` is the helper's ShellIntegration.sessionPrefix
+        // (hardcoded here — it lives in HelperKit, not the app's CLIPulseCore).
+        let provider: String = tmuxName.hasPrefix("clipulse-codex-") ? "codex" : "claude"
+        return HStack(spacing: 8) {
+            Image(systemName: "terminal.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(PulseTheme.providerColor(provider))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ProviderDisplay.defaultLabel(for: provider))
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+                Text(tmuxName)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            // Section is already gated on canHostInAppTerminal, so Attach is
+            // always reachable here.
+            Button {
+                Task {
+                    if let sid = await state.attachWrappedSessionViaHelper(
+                        tmuxName: tmuxName, provider: provider) {
+                        // Deterministic session id (below) → same window key on a
+                        // re-attach, so a double-tap reuses the singleton window.
+                        openWindow(value: TerminalSessionKey(sessionId: sid, provider: provider))
+                    }
+                }
+            } label: {
+                Label("Attach", systemImage: "arrow.right.circle")
+                    .font(.system(size: 10))
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     private func localHelperErrorBanner(message: String) -> some View {

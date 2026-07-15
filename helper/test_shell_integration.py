@@ -172,7 +172,11 @@ def test_shim_builds_the_expected_tmux_command(tmp_path):
     _fake_bin(str(bind), "tmux", f'printf "%s\\n" "$@" > "{argv_log}"; exit 0\n')
     fake_tmux = str(bind / "tmux")
     _fake_bin(str(bind), "claude", 'exit 0\n')
-    init = si.render_shell_init(fake_tmux, "/tmp/x.sock", "/tmp/x.conf")
+    # The shim fails open if the tmux CONF is missing (turned-off guard), so the
+    # conf must EXIST for the wrap path under test to run.
+    conf_p = tmp_path / "x.conf"
+    conf_p.write_text(si.render_tmux_conf())
+    init = si.render_shell_init(fake_tmux, "/tmp/x.sock", str(conf_p))
     init_p = tmp_path / "init.sh"
     init_p.write_text(init)
     env = dict(os.environ, PATH=f"{bind}:{os.environ['PATH']}")
@@ -208,6 +212,30 @@ def test_shim_fails_open_when_not_a_tty(tmp_path):
                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     assert ran.read_text().strip() == "REAL:go"
     assert not tmux_called.exists(), "shim wrapped a non-interactive launch — would break it"
+
+
+@pytest.mark.skipif(_BASH is None, reason="bash required")
+def test_shim_fails_open_when_conf_missing(tmp_path):
+    # Turn-Off safety (review: codex): an already-running shell keeps the wrapper
+    # function after uninstall removed the conf. The shim must then run the REAL
+    # binary, NOT wrap against the deleted -f config. Run under a PTY so the tty
+    # guards pass and ONLY the missing-conf guard fires.
+    bind = tmp_path / "bin"
+    bind.mkdir()
+    ran = tmp_path / "ran.txt"
+    tmux_called = tmp_path / "tmux_called.txt"
+    _fake_bin(str(bind), "tmux", f'echo called > "{tmux_called}"\n')
+    _fake_bin(str(bind), "claude", f'echo "REAL:$*" > "{ran}"\n')
+    # conf path deliberately does NOT exist (simulates post-uninstall).
+    init = si.render_shell_init(str(bind / "tmux"), str(tmp_path / "x.sock"),
+                                str(tmp_path / "gone.conf"))
+    init_p = tmp_path / "init.sh"
+    init_p.write_text(init)
+    env = dict(os.environ, PATH=f"{bind}:{os.environ['PATH']}")
+    env.pop("CLIPULSE_WRAP_ACTIVE", None)
+    _run_under_pty(_BASH, f'. "{init_p}"; claude go', env)
+    assert ran.read_text().strip() == "REAL:go"
+    assert not tmux_called.exists(), "shim wrapped against a deleted conf — would break claude"
 
 
 def test_install_locks_down_clipulse_dir(tmp_path):

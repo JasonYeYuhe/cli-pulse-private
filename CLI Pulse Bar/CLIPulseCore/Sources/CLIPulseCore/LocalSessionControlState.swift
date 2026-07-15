@@ -83,6 +83,10 @@ extension AppState {
             let hello = try await client.hello()
             self.localHelperReachable = true
             self.localCapabilities = hello.capabilities
+            // M4.4c: retain the advertised method set so the UI can gate the
+            // tmux-wrap section on the socket-owner helper actually supporting
+            // the verbs (an older helper would otherwise error only on click).
+            self.localSupportedMethods = hello.supportedMethods
             self.localProtocolVersion = hello.protocolVersion
             self.localProviderAvailability = hello.providerAvailability
             self.localProviderPlanStatus = hello.providerPlanStatus
@@ -984,6 +988,92 @@ extension AppState {
     @MainActor
     public func refreshClaudeApprovalHookStatus() async {
         self.claudeApprovalHookStatus = ClaudeHookDetector.currentStatus()
+    }
+
+    // MARK: - M4.4c: shell integration + wrapped-session attach
+
+    /// Refresh the shell-integration status + the list of wrapped sessions.
+    /// Best-effort — clears both on any failure so a stale toggle never lingers.
+    @MainActor
+    public func refreshWrappedSessionState() async {
+        guard localHelperReachable, localControlEnabled else {
+            self.shellIntegrationStatus = nil
+            self.wrappedSessions = []
+            return
+        }
+        let client = LocalSessionControlClient()
+        self.shellIntegrationStatus = try? await client.shellIntegrationStatus()
+        self.wrappedSessions = (try? await client.listWrappedSessions()) ?? []
+    }
+
+    /// Install the opt-in shell shim (writes the user's shell rc). Returns nil +
+    /// records `localHelperError` if unreachable/gated. Refreshes status on ok.
+    @discardableResult @MainActor
+    public func installShellIntegrationViaHelper() async -> ShellIntegrationStatus? {
+        guard localHelperReachable, localControlEnabled else {
+            self.localHelperError = "installShellIntegration: helper not reachable or local control disabled"
+            return nil
+        }
+        do {
+            let st = try await LocalSessionControlClient().installShellIntegration()
+            self.localHelperError = nil
+            self.shellIntegrationStatus = st
+            return st
+        } catch {
+            self.localHelperError = String(describing: error)
+            return nil
+        }
+    }
+
+    /// Remove the opt-in shell shim. Reversible other half of the toggle.
+    @discardableResult @MainActor
+    public func uninstallShellIntegrationViaHelper() async -> ShellIntegrationStatus? {
+        guard localHelperReachable, localControlEnabled else {
+            self.localHelperError = "uninstallShellIntegration: helper not reachable or local control disabled"
+            return nil
+        }
+        do {
+            let st = try await LocalSessionControlClient().uninstallShellIntegration()
+            self.localHelperError = nil
+            self.shellIntegrationStatus = st
+            return st
+        } catch {
+            self.localHelperError = String(describing: error)
+            return nil
+        }
+    }
+
+    /// Attach a wrapped external session so the app's terminal surface can drive
+    /// it. Returns the session_id on success (for opening the terminal), nil on
+    /// failure (records `localHelperError`). `tmuxName` is the wrapped tmux
+    /// session to bind to.
+    ///
+    /// The session_id is DETERMINISTIC (`wrapped-<tmuxName>`), not a fresh UUID
+    /// (review: codex — a double-tap would otherwise mint distinct ids and
+    /// register duplicate control clients + windows for the SAME external
+    /// session). A stable id makes attach idempotent in the helper AND makes the
+    /// terminal window (keyed by session id) a per-session singleton, so a
+    /// re-attach reuses the same window.
+    @discardableResult @MainActor
+    public func attachWrappedSessionViaHelper(tmuxName: String, provider: String) async -> String? {
+        guard localHelperReachable, localControlEnabled else {
+            self.localHelperError = "attachWrappedSession: helper not reachable or local control disabled"
+            return nil
+        }
+        let sessionId = "wrapped-\(tmuxName)"
+        do {
+            let ok = try await LocalSessionControlClient().attachWrappedSession(
+                sessionId: sessionId, tmuxSessionName: tmuxName, provider: provider)
+            if ok {
+                self.localHelperError = nil
+                return sessionId
+            }
+            self.localHelperError = "could not attach \(tmuxName) — the session may have ended"
+            return nil
+        } catch {
+            self.localHelperError = String(describing: error)
+            return nil
+        }
     }
 }
 #endif
