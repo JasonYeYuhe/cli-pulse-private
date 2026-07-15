@@ -525,9 +525,11 @@ def _cli_pulse_hook_entry(command: str) -> dict[str, Any]:
     }
 
 
-def recommended_hook_command(helper_path: Path, python_path: str | None = None) -> str:
-    """Return JUST the `command` string the helper installs as a Claude
-    Code PermissionRequest hook. Used by both
+def recommended_hook_command(
+    helper_path: Path, python_path: str | None = None, provider: str = "claude",
+) -> str:
+    """Return JUST the `command` string the helper installs as a `provider`
+    approval hook (claude | codex). Used by both
     `recommended_hook_config_snippet` (for the print path) and
     `install_claude_hook` (for the merge path) so the two surfaces
     can never drift.
@@ -546,7 +548,7 @@ def recommended_hook_command(helper_path: Path, python_path: str | None = None) 
     """
     py = shlex.quote(python_path or "python3")
     helper = shlex.quote(str(helper_path))
-    return f"{py} {helper} remote-approval-hook --provider claude"
+    return f"{py} {helper} {_marker_for(provider)}"
 
 
 # M1: the CLI Pulse hook is installed under BOTH `PermissionRequest` (fires only
@@ -556,32 +558,39 @@ def recommended_hook_command(helper_path: Path, python_path: str | None = None) 
 # reads `hook_event_name` to emit the right output shape per event.
 _CLI_PULSE_HOOK_EVENTS = ("PermissionRequest", "PreToolUse")
 
-# The marker `remote-approval-hook --provider claude` is unique to this codebase
-# — no other Claude hook would use both that subcommand AND that argument shape,
-# so matching on this string alone is specific enough without false positives.
-_HELPER_MARKER = "remote-approval-hook --provider claude"
+# The marker `remote-approval-hook --provider <p>` is unique to this codebase —
+# no other hook would use both that subcommand AND that argument shape, so
+# matching on this string alone is specific enough without false positives. The
+# provider suffix makes it provider-SPECIFIC: a claude install must never detect,
+# heal, or remove a codex entry (and vice versa). `_HELPER_MARKER` stays the
+# claude marker so the shipped claude callers + their default args are unchanged.
+def _marker_for(provider: str) -> str:
+    return f"remote-approval-hook --provider {provider}"
 
 
-def _hook_has_marker(h: object) -> bool:
+_HELPER_MARKER = _marker_for("claude")
+
+
+def _hook_has_marker(h: object, marker: str = _HELPER_MARKER) -> bool:
     return (
         isinstance(h, dict)
         and isinstance(h.get("command"), str)
-        and _HELPER_MARKER in h["command"]
+        and marker in h["command"]
     )
 
 
-def _is_cli_pulse_legacy_entry(entry: object) -> bool:
+def _is_cli_pulse_legacy_entry(entry: object, marker: str = _HELPER_MARKER) -> bool:
     """Legacy flat shape: top-level `command` field, no nested `hooks` array.
     The whole entry IS our hook (no other hooks can be co-resident)."""
     return (
         isinstance(entry, dict)
         and not isinstance(entry.get("hooks"), list)
         and isinstance(entry.get("command"), str)
-        and _HELPER_MARKER in entry["command"]
+        and marker in entry["command"]
     )
 
 
-def _matcher_entry_has_our_hook(entry: object) -> bool:
+def _matcher_entry_has_our_hook(entry: object, marker: str = _HELPER_MARKER) -> bool:
     """Matcher-shape entry whose nested `hooks` array contains our marker. The
     entry MAY also contain other (non-CLI-Pulse) nested hooks — the mixed-entry
     preservation path surgically removes only ours."""
@@ -590,7 +599,7 @@ def _matcher_entry_has_our_hook(entry: object) -> bool:
     nested = entry.get("hooks")
     if not isinstance(nested, list):
         return False
-    return any(_hook_has_marker(h) for h in nested)
+    return any(_hook_has_marker(h, marker) for h in nested)
 
 
 def _is_canonical_matcher(entry: object) -> bool:
@@ -599,30 +608,40 @@ def _is_canonical_matcher(entry: object) -> bool:
     return isinstance(entry, dict) and entry.get("matcher") == ""
 
 
-def _is_canonical_pure_cli_pulse_entry(entry: object) -> bool:
+def _is_canonical_pure_cli_pulse_entry(entry: object, marker: str = _HELPER_MARKER) -> bool:
     """Entry that is EXACTLY our canonical shape: matcher="", hooks=[<single CLI
-    Pulse hook>]. Used for the noop-eligibility check."""
+    Pulse hook with type=command>]. Used for the noop-eligibility check.
+
+    The `type == "command"` requirement matters: Claude Code AND Codex only
+    execute `command` hooks, so a marker-bearing entry with a non-command type
+    (e.g. a hand-edited `"type": "prompt"`, or a missing `type`) is INERT. It
+    must NOT count as already-correct — otherwise reinstall reports `noop` and
+    never heals it. `_matcher_entry_has_our_hook` still matches it on the marker
+    alone, so the merge path strips the inert hook and rewrites the canonical
+    command entry (review: codex)."""
     if not _is_canonical_matcher(entry):
         return False
     nested = entry.get("hooks")
     if not isinstance(nested, list) or len(nested) != 1:
         return False
-    return _hook_has_marker(nested[0])
+    hook = nested[0]
+    return _hook_has_marker(hook, marker) and hook.get("type") == "command"
 
 
-def _entry_command(entry: object) -> str | None:
+def _entry_command(entry: object, marker: str = _HELPER_MARKER) -> str | None:
     """Pull the helper command string out of either schema shape."""
-    if _is_cli_pulse_legacy_entry(entry):
+    if _is_cli_pulse_legacy_entry(entry, marker):
         return entry["command"]
-    if _matcher_entry_has_our_hook(entry):
+    if _matcher_entry_has_our_hook(entry, marker):
         for h in entry["hooks"]:
-            if _hook_has_marker(h):
+            if _hook_has_marker(h, marker):
                 return h["command"]
     return None
 
 
 def _merge_cli_pulse_event(
     existing: object, target_command: str, *, file_had_data: bool,
+    marker: str = _HELPER_MARKER,
 ) -> tuple[list[Any], str, str | None]:
     """Idempotently merge one CLI Pulse hook entry into a single event's list
     (e.g. `hooks["PreToolUse"]`). Pure — returns `(new_list, action,
@@ -630,28 +649,29 @@ def _merge_cli_pulse_event(
     PermissionRequest install had (Codex iter6 hardening): drop legacy flat
     entries, surgically strip our nested hook from mixed matcher entries
     (preserving the user's co-resident hooks), and append exactly one canonical
-    entry. `action` ∈ noop | replaced | added | created."""
+    entry. `action` ∈ noop | replaced | added | created. `marker` scopes
+    detection to one provider (claude vs codex)."""
     pr = existing if isinstance(existing, list) else []
 
     cli_pulse_touched_count = sum(
         1 for entry in pr
-        if _is_cli_pulse_legacy_entry(entry) or _matcher_entry_has_our_hook(entry)
+        if _is_cli_pulse_legacy_entry(entry, marker) or _matcher_entry_has_our_hook(entry, marker)
     )
     previous_command: str | None = None
     for entry in pr:
-        cmd = _entry_command(entry)
+        cmd = _entry_command(entry, marker)
         if cmd is not None:
             previous_command = cmd
             break
 
     canonical_pure_indices = [
         i for i, entry in enumerate(pr)
-        if _is_canonical_pure_cli_pulse_entry(entry)
+        if _is_canonical_pure_cli_pulse_entry(entry, marker)
         and entry["hooks"][0]["command"] == target_command
     ]
     is_noop = cli_pulse_touched_count == 1 and len(canonical_pure_indices) == 1
     had_unrelated_entries = any(
-        not (_is_cli_pulse_legacy_entry(entry) or _matcher_entry_has_our_hook(entry))
+        not (_is_cli_pulse_legacy_entry(entry, marker) or _matcher_entry_has_our_hook(entry, marker))
         for entry in pr
     )
 
@@ -660,10 +680,10 @@ def _merge_cli_pulse_event(
 
     new_pr: list[Any] = []
     for entry in pr:
-        if _is_cli_pulse_legacy_entry(entry):
+        if _is_cli_pulse_legacy_entry(entry, marker):
             continue
-        if _matcher_entry_has_our_hook(entry):
-            cleaned_nested = [h for h in entry["hooks"] if not _hook_has_marker(h)]
+        if _matcher_entry_has_our_hook(entry, marker):
+            cleaned_nested = [h for h in entry["hooks"] if not _hook_has_marker(h, marker)]
             if not cleaned_nested:
                 continue
             preserved = dict(entry)
@@ -682,19 +702,21 @@ def _merge_cli_pulse_event(
     return new_pr, action, previous_command
 
 
-def _strip_cli_pulse_from_event(existing: object) -> tuple[list[Any], int]:
+def _strip_cli_pulse_from_event(
+    existing: object, marker: str = _HELPER_MARKER,
+) -> tuple[list[Any], int]:
     """Remove every CLI Pulse hook from one event's list (uninstall). Preserves
     the user's co-resident hooks in mixed matcher entries. Returns `(new_list,
-    removed_count)`."""
+    removed_count)`. `marker` scopes removal to one provider."""
     pr = existing if isinstance(existing, list) else []
     new_pr: list[Any] = []
     removed = 0
     for entry in pr:
-        if _is_cli_pulse_legacy_entry(entry):
+        if _is_cli_pulse_legacy_entry(entry, marker):
             removed += 1
             continue
-        if _matcher_entry_has_our_hook(entry):
-            cleaned_nested = [h for h in entry["hooks"] if not _hook_has_marker(h)]
+        if _matcher_entry_has_our_hook(entry, marker):
+            cleaned_nested = [h for h in entry["hooks"] if not _hook_has_marker(h, marker)]
             removed += len(entry["hooks"]) - len(cleaned_nested)
             if not cleaned_nested:
                 continue
@@ -781,32 +803,60 @@ def install_claude_hook(
     "events": {<event>: <per-event action>}}`. `action` is the aggregate
     (`"created" | "added" | "noop" | "replaced"`); `events` gives the detail.
     """
-    settings = settings_path or (Path.home() / ".claude" / "settings.json")
+    return _install_hook(
+        helper_path, provider="claude",
+        default_settings=Path.home() / ".claude" / "settings.json",
+        settings_path=settings_path, python_path=python_path,
+    )
+
+
+def _install_hook(
+    helper_path: Path, *, provider: str, default_settings: Path,
+    settings_path: Path | None = None, python_path: str | None = None,
+) -> dict[str, object]:
+    """Provider-generic hook install (claude → ~/.claude/settings.json, codex →
+    ~/.codex/hooks.json — the two files share the exact `{"hooks": {<event>:
+    [...]}}` structure). Merges our canonical entry into BOTH events with the
+    reviewed auto-heal / mixed-entry-preservation semantics, scoped to this
+    provider's marker so it never touches the OTHER provider's hooks."""
+    settings = settings_path or default_settings
+    marker = _marker_for(provider)
     target_command = recommended_hook_command(
-        helper_path=helper_path, python_path=python_path,
+        helper_path=helper_path, python_path=python_path, provider=provider,
     )
 
     data = _load_settings_or_raise(settings)   # raises on malformed/non-object
     file_had_data = bool(data)
 
+    # Anti-clobber (review: codex): a present-but-malformed `hooks` structure may
+    # carry REAL user hook data — e.g. a user who mistakenly put the event array
+    # directly at `hooks` (`"hooks": [ {matcher…} ]`) instead of under an event
+    # key. Silently coercing to `{}` and writing would DISCARD it. Refuse instead,
+    # mirroring `_load_settings_or_raise`'s never-overwrite contract for the root.
+    if "hooks" in data and not isinstance(data["hooks"], dict):
+        raise ValueError(
+            "settings 'hooks' is present but is not a JSON object "
+            f"(got {type(data['hooks']).__name__}); refusing to overwrite — fix it by hand"
+        )
     hooks = data.get("hooks")
     if not isinstance(hooks, dict):
         hooks = {}
+    for event in _CLI_PULSE_HOOK_EVENTS:
+        if event in hooks and not isinstance(hooks[event], list):
+            raise ValueError(
+                f"settings hooks[{event!r}] is present but is not a JSON array "
+                f"(got {type(hooks[event]).__name__}); refusing to overwrite — fix it by hand"
+            )
 
-    # Merge our canonical entry into BOTH events (PermissionRequest + PreToolUse)
-    # with the same auto-heal / mixed-entry-preservation semantics.
     actions: list[str] = []
     previous_command: str | None = None
     for event in _CLI_PULSE_HOOK_EVENTS:
         new_list, action, prev = _merge_cli_pulse_event(
-            hooks.get(event), target_command, file_had_data=file_had_data,
+            hooks.get(event), target_command, file_had_data=file_had_data, marker=marker,
         )
         hooks[event] = new_list
         actions.append(action)
-        # Report `previous` ONLY from an event we actually REPLACED — a no-op
-        # event also returns its (current, matching) command as `prev`, which
-        # would misreport the current command as "previous" when the aggregate
-        # is "replaced" because of the OTHER event (review: codex).
+        # Report `previous` ONLY from an event we actually REPLACED (review: codex).
         if action == "replaced" and prev is not None and previous_command is None:
             previous_command = prev
 
@@ -825,6 +875,38 @@ def install_claude_hook(
     }
 
 
+def install_codex_hook(
+    helper_path: Path,
+    *,
+    settings_path: Path | None = None,
+    python_path: str | None = None,
+) -> dict[str, object]:
+    """Install the CLI Pulse hook into `~/.codex/hooks.json` (both events). Codex
+    hooks are Claude-compatible — the JSON file has the byte-identical `{"hooks":
+    {"PermissionRequest": [...], "PreToolUse": [...]}}` structure — so this reuses
+    the exact claude install machinery, scoped to the `--provider codex` marker.
+    A standalone hooks.json is additive to the user's config.toml (Codex loads
+    all matching hooks; higher layers don't replace lower ones).
+
+    ⚠️ One-time trust: Codex requires the user to review + trust a non-managed
+    command hook via `/hooks` in the TUI (hash-pinned) BEFORE it runs. This CANNOT
+    be automated — the caller MUST instruct the user to run `/hooks` once.
+
+    Return shape = `install_claude_hook`'s, PLUS two codex-only fields that make
+    the required manual step self-describing so EVERY consumer (CLI, UDS, a future
+    Swift client) can render it instead of relying on out-of-band docs (review:
+    codex): `requires_manual_trust: True` and `trust_command: "/hooks"`. The write
+    succeeded, but the hook stays INERT until the user completes the trust."""
+    result = _install_hook(
+        helper_path, provider="codex",
+        default_settings=Path.home() / ".codex" / "hooks.json",
+        settings_path=settings_path, python_path=python_path,
+    )
+    result["requires_manual_trust"] = True
+    result["trust_command"] = "/hooks"
+    return result
+
+
 def uninstall_claude_hook(
     *, settings_path: Path | None = None,
 ) -> dict[str, object]:
@@ -841,7 +923,22 @@ def uninstall_claude_hook(
     Returns `{"settings_path", "action", "removed", "events"}` where `action`
     is `"removed" | "noop"` and `removed` is the total hook count deleted.
     """
-    settings = settings_path or (Path.home() / ".claude" / "settings.json")
+    return _uninstall_hook(
+        provider="claude",
+        default_settings=Path.home() / ".claude" / "settings.json",
+        settings_path=settings_path,
+    )
+
+
+def _uninstall_hook(
+    *, provider: str, default_settings: Path, settings_path: Path | None = None,
+) -> dict[str, object]:
+    """Provider-generic hook uninstall. Surgically strips ONLY this provider's
+    marker from both events (keeps the user's co-resident hooks AND the OTHER
+    provider's hooks if they somehow share a file), dropping emptied arrays and
+    the `hooks` key when they become empty."""
+    settings = settings_path or default_settings
+    marker = _marker_for(provider)
     if not (settings.exists() and settings.stat().st_size > 0):
         return {"settings_path": str(settings), "action": "noop", "removed": 0,
                 "events": {}}
@@ -857,7 +954,7 @@ def uninstall_claude_hook(
     for event in _CLI_PULSE_HOOK_EVENTS:
         if event not in hooks:
             continue
-        new_list, removed = _strip_cli_pulse_from_event(hooks.get(event))
+        new_list, removed = _strip_cli_pulse_from_event(hooks.get(event), marker=marker)
         if removed == 0:
             continue
         per_event[event] = removed
@@ -886,3 +983,17 @@ def uninstall_claude_hook(
         "removed": total_removed,
         "events": per_event,
     }
+
+
+def uninstall_codex_hook(
+    *, settings_path: Path | None = None,
+) -> dict[str, object]:
+    """Remove EVERY CLI Pulse hook (both events) from `~/.codex/hooks.json`,
+    preserving the user's own hooks. Reversible other half of the Codex opt-in.
+    Idempotent — `noop` when nothing is installed. Same return shape as
+    `uninstall_claude_hook`."""
+    return _uninstall_hook(
+        provider="codex",
+        default_settings=Path.home() / ".codex" / "hooks.json",
+        settings_path=settings_path,
+    )

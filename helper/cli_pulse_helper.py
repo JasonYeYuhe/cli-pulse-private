@@ -1302,6 +1302,36 @@ def main() -> None:
     )
     ra_uninstall_parser.set_defaults(func=_remote_approvals_uninstall_hook_cmd)
 
+    # Codex counterparts — merge the SAME canonical entry into
+    # ~/.codex/hooks.json (Codex hooks are Claude-compatible; identical file
+    # structure). Scoped to the `--provider codex` marker so claude + codex
+    # installs are fully independent. Requires a one-time `/hooks` trust in the
+    # Codex TUI before the hook runs (can't be automated — surfaced in output).
+    ra_install_codex_parser = remote_subparsers.add_parser(
+        "install-codex-hook",
+        help="merge the CLI Pulse hooks into ~/.codex/hooks.json (idempotent; needs one-time /hooks trust)",
+    )
+    ra_install_codex_parser.add_argument(
+        "--python", default=None,
+        help="python3 interpreter to embed in the hook command (defaults to 'python3')",
+    )
+    ra_install_codex_parser.add_argument(
+        "--settings", default=None,
+        help="override target hooks file (default: ~/.codex/hooks.json)",
+    )
+    ra_install_codex_parser.set_defaults(func=_remote_approvals_install_codex_hook_cmd)
+
+    ra_uninstall_codex_parser = remote_subparsers.add_parser(
+        "uninstall-codex-hook",
+        help="remove the CLI Pulse hooks (PermissionRequest + PreToolUse) from "
+             "~/.codex/hooks.json, preserving your own hooks (idempotent)",
+    )
+    ra_uninstall_codex_parser.add_argument(
+        "--settings", default=None,
+        help="override target hooks file (default: ~/.codex/hooks.json)",
+    )
+    ra_uninstall_codex_parser.set_defaults(func=_remote_approvals_uninstall_codex_hook_cmd)
+
     ra_diagnose_parser = remote_subparsers.add_parser(
         "diagnose-claude-permissions",
         help="diagnose Claude Code permission rules + hook wiring (read-only)",
@@ -1475,6 +1505,69 @@ def _remote_approvals_uninstall_hook_cmd(args: argparse.Namespace) -> None:
     else:
         print()
         print("# Restart Claude Code so it stops invoking the removed hooks.")
+
+
+def _remote_approvals_install_codex_hook_cmd(args: argparse.Namespace) -> None:
+    """Idempotently merge the CLI Pulse hooks into `~/.codex/hooks.json` (Codex
+    hooks are Claude-compatible). Preserves every other key. Surfaces the manual
+    `/hooks` trust step Codex requires before a command hook runs."""
+    import permissions_diagnose
+
+    helper_path = Path(__file__).resolve()
+    settings_path: Path | None = None
+    if getattr(args, "settings", None):
+        settings_path = Path(args.settings).expanduser().resolve()
+
+    try:
+        result = permissions_diagnose.install_codex_hook(
+            helper_path=helper_path,
+            settings_path=settings_path,
+            python_path=getattr(args, "python", None),
+        )
+    except ValueError as exc:
+        print(f"install-codex-hook: error: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+    print(f"settings_path: {result['settings_path']}")
+    print(f"action:        {result['action']}")
+    if result.get("previous_command") is not None and result["action"] != "noop":
+        print(f"previous:      {result['previous_command']}")
+    print(f"new_command:   {result['new_command']}")
+    print()
+    if result["action"] == "noop":
+        print("# Hook already wired correctly in ~/.codex/hooks.json.")
+    else:
+        print("# Wrote the CLI Pulse hook into ~/.codex/hooks.json.")
+    # ALWAYS surface the one-time trust step — even on noop the user may not
+    # have completed it yet, and the hook is inert until they do.
+    print("# ONE-TIME STEP: in a Codex TUI, run `/hooks`, review the CLI Pulse")
+    print("# command hook, and Trust it. Codex hash-pins the command and will")
+    print("# SKIP an untrusted hook silently — this cannot be automated.")
+
+
+def _remote_approvals_uninstall_codex_hook_cmd(args: argparse.Namespace) -> None:
+    """Remove the CLI Pulse hooks (PermissionRequest + PreToolUse) from
+    `~/.codex/hooks.json`, preserving the user's own hooks."""
+    import permissions_diagnose
+
+    settings_path: Path | None = None
+    if getattr(args, "settings", None):
+        settings_path = Path(args.settings).expanduser().resolve()
+
+    try:
+        result = permissions_diagnose.uninstall_codex_hook(settings_path=settings_path)
+    except ValueError as exc:
+        print(f"uninstall-codex-hook: error: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+    print(f"settings_path: {result['settings_path']}")
+    print(f"action:        {result['action']}")
+    print(f"removed:       {result['removed']}")
+    print()
+    if result["action"] == "noop":
+        print("# No CLI Pulse hooks were installed in ~/.codex/hooks.json.")
+    else:
+        print("# Removed the CLI Pulse hook(s) from ~/.codex/hooks.json.")
 
 
 def _remote_approvals_diagnose_cmd(args: argparse.Namespace) -> None:

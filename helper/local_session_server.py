@@ -183,6 +183,12 @@ SUPPORTED_METHODS = (
     # (PermissionRequest + PreToolUse) from ~/.claude/settings.json, preserving
     # the user's own hooks. App-auth-gated (like install_claude_hook).
     "uninstall_claude_hook",
+    # M2 part 2: Codex counterparts — install/remove the SAME hook into
+    # ~/.codex/hooks.json (Claude-compatible format). App-auth-gated exactly
+    # like the claude verbs. Codex additionally requires a one-time `/hooks`
+    # TUI trust that CANNOT be automated; the app surfaces that step.
+    "install_codex_hook",
+    "uninstall_codex_hook",
     # v1.41 machine-mobile relay (Track B): the Mac app executor drains queued
     # fan/LPM commands, reports typed completions, and reports its live control
     # state. App-auth-gated but NOT local_control-gated (Machine tab, like
@@ -1598,6 +1604,53 @@ class LocalSessionServer:
                 ) from exc
             try:
                 result = uninstall_claude_hook()
+            except ValueError as exc:
+                raise _RequestError("settings_malformed", str(exc)) from exc
+            return dict(result)
+
+        if method == "install_codex_hook":
+            # M2 part 2: the Codex counterpart of install_claude_hook. Same
+            # helper-owns-argv[0] safety, same idempotency/auto-heal semantics,
+            # but targets ~/.codex/hooks.json with the `--provider codex` marker.
+            # NOTE: Codex requires a one-time `/hooks` TUI trust that CANNOT be
+            # automated. The result carries `requires_manual_trust`/`trust_command`
+            # so a client can render it. The Swift client codex methods are still
+            # DEFERRED (owner: codex-Swift later) — today only the CLI path
+            # (`remote-approvals install-codex-hook`) consumes this + prints the
+            # trust step; the field is here so the future Swift port needs no
+            # protocol change.
+            try:
+                from permissions_diagnose import install_codex_hook  # type: ignore
+            except ImportError as exc:  # pragma: no cover — module always present
+                raise _RequestError(
+                    "internal_error",
+                    f"permissions_diagnose import failed: {exc}",
+                ) from exc
+            helper_argv0 = self._get_helper_argv0()
+            if helper_argv0 is None:
+                raise _RequestError(
+                    "not_implemented",
+                    "helper did not record its own argv[0] — install_codex_hook unavailable",
+                )
+            try:
+                result = install_codex_hook(helper_path=Path(helper_argv0))
+            except ValueError as exc:
+                raise _RequestError("settings_malformed", str(exc)) from exc
+            return dict(result)
+
+        if method == "uninstall_codex_hook":
+            # M2 part 2: reversible other half — remove the CLI Pulse hooks from
+            # ~/.codex/hooks.json, preserving the user's own hooks. By-marker
+            # (no helper_path). Same settings_malformed contract as install.
+            try:
+                from permissions_diagnose import uninstall_codex_hook  # type: ignore
+            except ImportError as exc:  # pragma: no cover — module always present
+                raise _RequestError(
+                    "internal_error",
+                    f"permissions_diagnose import failed: {exc}",
+                ) from exc
+            try:
+                result = uninstall_codex_hook()
             except ValueError as exc:
                 raise _RequestError("settings_malformed", str(exc)) from exc
             return dict(result)
