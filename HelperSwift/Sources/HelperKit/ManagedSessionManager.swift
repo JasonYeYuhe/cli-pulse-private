@@ -101,6 +101,12 @@ public final class ManagedSessionManager: @unchecked Sendable {
         /// routes to the right transport (`_sessTransport`). Mirrors Python
         /// `_ManagedSession.transport`.
         let transportOverride: (any SessionTransport)?
+        /// M4.4a: true for an ATTACHED wrapped (external) session — it is
+        /// LOCAL-ONLY: never minted into a cloud row nor uploaded (the cloud
+        /// observer skips it), because the helper doesn't own its lifecycle and
+        /// the phone plane opts it in separately (M4.4d). Distinct from
+        /// `realtimePrivate` (which only governs the PUBLIC Realtime sink).
+        let attached: Bool
         let spawnedAtMono: TimeInterval
         /// R0 (S2): the session's `realtime_private` from the cloud start
         /// payload — `false` = positively public, `true` = private, `nil` =
@@ -137,6 +143,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
             clientLabel: String?,
             handle: SessionHandle,
             transportOverride: (any SessionTransport)? = nil,
+            attached: Bool = false,
             spawnedAtMono: TimeInterval,
             realtimePrivate: Bool?
         ) {
@@ -145,6 +152,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
             self.clientLabel = clientLabel
             self.handle = handle
             self.transportOverride = transportOverride
+            self.attached = attached
             self.spawnedAtMono = spawnedAtMono
             self.realtimePrivate = realtimePrivate
         }
@@ -424,9 +432,111 @@ public final class ManagedSessionManager: @unchecked Sendable {
         }
     }
 
+    // MARK: - M4.4a: attach an externally-launched wrapped tmux session
+
+    /// Enumerate CLI-Pulse-wrapped tmux sessions the shell integration created.
+    /// Best-effort — [] if the socket/server isn't up.
+    public func listWrappedSessions() -> [String] {
+        ShellIntegration.listWrappedSessions()
+    }
+
+    /// Attach to an EXTERNAL wrapped tmux session and register it so the app's
+    /// EXISTING terminal surface (subscribe_events / send_input_raw / resize /
+    /// get_tail_snapshot) drives it verbatim — no new I/O path. Swift port of
+    /// `RemoteAgentManager._attach_wrapped_session_impl`.
+    ///
+    /// NON-OWNING: the registered record carries its own `TmuxTransport` (via
+    /// `transportOverride`), and `TmuxTransport.terminate`/`close` no-op the
+    /// kill-session for `owns_session=false`, so stop/detach NEVER kills the
+    /// user's real `claude`. Unlike a spawn we do NOT inject auth, mint a
+    /// capability token, or write a cloud row — `realtimePrivate = nil` (UNKNOWN
+    /// privacy) so the fail-closed broadcast gate never mirrors it publicly; the
+    /// phone plane opts it in separately (M4.4d). Returns false on any failure
+    /// (the UDS layer maps that to `attach_failed`).
     @discardableResult
-    public func stopSession(_ sessionId: String) -> Bool {
+    public func attachWrappedSession(
+        sessionId: String,
+        tmuxSessionName: String,
+        provider: String = "claude",
+        clientLabel: String? = nil,
+        tmuxBin: String? = nil,
+        socketPath: String? = nil
+    ) -> Bool {
+        // Idempotent: already attached → success (don't double-register).
         lock.lock()
+        let already = sessions[sessionId] != nil
+        lock.unlock()
+        if already { return true }
+
+        let sock = socketPath ?? ShellIntegration.sockPath()
+        let resolvedTmux = ShellIntegration.resolveTmuxBin(explicit: tmuxBin)
+        let transport = TmuxTransport(socketPath: sock, tmuxBin: resolvedTmux)
+
+        let handle: TmuxTransport.Handle
+        do {
+            handle = try transport.attachExisting(sessionId: sessionId, tmuxSessionName: tmuxSessionName)
+        } catch {
+            return false
+        }
+        // Verify the tmux session actually EXISTS. attachExisting spawns a
+        // control client for ANY name; a stale/wrong/exited session yields a
+        // client that dies immediately. Without this guard we'd register a
+        // doomed row the reaper drops one tick later ("attached then instantly
+        // stopped"). Close the dead control client + report a clean failure.
+        if !transport.isAlive(handle) {
+            transport.close(handle)
+            return false
+        }
+
+        let record = ManagedSessionRecord(
+            sessionId: sessionId,
+            provider: provider,
+            clientLabel: clientLabel,
+            handle: handle,
+            transportOverride: transport,   // route all I/O through the tmux transport
+            attached: true,                 // LOCAL-ONLY: the cloud observer skips it
+            spawnedAtMono: ProcessInfo.processInfo.systemUptime,
+            realtimePrivate: nil            // UNKNOWN → never public-broadcast/mint
+        )
+        // Build the drain thread pre-publication (same discipline as spawn).
+        let drain = Thread { [weak self] in
+            self?.drainLoop(record: record)
+        }
+        drain.name = "cli-pulse-drain-\(sessionId)"
+        record.drainThread = drain
+
+        lock.lock()
+        // Re-check under lock: a concurrent attach for the same id could have
+        // won the race between our early check and here.
+        if sessions[sessionId] != nil {
+            lock.unlock()
+            transport.close(handle)   // ours is the loser — detach (non-owning, safe)
+            return true
+        }
+        sessions[sessionId] = record
+        lock.unlock()
+
+        broker?.publish([
+            "event": "session_started",
+            "session_id": sessionId,
+            "provider": provider,
+            "client_label": clientLabel ?? NSNull(),
+            "attached": true,          // distinguishes an attach from a spawn
+        ])
+        drain.start()
+        return true
+    }
+
+    /// `refuseAttached` (cloud callers pass true): refuse to act on an ATTACHED
+    /// wrapped session ATOMICALLY under the lock — closes the TOCTOU where a
+    /// cloud command checks not-attached, a local attach then registers the
+    /// same id, and the op would otherwise tear down the user's real session
+    /// (review: codex). The LOCAL app path leaves it false so it can drive
+    /// attached sessions normally.
+    @discardableResult
+    public func stopSession(_ sessionId: String, refuseAttached: Bool = false) -> Bool {
+        lock.lock()
+        if refuseAttached, sessions[sessionId]?.attached == true { lock.unlock(); return false }
         let rec = sessions.removeValue(forKey: sessionId)
         lock.unlock()
         guard let rec else { return false }
@@ -437,6 +547,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
         broker?.publish([
             "event": "session_stopped",
             "session_id": sessionId,
+            "attached": rec.attached,   // frame-latched (review: codex)
         ])
         return true
     }
@@ -448,8 +559,9 @@ public final class ManagedSessionManager: @unchecked Sendable {
     /// doesn't own the id (caller marks the queued command
     /// `failed`).
     @discardableResult
-    public func interruptSession(_ sessionId: String) -> Bool {
+    public func interruptSession(_ sessionId: String, refuseAttached: Bool = false) -> Bool {
         lock.lock()
+        if refuseAttached, sessions[sessionId]?.attached == true { lock.unlock(); return false }
         let rec = sessions[sessionId]
         lock.unlock()
         guard let rec else { return false }
@@ -467,14 +579,26 @@ public final class ManagedSessionManager: @unchecked Sendable {
         return sessions[sessionId] != nil
     }
 
+    /// M4.4a: true while `sessionId` is a registered ATTACHED wrapped (external)
+    /// session — the cloud observer queries this to SKIP it entirely (local-only:
+    /// no cloud row / upload). Ordering-independent: the record is present from
+    /// attach-registration through drain-removal, so a `session_started` or
+    /// `output_delta` event (both published while the record is live) always
+    /// sees `true` regardless of which observer Task runs first.
+    public func isAttached(_ sessionId: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return sessions[sessionId]?.attached ?? false
+    }
+
     /// Write to the PTY master, normalising the trailing
     /// terminator to `\r` (matches the Python helper —
     /// Claude Code's TUI is a raw-mode app with bracketed-paste
     /// enabled; sending `\n` is treated as "more text being
     /// pasted" rather than as Enter, so we coerce to CR).
     @discardableResult
-    public func sendInput(sessionId: String, payload: String) throws -> Bool {
+    public func sendInput(sessionId: String, payload: String, refuseAttached: Bool = false) throws -> Bool {
         lock.lock()
+        if refuseAttached, sessions[sessionId]?.attached == true { lock.unlock(); return false }
         let rec = sessions[sessionId]
         lock.unlock()
         guard let rec else { return false }
@@ -509,8 +633,9 @@ public final class ManagedSessionManager: @unchecked Sendable {
     /// sequences). The legacy `sendInput` CR-appends, which would
     /// corrupt these bytes (turning Ctrl-C into `0x03\r`).
     @discardableResult
-    public func sendInputRaw(sessionId: String, bytes: Data) throws -> Bool {
+    public func sendInputRaw(sessionId: String, bytes: Data, refuseAttached: Bool = false) throws -> Bool {
         lock.lock()
+        if refuseAttached, sessions[sessionId]?.attached == true { lock.unlock(); return false }
         let rec = sessions[sessionId]
         lock.unlock()
         guard let rec else { return false }
@@ -530,8 +655,9 @@ public final class ManagedSessionManager: @unchecked Sendable {
     /// re-flow their layout. Returns false if `sessionId` isn't owned
     /// or the underlying ioctl failed.
     @discardableResult
-    public func resize(sessionId: String, cols: UInt16, rows: UInt16) -> Bool {
+    public func resize(sessionId: String, cols: UInt16, rows: UInt16, refuseAttached: Bool = false) -> Bool {
         lock.lock()
+        if refuseAttached, sessions[sessionId]?.attached == true { lock.unlock(); return false }
         let rec = sessions[sessionId]
         lock.unlock()
         guard let rec else { return false }
@@ -556,9 +682,10 @@ public final class ManagedSessionManager: @unchecked Sendable {
     /// "catch-up snapshot." Redaction matches the `EventUploader` /
     /// `RemoteAgentCloud.swift:456` path so secrets never leak through
     /// this RPC.
-    public func getTailSnapshot(sessionId: String, maxBytes: Int) -> Data? {
+    public func getTailSnapshot(sessionId: String, maxBytes: Int, refuseAttached: Bool = false) -> Data? {
         let cappedMax = max(0, min(maxBytes, 65536))
         lock.lock()
+        if refuseAttached, sessions[sessionId]?.attached == true { lock.unlock(); return nil }
         let rec = sessions[sessionId]
         lock.unlock()
         guard let rec else { return nil }
@@ -652,6 +779,12 @@ public final class ManagedSessionManager: @unchecked Sendable {
                         "session_id": record.sessionId,
                         "payload": text,
                         "ts": Date().timeIntervalSince1970,
+                        // Latch attached onto the FRAME (review: codex) — the cloud
+                        // observer handles events on a DEFERRED per-event Task, so
+                        // it can't reliably query live manager state (the record may
+                        // be removed by then). The flag travels with the event →
+                        // ordering-independent skip.
+                        "attached": record.attached,
                     ])
                 }
             } catch {
@@ -681,6 +814,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
                 var stoppedEvent: [String: Any] = [
                     "event": "session_stopped",
                     "session_id": record.sessionId,
+                    "attached": record.attached,   // frame-latched (review: codex)
                 ]
                 if let exitCode {
                     stoppedEvent["exit_code"] = Int(exitCode)
