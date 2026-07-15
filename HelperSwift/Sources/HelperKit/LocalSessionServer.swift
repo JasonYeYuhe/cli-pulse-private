@@ -68,6 +68,11 @@ public final class LocalSessionServer: @unchecked Sendable {
         /// When nil, the server returns notImplemented for that
         /// method.
         public var eventBroker: EventBroker?
+        /// #18c: override the ~/.claude/settings.json path the install/uninstall
+        /// verbs write. `nil` (default) → the real path. A HELPER-side seam only
+        /// (tests + never the app) — the anti-tamper guarantee is unchanged: the
+        /// socket peer still can't pass a path.
+        public var claudeSettingsPathOverride: @Sendable () -> URL?
 
         public init(
             getAuthToken: @escaping @Sendable () -> String,
@@ -77,7 +82,8 @@ public final class LocalSessionServer: @unchecked Sendable {
             sessionManager: ManagedSessionManager? = nil,
             listDetectedSessions: @escaping @Sendable () -> [[String: Any]] = { [] },
             approvalRegistry: ApprovalRegistry? = nil,
-            eventBroker: EventBroker? = nil
+            eventBroker: EventBroker? = nil,
+            claudeSettingsPathOverride: @escaping @Sendable () -> URL? = { nil }
         ) {
             self.getAuthToken = getAuthToken
             self.isLocalControlEnabled = isLocalControlEnabled
@@ -87,6 +93,7 @@ public final class LocalSessionServer: @unchecked Sendable {
             self.listDetectedSessions = listDetectedSessions
             self.approvalRegistry = approvalRegistry
             self.eventBroker = eventBroker
+            self.claudeSettingsPathOverride = claudeSettingsPathOverride
         }
     }
 
@@ -529,6 +536,8 @@ public final class LocalSessionServer: @unchecked Sendable {
             return handleApproveAction(request: request)
         case .installClaudeHook:
             return handleInstallClaudeHook(request: request)
+        case .uninstallClaudeHook:
+            return handleUninstallClaudeHook(request: request)
         default:
             return .err(id: request.id, code: .notImplemented, message: "method \(request.method) lands in a later iter of the Swift port")
         }
@@ -738,25 +747,65 @@ public final class LocalSessionServer: @unchecked Sendable {
     }
 
     private func handleInstallClaudeHook(request: WireRequest) -> WireResponse {
-        // Phase 4D iter10 (Codex P1③.A): the global ~/.claude/
-        // settings.json install path is now a no-op.
-        // ManagedSessionManager.startSession injects the hook
-        // inline via `claude --settings <json>` at spawn time, so
-        // a global install is no longer necessary AND would
-        // re-introduce the "terminal-launched Claude breaks"
-        // problem Codex flagged.
-        //
-        // The macOS app's existing "Install hook" button (PR #19
-        // D) keeps working — it gets a successful response with
-        // `action: "noop_deprecated"` so the UI flow doesn't
-        // surface an error. v1.14 removes the UI button.
-        return .ok(id: request.id, result: [
-            "settings_path": "<deprecated; hook is injected at spawn time>",
-            "action": "noop_deprecated",
-            "previous_command": NSNull(),
-            "new_command": "<deprecated>",
-            "note": "CLI Pulse no longer needs a global hook in ~/.claude/settings.json. Managed sessions inject the PermissionRequest hook inline via the helper's --settings flag at spawn time. Terminal-launched Claude is left alone.",
-        ])
+        // M1/#18c: RE-ACTIVATED (owner-approved). Managed sessions inject the
+        // hook inline at spawn, but EXTERNAL (hand-launched) Claude can't be —
+        // it needs the global ~/.claude/settings.json install to route its
+        // approvals through CLI Pulse. This writes BOTH events (PermissionRequest
+        // + PreToolUse) via ClaudeSettingsInstaller. Runs only from an explicit
+        // app-authenticated + local-control-gated opt-in (the user's Install
+        // toggle). The helper supplies its OWN argv[0] as the hook command — the
+        // app must NOT pass a path (anti-tamper: a socket peer can't reroute the
+        // hook at a third-party binary).
+        guard let helperPath = hooks.getHelperArgv0() else {
+            return .err(id: request.id, code: .notImplemented,
+                        message: "helper did not record its own argv[0] — install_claude_hook unavailable")
+        }
+        do {
+            let result = try ClaudeSettingsInstaller.install(
+                helperPath: helperPath, settingsPath: hooks.claudeSettingsPathOverride())
+            var events: [String: Any] = [:]
+            for (event, action) in result.events { events[event] = action.rawValue }
+            return .ok(id: request.id, result: [
+                "settings_path": result.settingsPath,
+                "action": result.action.rawValue,
+                "previous_command": result.previousCommand ?? NSNull(),
+                "new_command": result.newCommand,
+                "events": events,
+            ])
+        } catch let err as ClaudeSettingsInstaller.InstallError {
+            if case .malformedSettings(let msg) = err {
+                return .err(id: request.id, code: .settingsMalformed, message: msg)
+            }
+            return .err(id: request.id, code: .internalError, message: "\(err)")
+        } catch {
+            return .err(id: request.id, code: .internalError, message: "\(error)")
+        }
+    }
+
+    private func handleUninstallClaudeHook(request: WireRequest) -> WireResponse {
+        // M1c/#18c: the reversible other half of the opt-in — remove the CLI
+        // Pulse hooks (both events) from ~/.claude/settings.json, preserving the
+        // user's own hooks. No helper path needed (removal is by marker). Same
+        // app-auth + local-control gating as install.
+        do {
+            let result = try ClaudeSettingsInstaller.uninstall(
+                settingsPath: hooks.claudeSettingsPathOverride())
+            var events: [String: Any] = [:]
+            for (event, removed) in result.events { events[event] = removed }
+            return .ok(id: request.id, result: [
+                "settings_path": result.settingsPath,
+                "action": result.action,
+                "removed": result.removed,
+                "events": events,
+            ])
+        } catch let err as ClaudeSettingsInstaller.InstallError {
+            if case .malformedSettings(let msg) = err {
+                return .err(id: request.id, code: .settingsMalformed, message: msg)
+            }
+            return .err(id: request.id, code: .internalError, message: "\(err)")
+        } catch {
+            return .err(id: request.id, code: .internalError, message: "\(error)")
+        }
     }
 
     // MARK: - iter4 hook ingress

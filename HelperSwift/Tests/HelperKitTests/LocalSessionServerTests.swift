@@ -26,7 +26,9 @@ final class LocalSessionServerTests: XCTestCase {
         super.tearDown()
     }
 
-    private func makeServer(token: String = "T", enabled: Bool = true) throws -> LocalSessionServer {
+    private func makeServer(token: String = "T", enabled: Bool = true,
+                            helperArgv0: String? = nil,
+                            settingsPath: URL? = nil) throws -> LocalSessionServer {
         let sockPath = sockDir.appendingPathComponent("clipulse-helper.sock")
         let enabledBox = AtomicBool()
         enabledBox.set(enabled)
@@ -35,7 +37,9 @@ final class LocalSessionServerTests: XCTestCase {
             hooks: LocalSessionServer.Hooks(
                 getAuthToken: { token },
                 isLocalControlEnabled: { enabledBox.get() },
-                setLocalControlEnabled: { enabledBox.set($0) }
+                setLocalControlEnabled: { enabledBox.set($0) },
+                getHelperArgv0: { helperArgv0 },
+                claudeSettingsPathOverride: { settingsPath }
             )
         )
         try s.start()
@@ -240,5 +244,66 @@ final class LocalSessionServerTests: XCTestCase {
         // start() must connect-probe (fails → stale), unlink, and bind cleanly.
         server = try makeServer(token: "T")
         XCTAssertTrue(FileManager.default.fileExists(atPath: sockPath.path))
+    }
+
+    // MARK: - #18c: install / uninstall_claude_hook verbs (re-activated)
+
+    private func tmpSettings() -> URL {
+        sockDir.appendingPathComponent("claude-\(UUID().uuidString)").appendingPathComponent("settings.json")
+    }
+
+    func testInstallClaudeHookWritesBothEvents() throws {
+        let settings = tmpSettings()
+        server = try makeServer(token: "T", helperArgv0: "/h/cli_pulse_helper", settingsPath: settings)
+        let reply = try clientCall(["id": "1", "method": "install_claude_hook",
+                                    "auth_token": "T", "params": [:]])
+        XCTAssertTrue(reply["ok"] as? Bool ?? false, "\(reply)")
+        let result = reply["result"] as! [String: Any]
+        XCTAssertEqual(result["action"] as? String, "created")
+        // both events written to the tmp settings file
+        let data = try Data(contentsOf: settings)
+        let hooks = (try JSONSerialization.jsonObject(with: data) as! [String: Any])["hooks"] as! [String: Any]
+        XCTAssertNotNil(hooks["PermissionRequest"])
+        XCTAssertNotNil(hooks["PreToolUse"])
+    }
+
+    func testInstallClaudeHookNoArgv0ReturnsNotImplemented() throws {
+        server = try makeServer(token: "T")  // no helperArgv0
+        let reply = try clientCall(["id": "1", "method": "install_claude_hook",
+                                    "auth_token": "T", "params": [:]])
+        XCTAssertFalse(reply["ok"] as? Bool ?? true)
+        XCTAssertEqual((reply["error"] as? [String: Any])?["code"] as? String, "not_implemented")
+    }
+
+    func testUninstallClaudeHookRoundTrip() throws {
+        let settings = tmpSettings()
+        server = try makeServer(token: "T", helperArgv0: "/h/cli_pulse_helper", settingsPath: settings)
+        _ = try clientCall(["id": "1", "method": "install_claude_hook", "auth_token": "T", "params": [:]])
+        let reply = try clientCall(["id": "2", "method": "uninstall_claude_hook",
+                                    "auth_token": "T", "params": [:]])
+        XCTAssertTrue(reply["ok"] as? Bool ?? false, "\(reply)")
+        let result = reply["result"] as! [String: Any]
+        XCTAssertEqual(result["action"] as? String, "removed")
+        XCTAssertEqual(result["removed"] as? Int, 2)
+    }
+
+    func testUninstallClaudeHookRequiresAuth() throws {
+        server = try makeServer(token: "T")
+        let reply = try clientCall(["id": "1", "method": "uninstall_claude_hook", "params": [:]])
+        XCTAssertEqual((reply["error"] as? [String: Any])?["code"] as? String, "unauthenticated")
+    }
+
+    func testUninstallClaudeHookBlockedWhenGateOff() throws {
+        server = try makeServer(token: "T", enabled: false)
+        let reply = try clientCall(["id": "1", "method": "uninstall_claude_hook",
+                                    "auth_token": "T", "params": [:]])
+        XCTAssertEqual((reply["error"] as? [String: Any])?["code"] as? String, "local_control_off")
+    }
+
+    func testHelloAdvertisesUninstallClaudeHook() throws {
+        server = try makeServer()
+        let reply = try clientCall(["id": "1", "method": "hello", "params": [:]])
+        let supported = (reply["result"] as! [String: Any])["supported_methods"] as! [String]
+        XCTAssertTrue(supported.contains("uninstall_claude_hook"))
     }
 }

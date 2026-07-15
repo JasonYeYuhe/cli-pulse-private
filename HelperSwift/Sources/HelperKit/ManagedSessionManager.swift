@@ -205,20 +205,27 @@ public final class ManagedSessionManager: @unchecked Sendable {
     }
 
     /// Build the inline JSON Claude Code's `--settings` flag
-    /// accepts, populated with our PermissionRequest hook entry
-    /// pointing at `helperPath`. Returns nil only if JSON
-    /// serialisation fails (which shouldn't happen for the
-    /// statically-shaped dict below). Public so unit tests can
-    /// pin the exact wire shape.
+    /// accepts, populated with our hook entry pointing at
+    /// `helperPath`. Returns nil only if JSON serialisation fails
+    /// (which shouldn't happen for the statically-shaped dict
+    /// below). Public so unit tests can pin the exact wire shape.
+    ///
+    /// M1 (review: codex): registers our hook under BOTH events —
+    /// PreToolUse (fires for EVERY tool call) as well as
+    /// PermissionRequest (which a broad allowlist suppresses).
+    /// Without PreToolUse, a managed session whose allowlist
+    /// pre-approves a tool would run it WITHOUT CLI Pulse approval.
+    /// Same both-events shape the global `ClaudeSettingsInstaller`
+    /// install writes.
     public static func buildInlineSettingsForManagedSession(helperPath: String) -> String? {
         let hookCommand = ClaudeSettingsInstaller.recommendedHookCommand(
             helperPath: helperPath
         )
+        let entry = ClaudeSettingsInstaller.canonicalHookEntry(command: hookCommand)
         let inlineSettings: [String: Any] = [
             "hooks": [
-                "PermissionRequest": [
-                    ClaudeSettingsInstaller.canonicalHookEntry(command: hookCommand),
-                ],
+                "PermissionRequest": [entry],
+                "PreToolUse": [entry],
             ],
         ]
         guard let data = try? JSONSerialization.data(
