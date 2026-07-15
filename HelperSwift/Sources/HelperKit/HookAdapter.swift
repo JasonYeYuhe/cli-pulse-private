@@ -58,12 +58,24 @@ public enum HookAdapter {
     public enum Behavior: String, Sendable {
         case allow
         case deny
+        /// M1: channel unavailable / timed out — NOT a definitive user deny.
+        /// `emit` resolves it per event + failOpen: an EXTERNAL session defers
+        /// to the local prompt (PreToolUse → "ask", PermissionRequest → empty
+        /// abstain), a MANAGED session fails CLOSED (deny). Never auto-approves.
+        case fallback
     }
 
     public struct Decision: Sendable, Equatable {
         public let behavior: Behavior
         public let message: String?
     }
+
+    /// Managed fail-closed message (external sessions never see it — they defer
+    /// to the local prompt). Mirrors the Python `_UNAVAILABLE_MSG`.
+    static let unavailableMessage =
+        "Remote approval unavailable. If this keeps happening, open CLI Pulse → "
+        + "Settings → Privacy and turn off Remote Control; the local Claude "
+        + "permission prompt will then run on your next attempt."
 
     /// Run the hook. Reads stdin, writes the decision to stdout,
     /// and returns the exit code (always 0 — Claude needs the
@@ -104,22 +116,24 @@ public enum HookAdapter {
     public static func run(provider: String) -> Int32 {
         let stdinData = readAllStdin()
         let parsed = parseClaudeHookInput(stdinData)
+        // M1: EXTERNAL (hand-launched) sessions fail OPEN — defer to Claude's
+        // own local prompt — so a remote outage never bricks a terminal Claude
+        // (and NEVER auto-approves: fail-open = "ask"/abstain, not allow).
+        // MANAGED sessions keep failing CLOSED.
+        let failOpen = !isManagedSession()
 
-        // Try the local UDS path first.
+        // Managed local UDS path first (only engages when the session env is set).
         if let decision = tryLocalUdsHook(parsed: parsed) {
-            emit(decision)
+            emit(decision, eventName: parsed.eventName, failOpen: failOpen)
             return 0
         }
 
-        // Codex P1③.A: non-managed session reaching the hook is
-        // a misconfiguration (Phase 4D iter10 stopped global
-        // install). Fail CLOSED — auto-approving would silently
-        // bypass Claude's own permission rules. The diagnostic
-        // tells the user what's wrong + how to fix.
-        emit(Decision(
-            behavior: .deny,
-            message: "CLI Pulse hook fired without managed-session env vars. This Claude session was NOT spawned by the CLI Pulse helper. If you see this in a session that SHOULD be managed, restart CLI Pulse. If you see this in a terminal-launched Claude, remove the leftover hook entry from ~/.claude/settings.json — recent CLI Pulse versions inject the hook at spawn time and don't need a global install."
-        ))
+        // No managed env → EXTERNAL session (the M1 external-approve/deny case,
+        // now that the global hook is installed for these). Fail OPEN: defer to
+        // the local prompt. For a MANAGED session with incomplete env this
+        // resolves to a fail-closed deny via the same fallback path.
+        emit(Decision(behavior: .fallback, message: nil),
+             eventName: parsed.eventName, failOpen: failOpen)
         return 0
     }
 
@@ -139,21 +153,59 @@ public enum HookAdapter {
         return out
     }
 
-    private static func emit(_ decision: Decision) {
-        let inner: [String: Any] = [
-            "behavior": decision.behavior.rawValue,
-            "message": decision.message ?? NSNull(),
-        ]
-        let outer: [String: Any] = [
-            "hookSpecificOutput": [
-                "hookEventName": "PermissionRequest",
-                "decision": inner,
-            ],
-        ]
-        if let data = try? JSONSerialization.data(withJSONObject: outer, options: []) {
+    /// M1: emit the decision in the shape for THIS event (PreToolUse vs
+    /// PermissionRequest), resolving a `.fallback` per `failOpen`. `nil` output
+    /// = ABSTAIN (write nothing → Claude's own local prompt runs).
+    static func emit(_ decision: Decision, eventName: String, failOpen: Bool) {
+        let output: [String: Any]?
+        if eventName == "PreToolUse" {
+            output = preToolUseOutput(decision, failOpen: failOpen)
+        } else {
+            output = permissionRequestOutput(decision, failOpen: failOpen)
+        }
+        guard let out = output else { return }  // abstain
+        if let data = try? JSONSerialization.data(withJSONObject: out, options: []) {
             FileHandle.standardOutput.write(data)
             FileHandle.standardOutput.write(Data([0x0a]))
         }
+    }
+
+    /// PermissionRequest output: allow (NO message — docs: "for deny only") /
+    /// deny+message / external-fail-open ABSTAIN (nil) / managed-fallback deny.
+    static func permissionRequestOutput(_ decision: Decision, failOpen: Bool) -> [String: Any]? {
+        let inner: [String: Any]
+        switch decision.behavior {
+        case .allow:
+            inner = ["behavior": "allow"]
+        case .deny:
+            inner = ["behavior": "deny", "message": decision.message ?? "Denied remotely via CLI Pulse"]
+        case .fallback:
+            if failOpen { return nil }  // external → abstain → local prompt
+            inner = ["behavior": "deny", "message": decision.message ?? unavailableMessage]
+        }
+        return ["hookSpecificOutput": ["hookEventName": "PermissionRequest", "decision": inner]]
+    }
+
+    /// PreToolUse output: permissionDecision allow / deny(+reason) / external-
+    /// fail-open "ask"(+reason) / managed-fallback deny(+reason). No auto-approve.
+    static func preToolUseOutput(_ decision: Decision, failOpen: Bool) -> [String: Any]? {
+        var hso: [String: Any] = ["hookEventName": "PreToolUse"]
+        switch decision.behavior {
+        case .allow:
+            hso["permissionDecision"] = "allow"
+        case .deny:
+            hso["permissionDecision"] = "deny"
+            hso["permissionDecisionReason"] = decision.message ?? "Denied remotely via CLI Pulse"
+        case .fallback:
+            if failOpen {
+                hso["permissionDecision"] = "ask"
+                hso["permissionDecisionReason"] = decision.message ?? "Remote approval unavailable — asking locally"
+            } else {
+                hso["permissionDecision"] = "deny"
+                hso["permissionDecisionReason"] = decision.message ?? unavailableMessage
+            }
+        }
+        return ["hookSpecificOutput": hso]
     }
 
     // MARK: - Claude hook input
@@ -166,6 +218,10 @@ public enum HookAdapter {
         public let summary: String       // built from tool_name + redacted args
         public let cwdBasename: String
         public let risk: String          // "low" | "medium" | "high"
+        /// M1: which hook event fired — "PreToolUse" (fires for EVERY tool call,
+        /// the always-present lever) or "PermissionRequest". Drives the output
+        /// SHAPE. From the stdin `hook_event_name`.
+        public let eventName: String
 
         // Provide a non-Sendable holder for `toolInput` to keep this
         // value safe to ship across the local function call boundary.
@@ -181,10 +237,22 @@ public enum HookAdapter {
         let cwdBasename = (cwd as NSString).lastPathComponent
         let summary = summaryFor(toolName: toolName, toolInput: toolInput)
         let risk = classifyRisk(toolName: toolName, toolInput: toolInput)
+        let eventName = (raw["hook_event_name"] as? String) == "PreToolUse"
+            ? "PreToolUse" : "PermissionRequest"
         return ClaudeHookInput(
             toolName: toolName, toolInput: toolInput,
-            summary: summary, cwdBasename: cwdBasename, risk: risk
+            summary: summary, cwdBasename: cwdBasename, risk: risk,
+            eventName: eventName
         )
+    }
+
+    /// M1: a MANAGED session carries the helper-injected session env; a hand-
+    /// launched (external) terminal Claude has neither → it fails OPEN.
+    static func isManagedSession() -> Bool {
+        let env = ProcessInfo.processInfo.environment
+        if let s = env[localSessionEnv], !s.isEmpty { return true }
+        if let r = env["CLI_PULSE_REMOTE_SESSION_ID"], !r.isEmpty { return true }
+        return false
     }
 
     /// Subset of risk classification — matches the Python helper's

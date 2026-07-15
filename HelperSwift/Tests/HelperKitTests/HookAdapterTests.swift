@@ -175,23 +175,20 @@ final class HookAdapterTests: XCTestCase {
     }
 
     func testTryLocalUdsHookNoEnvReturnsNil() {
-        // P1③.A revert: missing CLI_PULSE_LOCAL_* env vars now
-        // means run() emits `behavior: deny` with a diagnostic
-        // message — NOT `behavior: allow`. The latter would
-        // auto-approve every Bash/Read/Write etc. on terminal-
-        // launched Claude. Phase 4D iter10 stops global hook
-        // install entirely; this branch is now reachable only
-        // on misconfiguration / leftover stale hook entries.
+        // Missing CLI_PULSE_LOCAL_* env → not a managed session → tryLocalUdsHook
+        // returns nil. M1: run() then fails OPEN (external — defers to Claude's
+        // own prompt via "ask"/abstain, never auto-approves), NOT a hard deny.
         let parsed = HookAdapter.ClaudeHookInput(
             toolName: "Bash",
             toolInput: [:],
             summary: "$ x",
             cwdBasename: "tmp",
-            risk: "medium"
+            risk: "medium",
+            eventName: "PermissionRequest"
         )
         let outcome = HookAdapter.tryLocalUdsHook(parsed: parsed)
         XCTAssertNil(outcome,
-                     "missing env vars must return nil so run() can fail-closed")
+                     "missing env vars must return nil so run() takes the external path")
     }
 
     // MARK: - Codex P1.B redaction
@@ -274,7 +271,8 @@ final class HookAdapterTests: XCTestCase {
             toolInput: [:],
             summary: "$ x",
             cwdBasename: "tmp",
-            risk: "medium"
+            risk: "medium",
+            eventName: "PermissionRequest"
         )
         let outcome = HookAdapter.tryLocalUdsHook(parsed: parsed)
         guard let decision = outcome else {
@@ -286,5 +284,95 @@ final class HookAdapterTests: XCTestCase {
         XCTAssertNotNil(decision.message)
         XCTAssertTrue((decision.message ?? "").contains("CLI Pulse helper"),
                       "deny message must explain the helper is unreachable")
+    }
+
+    // MARK: - M1: event detection + PreToolUse shape + external fail-open
+
+    func testParsesPreToolUseEventName() {
+        let parsed = HookAdapter.parseClaudeHookInput(Data(
+            #"{"tool_name":"Bash","tool_input":{},"hook_event_name":"PreToolUse"}"#.utf8))
+        XCTAssertEqual(parsed.eventName, "PreToolUse")
+    }
+
+    func testDefaultsToPermissionRequestWithoutEventName() {
+        let parsed = HookAdapter.parseClaudeHookInput(Data(
+            #"{"tool_name":"Bash","tool_input":{}}"#.utf8))
+        XCTAssertEqual(parsed.eventName, "PermissionRequest")
+    }
+
+    private func decision(_ b: HookAdapter.Behavior, _ msg: String? = nil) -> HookAdapter.Decision {
+        HookAdapter.Decision(behavior: b, message: msg)
+    }
+
+    func testPermissionRequestAllowOmitsMessage() {
+        let out = HookAdapter.permissionRequestOutput(decision(.allow), failOpen: false)!
+        let d = (out["hookSpecificOutput"] as! [String: Any])["decision"] as! [String: Any]
+        XCTAssertEqual(d["behavior"] as? String, "allow")
+        XCTAssertNil(d["message"], "allow must NOT include a message (docs: for deny only)")
+    }
+
+    func testPermissionRequestExternalFallbackAbstains() {
+        // External fail-open PermissionRequest → nil (empty stdout → local prompt).
+        XCTAssertNil(HookAdapter.permissionRequestOutput(decision(.fallback), failOpen: true))
+    }
+
+    func testPermissionRequestManagedFallbackDenies() {
+        let out = HookAdapter.permissionRequestOutput(decision(.fallback), failOpen: false)!
+        let d = (out["hookSpecificOutput"] as! [String: Any])["decision"] as! [String: Any]
+        XCTAssertEqual(d["behavior"] as? String, "deny")
+    }
+
+    func testPreToolUseAllowShape() {
+        let out = HookAdapter.preToolUseOutput(decision(.allow), failOpen: false)!
+        let hso = out["hookSpecificOutput"] as! [String: Any]
+        XCTAssertEqual(hso["hookEventName"] as? String, "PreToolUse")
+        XCTAssertEqual(hso["permissionDecision"] as? String, "allow")
+        XCTAssertNil(hso["permissionDecisionReason"])
+    }
+
+    func testPreToolUseDenyShape() {
+        let out = HookAdapter.preToolUseOutput(decision(.deny, "nope"), failOpen: false)!
+        let hso = out["hookSpecificOutput"] as! [String: Any]
+        XCTAssertEqual(hso["permissionDecision"] as? String, "deny")
+        XCTAssertEqual(hso["permissionDecisionReason"] as? String, "nope")
+    }
+
+    func testPreToolUseExternalFallbackAsks() {
+        // External fail-open PreToolUse → "ask" (defer to prompt), NEVER "allow".
+        let out = HookAdapter.preToolUseOutput(decision(.fallback), failOpen: true)!
+        let hso = out["hookSpecificOutput"] as! [String: Any]
+        XCTAssertEqual(hso["permissionDecision"] as? String, "ask")
+    }
+
+    func testPreToolUseManagedFallbackDenies() {
+        let out = HookAdapter.preToolUseOutput(decision(.fallback), failOpen: false)!
+        let hso = out["hookSpecificOutput"] as! [String: Any]
+        XCTAssertEqual(hso["permissionDecision"] as? String, "deny")
+    }
+
+    func testNoFallbackPathEverAutoApproves() {
+        // Safety invariant: a .fallback (channel unavailable) NEVER emits allow,
+        // for either event or fail-open state.
+        for failOpen in [true, false] {
+            if let pr = HookAdapter.permissionRequestOutput(decision(.fallback), failOpen: failOpen) {
+                let d = (pr["hookSpecificOutput"] as! [String: Any])["decision"] as! [String: Any]
+                XCTAssertNotEqual(d["behavior"] as? String, "allow")
+            }
+            let ptu = HookAdapter.preToolUseOutput(decision(.fallback), failOpen: failOpen)!
+            let hso = ptu["hookSpecificOutput"] as! [String: Any]
+            XCTAssertNotEqual(hso["permissionDecision"] as? String, "allow")
+        }
+    }
+
+    func testIsManagedSessionDetectsEnv() {
+        setenv("CLI_PULSE_LOCAL_SESSION_ID", "sess-1", 1)
+        defer { unsetenv("CLI_PULSE_LOCAL_SESSION_ID") }
+        XCTAssertTrue(HookAdapter.isManagedSession())
+    }
+
+    func testIsManagedSessionFalseWhenNoEnv() {
+        unsetenv("CLI_PULSE_LOCAL_SESSION_ID")
+        unsetenv("CLI_PULSE_REMOTE_SESSION_ID")
+        XCTAssertFalse(HookAdapter.isManagedSession())
     }
 }
