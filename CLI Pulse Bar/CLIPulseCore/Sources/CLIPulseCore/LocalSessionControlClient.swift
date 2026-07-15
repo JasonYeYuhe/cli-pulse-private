@@ -213,6 +213,29 @@ public struct InstallCodexHookResult: Sendable, Equatable {
     }
 }
 
+/// M4.4c: shell-integration status returned by shell_integration_{status,
+/// install,uninstall}. Mirrors the helper `ShellIntegration.Status`.
+public struct ShellIntegrationStatus: Sendable, Equatable {
+    /// True when the marked block is present in at least one rc AND the init
+    /// file exists.
+    public let installed: Bool
+    public let initPresent: Bool
+    /// A tmux that actually exists (bundled/PATH), or nil if none found.
+    public let tmuxBin: String?
+    public let rcFilesWithBlock: [String]
+    /// Path of the CLI-Pulse tmux control socket wrapped sessions run on.
+    public let sock: String
+
+    public init(installed: Bool, initPresent: Bool, tmuxBin: String?,
+                rcFilesWithBlock: [String], sock: String) {
+        self.installed = installed
+        self.initPresent = initPresent
+        self.tmuxBin = tmuxBin
+        self.rcFilesWithBlock = rcFilesWithBlock
+        self.sock = sock
+    }
+}
+
 /// M2p2: result of removing the CLI Pulse hooks from `~/.codex/hooks.json`.
 public struct UninstallCodexHookResult: Sendable, Equatable {
     /// `"removed"` when hooks were stripped, `"noop"` when none were installed.
@@ -1044,6 +1067,66 @@ public final class LocalSessionControlClient: SessionControlClient, MachineContr
         }
         return UninstallCodexHookResult(
             action: action, removed: removed, settingsPath: settingsPath
+        )
+    }
+
+    // MARK: - M4.4c: shell integration + wrapped-session attach
+
+    /// Enumerate CLI-Pulse-wrapped tmux sessions the shell integration created
+    /// (their names start with `clipulse-`). Best-effort — [] if the socket/
+    /// server isn't up.
+    public func listWrappedSessions() async throws -> [String] {
+        let result = try await send(method: "list_wrapped_sessions", params: [:])
+        return (result["sessions"] as? [String]) ?? []
+    }
+
+    /// Attach an externally-launched wrapped tmux session so the app's terminal
+    /// surface can drive it. `attach_failed` (→ `.attachFailed`) means the tmux
+    /// session was gone / wrong name.
+    @discardableResult
+    public func attachWrappedSession(
+        sessionId: String, tmuxSessionName: String,
+        provider: String = "claude", clientLabel: String? = nil
+    ) async throws -> Bool {
+        var params: [String: Any] = [
+            "session_id": sessionId,
+            "tmux_session_name": tmuxSessionName,
+            "provider": provider,
+        ]
+        if let clientLabel { params["client_label"] = clientLabel }
+        let result = try await send(method: "attach_wrapped_session", params: params)
+        return (result["attached"] as? Bool) ?? false
+    }
+
+    /// Read-only shell-integration status (installed? which rc files? tmux path).
+    public func shellIntegrationStatus() async throws -> ShellIntegrationStatus {
+        try Self.decodeShellStatus(await send(method: "shell_integration_status", params: [:]))
+    }
+
+    /// Install the opt-in shell shim (writes the user's shell rc — a STANDING
+    /// change; only ever from an explicit user toggle).
+    @discardableResult
+    public func installShellIntegration() async throws -> ShellIntegrationStatus {
+        try Self.decodeShellStatus(await send(method: "shell_integration_install", params: [:]))
+    }
+
+    /// Remove the opt-in shell shim.
+    @discardableResult
+    public func uninstallShellIntegration() async throws -> ShellIntegrationStatus {
+        try Self.decodeShellStatus(await send(method: "shell_integration_uninstall", params: [:]))
+    }
+
+    private static func decodeShellStatus(_ result: [String: Any]) throws -> ShellIntegrationStatus {
+        guard let installed = result["installed"] as? Bool,
+              let sock = result["sock"] as? String else {
+            throw SessionControlError.invalidResponse("shell_integration: missing installed / sock")
+        }
+        return ShellIntegrationStatus(
+            installed: installed,
+            initPresent: (result["init_present"] as? Bool) ?? false,
+            tmuxBin: result["tmux_bin"] as? String,
+            rcFilesWithBlock: (result["rc_files_with_block"] as? [String]) ?? [],
+            sock: sock
         )
     }
 

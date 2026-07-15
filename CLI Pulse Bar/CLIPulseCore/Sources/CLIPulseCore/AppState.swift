@@ -410,6 +410,11 @@ public final class AppState: ObservableObject {
     /// macOS UI to decide which controls to enable when local routing
     /// is in effect (iter 1: start / list / stop only).
     @Published public var localCapabilities: SessionControlCapabilities?
+    /// M4.4c: the method names the socket-owner helper advertised in `hello`.
+    /// Empty until the first successful hello. The tmux-wrap UI gates on these
+    /// so an older helper (without the verbs) shows an update-required state
+    /// instead of erroring on click.
+    @Published public var localSupportedMethods: Set<String> = []
 
     /// Phase 4 helper-bundling: status of the embedded LaunchAgent.
     #if os(macOS)
@@ -507,6 +512,13 @@ public final class AppState: ObservableObject {
     /// `refreshLocalSessionControlState`. `nil` while we haven't
     /// checked yet (suppresses banner during cold launch).
     @Published public var claudeApprovalHookStatus: ClaudeHookDetector.Status?
+
+    /// M4.4c: opt-in shell-integration status (wraps future claude/codex into a
+    /// CLI-Pulse tmux for full remote I/O). `nil` until first fetched.
+    @Published public var shellIntegrationStatus: ShellIntegrationStatus?
+    /// M4.4c: CLI-Pulse-wrapped tmux sessions discovered on this Mac (names the
+    /// helper's `list_wrapped_sessions` returned) — the app offers to attach each.
+    @Published public var wrappedSessions: [String] = []
 
     // MARK: - Local Session Control (Phase 3 Iter 2B, macOS-only)
 

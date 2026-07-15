@@ -1824,6 +1824,60 @@ def test_wrapped_session_verbs_gated_by_local_control(short_sock_dir):
         server.stop()
 
 
+def test_shell_integration_status_verb_shape(short_sock_dir, tmp_path, monkeypatch):
+    # M4.4c: the read-only status verb returns the exact shape the app decodes
+    # (installed/init_present/tmux_bin/rc_files_with_block/sock), identical to
+    # the Swift helper. Redirect the module to a tmp HOME so we don't read the
+    # dev machine's real rc.
+    import shell_integration as si
+
+    fake = si.IntegrationStatus(
+        installed=True, init_present=True, tmux_bin="/opt/homebrew/bin/tmux",
+        rc_files_with_block=[str(tmp_path / ".zshrc")], sock=str(tmp_path / "tmux.sock"))
+    monkeypatch.setattr(si, "status", lambda *a, **k: fake)
+    server, _mgr, _state = _make_server(short_sock_dir, enabled=True)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "shell_integration_status", "auth_token": "T", "params": {}})
+        assert reply["ok"] is True, reply
+        r = reply["result"]
+        assert r["installed"] is True
+        assert r["init_present"] is True
+        assert r["tmux_bin"] == "/opt/homebrew/bin/tmux"
+        assert r["rc_files_with_block"] == [str(tmp_path / ".zshrc")]
+        assert r["sock"] == str(tmp_path / "tmux.sock")
+    finally:
+        server.stop()
+
+
+def test_shell_integration_verbs_gated_by_local_control(short_sock_dir):
+    # install/uninstall write the user's rc → session-control surface, blocked
+    # when local_control is OFF (never auto-run).
+    server, _mgr, _state = _make_server(short_sock_dir, enabled=False)
+    try:
+        for method in ("shell_integration_install", "shell_integration_uninstall",
+                       "shell_integration_status"):
+            reply = _client_call(server._socket_path, {
+                "id": "1", "method": method, "auth_token": "T", "params": {}})
+            assert reply["ok"] is False, method
+            assert reply["error"]["code"] == "local_control_off", reply
+    finally:
+        server.stop()
+
+
+def test_shell_integration_verbs_advertised_in_hello(short_sock_dir):
+    server, _mgr, _state = _make_server(short_sock_dir)
+    try:
+        reply = _client_call(server._socket_path, {
+            "id": "1", "method": "hello",
+            "params": {"client_protocol_version": PROTOCOL_VERSION}})
+        methods = set(reply["result"]["supported_methods"])
+        assert {"shell_integration_status", "shell_integration_install",
+                "shell_integration_uninstall"} <= methods
+    finally:
+        server.stop()
+
+
 def test_send_input_raw_and_resize_advertised_in_hello(short_sock_dir):
     server, _mgr, _state = _make_server(short_sock_dir)
     try:
@@ -1949,6 +2003,13 @@ _SWIFT_CLIENT_METHODS = frozenset({
     # external-Codex approve/deny opt-in (→ ~/.codex/hooks.json).
     "install_codex_hook",
     "uninstall_codex_hook",
+    # M4.4c tmux-wrap app UI: the wrapped-session list/attach + shell-integration
+    # toggle client methods (LocalSessionControlClient).
+    "list_wrapped_sessions",
+    "attach_wrapped_session",
+    "shell_integration_status",
+    "shell_integration_install",
+    "shell_integration_uninstall",
     "get_pending_approvals", "get_local_control_status",
     "set_local_control_enabled",
     # System Monitor S4: the macOS Machine tab's LocalSessionControlClient.
@@ -2152,6 +2213,9 @@ def test_every_swift_client_method_has_a_live_handler(short_sock_dir):
         _WRITES_REAL_USER_CONFIG = {
             "install_claude_hook", "uninstall_claude_hook",
             "install_codex_hook", "uninstall_codex_hook",
+            # M4.4c: these write the user's REAL shell rc (~/.zshrc etc.) — a
+            # live call during pytest would mutate the dev machine's dotfiles.
+            "shell_integration_install", "shell_integration_uninstall",
         }
         for method in _SWIFT_CLIENT_METHODS - _WRITES_REAL_USER_CONFIG:
             body = {"id": method, "method": method, "params": {}}

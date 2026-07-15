@@ -149,6 +149,12 @@ SUPPORTED_METHODS = (
     # never kills the user's real session).
     "list_wrapped_sessions",
     "attach_wrapped_session",
+    # M4.4c: the app's opt-in shell-integration toggle (status read-only;
+    # install/uninstall write the user's shell rc — app-auth + local-control
+    # gated, never automatic). Same status shape the Swift helper returns.
+    "shell_integration_status",
+    "shell_integration_install",
+    "shell_integration_uninstall",
     # System Monitor S2: read-only machine-health snapshot (per-process CPU/mem,
     # battery health, thermal state; S3 adds native temps/fans/power).
     "get_machine_snapshot",
@@ -1417,6 +1423,35 @@ class LocalSessionServer:
                 raise _RequestError("attach_failed",
                                     f"could not attach wrapped session {tmux_name!r}")
             return {"attached": True, "session_id": session_id}
+
+        if method in ("shell_integration_status", "shell_integration_install",
+                      "shell_integration_uninstall"):
+            # M4.4c: the app's opt-in shell-integration toggle. install/uninstall
+            # write the user's shell rc (a STANDING change) — app-auth +
+            # local-control gated (NOT in GATE_BYPASSED_METHODS), never automatic;
+            # status is read-only. Returns the same status shape the Swift helper
+            # does so the app treats both identically.
+            try:
+                import shell_integration as si  # type: ignore
+            except ImportError as exc:  # pragma: no cover — module always present
+                raise _RequestError("internal_error",
+                                    f"shell_integration import failed: {exc}") from exc
+            try:
+                if method == "shell_integration_status":
+                    st = si.status()
+                elif method == "shell_integration_install":
+                    st = si.install()
+                else:
+                    st = si.uninstall()
+            except Exception as exc:  # noqa: BLE001 — surface as a typed error
+                raise _RequestError("internal_error", f"{method}: {exc}") from exc
+            return {
+                "installed": st.installed,
+                "init_present": st.init_present,
+                "tmux_bin": st.tmux_bin,
+                "rc_files_with_block": st.rc_files_with_block,
+                "sock": st.sock,
+            }
 
         if method == "get_machine_snapshot":
             # System Monitor S2: read-only machine-health snapshot. Rich, LOCAL

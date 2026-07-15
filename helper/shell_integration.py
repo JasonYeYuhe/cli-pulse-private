@@ -142,8 +142,12 @@ _clipulse_wrap() {{
   # stdin/stdout is NOT a terminal. The last is CRITICAL: `tmux new-session -A`
   # ATTACHES and needs a controlling tty, so a non-interactive launch (headless
   # `claude -p …`, a pipe, a script, an IDE task) MUST run unwrapped or it breaks.
+  # ALSO fail open when the managed tmux CONF was removed (integration turned
+  # OFF) — an already-running shell keeps this function; without this guard it
+  # would wrap against a deleted -f config and break `claude` (review: codex).
   if [ -n "$CLIPULSE_WRAP_ACTIVE" ] || [ "$CLIPULSE_WRAP_DISABLE" = "1" ] \\
-     || [ ! -t 0 ] || [ ! -t 1 ] || [ ! -x "$CLIPULSE_TMUX_BIN" ]; then
+     || [ ! -t 0 ] || [ ! -t 1 ] || [ ! -x "$CLIPULSE_TMUX_BIN" ] \\
+     || [ ! -f "$CLIPULSE_TMUX_CONF" ]; then
     command "$@"; return $?
   fi
   _clip_sess="{SESSION_PREFIX}${{_clip_label}}-$$"
