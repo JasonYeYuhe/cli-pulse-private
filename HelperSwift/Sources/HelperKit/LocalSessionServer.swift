@@ -547,6 +547,16 @@ public final class LocalSessionServer: @unchecked Sendable {
             return handleInstallCodexHook(request: request)
         case .uninstallCodexHook:
             return handleUninstallCodexHook(request: request)
+        case .listWrappedSessions:
+            return handleListWrappedSessions(request: request)
+        case .attachWrappedSession:
+            return handleAttachWrappedSession(request: request)
+        case .shellIntegrationStatus:
+            return handleShellIntegration(request: request, action: .status)
+        case .shellIntegrationInstall:
+            return handleShellIntegration(request: request, action: .install)
+        case .shellIntegrationUninstall:
+            return handleShellIntegration(request: request, action: .uninstall)
         default:
             return .err(id: request.id, code: .notImplemented, message: "method \(request.method) lands in a later iter of the Swift port")
         }
@@ -874,6 +884,80 @@ public final class LocalSessionServer: @unchecked Sendable {
                 return .err(id: request.id, code: .settingsMalformed, message: msg)
             }
             return .err(id: request.id, code: .internalError, message: "\(err)")
+        } catch {
+            return .err(id: request.id, code: .internalError, message: "\(error)")
+        }
+    }
+
+    // MARK: - M4.4a: wrapped-session attach + shell integration
+
+    private func handleListWrappedSessions(request: WireRequest) -> WireResponse {
+        guard let mgr = hooks.sessionManager else {
+            return .err(id: request.id, code: .notImplemented, message: "session manager not configured")
+        }
+        return .ok(id: request.id, result: ["sessions": mgr.listWrappedSessions()])
+    }
+
+    private func handleAttachWrappedSession(request: WireRequest) -> WireResponse {
+        guard let mgr = hooks.sessionManager else {
+            return .err(id: request.id, code: .notImplemented, message: "session manager not configured")
+        }
+        guard let sessionId = request.params["session_id"] as? String, !sessionId.isEmpty else {
+            return .err(id: request.id, code: .badRequest, message: "'session_id' must be a non-empty string")
+        }
+        guard let tmuxName = request.params["tmux_session_name"] as? String, !tmuxName.isEmpty else {
+            return .err(id: request.id, code: .badRequest, message: "'tmux_session_name' must be a non-empty string")
+        }
+        // Strict validation matching Python (review: codex): a SUPPLIED provider
+        // must be a non-empty string (not silently coerced to "claude"); a
+        // SUPPLIED client_label must be a string or null (not silently dropped).
+        var provider = "claude"
+        if let raw = request.params["provider"] {
+            guard let p = raw as? String, !p.isEmpty else {
+                return .err(id: request.id, code: .badRequest, message: "'provider' must be a non-empty string")
+            }
+            provider = p
+        }
+        var clientLabel: String? = nil
+        if let raw = request.params["client_label"], !(raw is NSNull) {
+            guard let label = raw as? String else {
+                return .err(id: request.id, code: .badRequest, message: "'client_label' must be a string or null")
+            }
+            clientLabel = label
+        }
+        let attached = mgr.attachWrappedSession(
+            sessionId: sessionId, tmuxSessionName: tmuxName,
+            provider: provider, clientLabel: clientLabel)
+        if !attached {
+            return .err(id: request.id, code: .attachFailed,
+                        message: "could not attach wrapped session \(tmuxName)")
+        }
+        return .ok(id: request.id, result: ["attached": true, "session_id": sessionId])
+    }
+
+    private enum ShellIntegrationAction { case status, install, uninstall }
+
+    private func handleShellIntegration(request: WireRequest, action: ShellIntegrationAction) -> WireResponse {
+        // The install/uninstall paths write to the user's shell rc — a STANDING
+        // change — so they're app-auth + local-control gated (dispatch gate),
+        // never automatic. status is read-only.
+        func statusDict(_ st: ShellIntegration.Status) -> [String: Any] {
+            [
+                "installed": st.installed,
+                "init_present": st.initPresent,
+                "tmux_bin": st.tmuxBin ?? NSNull(),
+                "rc_files_with_block": st.rcFilesWithBlock,
+                "sock": st.sock,
+            ]
+        }
+        do {
+            let st: ShellIntegration.Status
+            switch action {
+            case .status: st = ShellIntegration.status()
+            case .install: st = try ShellIntegration.install()
+            case .uninstall: st = try ShellIntegration.uninstall()
+            }
+            return .ok(id: request.id, result: statusDict(st))
         } catch {
             return .err(id: request.id, code: .internalError, message: "\(error)")
         }

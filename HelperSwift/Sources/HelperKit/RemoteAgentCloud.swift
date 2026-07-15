@@ -183,6 +183,19 @@ public actor RemoteAgentCloud {
 
         log("dispatch kind=\(kind) session=\(sessionId) cmd=\(cmdId) payload_chars=\(payload.count)")
 
+        // M4.4a defense-in-depth (review: codex): an ATTACHED wrapped session is
+        // LOCAL-ONLY and was never uploaded, so the cloud has no legitimate way
+        // to command it — reject ANY inbound cloud command for it (a `stop`
+        // would otherwise drive the user's real external session + post a cloud
+        // status). isAttached is reliable here: a command targets a LIVE session,
+        // so the record is present. The phone plane wires attached sessions in
+        // deliberately (M4.4d), at which point this gate is revisited.
+        if !sessionId.isEmpty, sessionManager.isAttached(sessionId) {
+            log("dispatch rejected: \(sessionId) is a local-only attached session")
+            await completeCommand(cmdId: cmdId, ok: false, error: "attached session is local-only")
+            return
+        }
+
         let outcome: (Bool, String)
         switch kind {
         case "start":
@@ -194,10 +207,15 @@ public actor RemoteAgentCloud {
             // rather than silently `delivered`. The macOS app
             // distinguishes stale-row no-ops from real
             // successful stops via this status.
+            // refuseAttached:true closes the TOCTOU (review: codex) — even if a
+            // local attach registered this id after the top-of-dispatch check,
+            // stopSession refuses it ATOMICALLY, so a cloud stop can never tear
+            // down a local-only wrapped session.
             if !sessionManager.ownsSession(sessionId) {
                 outcome = (false, "session not running on this helper")
+            } else if !sessionManager.stopSession(sessionId, refuseAttached: true) {
+                outcome = (false, "session is local-only or already gone")
             } else {
-                _ = sessionManager.stopSession(sessionId)
                 await postStatus(sessionId: sessionId, status: "stopped")
                 sessions.removeValue(forKey: sessionId)
                 outcome = (true, "")
@@ -205,8 +223,9 @@ public actor RemoteAgentCloud {
         case "interrupt":
             if !sessionManager.ownsSession(sessionId) {
                 outcome = (false, "session not running on this helper")
+            } else if !sessionManager.interruptSession(sessionId, refuseAttached: true) {
+                outcome = (false, "session is local-only or already gone")
             } else {
-                _ = sessionManager.interruptSession(sessionId)
                 outcome = (true, "")
             }
         case "input_raw":
@@ -359,7 +378,7 @@ public actor RemoteAgentCloud {
         }
         let ok: Bool
         do {
-            ok = try sessionManager.sendInput(sessionId: sessionId, payload: payload)
+            ok = try sessionManager.sendInput(sessionId: sessionId, payload: payload, refuseAttached: true)
         } catch {
             return (false, "child exited")
         }
@@ -385,7 +404,7 @@ public actor RemoteAgentCloud {
         }
         let ok: Bool
         do {
-            ok = try sessionManager.sendInputRaw(sessionId: sessionId, bytes: bytes)
+            ok = try sessionManager.sendInputRaw(sessionId: sessionId, bytes: bytes, refuseAttached: true)
         } catch {
             return (false, "child exited")
         }
@@ -456,7 +475,7 @@ public actor RemoteAgentCloud {
         guard let (cols, rows) = Self.decodeResizePayload(payload) else {
             return (false, "resize payload must be '<cols>x<rows>' (1..32767 each)")
         }
-        let ok = sessionManager.resize(sessionId: sessionId, cols: cols, rows: rows)
+        let ok = sessionManager.resize(sessionId: sessionId, cols: cols, rows: rows, refuseAttached: true)
         return ok ? (true, "") : (false, "resize failed (ioctl)")
     }
 
@@ -539,6 +558,18 @@ public actor RemoteAgentCloud {
     private func handleBrokerEvent(_ event: [String: Any]) async {
         guard let kind = event["event"] as? String else { return }
         guard let sessionId = event["session_id"] as? String else { return }
+        // M4.4a: an ATTACHED wrapped (external) session is LOCAL-ONLY — never
+        // mint a cloud row nor upload its output/status (review: codex —
+        // `realtimePrivate=nil` only mutes the PUBLIC Realtime sink, NOT this
+        // cloud-upload path). The `attached` flag is LATCHED onto every frame by
+        // the manager, so we reject from the FRAME ITSELF — NOT from live manager
+        // state. This is ordering-independent: broker frames are handled on a
+        // DEFERRED per-event Task (see `installBrokerSubscription`), so by the
+        // time this runs the manager may already have removed the record; a
+        // state query would then return false and let a delayed output_delta slip
+        // a row in. The flag travels with the event and can't. The phone plane
+        // opts an external session in deliberately (M4.4d).
+        if (event["attached"] as? Bool) == true { return }
         switch kind {
         case "session_started":
             // We register state on `start` dispatch; this branch
@@ -691,6 +722,22 @@ public actor RemoteAgentCloud {
     public func flushBatchersForTesting() async {
         await flushIdleBatchers()
     }
+
+    /// Test-only: drive a single broker frame through the observer (so the
+    /// attached-session cloud-skip can be asserted end-to-end).
+    public func handleBrokerEventForTesting(_ event: [String: Any]) async {
+        await handleBrokerEvent(event)
+    }
+
+    /// Test-only: drive one inbound cloud command through the dispatcher (so the
+    /// attached-session command-reject can be asserted).
+    public func dispatchOneForTesting(_ cmd: [String: Any]) async {
+        await dispatchOne(cmd)
+    }
+
+    /// Test-only: number of cloud session states the observer is tracking (an
+    /// attached session must NEVER create one).
+    public var trackedSessionCountForTesting: Int { sessions.count }
 
     /// Test-only: simulate `session_stopped` broker frame so we
     /// can drive observeExits() without a real PtyTransport.

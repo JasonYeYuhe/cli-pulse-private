@@ -67,6 +67,18 @@ public enum SupportedMethod: String, CaseIterable, Sendable {
     // surfaces via requires_manual_trust/trust_command.
     case installCodexHook = "install_codex_hook"
     case uninstallCodexHook = "uninstall_codex_hook"
+    // M4.4a tmux-wrap: enumerate + attach an EXTERNALLY-launched claude/codex
+    // that the shell integration wrapped into a CLI-Pulse tmux, so the app's
+    // existing terminal surface can stream its I/O + inject input. App-auth +
+    // local-control gated like the other session-control verbs.
+    case listWrappedSessions = "list_wrapped_sessions"
+    case attachWrappedSession = "attach_wrapped_session"
+    // M4.3 shell integration: the opt-in toggle that writes/removes the shim in
+    // the user's shell rc (a STANDING change → app-auth + local-control gated,
+    // never automatic).
+    case shellIntegrationStatus = "shell_integration_status"
+    case shellIntegrationInstall = "shell_integration_install"
+    case shellIntegrationUninstall = "shell_integration_uninstall"
 
     /// Methods that use the per-session capability token (set by
     /// the managed-session env vars) instead of the global app
@@ -115,6 +127,8 @@ public enum WireErrorCode: String, Sendable {
     case notControllable = "not_controllable"
     case notImplemented = "not_implemented"
     case settingsMalformed = "settings_malformed"
+    // M4.4a: attach_wrapped_session couldn't attach (session gone/wrong name).
+    case attachFailed = "attach_failed"
     case internalError = "internal_error"
     // Iter 2B approval surface — match
     // `helper/local_approvals.py:ApprovalError`.
