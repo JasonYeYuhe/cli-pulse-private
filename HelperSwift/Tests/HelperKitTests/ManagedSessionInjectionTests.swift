@@ -32,6 +32,22 @@ final class ManagedSessionInjectionTests: XCTestCase {
         XCTAssertTrue(cmd.contains("--provider claude"))
     }
 
+    func testInlineSettingsRegistersBothEvents() throws {
+        // M1 (review: codex): managed inline settings must register BOTH
+        // PermissionRequest AND PreToolUse — else a broad allowlist suppresses
+        // PermissionRequest and the tool runs without CLI Pulse approval.
+        let helperPath = "/Applications/CLI Pulse Bar.app/Contents/Helpers/cli_pulse_helper"
+        let json = ManagedSessionManager.buildInlineSettingsForManagedSession(helperPath: helperPath)!
+        let hooks = (try JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: Any])["hooks"] as! [String: Any]
+        for event in ["PermissionRequest", "PreToolUse"] {
+            let entries = hooks[event] as? [[String: Any]]
+            XCTAssertEqual(entries?.count, 1, "\(event) missing")
+            XCTAssertEqual(entries?.first?["matcher"] as? String, "")
+            let cmd = (entries?.first?["hooks"] as? [[String: Any]])?.first?["command"] as? String ?? ""
+            XCTAssertTrue(cmd.contains("remote-approval-hook --provider claude"), event)
+        }
+    }
+
     func testInlineSettingsHandlesPathsWithSpaces() throws {
         let helperPath = "/Users/me/CLI Pulse Bar.app/Contents/Helpers/cli_pulse_helper"
         let json = ManagedSessionManager.buildInlineSettingsForManagedSession(

@@ -56,6 +56,9 @@ public enum SupportedMethod: String, CaseIterable, Sendable {
     case hookWaitDecision = "hook_wait_decision"
     // Phase 4 (one-click install)
     case installClaudeHook = "install_claude_hook"
+    // M1c/#18c: reversible other half of the opt-in — remove the CLI Pulse hooks
+    // (both events) from ~/.claude/settings.json, preserving the user's hooks.
+    case uninstallClaudeHook = "uninstall_claude_hook"
 
     /// Methods that use the per-session capability token (set by
     /// the managed-session env vars) instead of the global app
