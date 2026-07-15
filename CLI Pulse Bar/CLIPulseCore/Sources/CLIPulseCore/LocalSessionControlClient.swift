@@ -182,6 +182,51 @@ public struct UninstallClaudeHookResult: Sendable, Equatable {
     }
 }
 
+/// M2p2 codex-Swift: result of `installCodexHook()` — the Codex counterpart of
+/// `InstallClaudeHookResult` (helper writes `~/.codex/hooks.json`; Codex hooks
+/// are Claude-compatible). Two codex-only extras: Codex hash-pins command hooks
+/// and silently SKIPS an untrusted one, so the user must run `trustCommand`
+/// (`/hooks`) once in a Codex TUI — the UI MUST render that step; the write
+/// succeeding does not mean the hook is live yet.
+public struct InstallCodexHookResult: Sendable, Equatable {
+    /// One of `"created" | "added" | "noop" | "replaced"`.
+    public let action: String
+    public let previousCommand: String?
+    public let newCommand: String
+    /// Absolute path of `~/.codex/hooks.json`.
+    public let settingsPath: String
+    /// Always true for codex — self-describing so the UI never forgets the step.
+    public let requiresManualTrust: Bool
+    /// The command to run in a Codex TUI (`"/hooks"`).
+    public let trustCommand: String?
+
+    public init(
+        action: String, previousCommand: String?, newCommand: String,
+        settingsPath: String, requiresManualTrust: Bool, trustCommand: String?
+    ) {
+        self.action = action
+        self.previousCommand = previousCommand
+        self.newCommand = newCommand
+        self.settingsPath = settingsPath
+        self.requiresManualTrust = requiresManualTrust
+        self.trustCommand = trustCommand
+    }
+}
+
+/// M2p2: result of removing the CLI Pulse hooks from `~/.codex/hooks.json`.
+public struct UninstallCodexHookResult: Sendable, Equatable {
+    /// `"removed"` when hooks were stripped, `"noop"` when none were installed.
+    public let action: String
+    public let removed: Int
+    public let settingsPath: String
+
+    public init(action: String, removed: Int, settingsPath: String) {
+        self.action = action
+        self.removed = removed
+        self.settingsPath = settingsPath
+    }
+}
+
 /// Wire-level event coming off the helper's `subscribe_events` stream.
 /// Decoded by `LocalSessionControlClient.subscribeEvents`. The macOS
 /// app's per-row task drains the stream and updates AppState.
@@ -951,6 +996,53 @@ public final class LocalSessionControlClient: SessionControlClient, MachineContr
             )
         }
         return UninstallClaudeHookResult(
+            action: action, removed: removed, settingsPath: settingsPath
+        )
+    }
+
+    /// M2p2 codex-Swift: ask the helper to install the CLI Pulse hooks (both
+    /// events) into `~/.codex/hooks.json` — the external-Codex approve/deny
+    /// opt-in. Same anti-tamper contract as claude (helper supplies its own
+    /// argv[0]; the app passes no path). The result's `requiresManualTrust` /
+    /// `trustCommand` mark the one-time `/hooks` TUI trust Codex requires
+    /// before the hook RUNS — the caller must surface that step.
+    public func installCodexHook() async throws -> InstallCodexHookResult {
+        let result = try await send(method: "install_codex_hook", params: [:])
+        guard
+            let action = result["action"] as? String,
+            let newCommand = result["new_command"] as? String,
+            let settingsPath = result["settings_path"] as? String
+        else {
+            throw SessionControlError.invalidResponse(
+                "install_codex_hook: missing action / new_command / settings_path"
+            )
+        }
+        return InstallCodexHookResult(
+            action: action,
+            previousCommand: result["previous_command"] as? String,
+            newCommand: newCommand,
+            settingsPath: settingsPath,
+            // Tolerant decode: absent → assume true (codex always needs trust);
+            // never let a lean helper reply hide the manual step.
+            requiresManualTrust: (result["requires_manual_trust"] as? Bool) ?? true,
+            trustCommand: result["trust_command"] as? String
+        )
+    }
+
+    /// M2p2: remove the CLI Pulse hooks (both events) from `~/.codex/hooks.json`,
+    /// preserving the user's own hooks and any co-resident claude entries.
+    public func uninstallCodexHook() async throws -> UninstallCodexHookResult {
+        let result = try await send(method: "uninstall_codex_hook", params: [:])
+        guard
+            let action = result["action"] as? String,
+            let removed = result["removed"] as? Int,
+            let settingsPath = result["settings_path"] as? String
+        else {
+            throw SessionControlError.invalidResponse(
+                "uninstall_codex_hook: missing action / removed / settings_path"
+            )
+        }
+        return UninstallCodexHookResult(
             action: action, removed: removed, settingsPath: settingsPath
         )
     }

@@ -59,6 +59,14 @@ public enum SupportedMethod: String, CaseIterable, Sendable {
     // M1c/#18c: reversible other half of the opt-in — remove the CLI Pulse hooks
     // (both events) from ~/.claude/settings.json, preserving the user's hooks.
     case uninstallClaudeHook = "uninstall_claude_hook"
+    // M2p2 codex-Swift port: install/remove the SAME hook into ~/.codex/hooks.json
+    // (Claude-compatible format), scoped to the `--provider codex` marker so the
+    // two providers never touch each other. App-auth + local-control gated exactly
+    // like the claude verbs (the gate-var defaults below already do this). Codex
+    // additionally needs a one-time `/hooks` TUI trust the result payload
+    // surfaces via requires_manual_trust/trust_command.
+    case installCodexHook = "install_codex_hook"
+    case uninstallCodexHook = "uninstall_codex_hook"
 
     /// Methods that use the per-session capability token (set by
     /// the managed-session env vars) instead of the global app

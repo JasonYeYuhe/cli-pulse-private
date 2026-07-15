@@ -73,6 +73,9 @@ public final class LocalSessionServer: @unchecked Sendable {
         /// (tests + never the app) — the anti-tamper guarantee is unchanged: the
         /// socket peer still can't pass a path.
         public var claudeSettingsPathOverride: @Sendable () -> URL?
+        /// M2p2: same seam for the codex verbs' ~/.codex/hooks.json target.
+        /// Helper-side only; the socket peer can never pass a path.
+        public var codexSettingsPathOverride: @Sendable () -> URL?
 
         public init(
             getAuthToken: @escaping @Sendable () -> String,
@@ -83,7 +86,8 @@ public final class LocalSessionServer: @unchecked Sendable {
             listDetectedSessions: @escaping @Sendable () -> [[String: Any]] = { [] },
             approvalRegistry: ApprovalRegistry? = nil,
             eventBroker: EventBroker? = nil,
-            claudeSettingsPathOverride: @escaping @Sendable () -> URL? = { nil }
+            claudeSettingsPathOverride: @escaping @Sendable () -> URL? = { nil },
+            codexSettingsPathOverride: @escaping @Sendable () -> URL? = { nil }
         ) {
             self.getAuthToken = getAuthToken
             self.isLocalControlEnabled = isLocalControlEnabled
@@ -94,6 +98,7 @@ public final class LocalSessionServer: @unchecked Sendable {
             self.approvalRegistry = approvalRegistry
             self.eventBroker = eventBroker
             self.claudeSettingsPathOverride = claudeSettingsPathOverride
+            self.codexSettingsPathOverride = codexSettingsPathOverride
         }
     }
 
@@ -538,6 +543,10 @@ public final class LocalSessionServer: @unchecked Sendable {
             return handleInstallClaudeHook(request: request)
         case .uninstallClaudeHook:
             return handleUninstallClaudeHook(request: request)
+        case .installCodexHook:
+            return handleInstallCodexHook(request: request)
+        case .uninstallCodexHook:
+            return handleUninstallCodexHook(request: request)
         default:
             return .err(id: request.id, code: .notImplemented, message: "method \(request.method) lands in a later iter of the Swift port")
         }
@@ -790,6 +799,68 @@ public final class LocalSessionServer: @unchecked Sendable {
         do {
             let result = try ClaudeSettingsInstaller.uninstall(
                 settingsPath: hooks.claudeSettingsPathOverride())
+            var events: [String: Any] = [:]
+            for (event, removed) in result.events { events[event] = removed }
+            return .ok(id: request.id, result: [
+                "settings_path": result.settingsPath,
+                "action": result.action,
+                "removed": result.removed,
+                "events": events,
+            ])
+        } catch let err as ClaudeSettingsInstaller.InstallError {
+            if case .malformedSettings(let msg) = err {
+                return .err(id: request.id, code: .settingsMalformed, message: msg)
+            }
+            return .err(id: request.id, code: .internalError, message: "\(err)")
+        } catch {
+            return .err(id: request.id, code: .internalError, message: "\(error)")
+        }
+    }
+
+    private func handleInstallCodexHook(request: WireRequest) -> WireResponse {
+        // M2p2 codex-Swift port: the Codex counterpart of install_claude_hook.
+        // Same helper-owns-argv[0] anti-tamper, same idempotency/auto-heal, but
+        // targets ~/.codex/hooks.json with the `--provider codex` marker (fully
+        // independent of the claude install even co-resident in one file).
+        // Codex requires a one-time `/hooks` TUI trust that CANNOT be automated;
+        // the result carries requires_manual_trust/trust_command so the client
+        // renders that step — matching the Python #357 payload.
+        guard let helperPath = hooks.getHelperArgv0() else {
+            return .err(id: request.id, code: .notImplemented,
+                        message: "helper did not record its own argv[0] — install_codex_hook unavailable")
+        }
+        do {
+            let result = try ClaudeSettingsInstaller.install(
+                helperPath: helperPath, settingsPath: hooks.codexSettingsPathOverride(),
+                provider: "codex")
+            var events: [String: Any] = [:]
+            for (event, action) in result.events { events[event] = action.rawValue }
+            return .ok(id: request.id, result: [
+                "settings_path": result.settingsPath,
+                "action": result.action.rawValue,
+                "previous_command": result.previousCommand ?? NSNull(),
+                "new_command": result.newCommand,
+                "events": events,
+                "requires_manual_trust": result.requiresManualTrust,
+                "trust_command": result.trustCommand ?? NSNull(),
+            ])
+        } catch let err as ClaudeSettingsInstaller.InstallError {
+            if case .malformedSettings(let msg) = err {
+                return .err(id: request.id, code: .settingsMalformed, message: msg)
+            }
+            return .err(id: request.id, code: .internalError, message: "\(err)")
+        } catch {
+            return .err(id: request.id, code: .internalError, message: "\(error)")
+        }
+    }
+
+    private func handleUninstallCodexHook(request: WireRequest) -> WireResponse {
+        // M2p2: reversible other half — remove the CLI Pulse hooks from
+        // ~/.codex/hooks.json by the codex marker, preserving the user's own
+        // hooks AND any co-resident claude entries. Same gating as claude.
+        do {
+            let result = try ClaudeSettingsInstaller.uninstall(
+                settingsPath: hooks.codexSettingsPathOverride(), provider: "codex")
             var events: [String: Any] = [:]
             for (event, removed) in result.events { events[event] = removed }
             return .ok(id: request.id, result: [

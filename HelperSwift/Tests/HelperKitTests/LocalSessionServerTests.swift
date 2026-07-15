@@ -28,7 +28,8 @@ final class LocalSessionServerTests: XCTestCase {
 
     private func makeServer(token: String = "T", enabled: Bool = true,
                             helperArgv0: String? = nil,
-                            settingsPath: URL? = nil) throws -> LocalSessionServer {
+                            settingsPath: URL? = nil,
+                            codexSettingsPath: URL? = nil) throws -> LocalSessionServer {
         let sockPath = sockDir.appendingPathComponent("clipulse-helper.sock")
         let enabledBox = AtomicBool()
         enabledBox.set(enabled)
@@ -39,7 +40,8 @@ final class LocalSessionServerTests: XCTestCase {
                 isLocalControlEnabled: { enabledBox.get() },
                 setLocalControlEnabled: { enabledBox.set($0) },
                 getHelperArgv0: { helperArgv0 },
-                claudeSettingsPathOverride: { settingsPath }
+                claudeSettingsPathOverride: { settingsPath },
+                codexSettingsPathOverride: { codexSettingsPath }
             )
         )
         try s.start()
@@ -305,5 +307,77 @@ final class LocalSessionServerTests: XCTestCase {
         let reply = try clientCall(["id": "1", "method": "hello", "params": [:]])
         let supported = (reply["result"] as! [String: Any])["supported_methods"] as! [String]
         XCTAssertTrue(supported.contains("uninstall_claude_hook"))
+    }
+
+    // MARK: - M2p2: install / uninstall_codex_hook verbs
+
+    private func tmpCodexSettings() -> URL {
+        sockDir.appendingPathComponent("codex-\(UUID().uuidString)").appendingPathComponent("hooks.json")
+    }
+
+    func testInstallCodexHookWritesBothEventsAndTrustPayload() throws {
+        let codexSettings = tmpCodexSettings()
+        server = try makeServer(token: "T", helperArgv0: "/h/cli_pulse_helper",
+                                codexSettingsPath: codexSettings)
+        let reply = try clientCall(["id": "1", "method": "install_codex_hook",
+                                    "auth_token": "T", "params": [:]])
+        XCTAssertTrue(reply["ok"] as? Bool ?? false, "\(reply)")
+        let result = reply["result"] as! [String: Any]
+        XCTAssertEqual(result["action"] as? String, "created")
+        // The self-describing trust step (Python #357 payload parity): Codex
+        // hash-pins + silently skips an untrusted command hook — the client
+        // MUST render the one-time /hooks step.
+        XCTAssertEqual(result["requires_manual_trust"] as? Bool, true)
+        XCTAssertEqual(result["trust_command"] as? String, "/hooks")
+        // Both events written with the CODEX marker.
+        let data = try Data(contentsOf: codexSettings)
+        let hooks = (try JSONSerialization.jsonObject(with: data) as! [String: Any])["hooks"] as! [String: Any]
+        for event in ["PermissionRequest", "PreToolUse"] {
+            let entries = hooks[event] as! [[String: Any]]
+            XCTAssertEqual(entries.count, 1)
+            let cmd = ((entries[0]["hooks"] as! [[String: Any]])[0]["command"] as! String)
+            XCTAssertTrue(cmd.contains("remote-approval-hook --provider codex"), cmd)
+        }
+    }
+
+    func testInstallCodexHookNoArgv0ReturnsNotImplemented() throws {
+        server = try makeServer(token: "T")  // no helperArgv0
+        let reply = try clientCall(["id": "1", "method": "install_codex_hook",
+                                    "auth_token": "T", "params": [:]])
+        XCTAssertFalse(reply["ok"] as? Bool ?? true)
+        XCTAssertEqual((reply["error"] as? [String: Any])?["code"] as? String, "not_implemented")
+    }
+
+    func testUninstallCodexHookRoundTrip() throws {
+        let codexSettings = tmpCodexSettings()
+        server = try makeServer(token: "T", helperArgv0: "/h/cli_pulse_helper",
+                                codexSettingsPath: codexSettings)
+        _ = try clientCall(["id": "1", "method": "install_codex_hook", "auth_token": "T", "params": [:]])
+        let reply = try clientCall(["id": "2", "method": "uninstall_codex_hook",
+                                    "auth_token": "T", "params": [:]])
+        XCTAssertTrue(reply["ok"] as? Bool ?? false, "\(reply)")
+        let result = reply["result"] as! [String: Any]
+        XCTAssertEqual(result["action"] as? String, "removed")
+        XCTAssertEqual(result["removed"] as? Int, 2)
+    }
+
+    func testCodexVerbsGatedLikeClaude() throws {
+        // Same app-auth + local-control gating as the claude verbs.
+        server = try makeServer(token: "T", enabled: false)
+        let gateOff = try clientCall(["id": "1", "method": "install_codex_hook",
+                                      "auth_token": "T", "params": [:]])
+        XCTAssertEqual((gateOff["error"] as? [String: Any])?["code"] as? String, "local_control_off")
+        server?.stop()
+        server = try makeServer(token: "T")
+        let noAuth = try clientCall(["id": "2", "method": "uninstall_codex_hook", "params": [:]])
+        XCTAssertEqual((noAuth["error"] as? [String: Any])?["code"] as? String, "unauthenticated")
+    }
+
+    func testHelloAdvertisesCodexHookVerbs() throws {
+        server = try makeServer()
+        let reply = try clientCall(["id": "1", "method": "hello", "params": [:]])
+        let supported = (reply["result"] as! [String: Any])["supported_methods"] as! [String]
+        XCTAssertTrue(supported.contains("install_codex_hook"))
+        XCTAssertTrue(supported.contains("uninstall_codex_hook"))
     }
 }

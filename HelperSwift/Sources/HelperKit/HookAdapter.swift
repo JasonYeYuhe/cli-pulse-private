@@ -77,6 +77,19 @@ public enum HookAdapter {
         + "Settings → Privacy and turn off Remote Control; the local Claude "
         + "permission prompt will then run on your next attempt."
 
+    /// M2 codex-Swift port: provider-worded fallback. The claude constant names
+    /// "the local Claude permission prompt" — wrong provider for a Codex session
+    /// (mirrors the Python `CodexAdapter._UNAVAILABLE_MSG`, review: codex).
+    static func unavailableMessage(provider: String) -> String {
+        if provider == "codex" {
+            return "Remote approval unavailable. If this keeps happening, "
+                + "open CLI Pulse → Settings → Privacy and turn off "
+                + "Remote Control; Codex's local approval prompt will then "
+                + "run on your next attempt."
+        }
+        return unavailableMessage
+    }
+
     /// Run the hook. Reads stdin, writes the decision to stdout,
     /// and returns the exit code (always 0 — Claude needs the
     /// stdout JSON regardless of decision).
@@ -115,16 +128,19 @@ public enum HookAdapter {
     @discardableResult
     public static func run(provider: String) -> Int32 {
         let stdinData = readAllStdin()
+        // Codex hooks are Claude-compatible — same hook_event_name-tagged stdin,
+        // same events — so the claude parser serves both providers (mirrors the
+        // Python CodexAdapter subclassing ClaudeAdapter's parse verbatim).
         let parsed = parseClaudeHookInput(stdinData)
-        // M1: EXTERNAL (hand-launched) sessions fail OPEN — defer to Claude's
-        // own local prompt — so a remote outage never bricks a terminal Claude
-        // (and NEVER auto-approves: fail-open = "ask"/abstain, not allow).
-        // MANAGED sessions keep failing CLOSED.
+        // M1: EXTERNAL (hand-launched) sessions fail OPEN — defer to the
+        // provider's own local prompt — so a remote outage never bricks a
+        // terminal session (and NEVER auto-approves: fail-open = "ask"/abstain,
+        // not allow). MANAGED sessions keep failing CLOSED.
         let failOpen = !isManagedSession()
 
         // Managed local UDS path first (only engages when the session env is set).
-        if let decision = tryLocalUdsHook(parsed: parsed) {
-            emit(decision, eventName: parsed.eventName, failOpen: failOpen)
+        if let decision = tryLocalUdsHook(parsed: parsed, provider: provider) {
+            emit(decision, eventName: parsed.eventName, failOpen: failOpen, provider: provider)
             return 0
         }
 
@@ -133,7 +149,7 @@ public enum HookAdapter {
         // the local prompt. For a MANAGED session with incomplete env this
         // resolves to a fail-closed deny via the same fallback path.
         emit(Decision(behavior: .fallback, message: nil),
-             eventName: parsed.eventName, failOpen: failOpen)
+             eventName: parsed.eventName, failOpen: failOpen, provider: provider)
         return 0
     }
 
@@ -155,13 +171,14 @@ public enum HookAdapter {
 
     /// M1: emit the decision in the shape for THIS event (PreToolUse vs
     /// PermissionRequest), resolving a `.fallback` per `failOpen`. `nil` output
-    /// = ABSTAIN (write nothing → Claude's own local prompt runs).
-    static func emit(_ decision: Decision, eventName: String, failOpen: Bool) {
+    /// = ABSTAIN (write nothing → the provider's own local prompt runs).
+    static func emit(_ decision: Decision, eventName: String, failOpen: Bool,
+                     provider: String = "claude") {
         let output: [String: Any]?
         if eventName == "PreToolUse" {
-            output = preToolUseOutput(decision, failOpen: failOpen)
+            output = preToolUseOutput(decision, failOpen: failOpen, provider: provider)
         } else {
-            output = permissionRequestOutput(decision, failOpen: failOpen)
+            output = permissionRequestOutput(decision, failOpen: failOpen, provider: provider)
         }
         guard let out = output else { return }  // abstain
         if let data = try? JSONSerialization.data(withJSONObject: out, options: []) {
@@ -172,7 +189,10 @@ public enum HookAdapter {
 
     /// PermissionRequest output: allow (NO message — docs: "for deny only") /
     /// deny+message / external-fail-open ABSTAIN (nil) / managed-fallback deny.
-    static func permissionRequestOutput(_ decision: Decision, failOpen: Bool) -> [String: Any]? {
+    /// Byte-identical for claude and codex (Codex PermissionRequest is fully
+    /// Claude-compatible) — only the fallback deny wording is provider-aware.
+    static func permissionRequestOutput(_ decision: Decision, failOpen: Bool,
+                                        provider: String = "claude") -> [String: Any]? {
         let inner: [String: Any]
         switch decision.behavior {
         case .allow:
@@ -181,14 +201,22 @@ public enum HookAdapter {
             inner = ["behavior": "deny", "message": decision.message ?? "Denied remotely via CLI Pulse"]
         case .fallback:
             if failOpen { return nil }  // external → abstain → local prompt
-            inner = ["behavior": "deny", "message": decision.message ?? unavailableMessage]
+            inner = ["behavior": "deny", "message": decision.message ?? unavailableMessage(provider: provider)]
         }
         return ["hookSpecificOutput": ["hookEventName": "PermissionRequest", "decision": inner]]
     }
 
     /// PreToolUse output: permissionDecision allow / deny(+reason) / external-
     /// fail-open "ask"(+reason) / managed-fallback deny(+reason). No auto-approve.
-    static func preToolUseOutput(_ decision: Decision, failOpen: Bool) -> [String: Any]? {
+    ///
+    /// M2 codex-Swift port: Codex `PreToolUse.permissionDecision` is
+    /// **allow | deny ONLY** — there is no "ask" (Claude has allow|deny|ask|
+    /// defer). A Codex PreToolUse abstains by emitting NO output → "Codex uses
+    /// the normal approval flow." So an EXTERNAL (fail-open) codex fallback
+    /// ABSTAINS (nil) instead of Claude's "ask"; a MANAGED one still denies.
+    /// Mirrors the Python `CodexAdapter._emit_pre_tool_use`.
+    static func preToolUseOutput(_ decision: Decision, failOpen: Bool,
+                                 provider: String = "claude") -> [String: Any]? {
         var hso: [String: Any] = ["hookEventName": "PreToolUse"]
         switch decision.behavior {
         case .allow:
@@ -198,11 +226,14 @@ public enum HookAdapter {
             hso["permissionDecisionReason"] = decision.message ?? "Denied remotely via CLI Pulse"
         case .fallback:
             if failOpen {
+                if provider == "codex" {
+                    return nil  // codex has no "ask" → abstain → local approval flow
+                }
                 hso["permissionDecision"] = "ask"
                 hso["permissionDecisionReason"] = decision.message ?? "Remote approval unavailable — asking locally"
             } else {
                 hso["permissionDecision"] = "deny"
-                hso["permissionDecisionReason"] = decision.message ?? unavailableMessage
+                hso["permissionDecisionReason"] = decision.message ?? unavailableMessage(provider: provider)
             }
         }
         return ["hookSpecificOutput": hso]
@@ -367,7 +398,7 @@ public enum HookAdapter {
     ///     helper crash should fail CLOSED, not silently succeed.
     ///   - **Decision(allow|deny)** with concrete reason: definitive
     ///     resolution from the user via the macOS app.
-    static func tryLocalUdsHook(parsed: ClaudeHookInput) -> Decision? {
+    static func tryLocalUdsHook(parsed: ClaudeHookInput, provider: String = "claude") -> Decision? {
         let env = ProcessInfo.processInfo.environment
         let sockPath = env[localSockEnv] ?? ""
         let sessionId = env[localSessionEnv] ?? ""
@@ -433,7 +464,9 @@ public enum HookAdapter {
         let redactedToolInput = Self.redactedToolInput(parsed.toolInput)
         var meta: [String: Any] = [
             "tool_input": redactedToolInput,
-            "provider": "claude",
+            // M2 codex-Swift port: the REAL provider — was hardcoded "claude",
+            // which mislabeled a codex session's approval row in the app UI.
+            "provider": provider,
             "risk": parsed.risk,
             "tool_name": parsed.toolName,
             "permission_suggestions_count": 0,

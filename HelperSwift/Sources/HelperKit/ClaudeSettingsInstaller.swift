@@ -34,7 +34,17 @@ public enum ClaudeSettingsInstaller {
     /// enough that no other PermissionRequest hook would use both
     /// the subcommand AND the argument shape — matching on this
     /// string alone is specific without false positives.
-    public static let helperMarker = "remote-approval-hook --provider claude"
+    ///
+    /// M2p2 codex-Swift port: the provider suffix makes the marker
+    /// provider-SPECIFIC — a claude install must never detect, heal, or remove
+    /// a codex entry (and vice versa), even co-resident in one file. Mirrors
+    /// the Python `_marker_for(provider)`. `helperMarker` stays the claude
+    /// constant so every shipped claude caller is byte-for-byte unchanged.
+    public static func marker(for provider: String) -> String {
+        return "remote-approval-hook --provider \(provider)"
+    }
+
+    public static let helperMarker = marker(for: "claude")
 
     /// M1: the events CLI Pulse wires the hook into. PreToolUse fires for EVERY
     /// tool call (the always-present lever a broad allowlist would otherwise
@@ -60,6 +70,13 @@ public enum ClaudeSettingsInstaller {
         public let newCommand: String
         /// M1: per-event action detail (PermissionRequest / PreToolUse).
         public let events: [String: Action]
+        /// M2p2: codex-only — Codex requires a one-time `/hooks` TUI trust
+        /// (hash-pinned) before a non-managed command hook RUNS; it silently
+        /// skips an untrusted one. This CANNOT be automated, so the payload is
+        /// self-describing: every consumer must render the step. `false`/`nil`
+        /// for claude (no trust step) — mirrors the Python #357 contract.
+        public let requiresManualTrust: Bool
+        public let trustCommand: String?
     }
 
     /// M1: result of removing the CLI Pulse hooks from both events.
@@ -83,16 +100,29 @@ public enum ClaudeSettingsInstaller {
         return home.appendingPathComponent(".claude").appendingPathComponent("settings.json")
     }
 
+    /// M2p2: per-provider default hook file. Codex's standalone
+    /// `~/.codex/hooks.json` is Claude-compatible — byte-identical
+    /// `{"hooks": {<event>: [...]}}` structure — and additive to the user's
+    /// config.toml (Codex loads all matching hooks; higher-precedence layers
+    /// don't replace lower ones). Verified against learn.chatgpt.com/docs/hooks.
+    public static func defaultSettingsPath(provider: String) -> URL {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        if provider == "codex" {
+            return home.appendingPathComponent(".codex").appendingPathComponent("hooks.json")
+        }
+        return defaultSettingsPath()
+    }
+
     /// Build the hook command string. The Swift port doesn't need
     /// a python3 prefix — the binary IS the executable.
-    public static func recommendedHookCommand(helperPath: String) -> String {
+    public static func recommendedHookCommand(helperPath: String, provider: String = "claude") -> String {
         // Quote paths with spaces so Claude Code's shell-parser
         // sees a single argv. Same precaution as the Python
         // helper's `shlex.quote` after iter5 review.
         if helperPath.contains(" ") {
-            return "'\(helperPath)' \(helperMarker)"
+            return "'\(helperPath)' \(marker(for: provider))"
         }
-        return "\(helperPath) \(helperMarker)"
+        return "\(helperPath) \(marker(for: provider))"
     }
 
     /// Build a single canonical hook entry: matcher = "", hooks =
@@ -111,13 +141,22 @@ public enum ClaudeSettingsInstaller {
     /// Idempotent install. Throws `InstallError.malformedSettings`
     /// if the existing file is non-JSON or non-object — we refuse
     /// to clobber the user's data; operator must fix by hand.
+    ///
+    /// M2p2: `provider` selects the marker + default path — `"claude"` →
+    /// `~/.claude/settings.json` (default, byte-for-byte shipped behavior),
+    /// `"codex"` → `~/.codex/hooks.json` + `requiresManualTrust`/`trustCommand`
+    /// in the result (the one-time `/hooks` TUI trust cannot be automated).
+    /// Marker scoping keeps the two providers fully independent even
+    /// co-resident in one file.
     @discardableResult
     public static func install(
         helperPath: String,
-        settingsPath: URL? = nil
+        settingsPath: URL? = nil,
+        provider: String = "claude"
     ) throws -> InstallResult {
-        let target = settingsPath ?? defaultSettingsPath()
-        let targetCommand = recommendedHookCommand(helperPath: helperPath)
+        let target = settingsPath ?? defaultSettingsPath(provider: provider)
+        let providerMarker = marker(for: provider)
+        let targetCommand = recommendedHookCommand(helperPath: helperPath, provider: provider)
 
         var data: [String: Any] = [:]
         let fileExists = FileManager.default.fileExists(atPath: target.path)
@@ -146,9 +185,28 @@ public enum ClaudeSettingsInstaller {
             }
         }
 
+        // Anti-clobber (Python #357 parity, review: codex): a present-but-
+        // malformed `hooks` structure may carry REAL user hook data — e.g. an
+        // event array mis-nested directly at `hooks`. Silently coercing to
+        // `[:]` and writing would DISCARD it. Refuse instead, mirroring the
+        // never-overwrite contract for the root. A MISSING hooks key is NOT
+        // malformed — still creates fresh.
+        if let present = data["hooks"], !(present is [String: Any]) {
+            throw InstallError.malformedSettings(
+                "settings 'hooks' is present but is not a JSON object (got \(type(of: present))); refusing to overwrite — fix it by hand"
+            )
+        }
+        var hooks = (data["hooks"] as? [String: Any]) ?? [:]
+        for event in Self.hookEvents {
+            if let present = hooks[event], !(present is [Any]) {
+                throw InstallError.malformedSettings(
+                    "settings hooks['\(event)'] is present but is not a JSON array (got \(type(of: present))); refusing to overwrite — fix it by hand"
+                )
+            }
+        }
+
         // M1: merge our canonical entry into BOTH events (PermissionRequest +
         // PreToolUse) with the same auto-heal / mixed-entry-preservation.
-        var hooks = (data["hooks"] as? [String: Any]) ?? [:]
         var actions: [Action] = []
         var eventActions: [String: Action] = [:]
         var previousCommand: String? = nil
@@ -156,7 +214,8 @@ public enum ClaudeSettingsInstaller {
             let (newList, action, prev) = mergeCliPulseEvent(
                 existing: hooks[event] as? [Any],
                 targetCommand: targetCommand,
-                fileHadContent: fileHadContent
+                fileHadContent: fileHadContent,
+                marker: providerMarker
             )
             hooks[event] = newList
             actions.append(action)
@@ -181,7 +240,12 @@ public enum ClaudeSettingsInstaller {
             action: aggregate,
             previousCommand: previousCommand,
             newCommand: targetCommand,
-            events: eventActions
+            events: eventActions,
+            // Codex hash-pins + silently SKIPS an untrusted command hook — the
+            // user must trust it once via `/hooks` in the Codex TUI. Claude has
+            // no trust step. Self-describing so every consumer renders it.
+            requiresManualTrust: provider == "codex",
+            trustCommand: provider == "codex" ? "/hooks" : nil
         )
     }
 
@@ -191,7 +255,8 @@ public enum ClaudeSettingsInstaller {
     /// entries, surgically strip our nested hook from mixed matcher entries
     /// (preserving the user's co-resident hooks), append one canonical entry.
     static func mergeCliPulseEvent(
-        existing: [Any]?, targetCommand: String, fileHadContent: Bool
+        existing: [Any]?, targetCommand: String, fileHadContent: Bool,
+        marker: String = helperMarker
     ) -> (newList: [Any], action: Action, previousCommand: String?) {
         let pr = existing ?? []
         var previousCommand: String? = nil
@@ -199,13 +264,13 @@ public enum ClaudeSettingsInstaller {
         var canonicalPureMatchingIndices: [Int] = []
         for (idx, element) in pr.enumerated() {
             guard let entry = element as? [String: Any] else { continue }  // non-object → unrelated
-            if isCliPulseLegacyEntry(entry) || matcherEntryHasOurHook(entry) {
+            if isCliPulseLegacyEntry(entry, marker: marker) || matcherEntryHasOurHook(entry, marker: marker) {
                 cliPulseTouchedCount += 1
             }
-            if let cmd = entryCommand(entry), previousCommand == nil {
+            if let cmd = entryCommand(entry, marker: marker), previousCommand == nil {
                 previousCommand = cmd
             }
-            if isCanonicalPureCliPulseEntry(entry),
+            if isCanonicalPureCliPulseEntry(entry, marker: marker),
                let nested = entry["hooks"] as? [Any],
                nested.count == 1,
                let cmd = (nested[0] as? [String: Any])?["command"] as? String,
@@ -223,10 +288,10 @@ public enum ClaudeSettingsInstaller {
             guard let entry = element as? [String: Any] else {
                 newPr.append(element); hadUnrelated = true; continue  // preserve non-object verbatim
             }
-            if isCliPulseLegacyEntry(entry) { continue }
-            if matcherEntryHasOurHook(entry) {
+            if isCliPulseLegacyEntry(entry, marker: marker) { continue }
+            if matcherEntryHasOurHook(entry, marker: marker) {
                 let nested = entry["hooks"] as? [Any] ?? []
-                let cleanedNested = nested.filter { !hookHasMarker($0) }
+                let cleanedNested = nested.filter { !hookHasMarker($0, marker: marker) }
                 if cleanedNested.isEmpty { continue }
                 var preserved = entry
                 preserved["hooks"] = cleanedNested
@@ -263,7 +328,7 @@ public enum ClaudeSettingsInstaller {
     /// Preserves the user's co-resident hooks in mixed matcher entries. Mirrors
     /// the Python `_strip_cli_pulse_from_event`.
     static func stripCliPulseFromEvent(
-        _ existing: [Any]?
+        _ existing: [Any]?, marker: String = helperMarker
     ) -> (newList: [Any], removed: Int) {
         let pr = existing ?? []
         var newPr: [Any] = []
@@ -272,10 +337,10 @@ public enum ClaudeSettingsInstaller {
             guard let entry = element as? [String: Any] else {
                 newPr.append(element); continue  // preserve non-object verbatim
             }
-            if isCliPulseLegacyEntry(entry) { removed += 1; continue }
-            if matcherEntryHasOurHook(entry) {
+            if isCliPulseLegacyEntry(entry, marker: marker) { removed += 1; continue }
+            if matcherEntryHasOurHook(entry, marker: marker) {
                 let nested = entry["hooks"] as? [Any] ?? []
-                let cleaned = nested.filter { !hookHasMarker($0) }
+                let cleaned = nested.filter { !hookHasMarker($0, marker: marker) }
                 removed += nested.count - cleaned.count
                 if cleaned.isEmpty { continue }
                 var preserved = entry
@@ -293,9 +358,11 @@ public enum ClaudeSettingsInstaller {
     /// Mirrors the Python `uninstall_claude_hook`. Idempotent.
     @discardableResult
     public static func uninstall(
-        settingsPath: URL? = nil
+        settingsPath: URL? = nil,
+        provider: String = "claude"
     ) throws -> UninstallResult {
-        let target = settingsPath ?? defaultSettingsPath()
+        let target = settingsPath ?? defaultSettingsPath(provider: provider)
+        let providerMarker = marker(for: provider)
         let noop = UninstallResult(settingsPath: target.path, action: "noop",
                                    removed: 0, events: [:])
         guard FileManager.default.fileExists(atPath: target.path) else { return noop }
@@ -321,7 +388,7 @@ public enum ClaudeSettingsInstaller {
         var totalRemoved = 0
         for event in Self.hookEvents {
             guard hooks[event] != nil else { continue }
-            let (newList, removed) = stripCliPulseFromEvent(hooks[event] as? [Any])
+            let (newList, removed) = stripCliPulseFromEvent(hooks[event] as? [Any], marker: providerMarker)
             if removed == 0 { continue }
             perEvent[event] = removed
             totalRemoved += removed
@@ -346,27 +413,27 @@ public enum ClaudeSettingsInstaller {
 
     // MARK: - shape predicates
 
-    static func hookHasMarker(_ h: Any) -> Bool {
+    static func hookHasMarker(_ h: Any, marker: String = helperMarker) -> Bool {
         // Accepts Any so a nested `hooks` array containing a non-object element
         // (Python treats these arrays as list[Any]) doesn't fail a whole-array
         // cast and silently drop the user's data (review: codex).
         guard let d = h as? [String: Any], let cmd = d["command"] as? String else { return false }
-        return cmd.contains(helperMarker)
+        return cmd.contains(marker)
     }
 
-    static func isCliPulseLegacyEntry(_ entry: [String: Any]) -> Bool {
+    static func isCliPulseLegacyEntry(_ entry: [String: Any], marker: String = helperMarker) -> Bool {
         // Legacy flat shape: top-level command, no nested hooks.
         if entry["hooks"] is [Any] { return false }
         guard let cmd = entry["command"] as? String else { return false }
-        return cmd.contains(helperMarker)
+        return cmd.contains(marker)
     }
 
-    static func matcherEntryHasOurHook(_ entry: [String: Any]) -> Bool {
+    static func matcherEntryHasOurHook(_ entry: [String: Any], marker: String = helperMarker) -> Bool {
         // `hooks` is treated as [Any] so a non-object element can't fail the cast
         // and hide our marker (which would duplicate on install + leak on
         // uninstall) (review: codex).
         guard let nested = entry["hooks"] as? [Any] else { return false }
-        return nested.contains { hookHasMarker($0) }
+        return nested.contains { hookHasMarker($0, marker: marker) }
     }
 
     static func isCanonicalMatcher(_ entry: [String: Any]) -> Bool {
@@ -376,21 +443,41 @@ public enum ClaudeSettingsInstaller {
         return matcher.isEmpty
     }
 
-    static func isCanonicalPureCliPulseEntry(_ entry: [String: Any]) -> Bool {
+    static func isCanonicalPureCliPulseEntry(_ entry: [String: Any], marker: String = helperMarker) -> Bool {
         guard isCanonicalMatcher(entry) else { return false }
-        guard let nested = entry["hooks"] as? [[String: Any]],
-              nested.count == 1 else { return false }
-        return hookHasMarker(nested[0])
+        // [Any] cast (review: codex P2 — heterogeneity): a homogeneous
+        // [[String: Any]] cast fails on a nested array holding a non-object
+        // element. A single-element array can't be canonical-pure unless that
+        // element is our command hook, so inspect the one element individually.
+        guard let nested = entry["hooks"] as? [Any],
+              nested.count == 1,
+              let hook = nested[0] as? [String: Any] else { return false }
+        // `type == "command"` required (Python #357 parity): Claude AND Codex
+        // only EXECUTE command hooks, so a marker-bearing entry with any other
+        // type (hand-edited `"type": "prompt"`, missing type) is INERT. It must
+        // not count as already-correct — otherwise reinstall reports noop and
+        // never heals it. `matcherEntryHasOurHook` still matches it on the
+        // marker alone, so the merge path strips + rewrites the command entry.
+        return hookHasMarker(hook, marker: marker)
+            && (hook["type"] as? String) == "command"
     }
 
-    static func entryCommand(_ entry: [String: Any]) -> String? {
-        if isCliPulseLegacyEntry(entry) {
+    static func entryCommand(_ entry: [String: Any], marker: String = helperMarker) -> String? {
+        if isCliPulseLegacyEntry(entry, marker: marker) {
             return entry["command"] as? String
         }
-        if matcherEntryHasOurHook(entry),
-           let nested = entry["hooks"] as? [[String: Any]] {
-            for h in nested where hookHasMarker(h) {
-                return h["command"] as? String
+        // Iterate [Any] and inspect dict elements individually (review: codex
+        // P2): the previous [[String: Any]] whole-array cast failed on a
+        // heterogeneous nested array like [ourHook, "user note"], so a healed
+        // entry reported `added` with no previous_command where the Python
+        // reports `replaced` + the old command — result-shape drift the app
+        // would see between the two helpers.
+        if matcherEntryHasOurHook(entry, marker: marker),
+           let nested = entry["hooks"] as? [Any] {
+            for element in nested {
+                if let h = element as? [String: Any], hookHasMarker(h, marker: marker) {
+                    return h["command"] as? String
+                }
             }
         }
         return nil
