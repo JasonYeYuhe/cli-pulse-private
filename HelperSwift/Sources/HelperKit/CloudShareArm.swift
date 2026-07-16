@@ -36,6 +36,24 @@ public final class CloudShareArm: @unchecked Sendable {
         return cloud
     }
 
+    /// Revoke every attached session's cloud opt-in, synchronously. Wired to the
+    /// Local-Session-Control OFF switch: that gate hides the toggle, so anything
+    /// still shared would keep uploading with no way for the user to stop it.
+    /// Bounded, and safe to time out: `unshareAllAttachedSessions` drops every
+    /// in-memory opt-in flag FIRST and synchronously, so by the time this can
+    /// time out the uploads have already stopped — only the best-effort cloud
+    /// row cleanup would still be outstanding. A wedged network must never block
+    /// the user from turning the feature off.
+    public func unshareAllBlocking(timeout: TimeInterval = 10) {
+        guard let cloud = current() else { return }
+        let sem = DispatchSemaphore(value: 0)
+        Task.detached {
+            _ = await cloud.unshareAllAttachedSessions()
+            sem.signal()
+        }
+        _ = sem.wait(timeout: .now() + timeout)
+    }
+
     /// Synchronous bridge for `LocalSessionServer.Hooks.setWrappedSessionCloudShared`.
     /// Returns (ok, error). Blocks the calling thread until the actor call
     /// completes — see the type doc for why that's the right trade here.

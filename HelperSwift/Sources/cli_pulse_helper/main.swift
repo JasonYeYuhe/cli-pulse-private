@@ -302,7 +302,16 @@ case "daemon":
         hooks: LocalSessionServer.Hooks(
             getAuthToken: { token },
             isLocalControlEnabled: { configStore.localControlEnabled },
-            setLocalControlEnabled: { v in configStore.setLocalControlEnabled(v) },
+            setLocalControlEnabled: { v in
+                // M4.4d (review: audit workflow): turning the local surface OFF
+                // hides the wrapped-session toggle, so revoke first — otherwise
+                // a shared external session keeps uploading with the user's only
+                // means of stopping it now hidden behind the very gate they just
+                // closed. Revoke BEFORE persisting, so a crash in between leaves
+                // the gate on and the toggle reachable rather than the reverse.
+                if !v { cloudShareArm.unshareAllBlocking() }
+                configStore.setLocalControlEnabled(v)
+            },
             getHelperArgv0: { ExecutablePath.current() },
             sessionManager: sessionManager,
             listDetectedSessions: { [] },

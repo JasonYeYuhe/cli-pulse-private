@@ -997,6 +997,11 @@ extension AppState {
     @MainActor
     public func refreshWrappedSessionState() async {
         guard localHelperReachable, localControlEnabled else {
+            // Distinct from the failure path below: this isn't "we couldn't
+            // ask", it's "the local surface is off", which hides the whole
+            // section — there is no toggle left to mislead anyone with. (The
+            // helper is separately responsible for revoking on gate-off; see
+            // `setLocalControlEnabled`.)
             self.shellIntegrationStatus = nil
             self.wrappedSessions = []
             self.wrappedCloudSharedSessionIds = []
@@ -1005,11 +1010,17 @@ extension AppState {
         let client = LocalSessionControlClient()
         self.shellIntegrationStatus = try? await client.shellIntegrationStatus()
         self.wrappedSessions = (try? await client.listWrappedSessions()) ?? []
-        // M4.4d: on failure fall back to EMPTY, i.e. "nothing is shared". The
-        // toggle then reads off rather than stale-on, so the UI can never claim
-        // a session is private while it is in fact still uploading — the
-        // direction that misleads the user is the one to avoid.
-        self.wrappedCloudSharedSessionIds = (try? await client.wrappedSessionCloudState()) ?? []
+        // M4.4d: on failure KEEP the last known set (review: audit workflow).
+        // Falling back to EMPTY looks conservative and is the exact opposite:
+        // empty means "nothing is shared", so the toggle snaps to Off and the
+        // row reads "Off — this session stays on this Mac" while every byte
+        // keeps uploading. Sharing lives in the HELPER; a failed read here tells
+        // us nothing about it, and the honest answer under uncertainty is the
+        // last state the helper actually reported — the one that still shows the
+        // user their session is syncing.
+        if let live = try? await client.wrappedSessionCloudState() {
+            self.wrappedCloudSharedSessionIds = live
+        }
     }
 
     /// M4.4d: opt an attached wrapped session into / out of the cloud plane.
@@ -1036,9 +1047,12 @@ extension AppState {
             self.localHelperError = String(describing: error)
             // Re-read rather than assume: a failed share may still have minted
             // the row, and a failed unshare may still have revoked. The helper
-            // is the authority on what actually happened.
-            self.wrappedCloudSharedSessionIds =
-                (try? await LocalSessionControlClient().wrappedSessionCloudState()) ?? []
+            // is the authority on what actually happened — but if we can't reach
+            // it, keep the last known set rather than claiming nothing is
+            // shared (same reasoning as refreshWrappedSessionState).
+            if let live = try? await LocalSessionControlClient().wrappedSessionCloudState() {
+                self.wrappedCloudSharedSessionIds = live
+            }
             return nil
         }
     }

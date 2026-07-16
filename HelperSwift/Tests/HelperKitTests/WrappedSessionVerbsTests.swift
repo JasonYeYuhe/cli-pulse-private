@@ -571,6 +571,120 @@ final class WrappedSessionVerbsTests: XCTestCase {
                        "an event ingested during a pump must not be discarded")
     }
 
+    func testALateFrameCannotResurrectARevokedSession() async throws {
+        // review: audit workflow. Frames are handled on a deferred Task, so one
+        // emitted while sharing was live (local_only:false) can arrive AFTER the
+        // revoke. handleOutputDelta's get-or-create would then rebuild the state
+        // and batcher we just tore down and upload the chunk anyway.
+        guard let bin = tmuxBin else { throw XCTSkip("tmux not available") }
+        let mgr = ManagedSessionManager(transport: PtyTransport())
+        defer { mgr.shutdown() }
+        let sock = sockDir.appendingPathComponent("late.sock").path
+        let owner = TmuxTransport(socketPath: sock, tmuxBin: bin)
+        let oh = try owner.start(sessionId: "clipulse-claude-84", argv: ["cat"])
+        defer { owner.close(oh); try? FileManager.default.removeItem(atPath: sock) }
+        XCTAssertTrue(mgr.attachWrappedSession(sessionId: "att-l", tmuxSessionName: "clipulse-claude-84",
+                                               tmuxBin: bin, socketPath: sock))
+        let rpc = CountingRPC()
+        let cfg = Self.testCfg
+        let uploader = EventUploader(helperConfig: { cfg }, rpcCaller: rpc)
+        let cloud = RemoteAgentCloud(helperConfig: { cfg }, rpcCaller: rpc,
+                                     sessionManager: mgr, uploader: uploader, broker: nil)
+        let sh = await cloud.shareAttachedSession(sessionId: "att-l")
+        XCTAssertTrue(sh.ok, "share failed: \(sh.error)")
+        _ = await cloud.unshareAttachedSession(sessionId: "att-l")
+        // Drain the revoke's own 'stopped' status first, so the count below
+        // isolates the late frame.
+        _ = await uploader.flush()
+
+        // A frame stamped BEFORE the revoke (local_only:false) lands after it.
+        let before = rpc.postEventCount
+        await cloud.handleBrokerEventForTesting([
+            "event": "output_delta", "session_id": "att-l",
+            "payload": String(repeating: "late secret ", count: 500),
+            "attached": true, "local_only": false])
+        _ = await uploader.flush()
+        XCTAssertEqual(rpc.postEventCount, before,
+                       "a late pre-revoke frame must not resurrect the session and upload")
+        let tracked = await cloud.trackedSessionCountForTesting
+        XCTAssertEqual(tracked, 0, "the revoked session's state must stay torn down")
+    }
+
+    func testASupersededShareDoesNotLeaveAnOrphanRunningRow() async throws {
+        // review: audit workflow. `previouslyShared` is not a proxy for "a row
+        // exists": during the register RPC's suspension the row is committed but
+        // the flag is still false, so a revoke in that window short-circuited and
+        // posted nothing — leaving a `running` row on the phone forever for a
+        // session the user explicitly declined.
+        guard let bin = tmuxBin else { throw XCTSkip("tmux not available") }
+        let mgr = ManagedSessionManager(transport: PtyTransport())
+        defer { mgr.shutdown() }
+        let sock = sockDir.appendingPathComponent("orphan.sock").path
+        let owner = TmuxTransport(socketPath: sock, tmuxBin: bin)
+        let oh = try owner.start(sessionId: "clipulse-claude-85", argv: ["cat"])
+        defer { owner.close(oh); try? FileManager.default.removeItem(atPath: sock) }
+        XCTAssertTrue(mgr.attachWrappedSession(sessionId: "att-o", tmuxSessionName: "clipulse-claude-85",
+                                               tmuxBin: bin, socketPath: sock))
+        let gate = RegisterGate()
+        let rpc = GatedRPC(gate: gate)
+        let cfg = Self.testCfg
+        let uploader = EventUploader(helperConfig: { cfg }, rpcCaller: rpc)
+        let cloud = RemoteAgentCloud(helperConfig: { cfg }, rpcCaller: rpc,
+                                     sessionManager: mgr, uploader: uploader, broker: nil)
+
+        async let shareResult = cloud.shareAttachedSession(sessionId: "att-o")
+        await gate.waitUntilRegisterEntered()
+        // The user changes their mind while the register is in flight — the row
+        // is about to exist, but the flag never flipped.
+        _ = await cloud.unshareAttachedSession(sessionId: "att-o")
+        await gate.release()
+        let share = await shareResult
+        XCTAssertFalse(share.ok, "the superseded share must not report success")
+        XCTAssertFalse(mgr.isCloudShared("att-o"))
+
+        _ = await uploader.flush()
+        // The minted row must be retired — a `stopped` status has to have been
+        // posted for it, or the phone shows a live session that rejects
+        // everything.
+        XCTAssertGreaterThan(rpc.postEventCount, 0,
+                             "a superseded share must still retire the row it minted")
+    }
+
+    func testTurningLocalControlOffRevokesEverySharedSession() async throws {
+        // review: audit workflow. The gate hides the toggle, so anything left
+        // shared would keep uploading with the user's only means of stopping it
+        // now behind the very switch they just closed.
+        guard let bin = tmuxBin else { throw XCTSkip("tmux not available") }
+        let mgr = ManagedSessionManager(transport: PtyTransport())
+        defer { mgr.shutdown() }
+        let sock = sockDir.appendingPathComponent("gateoff.sock").path
+        let owner = TmuxTransport(socketPath: sock, tmuxBin: bin)
+        let oh = try owner.start(sessionId: "clipulse-claude-86", argv: ["cat"])
+        defer { owner.close(oh); try? FileManager.default.removeItem(atPath: sock) }
+        XCTAssertTrue(mgr.attachWrappedSession(sessionId: "att-g", tmuxSessionName: "clipulse-claude-86",
+                                               tmuxBin: bin, socketPath: sock))
+        let rpc = CountingRPC()
+        let cloud = Self.makeCloud(rpc: rpc, mgr: mgr)
+        let sh = await cloud.shareAttachedSession(sessionId: "att-g")
+        XCTAssertTrue(sh.ok, "share failed: \(sh.error)")
+        XCTAssertEqual(mgr.cloudSharedSessionIds(), ["att-g"])
+
+        let revoked = await cloud.unshareAllAttachedSessions()
+        XCTAssertEqual(revoked, 1)
+        XCTAssertEqual(mgr.cloudSharedSessionIds(), [],
+                       "turning the local surface off must revoke every share")
+        XCTAssertTrue(mgr.isAttached("att-g"), "the session itself keeps running")
+    }
+
+    func testRevokeAllClearsFlagsWithoutTheNetwork() throws {
+        // The flag is what stops uploads, so dropping it must not depend on any
+        // RPC — a wedged network must never keep a session uploading after the
+        // user turned the feature off.
+        let mgr = ManagedSessionManager(transport: PtyTransport())
+        defer { mgr.shutdown() }
+        XCTAssertEqual(mgr.revokeAllCloudShares(), [], "no attached sessions → nothing to revoke")
+    }
+
     func testSetCloudSharedRefusesANonAttachedSession() throws {
         // The flag governs attached sessions only. A spawned session is already
         // cloud-wired; letting this flip on one would imply an opt-in surface
@@ -690,8 +804,14 @@ private actor RegisterGate {
 
 private final class GatedRPC: RPCCallable, @unchecked Sendable {
     private let gate: RegisterGate
+    private let lock = NSLock()
+    private var _posts = 0
+    var postEventCount: Int { lock.lock(); defer { lock.unlock() }; return _posts }
     init(gate: RegisterGate) { self.gate = gate }
     func call(_ rpcName: String, params: [String: Any]) async throws -> Any {
+        if rpcName == "remote_helper_post_event" {
+            lock.lock(); _posts += 1; lock.unlock()
+        }
         if rpcName == "remote_helper_register_session" {
             await gate.noteEntered()
             await gate.waitForRelease()

@@ -768,6 +768,24 @@ public final class ManagedSessionManager: @unchecked Sendable {
         return rec.attached && rec.cloudShared
     }
 
+    /// M4.4d: clear the cloud opt-in on EVERY attached session at once, under a
+    /// single lock acquisition, and return the ids that were actually flipped.
+    ///
+    /// This is the part of "turn it all off" that must NOT depend on the network:
+    /// the flag is what the drain loop latches, so once this returns, nothing
+    /// further uploads — no matter how long the cloud-side row cleanup takes or
+    /// whether it succeeds at all. Callers then retire the returned rows
+    /// best-effort.
+    public func revokeAllCloudShares() -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        var revoked: [String] = []
+        for (sid, rec) in sessions where rec.attached && rec.cloudShared {
+            rec.cloudShared = false
+            revoked.append(sid)
+        }
+        return revoked.sorted()
+    }
+
     /// M4.4d: ids of every attached session currently opted into the cloud.
     /// One round-trip for the app's per-session toggle state, instead of an
     /// `isCloudShared` call per row.

@@ -66,6 +66,18 @@ public actor RemoteAgentCloud {
     private var shareSeq: [String: Int] = [:]
     private var shareSeqCounter = 0
 
+    /// M4.4d: sessions whose cloud row we have actually MINTED this run.
+    ///
+    /// Distinct from `cloudShared` on purpose (review: audit workflow). The flag
+    /// says "the user's opt-in is applied"; this says "a `running` row exists in
+    /// the cloud". They diverge across the register RPC's suspension — precisely
+    /// the window `shareSeq` exists for — and using the flag as a proxy for the
+    /// row leaks orphan rows: a share that is superseded or times out AFTER the
+    /// server committed the row leaves it `running` forever, visible on the phone
+    /// as a live session that rejects every command, because nothing ever posts
+    /// its `stopped`.
+    private var mintedRow: Set<String> = []
+
     /// Subscription to the broker for output_delta + lifecycle
     /// events. Held so we can unsubscribe on shutdown — even
     /// though EventBroker doesn't support weak refs, dropping it
@@ -631,12 +643,20 @@ public actor RemoteAgentCloud {
             return (false, "could not register the session with the cloud: \(error)")
         }
 
+        // The row now provably exists, whatever happens to the opt-in below.
+        // Record that BEFORE the supersede check so a revoke can always clean it
+        // up (review: audit workflow).
+        mintedRow.insert(sessionId)
+
         // Superseded while we were awaiting → the user has since said something
         // else about this session. Their later word wins; do NOT flip the flag.
-        // The row we minted is harmless: no opt-in means nothing uploads to it,
-        // and a concurrent unshare marks it stopped.
         guard shareSeq[sessionId] == mySeq else {
             log("share(\(sessionId)) superseded by a later opt-in change — not applying")
+            // Don't leave the row we just minted sitting `running` — the earlier
+            // comment here claimed "a concurrent unshare marks it stopped", which
+            // was false: that unshare short-circuits on previouslyShared==false,
+            // because during this very window the flag had not flipped yet.
+            await retireMintedRow(sessionId)
             return (false, "superseded by a later change")
         }
 
@@ -646,11 +666,9 @@ public actor RemoteAgentCloud {
         // would apply consent given for one session to another.
         guard sessionManager.setCloudShared(sessionId, true, expectedEpoch: info.epoch) != nil else {
             // The session ended (or was replaced) between the info read and the
-            // flip. We've already minted a 'running' row; mark it stopped so the
-            // phone doesn't offer a dead session for the ~60 s until it goes
-            // stale. Safe to post: the row provably exists — we just minted it.
-            await postStatus(sessionId: sessionId, status: "stopped")
-            await uploader.removeSession(sessionId)
+            // flip. We've already minted a 'running' row; retire it so the phone
+            // doesn't offer a dead session.
+            await retireMintedRow(sessionId)
             return (false, "the session ended before it could be shared")
         }
         // Register our own per-session state directly rather than waiting for a
@@ -687,24 +705,69 @@ public actor RemoteAgentCloud {
         // would otherwise flush the batcher we meant to discard.
         sessions.removeValue(forKey: sessionId)
 
-        guard change.previouslyShared else {
-            // Never shared ⇒ no cloud row exists ⇒ posting a status would raise
-            // 'Session not found for device', and a failed event does not drop:
-            // it sits at the head of this session's uploader queue and wedges
-            // everything behind it, including a later legitimate share's output
-            // (review: codex). Nothing to revoke; nothing to say.
-            log("unshare(\(sessionId)): was not shared — nothing to revoke")
+        // `previouslyShared` is NOT a proxy for "a row exists" (review: audit
+        // workflow): a share that is still awaiting its register RPC — or one
+        // that already committed the row and then timed out — has minted a row
+        // with the flag still false. Retire on EITHER signal.
+        guard change.previouslyShared || mintedRow.contains(sessionId) else {
+            // Genuinely nothing minted ⇒ no cloud row ⇒ posting a status would
+            // raise 'Session not found for device', and a failed event does not
+            // drop: it sits at the head of this session's uploader queue and
+            // wedges everything behind it, including a later legitimate share's
+            // output (review: codex).
+            log("unshare(\(sessionId)): nothing minted — nothing to revoke")
             return (true, "")
         }
-        // Revoke what's already queued but not yet sent. Output produced while
-        // consent was live is arguably fair game, but "stop sharing" should mean
-        // stop — not "stop after the backlog drains" (review: codex).
-        await uploader.removeSession(sessionId)
-        // Mark the row stopped so the session leaves the phone's list, which
-        // filters on status in ('pending','running').
-        await postStatus(sessionId: sessionId, status: "stopped")
+        await retireMintedRow(sessionId)
         log("unshared attached session \(sessionId) — cloud view ended, session still running")
         return (true, "")
+    }
+
+    /// M4.4d: revoke EVERY attached session's cloud opt-in. Called when the user
+    /// turns Local Session Control off (review: audit workflow).
+    ///
+    /// That switch is the most plausible expression of "stop CLI Pulse touching
+    /// my terminals", and without this it did the opposite of what it looks like:
+    /// the gate only guards the UDS dispatch surface, so the toggle and the whole
+    /// wrapped-session section vanish from the app while `cloudShared` stays true
+    /// and output keeps uploading — with no toggle left to turn it off, since
+    /// `set_wrapped_session_cloud_shared` is itself gated.
+    @discardableResult
+    public func unshareAllAttachedSessions() async -> Int {
+        // Clear every flag FIRST, synchronously, under one lock acquisition.
+        // That is what actually stops the uploads, and it must not be hostage to
+        // the network: the row cleanup below can be slow or fail entirely and
+        // nothing will have uploaded in the meantime.
+        let revoked = sessionManager.revokeAllCloudShares()
+        for sid in revoked {
+            _ = nextShareSeq(for: sid)   // supersede any share still in flight
+            // Retire directly: the flags are already down, so the
+            // `previouslyShared` signal `unshareAttachedSession` reads is gone.
+            // `mintedRow` is the durable record that a row exists.
+            if mintedRow.contains(sid) {
+                await retireMintedRow(sid)
+            } else {
+                sessions.removeValue(forKey: sid)
+            }
+        }
+        if !revoked.isEmpty {
+            log("local control disabled — revoked cloud sharing for \(revoked.count) attached session(s)")
+        }
+        return revoked.count
+    }
+
+    /// Purge anything still queued for `sessionId` and mark its cloud row
+    /// stopped, so a session the user is not sharing never lingers `running` on
+    /// the phone. The single owner of that cleanup — every path that mints a row
+    /// but does not end up sharing routes through here.
+    ///
+    /// Purge BEFORE the status post: `postStatus` suspends, and the uploader
+    /// must not drain revoked output during that window.
+    private func retireMintedRow(_ sessionId: String) async {
+        await uploader.removeSession(sessionId)
+        await postStatus(sessionId: sessionId, status: "stopped")
+        sessions.removeValue(forKey: sessionId)
+        mintedRow.remove(sessionId)
     }
 
     /// Monotonic per-session opt-in sequence. Bumped synchronously at the START
@@ -774,6 +837,19 @@ public actor RemoteAgentCloud {
 
     private func handleOutputDelta(sessionId: String, event: [String: Any]) async {
         guard let payload = event["payload"] as? String, !payload.isEmpty else { return }
+        // M4.4d (review: audit workflow): NEVER auto-create state for an ATTACHED
+        // session. Frames are handled on a deferred Task, so one emitted while
+        // sharing was live (local_only:false) can arrive AFTER the user revoked
+        // — by which point unshareAttachedSession has already removed our state
+        // and purged the uploader. The get-or-create below would resurrect both
+        // and upload the chunk anyway, undoing the revoke.
+        //
+        // Absence is decisive here, unlike the frame flags: `shareAttachedSession`
+        // is the ONLY creator of an attached session's state and it runs
+        // synchronously, so attached + no state ⇒ not currently shared. (The
+        // auto-create stays for SPAWNED sessions, whose local-UDS start path
+        // legitimately has no cloud `start` to register them.)
+        if sessions[sessionId] == nil, (event["attached"] as? Bool) == true { return }
         let state: SessionState
         if let existing = sessions[sessionId] {
             state = existing
