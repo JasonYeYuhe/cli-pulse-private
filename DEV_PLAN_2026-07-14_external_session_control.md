@@ -72,7 +72,7 @@ Shipped as M4.1–M4.4d:
 **Known limits of M4.4d** (deliberate, not oversights):
 - A shared wrapped session is minted `realtime_private = true` and the Swift helper has **no `pterm:` producer** (§2 gap 2) → the phone reads it through the durable event tail at **~3 s poll**, not a live stream. Closing gap 2 upgrades this for free.
 - Cloud `stop` is refused for attached sessions: `terminate()` no-ops on a non-owning attach, so it could only report a false `stopped`. This is NOT a protection — sharing grants input, and input includes `C-c`.
-- **Python twin has no cloud-share parity.** Swift is the shipped path; the app gates the toggle on advertised verbs, so a Python-owned socket degrades to "no toggle" rather than erroring.
+- **Wrapped session ids are device-independent.** `WrappedSessionID` is UUIDv5 over the tmux name `clipulse-<provider>-$$` — provider + shell PID, no machine component. M4.4d makes that id the PK of a **device-scoped** `remote_sessions` row, so v0.69's inherited ownership check (`v_existing_device is distinct from p_device_id → 'Device not found or unauthorized'`, from v0.30, written when ids were `gen_random_uuid()` and a collision meant an attack) can fire on benign PID recycling after a re-pair, or across two Macs on one account. Low probability, self-clearing at retention; the fix is an id-derivation/schema change beyond M4.4d. Found by the M4.4d audit.
 
 ## 4. Risks / decisions to flag
 - Writing `~/.claude/settings.json` and `~/.codex/hooks.json` = **standing config changes on the user's machine.** All gated behind explicit opt-in + consent + one-click uninstall. Never silent. (The owner asked for this capability, so enabling it is in-scope — but the toggle is the owner's to flip.)
