@@ -93,6 +93,50 @@ final class WrappedSessionVerbsTests: XCTestCase {
         XCTAssertEqual((noAuth["error"] as? [String: Any])?["code"] as? String, "unauthenticated")
     }
 
+    func testCloudOptInVerbsAreAdvertisedAndGated() throws {
+        // M4.4d. The gating is IMPLICIT — `bypassesAuth`/`bypassesGate` are
+        // default-deny, so these verbs are protected by falling through to
+        // `default`. That's load-bearing and invisible at the call site: pin it,
+        // so a future `case` added to either switch can't silently expose the
+        // consent surface.
+        server = try makeServer(enabled: false)
+        let hello = try clientCall(["id": "1", "method": "hello", "params": [:]])
+        let supported = (hello["result"] as! [String: Any])["supported_methods"] as! [String]
+        for m in ["set_wrapped_session_cloud_shared", "wrapped_session_cloud_state"] {
+            XCTAssertTrue(supported.contains(m), "hello must advertise \(m)")
+        }
+        // local control off → refused even with a valid token.
+        let gated = try clientCall(["id": "2", "method": "set_wrapped_session_cloud_shared",
+                                    "auth_token": "T", "params": ["session_id": "s", "shared": true]])
+        XCTAssertEqual((gated["error"] as? [String: Any])?["code"] as? String, "local_control_off")
+        let gatedState = try clientCall(["id": "3", "method": "wrapped_session_cloud_state",
+                                         "auth_token": "T", "params": [:]])
+        XCTAssertEqual((gatedState["error"] as? [String: Any])?["code"] as? String, "local_control_off")
+        // no token → refused.
+        let noAuth = try clientCall(["id": "4", "method": "set_wrapped_session_cloud_shared",
+                                     "params": ["session_id": "s", "shared": true]])
+        XCTAssertEqual((noAuth["error"] as? [String: Any])?["code"] as? String, "unauthenticated")
+    }
+
+    func testSetCloudSharedVerbValidatesParams() throws {
+        server = try makeServer()
+        // No cloud arm wired (unpaired helper / this test) → not_implemented,
+        // never a silent local flag flip that nothing would act on.
+        let noArm = try clientCall(["id": "1", "method": "set_wrapped_session_cloud_shared",
+                                    "auth_token": "T", "params": ["session_id": "s", "shared": true]])
+        XCTAssertEqual((noArm["error"] as? [String: Any])?["code"] as? String, "not_implemented")
+        // `shared` is a PRIVACY decision — a missing/non-boolean value must be
+        // refused, never defaulted.
+        let missingShared = try clientCall(["id": "2", "method": "set_wrapped_session_cloud_shared",
+                                            "auth_token": "T", "params": ["session_id": "s"]])
+        XCTAssertNotNil(missingShared["error"], "a missing `shared` must not be defaulted")
+        // The state verb works without a cloud arm (it reads the manager).
+        let state = try clientCall(["id": "3", "method": "wrapped_session_cloud_state",
+                                    "auth_token": "T", "params": [:]])
+        XCTAssertTrue(state["ok"] as? Bool ?? false, "\(state)")
+        XCTAssertEqual(((state["result"] as? [String: Any])?["shared"] as? [String])?.count, 0)
+    }
+
     func testListWrappedSessionsReturnsArray() throws {
         server = try makeServer()
         let reply = try clientCall(["id": "1", "method": "list_wrapped_sessions", "auth_token": "T", "params": [:]])
