@@ -353,6 +353,43 @@ final class WrappedSessionVerbsTests: XCTestCase {
         XCTAssertTrue(owner.isAlive(oh), "the user's real session must survive a cloud stop")
     }
 
+    func testAnUnshareDuringAnInFlightShareWins() async throws {
+        // review: agy — `shareAttachedSession` awaits its register RPC, and the
+        // actor is REENTRANT across that suspension. An unshare that lands in the
+        // gap must win: otherwise the share resumes, stomps the user's LAST
+        // explicit choice, and the session silently uploads while the toggle
+        // reads off. Same hazard the CloudShareArm timeout path relies on.
+        guard let bin = tmuxBin else { throw XCTSkip("tmux not available") }
+        let mgr = ManagedSessionManager(transport: PtyTransport())
+        defer { mgr.shutdown() }
+        let sock = sockDir.appendingPathComponent("race.sock").path
+        let owner = TmuxTransport(socketPath: sock, tmuxBin: bin)
+        let oh = try owner.start(sessionId: "clipulse-claude-81", argv: ["cat"])
+        defer { owner.close(oh); try? FileManager.default.removeItem(atPath: sock) }
+        XCTAssertTrue(mgr.attachWrappedSession(sessionId: "att-r", tmuxSessionName: "clipulse-claude-81",
+                                               tmuxBin: bin, socketPath: sock))
+
+        // A register that parks until we let it through, so the unshare provably
+        // runs INSIDE the share's suspension rather than by luck of timing.
+        let gate = RegisterGate()
+        let rpc = GatedRPC(gate: gate)
+        let cfg = Self.testCfg
+        let cloud = RemoteAgentCloud(
+            helperConfig: { cfg }, rpcCaller: rpc, sessionManager: mgr,
+            uploader: EventUploader(helperConfig: { cfg }, rpcCaller: rpc), broker: nil)
+
+        async let shareResult = cloud.shareAttachedSession(sessionId: "att-r")
+        await gate.waitUntilRegisterEntered()
+        let un = await cloud.unshareAttachedSession(sessionId: "att-r")
+        XCTAssertTrue(un.ok, "unshare failed: \(un.error)")
+        await gate.release()
+        let share = await shareResult
+
+        XCTAssertFalse(share.ok, "a share superseded by an unshare must not report success")
+        XCTAssertFalse(mgr.isCloudShared("att-r"),
+                       "the user's LAST choice (unshare) must win over an in-flight share")
+    }
+
     func testSetCloudSharedRefusesANonAttachedSession() throws {
         // The flag governs attached sessions only. A spawned session is already
         // cloud-wired; letting this flip on one would imply an opt-in surface
@@ -442,6 +479,46 @@ final class WrappedSessionVerbsTests: XCTestCase {
 }
 
 /// Counts remote_helper_post_event calls; returns benign empties for the rest.
+/// Lets a test park inside `remote_helper_register_session` so a second actor
+/// call provably runs during the share's suspension.
+private actor RegisterGate {
+    private var entered = false
+    private var enteredWaiters: [CheckedContinuation<Void, Never>] = []
+    private var released = false
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func noteEntered() {
+        entered = true
+        enteredWaiters.forEach { $0.resume() }
+        enteredWaiters.removeAll()
+    }
+    func waitUntilRegisterEntered() async {
+        if entered { return }
+        await withCheckedContinuation { enteredWaiters.append($0) }
+    }
+    func release() {
+        released = true
+        releaseWaiters.forEach { $0.resume() }
+        releaseWaiters.removeAll()
+    }
+    func waitForRelease() async {
+        if released { return }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+}
+
+private final class GatedRPC: RPCCallable, @unchecked Sendable {
+    private let gate: RegisterGate
+    init(gate: RegisterGate) { self.gate = gate }
+    func call(_ rpcName: String, params: [String: Any]) async throws -> Any {
+        if rpcName == "remote_helper_register_session" {
+            await gate.noteEntered()
+            await gate.waitForRelease()
+        }
+        return [String: Any]()
+    }
+}
+
 private final class CountingRPC: RPCCallable, @unchecked Sendable {
     private let lock = NSLock()
     private var _postEvents = 0

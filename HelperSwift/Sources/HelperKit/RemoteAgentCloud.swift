@@ -60,6 +60,12 @@ public actor RemoteAgentCloud {
     /// for tests/local-only scenarios.
     private var sessions: [String: SessionState] = [:]
 
+    /// M4.4d: per-session opt-in sequence numbers + their source counter. See
+    /// `nextShareSeq`. Entries are tiny and bounded by the number of wrapped
+    /// sessions the user ever toggled this run, so they're not pruned.
+    private var shareSeq: [String: Int] = [:]
+    private var shareSeqCounter = 0
+
     /// Subscription to the broker for output_delta + lifecycle
     /// events. Held so we can unsubscribe on shutdown — even
     /// though EventBroker doesn't support weak refs, dropping it
@@ -593,6 +599,12 @@ public actor RemoteAgentCloud {
         guard let info = sessionManager.attachedSessionInfo(sessionId) else {
             return (false, "not an attached external session")
         }
+        // Actor reentrancy guard (review: agy). `await`ing the RPC below is a
+        // suspension point: an unshare — or a later share — can run to
+        // completion in the gap and we'd resume and stomp it, silently
+        // uploading against the user's LAST explicit choice. Claim a sequence
+        // number now and refuse to apply if anything supersedes us.
+        let mySeq = nextShareSeq(for: sessionId)
 
         do {
             _ = try await rpcCaller.call(
@@ -615,6 +627,15 @@ public actor RemoteAgentCloud {
         } catch {
             log("share(\(sessionId)) register_session failed: \(error)")
             return (false, "could not register the session with the cloud: \(error)")
+        }
+
+        // Superseded while we were awaiting → the user has since said something
+        // else about this session. Their later word wins; do NOT flip the flag.
+        // The row we minted is harmless: no opt-in means nothing uploads to it,
+        // and a concurrent unshare marks it stopped.
+        guard shareSeq[sessionId] == mySeq else {
+            log("share(\(sessionId)) superseded by a later opt-in change — not applying")
+            return (false, "superseded by a later change")
         }
 
         guard sessionManager.setCloudShared(sessionId, true) != nil else {
@@ -646,17 +667,32 @@ public actor RemoteAgentCloud {
     /// `local_only:true` and nothing further uploads, even if the steps after it
     /// fail. Revocation must never depend on the network.
     public func unshareAttachedSession(sessionId: String) async -> (ok: Bool, error: String) {
+        // Claim the sequence FIRST so any share still awaiting its RPC resumes
+        // into a superseded check and can't re-enable us (review: agy).
+        _ = nextShareSeq(for: sessionId)
         guard sessionManager.setCloudShared(sessionId, false) != nil else {
             return (false, "not an attached external session")
         }
+        // Drop the batcher WITHOUT flushing — whatever it holds is output the
+        // user just revoked consent for. This MUST happen before the await
+        // below (review: agy): `postStatus` suspends, and the uploader's tick
+        // would otherwise flush the batcher we meant to discard.
+        sessions.removeValue(forKey: sessionId)
         // Mark the row stopped so the session leaves the phone's list, which
         // filters on status in ('pending','running').
         await postStatus(sessionId: sessionId, status: "stopped")
-        // Drop the batcher WITHOUT flushing — whatever it still holds is output
-        // the user just revoked consent for.
-        sessions.removeValue(forKey: sessionId)
         log("unshared attached session \(sessionId) — cloud view ended, session still running")
         return (true, "")
+    }
+
+    /// Monotonic per-session opt-in sequence. Bumped synchronously at the START
+    /// of every share/unshare, so a call that suspends can tell on resume whether
+    /// the user has since changed their mind. Actor-isolated, so the
+    /// read-bump-write is atomic with respect to other calls.
+    private func nextShareSeq(for sessionId: String) -> Int {
+        shareSeqCounter += 1
+        shareSeq[sessionId] = shareSeqCounter
+        return shareSeqCounter
     }
 
     // MARK: - broker event handling

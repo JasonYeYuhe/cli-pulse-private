@@ -59,10 +59,21 @@ public final class CloudShareArm: @unchecked Sendable {
             sem.signal()
         }
         // Bounded so a wedged network can't pin a connection thread forever.
-        // On timeout we report failure: the flag flip happens INSIDE the actor
-        // only after the row is minted, so a timed-out share never leaves the
-        // session uploading — the fail-safe direction.
         if sem.wait(timeout: .now() + 20) == .timedOut {
+            // The detached Task is NOT cancelled by our giving up, and it isn't
+            // cancellation-aware anyway — a slow `register_session` can still
+            // land and flip the opt-in ON minutes later, while we've already
+            // told the user it failed and their toggle reads OFF. That is the
+            // exact shape of a silent privacy leak (review: agy).
+            //
+            // So make the truth match what we reported: force the session back
+            // OFF. Either order converges — if the late share flips it on first,
+            // this turns it off; if this runs first, it bumps the opt-in
+            // sequence and the late share resumes into its superseded check and
+            // declines to flip at all.
+            if shared {
+                Task.detached { _ = await cloud.unshareAttachedSession(sessionId: sessionId) }
+            }
             return (false, "timed out talking to the cloud — try again")
         }
         return box.get()

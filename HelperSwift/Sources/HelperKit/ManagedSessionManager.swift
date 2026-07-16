@@ -588,8 +588,9 @@ public final class ManagedSessionManager: @unchecked Sendable {
             "client_label": clientLabel ?? NSNull(),
             "attached": true,          // distinguishes an attach from a spawn
             // Fresh attach ⇒ not yet opted in ⇒ the cloud observer must skip
-            // this frame. `setCloudShared` republishes a session_started with
-            // local_only:false when the user opts in.
+            // this frame. Opting in later doesn't republish this frame (see
+            // `setCloudShared`); the cloud arm registers its own state directly,
+            // and every SUBSEQUENT frame latches the new value.
             "local_only": true,
         ])
         drain.start()
