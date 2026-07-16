@@ -149,6 +149,13 @@ SUPPORTED_METHODS = (
     # never kills the user's real session).
     "list_wrapped_sessions",
     "attach_wrapped_session",
+    # M4.4d: opt an ATTACHED wrapped session into / out of the cloud plane so the
+    # phone can see and drive it. An attached session is LOCAL-ONLY by default —
+    # the user launched it themselves, so shipping its output to the cloud needs
+    # their explicit, per-session, revocable say-so. `_state` reports which are
+    # currently opted in (one round-trip for the app's toggles).
+    "set_wrapped_session_cloud_shared",
+    "wrapped_session_cloud_state",
     # M4.4c: the app's opt-in shell-integration toggle (status read-only;
     # install/uninstall write the user's shell rc — app-auth + local-control
     # gated, never automatic). Same status shape the Swift helper returns.
@@ -414,6 +421,10 @@ class LocalSessionServer:
         # bool; `list_wrapped_sessions` returns tmux session names.
         list_wrapped_sessions: Callable[[], list[str]] | None = None,
         attach_wrapped_session: Callable[[str, str, str, str | None], bool] | None = None,
+        # M4.4d: (session_id, shared) -> resulting shared state. Raises
+        # LookupError when the id isn't an attached session.
+        set_wrapped_session_cloud_shared: Callable[[str, bool], bool] | None = None,
+        wrapped_session_cloud_state: Callable[[], list[str]] | None = None,
         get_machine_snapshot: Callable[[], dict] | None = None,
         kill_process: Callable[[int], dict] | None = None,
         signal_process: Callable[[int, str], dict] | None = None,
@@ -471,6 +482,8 @@ class LocalSessionServer:
         # None ⇒ `not_implemented` (older wiring / unit tests that omit them).
         self._list_wrapped_sessions = list_wrapped_sessions
         self._attach_wrapped_session = attach_wrapped_session
+        self._set_wrapped_session_cloud_shared = set_wrapped_session_cloud_shared
+        self._wrapped_session_cloud_state = wrapped_session_cloud_state
         # System Monitor S2: read-only machine-health snapshot (process table +
         # battery/thermal + capability). None ⇒ the UDS method replies
         # `not_implemented` (older wiring / unit tests that omit it).
@@ -1423,6 +1436,40 @@ class LocalSessionServer:
                 raise _RequestError("attach_failed",
                                     f"could not attach wrapped session {tmux_name!r}")
             return {"attached": True, "session_id": session_id}
+
+        if method == "set_wrapped_session_cloud_shared":
+            # M4.4d: the consent surface for shipping an EXTERNAL session's
+            # output off this machine. Both directions are the user's explicit
+            # choice; nothing here is inferred.
+            session_id = params.get("session_id")
+            shared = params.get("shared")
+            if not isinstance(session_id, str) or not session_id:
+                raise _RequestError("bad_request", "'session_id' must be a non-empty string")
+            # Strict: `shared` is a PRIVACY decision, so a missing or
+            # non-boolean value is refused rather than defaulted. `bool` check
+            # excludes ints explicitly — in Python `isinstance(1, bool)` is
+            # False but `isinstance(True, int)` is True, so order matters.
+            if not isinstance(shared, bool):
+                raise _RequestError("bad_request", "'shared' must be a boolean")
+            if self._set_wrapped_session_cloud_shared is None:
+                raise _RequestError("not_implemented",
+                                    "cloud sharing unavailable on this helper")
+            try:
+                now_shared = self._set_wrapped_session_cloud_shared(session_id, shared)
+            except LookupError as exc:
+                raise _RequestError("bad_request", str(exc)) from exc
+            except Exception as exc:  # noqa: BLE001
+                # e.g. the register RPC failed (unpaired / offline). Surface the
+                # reason: it's what the user's toggle needs to show.
+                raise _RequestError("bad_request",
+                                    f"could not change cloud sharing: {exc}") from exc
+            return {"session_id": session_id, "shared": bool(now_shared)}
+
+        if method == "wrapped_session_cloud_state":
+            if self._wrapped_session_cloud_state is None:
+                raise _RequestError("not_implemented",
+                                    "cloud sharing unavailable on this helper")
+            return {"shared": list(self._wrapped_session_cloud_state() or [])}
 
         if method in ("shell_integration_status", "shell_integration_install",
                       "shell_integration_uninstall"):

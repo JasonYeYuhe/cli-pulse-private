@@ -41,7 +41,7 @@ From the R0 map (file:line in workflow report):
 4. Input latency: 1 HTTPS RPC/keystroke + ~1Hz helper poll → ~0.5–1.5s floor; no coalescing/local echo.
 5. `RemoteControlHealth.realtime` check is **dead** (both call sites omit it → never surfaced).
 6. `RemoteTerminalKeyBar` Ctrl toggle is a **visual-only stub**; `remoteTerminalViewDidBecomeReady` is a no-op.
-7. S7 public→private cutover **not executed** (public `term:` eavesdrop-by-UUID still the default; 0 users private).
+7. S7 public→private cutover **not executed** (public `term:` eavesdrop-by-UUID still the default for sessions the user starts from the phone). M4.4d (#364) does NOT change that default — but a **shared wrapped session is always minted private**, since publishing an externally-launched session on an RLS-bypassing topic isn't defensible. So the first `realtime_private = true` rows in prod come from this path, which also means it's the first path that actually exercises gap 2 (no `pterm:` producer ⇒ event-tail polling).
 8. iOS scrollback 500 vs Mac 5000; no multi-terminal UI.
 
 ## 3. Proposed milestones (each = its own branch/PR, dual-reviewed, CI-gated)
@@ -61,8 +61,18 @@ Extend the SHIPPED managed-approval infra to cover terminal-launched Claude.
 ### M3 — Remote feature hardening (the "做好" half)
 Pick the top gaps from §2: (a) realtime approval channel (push the pending-approval row over the existing `pterm:`-style broadcast so the app doesn't race the 3s poll vs 10s deny) — biggest UX win; (b) wire `RemoteControlHealth.realtime` into diagnostics; (c) keystroke coalescing for input; (d) iOS scrollback 500→ parity. Each independently shippable.
 
-### M4 — (bigger, separate decision) tmux-wrap for full external I/O
-Opt-in shell integration: bundle a signed tmux, ship a `clipulse_wrap` rc function so FUTURE `claude`/`codex` launches run inside a CLI-Pulse-owned tmux socket (status bar off, TERM passthrough) → CLI Pulse attaches in control mode for full read + `send-keys` input. **Persistent rc change → hard opt-in.** Only wraps future launches; TERM/render caveats to test. Deferred until M1–M3 land and the owner wants remote *input* to external sessions.
+### M4 — (bigger, separate decision) tmux-wrap for full external I/O — **DONE**
+Opt-in shell integration: bundle a signed tmux, ship a `clipulse_wrap` rc function so FUTURE `claude`/`codex` launches run inside a CLI-Pulse-owned tmux socket (status bar off, TERM passthrough) → CLI Pulse attaches in control mode for full read + `send-keys` input. **Persistent rc change → hard opt-in.** Only wraps future launches; TERM/render caveats to test.
+
+Shipped as M4.1–M4.4d:
+- **M4.1–M4.3** spike, `TmuxTransport`, opt-in shell integration.
+- **M4.4a–c** (#360–#363) manager attach + bundled signed tmux + app UI. Attached sessions were hard LOCAL-ONLY here.
+- **M4.4d** (#364) per-session cloud opt-in: the phone can see + drive a wrapped external session once the user explicitly says so. Backend `migrate_v0.69` adds `p_realtime_private` to `remote_helper_register_session`; session ids became deterministic **UUIDv5** (the register RPC takes a `uuid`, and `wrapped-<tmuxName>` isn't one).
+
+**Known limits of M4.4d** (deliberate, not oversights):
+- A shared wrapped session is minted `realtime_private = true` and the Swift helper has **no `pterm:` producer** (§2 gap 2) → the phone reads it through the durable event tail at **~3 s poll**, not a live stream. Closing gap 2 upgrades this for free.
+- Cloud `stop` is refused for attached sessions: `terminate()` no-ops on a non-owning attach, so it could only report a false `stopped`. This is NOT a protection — sharing grants input, and input includes `C-c`.
+- **Wrapped session ids are device-independent.** `WrappedSessionID` is UUIDv5 over the tmux name `clipulse-<provider>-$$` — provider + shell PID, no machine component. M4.4d makes that id the PK of a **device-scoped** `remote_sessions` row, so v0.69's inherited ownership check (`v_existing_device is distinct from p_device_id → 'Device not found or unauthorized'`, from v0.30, written when ids were `gen_random_uuid()` and a collision meant an attack) can fire on benign PID recycling after a re-pair, or across two Macs on one account. Low probability, self-clearing at retention; the fix is an id-derivation/schema change beyond M4.4d. Found by the M4.4d audit.
 
 ## 4. Risks / decisions to flag
 - Writing `~/.claude/settings.json` and `~/.codex/hooks.json` = **standing config changes on the user's machine.** All gated behind explicit opt-in + consent + one-click uninstall. Never silent. (The owner asked for this capability, so enabling it is in-scope — but the toggle is the owner's to flip.)

@@ -293,17 +293,33 @@ case "daemon":
         getHelperArgv0: { ExecutablePath.current() },
         broadcastPublisher: broadcastPublisher
     )
+    // M4.4d: late-bound because RemoteAgentCloud is built AFTER the server, and
+    // only when the helper is paired. Stays inert (verb → not_implemented) until
+    // `attach` below runs.
+    let cloudShareArm = CloudShareArm()
     let server = LocalSessionServer(
         config: LocalSessionServer.Configuration(socketPath: socketPath),
         hooks: LocalSessionServer.Hooks(
             getAuthToken: { token },
             isLocalControlEnabled: { configStore.localControlEnabled },
-            setLocalControlEnabled: { v in configStore.setLocalControlEnabled(v) },
+            setLocalControlEnabled: { v in
+                // M4.4d (review: audit workflow): turning the local surface OFF
+                // hides the wrapped-session toggle, so revoke first — otherwise
+                // a shared external session keeps uploading with the user's only
+                // means of stopping it now hidden behind the very gate they just
+                // closed. Revoke BEFORE persisting, so a crash in between leaves
+                // the gate on and the toggle reachable rather than the reverse.
+                if !v { cloudShareArm.unshareAllBlocking() }
+                configStore.setLocalControlEnabled(v)
+            },
             getHelperArgv0: { ExecutablePath.current() },
             sessionManager: sessionManager,
             listDetectedSessions: { [] },
             approvalRegistry: registry,
-            eventBroker: broker
+            eventBroker: broker,
+            setWrappedSessionCloudShared: { sid, shared in
+                cloudShareArm.setShared(sid, shared)
+            }
         )
     )
     do {
@@ -359,6 +375,9 @@ case "daemon":
             uploader: eventUploader,
             broker: broker
         )
+        // M4.4d: light up `set_wrapped_session_cloud_shared` now that a cloud
+        // arm exists to serve it.
+        cloudShareArm.attach(remoteCloud)
         let nanos = UInt64(daemonConfig.cloudTickSeconds * 1_000_000_000)
         let pullMax = daemonConfig.cloudPullMax
         cloudTask = Task { [remoteCloud, eventUploader] in

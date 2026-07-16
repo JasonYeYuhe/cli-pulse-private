@@ -2007,6 +2007,9 @@ _SWIFT_CLIENT_METHODS = frozenset({
     # toggle client methods (LocalSessionControlClient).
     "list_wrapped_sessions",
     "attach_wrapped_session",
+    # M4.4d: the per-session cloud opt-in for attached wrapped sessions.
+    "set_wrapped_session_cloud_shared",
+    "wrapped_session_cloud_state",
     "shell_integration_status",
     "shell_integration_install",
     "shell_integration_uninstall",

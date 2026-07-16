@@ -1098,6 +1098,28 @@ public final class LocalSessionControlClient: SessionControlClient, MachineContr
         return (result["attached"] as? Bool) ?? false
     }
 
+    // MARK: - M4.4d: cloud opt-in for attached wrapped sessions
+
+    /// Opt an attached wrapped session into (or out of) the cloud plane, so the
+    /// phone can see and drive it. Throws on refusal — the helper's message
+    /// (unpaired Mac, session already gone, cloud unreachable) is what the user
+    /// needs to see, so it must not be swallowed into a bare `false`.
+    @discardableResult
+    public func setWrappedSessionCloudShared(sessionId: String, shared: Bool) async throws -> Bool {
+        let result = try await send(
+            method: "set_wrapped_session_cloud_shared",
+            params: ["session_id": sessionId, "shared": shared]
+        )
+        return (result["shared"] as? Bool) ?? false
+    }
+
+    /// Session ids currently opted into the cloud. One round-trip for every
+    /// toggle in the wrapped-session list.
+    public func wrappedSessionCloudState() async throws -> Set<String> {
+        let result = try await send(method: "wrapped_session_cloud_state", params: [:])
+        return Set((result["shared"] as? [String]) ?? [])
+    }
+
     /// Read-only shell-integration status (installed? which rc files? tmux path).
     public func shellIntegrationStatus() async throws -> ShellIntegrationStatus {
         try Self.decodeShellStatus(await send(method: "shell_integration_status", params: [:]))

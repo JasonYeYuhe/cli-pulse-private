@@ -18,10 +18,12 @@ import Foundation
 /// Gemini v2 P1 — flush 5 s budget on SIGTERM.
 ///
 /// Per-session monotonic seq counter starts at 1 on the first event
-/// posted for a session. Resets when the session is removed via
-/// `removeSession(_:)` (the lifecycle event posts come THROUGH the
-/// uploader, so the counter must outlive the in-memory session
-/// entry until after the final 'stopped'/'errored' status is sent).
+/// posted for a session and is NOT reset by `removeSession(_:)` — the
+/// lifecycle posts come THROUGH the uploader, so the counter must
+/// outlive the queue entry until after the final 'stopped'/'errored'
+/// status is sent. (M4.4d's revoke purges the queue on a session that
+/// is still alive and then posts a trailing status; resetting here
+/// would make that status reuse a consumed seq.)
 public actor EventUploader {
 
     public enum EventKind: String, Sendable {
@@ -77,14 +79,35 @@ public actor EventUploader {
     private let onDrop: (@Sendable (String, EventKind, DropReason) -> Void)?
     private let nowProvider: @Sendable () -> TimeInterval
 
-    /// Per-session monotonic seq. Survives session removal via
-    /// `removeSession(_:)` callers — caller must explicitly call
-    /// after the final lifecycle event has been posted.
+    /// Per-session monotonic seq. Survives `removeSession(_:)` so a trailing
+    /// lifecycle status can't reuse a consumed seq.
     private var sessionSeq: [String: Int] = [:]
 
     /// Per-session bounded queue. Append at end, drop from front
     /// when full.
     private var queues: [String: [PendingEvent]] = [:]
+
+    /// Per-session PURGE generation, bumped only by `removeSession`. `pumpOnce`
+    /// captures it before its first `await` and re-checks after each one: a
+    /// change means the session was purged mid-pump (the user revoked cloud
+    /// sharing), so the pump must abandon it rather than keep posting output
+    /// consent was withdrawn for. Not bumped by `ingest` — appending during a
+    /// pump is normal and must not abort it.
+    private var purgeGen: [String: Int] = [:]
+    private var purgeGenCounter = 0
+
+    /// `pumpOnce` re-reads live state across its awaits, which is only sound if
+    /// pumps don't overlap — two concurrent pumps would both see the same event
+    /// at the front and post it TWICE. (The pre-M4.4d copy-based loop had the
+    /// same hazard: both pumps copied the same array and both drained it.)
+    /// `flush` and the daemon tick can both reach `pumpOnce`, so serialize them.
+    ///
+    /// A second caller WAITS rather than no-opping: `flush` loops on `pumpOnce`
+    /// and reads a 0 return as "no progress was possible", so a no-op would make
+    /// a shutdown flush racing an in-flight pump bail early and DROP the queue —
+    /// the exact thing flush exists to prevent.
+    private var isPumping = false
+    private var pumpWaiters: [CheckedContinuation<Void, Never>] = []
 
     public init(
         helperConfig: @escaping @Sendable () -> HelperConfigStore.CloudConfig,
@@ -104,28 +127,79 @@ public actor EventUploader {
     /// event via the RPC caller. Stops at the first failure for a
     /// given session (the rest stay queued for the next pump).
     /// Returns count of events successfully posted.
+    ///
+    /// Every mutation here works against the LIVE `queues` entry, re-read after
+    /// each `await`. It must NOT hold a local copy across the suspension:
+    /// `postEvent` awaits an HTTPS RPC, which releases this actor, and anything
+    /// that runs in that gap — `removeSession` from a user revoking cloud
+    /// sharing, or an `ingest` from the drain loop — mutates `queues` behind us.
+    /// A copy captured before the await would then be written back over their
+    /// work, which:
+    ///   * RESURRECTS events `removeSession` purged (defeating M4.4d's revoke —
+    ///     the user's revoked output uploads anyway), and
+    ///   * DISCARDS events `ingest` appended during the pump (silent data loss).
+    /// (review: audit workflow — agy and codex both missed this; the earlier
+    /// `uploader.removeSession` revoke fix was a no-op whenever a pump was in
+    /// flight, i.e. the common case on a chatty session.)
     @discardableResult
     public func pumpOnce() async -> Int {
+        // Re-check in a loop: several callers can be parked, and each resumes
+        // into a fresh race for the flag.
+        while isPumping {
+            await withCheckedContinuation { pumpWaiters.append($0) }
+        }
+        isPumping = true
+        defer {
+            isPumping = false
+            let waiters = pumpWaiters
+            pumpWaiters.removeAll()
+            for w in waiters { w.resume() }
+        }
         var posted = 0
         // Snapshot the keys first so a parallel ingest doesn't
         // shift iteration. (We're an actor; this is sequential.)
         let sids = Array(queues.keys)
         for sid in sids {
-            guard var queue = queues[sid], !queue.isEmpty else { continue }
-            while !queue.isEmpty {
-                let event = queue[0]
+            let purgeAtEntry = purgeGen[sid]
+            // BOUND the work to what was queued when we got here (review: codex).
+            // Re-reading live is what makes a concurrent purge/ingest correct,
+            // but it must not turn into chasing a live tail: on a session
+            // producing output as fast as we post it, an unbounded loop would
+            // never empty this sid — starving every other session's queue AND
+            // never returning, so `tick` would stop polling for commands
+            // entirely. The pre-M4.4d loop was bounded by its snapshot's length;
+            // keep that property.
+            var budget = queues[sid]?.count ?? 0
+            while budget > 0 {
+                budget -= 1
+                // Re-read live: an earlier session's await may have let
+                // removeSession purge this one.
+                guard let live = queues[sid], let event = live.first else { break }
                 let ok = await postEvent(event)
+                // The await released the actor. If this session was purged in
+                // the gap, the user revoked consent — stop, and touch nothing:
+                // `queues[sid]` is either gone or a FRESH queue (e.g. the
+                // 'stopped' status the revoke posts), and neither is ours.
+                if purgeGen[sid] != purgeAtEntry { break }
                 if !ok {
                     // Leave the failing event at the front for retry.
                     break
                 }
-                queue.removeFirst()
+                // Drop the event we just posted — but only if it's STILL the
+                // front. At queue capacity an ingest during the await can
+                // drop-oldest the very event we were posting (review: codex), in
+                // which case the front is now a DIFFERENT, unposted event and
+                // removing it would lose it silently, beyond the drop-oldest
+                // policy's one.
+                if var cur = queues[sid], cur.first == event {
+                    cur.removeFirst()
+                    if cur.isEmpty {
+                        queues.removeValue(forKey: sid)
+                    } else {
+                        queues[sid] = cur
+                    }
+                }
                 posted += 1
-            }
-            if queue.isEmpty {
-                queues.removeValue(forKey: sid)
-            } else {
-                queues[sid] = queue
             }
         }
         return posted
@@ -215,10 +289,45 @@ public actor EventUploader {
         return sessionSeq[sessionId] ?? 0
     }
 
-    public func removeSession(_ sessionId: String) {
+    /// Drop every queued-but-unsent event for a session.
+    ///
+    /// M4.4d uses this to REVOKE: when the user turns off cloud sharing for a
+    /// wrapped session, output already handed to us must not keep draining.
+    /// Bumping `purgeGen` is what makes that stick against an in-flight pump —
+    /// without it the pump resumes from its own pre-await copy and posts the
+    /// purged events anyway (review: audit workflow).
+    ///
+    /// `sessionSeq` is deliberately RETAINED (review: audit workflow). Clearing
+    /// it restarts the per-session counter at 1, so a status posted right after
+    /// a purge — exactly what the revoke path does — would collide with a seq
+    /// already consumed by earlier events for the same session. `seq` is
+    /// advisory (no UNIQUE constraint; the app pages by the bigserial `id`), so
+    /// a collision is cosmetic rather than corrupting — but there's no reason to
+    /// emit one, and the counter outliving the queue is what this type's doc
+    /// always promised.
+    /// Retire ALL per-session bookkeeping for a session that has genuinely
+    /// ENDED and had its final status posted. Distinct from `removeSession`,
+    /// which revokes a session that is still ALIVE and may still post a trailing
+    /// status — that one must keep the seq counter.
+    ///
+    /// Without this the seq/purge maps grow for the daemon's whole lifetime, one
+    /// entry per session id ever seen (review: agy, codex).
+    ///
+    /// Deliberately does NOT touch `queues`: the caller has just INGESTED the
+    /// final status, which is sitting in that queue waiting to be pumped.
+    /// Dropping it here would delete the very event that retires the session's
+    /// cloud row. The queue entry removes itself once drained.
+    public func forgetSession(_ sessionId: String) {
         sessionSeq.removeValue(forKey: sessionId)
+        purgeGen.removeValue(forKey: sessionId)
+    }
+
+    public func removeSession(_ sessionId: String) {
+        purgeGenCounter += 1
+        purgeGen[sessionId] = purgeGenCounter
         queues.removeValue(forKey: sessionId)
     }
+
 
     /// Per-session monotonic seq. Starts at 1 on the first event
     /// posted for a given session. Mirrors Python's

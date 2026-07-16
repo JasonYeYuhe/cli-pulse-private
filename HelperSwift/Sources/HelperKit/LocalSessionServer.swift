@@ -76,6 +76,16 @@ public final class LocalSessionServer: @unchecked Sendable {
         /// M2p2: same seam for the codex verbs' ~/.codex/hooks.json target.
         /// Helper-side only; the socket peer can never pass a path.
         public var codexSettingsPathOverride: @Sendable () -> URL?
+        /// M4.4d: opt an ATTACHED wrapped session into / out of the cloud plane.
+        /// Wired to `RemoteAgentCloud.share/unshareAttachedSession` by the daemon.
+        /// `nil` ⇒ no cloud arm (unpaired helper, or a test) → the verb reports
+        /// `not_implemented` rather than flipping a local flag nothing acts on.
+        ///
+        /// SYNCHRONOUS by design: it performs a network RPC, and each connection
+        /// already runs on its own thread (see `start()`), so blocking here
+        /// stalls only the client that asked. Returns (ok, error); the error text
+        /// surfaces on the user's toggle.
+        public var setWrappedSessionCloudShared: (@Sendable (String, Bool) -> (Bool, String))?
 
         public init(
             getAuthToken: @escaping @Sendable () -> String,
@@ -87,7 +97,8 @@ public final class LocalSessionServer: @unchecked Sendable {
             approvalRegistry: ApprovalRegistry? = nil,
             eventBroker: EventBroker? = nil,
             claudeSettingsPathOverride: @escaping @Sendable () -> URL? = { nil },
-            codexSettingsPathOverride: @escaping @Sendable () -> URL? = { nil }
+            codexSettingsPathOverride: @escaping @Sendable () -> URL? = { nil },
+            setWrappedSessionCloudShared: (@Sendable (String, Bool) -> (Bool, String))? = nil
         ) {
             self.getAuthToken = getAuthToken
             self.isLocalControlEnabled = isLocalControlEnabled
@@ -99,6 +110,7 @@ public final class LocalSessionServer: @unchecked Sendable {
             self.eventBroker = eventBroker
             self.claudeSettingsPathOverride = claudeSettingsPathOverride
             self.codexSettingsPathOverride = codexSettingsPathOverride
+            self.setWrappedSessionCloudShared = setWrappedSessionCloudShared
         }
     }
 
@@ -551,6 +563,10 @@ public final class LocalSessionServer: @unchecked Sendable {
             return handleListWrappedSessions(request: request)
         case .attachWrappedSession:
             return handleAttachWrappedSession(request: request)
+        case .setWrappedSessionCloudShared:
+            return handleSetWrappedSessionCloudShared(request: request)
+        case .wrappedSessionCloudState:
+            return handleWrappedSessionCloudState(request: request)
         case .shellIntegrationStatus:
             return handleShellIntegration(request: request, action: .status)
         case .shellIntegrationInstall:
@@ -896,6 +912,37 @@ public final class LocalSessionServer: @unchecked Sendable {
             return .err(id: request.id, code: .notImplemented, message: "session manager not configured")
         }
         return .ok(id: request.id, result: ["sessions": mgr.listWrappedSessions()])
+    }
+
+    /// M4.4d: which attached sessions the user has opted into the cloud. One
+    /// round-trip for every toggle in the app's wrapped-session list.
+    private func handleWrappedSessionCloudState(request: WireRequest) -> WireResponse {
+        guard let mgr = hooks.sessionManager else {
+            return .err(id: request.id, code: .notImplemented, message: "session manager not configured")
+        }
+        return .ok(id: request.id, result: ["shared": mgr.cloudSharedSessionIds()])
+    }
+
+    /// M4.4d: flip an attached session's cloud opt-in. Both directions are the
+    /// user's explicit choice; nothing here is inferred or automatic.
+    private func handleSetWrappedSessionCloudShared(request: WireRequest) -> WireResponse {
+        guard let arm = hooks.setWrappedSessionCloudShared else {
+            return .err(id: request.id, code: .notImplemented,
+                        message: "cloud sharing is unavailable — this Mac is not paired with an account")
+        }
+        guard let sessionId = request.params["session_id"] as? String, !sessionId.isEmpty else {
+            return .err(id: request.id, code: .badRequest, message: "'session_id' must be a non-empty string")
+        }
+        // Strict: a missing or non-boolean `shared` is a client bug, and guessing
+        // a default here would guess about a PRIVACY decision.
+        guard let shared = request.params["shared"] as? Bool else {
+            return .err(id: request.id, code: .badRequest, message: "'shared' must be a boolean")
+        }
+        let (ok, message) = arm(sessionId, shared)
+        guard ok else {
+            return .err(id: request.id, code: .badRequest, message: message)
+        }
+        return .ok(id: request.id, result: ["session_id": sessionId, "shared": shared])
     }
 
     private func handleAttachWrappedSession(request: WireRequest) -> WireResponse {

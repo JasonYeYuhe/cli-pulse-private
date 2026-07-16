@@ -455,6 +455,14 @@ struct SessionsTab: View {
         "shell_integration_status", "shell_integration_install", "shell_integration_uninstall",
     ]
 
+    /// M4.4d: verbs the per-session cloud toggle needs. Deliberately NOT folded
+    /// into `wrappedRequiredMethods` — a helper that has M4.4c's five verbs but
+    /// not these two should keep its attach list and simply not offer the
+    /// toggle, rather than lose the whole section.
+    private static let wrappedCloudMethods: Set<String> = [
+        "set_wrapped_session_cloud_shared", "wrapped_session_cloud_state",
+    ]
+
     /// Opt-in toggle + attach list for EXTERNALLY-launched claude/codex that the
     /// shell integration wrapped into a CLI-Pulse tmux. Gated (review: codex) on:
     ///   * local fast path usable (helper reachable + local control on),
@@ -537,42 +545,91 @@ struct SessionsTab: View {
         // claude. `clipulse-` is the helper's ShellIntegration.sessionPrefix
         // (hardcoded here — it lives in HelperKit, not the app's CLIPulseCore).
         let provider: String = tmuxName.hasPrefix("clipulse-codex-") ? "codex" : "claude"
-        return HStack(spacing: 8) {
-            Image(systemName: "terminal.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(PulseTheme.providerColor(provider))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(ProviderDisplay.defaultLabel(for: provider))
-                    .font(.system(size: 11, weight: .semibold))
-                    .lineLimit(1)
-                Text(tmuxName)
-                    .font(.system(size: 9))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            Spacer()
-            // Section is already gated on canHostInAppTerminal, so Attach is
-            // always reachable here.
-            Button {
-                Task {
-                    if let sid = await state.attachWrappedSessionViaHelper(
-                        tmuxName: tmuxName, provider: provider) {
-                        // Deterministic session id (below) → same window key on a
-                        // re-attach, so a double-tap reuses the singleton window.
-                        openWindow(value: TerminalSessionKey(sessionId: sid, provider: provider))
-                    }
+        // Same derivation the attach uses, so the row can key cloud state off it
+        // before/after attaching without another round-trip.
+        let sid = WrappedSessionID.sessionId(forTmuxName: tmuxName)
+        let isAttached = state.localManagedSessions.contains { $0.id == sid }
+        let isShared = state.wrappedCloudSharedSessionIds.contains(sid)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "terminal.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(PulseTheme.providerColor(provider))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(ProviderDisplay.defaultLabel(for: provider))
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                    Text(tmuxName)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
-            } label: {
-                Label("Attach", systemImage: "arrow.right.circle")
-                    .font(.system(size: 10))
+                Spacer()
+                // Section is already gated on canHostInAppTerminal, so Attach is
+                // always reachable here.
+                Button {
+                    Task {
+                        if let sid = await state.attachWrappedSessionViaHelper(
+                            tmuxName: tmuxName, provider: provider) {
+                            // Deterministic session id → same window key on a
+                            // re-attach, so a double-tap reuses the singleton window.
+                            openWindow(value: TerminalSessionKey(sessionId: sid, provider: provider))
+                        }
+                        await state.refreshWrappedSessionState()
+                    }
+                } label: {
+                    Label(isAttached ? "Open" : "Attach", systemImage: "arrow.right.circle")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+            // M4.4d: only offer the cloud opt-in once CLI Pulse is actually
+            // attached (there's nothing to share otherwise) and only if this
+            // helper speaks the verbs.
+            if isAttached, state.localSupportedMethods.isSuperset(of: Self.wrappedCloudMethods) {
+                Divider().padding(.leading, 19)
+                wrappedCloudShareToggle(sessionId: sid, isShared: isShared)
+            }
         }
         .padding(8)
         .background(Color.secondary.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    /// M4.4d: the per-session cloud opt-in. This is the consent surface for
+    /// shipping an EXTERNAL session's output off the machine, so it says plainly
+    /// what happens, defaults to off, and is reversible in one click.
+    private func wrappedCloudShareToggle(sessionId: String, isShared: Bool) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: isShared ? "iphone.radiowaves.left.and.right" : "iphone.slash")
+                .font(.system(size: 11))
+                .foregroundStyle(isShared ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.tertiary))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Show on my phone")
+                    .font(.system(size: 10, weight: .medium))
+                Text(isShared
+                     ? "This session's output is syncing to your account so you can read and type from your phone. It updates every few seconds."
+                     : "Off — this session stays on this Mac. Turn on to read and type from your phone.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Toggle("", isOn: Binding(
+                get: { isShared },
+                set: { want in
+                    Task {
+                        await state.setWrappedSessionCloudSharedViaHelper(
+                            sessionId: sessionId, shared: want)
+                    }
+                }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+        }
     }
 
     private func localHelperErrorBanner(message: String) -> some View {

@@ -89,6 +89,9 @@ public final class ManagedSessionManager: @unchecked Sendable {
     private let lock = NSLock()
     private var sessions: [String: ManagedSessionRecord] = [:]
     private var stopFlag = AtomicBool()
+    /// M4.4d: monotonic source for `ManagedSessionRecord.attachEpoch`. Governed
+    /// by `lock`.
+    private var attachEpochCounter = 0
 
     private final class ManagedSessionRecord: @unchecked Sendable {
         let sessionId: String
@@ -101,12 +104,28 @@ public final class ManagedSessionManager: @unchecked Sendable {
         /// routes to the right transport (`_sessTransport`). Mirrors Python
         /// `_ManagedSession.transport`.
         let transportOverride: (any SessionTransport)?
-        /// M4.4a: true for an ATTACHED wrapped (external) session — it is
-        /// LOCAL-ONLY: never minted into a cloud row nor uploaded (the cloud
-        /// observer skips it), because the helper doesn't own its lifecycle and
-        /// the phone plane opts it in separately (M4.4d). Distinct from
-        /// `realtimePrivate` (which only governs the PUBLIC Realtime sink).
+        /// M4.4a: true for an ATTACHED wrapped (external) session — one the
+        /// USER launched in their own terminal and the shell integration parked
+        /// inside a CLI-Pulse tmux. The helper doesn't own its lifecycle.
+        /// Distinct from `realtimePrivate` (which only governs the PUBLIC
+        /// Realtime sink).
         let attached: Bool
+        /// M4.4d: the user EXPLICITLY opted this attached session into the
+        /// cloud plane (`set_wrapped_session_cloud_shared`). Default false —
+        /// an attached session is LOCAL-ONLY until the user says otherwise, so
+        /// output from a session CLI Pulse didn't start never leaves the
+        /// machine by default. Meaningless for a spawned session (already
+        /// cloud-wired); only `attached` records ever flip it.
+        ///
+        /// Governed by `ManagedSessionManager.lock` — read it via
+        /// `isLocalOnly`/`attachedPolicyRefuses` (both lock-held), never bare.
+        var cloudShared: Bool = false
+        /// M4.4d: identifies THIS attach. Session ids are deterministic per tmux
+        /// name (see `WrappedSessionID`), so a detach + re-attach reuses the
+        /// SAME id — the epoch is what distinguishes the two, letting a
+        /// suspended share refuse to apply the user's consent to a DIFFERENT
+        /// session that happens to share the id (review: codex).
+        let attachEpoch: Int
         let spawnedAtMono: TimeInterval
         /// R0 (S2): the session's `realtime_private` from the cloud start
         /// payload — `false` = positively public, `true` = private, `nil` =
@@ -144,6 +163,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
             handle: SessionHandle,
             transportOverride: (any SessionTransport)? = nil,
             attached: Bool = false,
+            attachEpoch: Int = 0,
             spawnedAtMono: TimeInterval,
             realtimePrivate: Bool?
         ) {
@@ -153,6 +173,7 @@ public final class ManagedSessionManager: @unchecked Sendable {
             self.handle = handle
             self.transportOverride = transportOverride
             self.attached = attached
+            self.attachEpoch = attachEpoch
             self.spawnedAtMono = spawnedAtMono
             self.realtimePrivate = realtimePrivate
         }
@@ -167,6 +188,64 @@ public final class ManagedSessionManager: @unchecked Sendable {
     /// gets no realtime mirror — the phone degrades to event-polling.
     static func allowsPublicBroadcast(realtimePrivate: Bool?) -> Bool {
         realtimePrivate == false
+    }
+
+    /// M4.4d: how an op treats an ATTACHED wrapped (external) session.
+    ///
+    /// Replaces #362's `refuseAttached: Bool`, which could only express
+    /// "attached ⇒ refuse". Once the user can OPT an external session into the
+    /// cloud plane, three distinct policies exist and conflating them is a
+    /// privacy or a correctness bug depending on which way you collapse them.
+    ///
+    /// Whichever policy applies, it is evaluated ATOMICALLY under `lock` — that
+    /// is what closes the TOCTOU codex flagged in #362 (a cloud command checks
+    /// "not attached", a local attach then registers the same id, and the op
+    /// drives the user's real session anyway).
+    public enum AttachedPolicy: Sendable {
+        /// The LOCAL app path: the user is sitting at the Mac driving their own
+        /// session through the app's terminal surface. Attached sessions are
+        /// exactly what that surface is for, so never refuse.
+        case allow
+        /// The CLOUD path: act only on an attached session the user EXPLICITLY
+        /// opted in (`cloudShared`). An un-opted attached session is local-only
+        /// and the cloud has no legitimate way to reach it.
+        case requireCloudShared
+        /// The CLOUD `stop` path: refuse an attached session ALWAYS — even a
+        /// shared one.
+        ///
+        /// NOT because it protects the session from the phone — it doesn't, and
+        /// claiming so would be theatre (review: codex). Sharing deliberately
+        /// grants INPUT, and input includes `interrupt` (tmux `send-keys C-c`)
+        /// and a raw `0x03`; a phone that can type into a session can end it.
+        /// That is what "read and type from your phone" means and what the user
+        /// opted into.
+        ///
+        /// The reason is that `stop` on a non-owning attach is a LIE. Attach is
+        /// NON-OWNING, so `TmuxTransport.terminate` no-ops the kill: we would
+        /// drop our record and detach, report `stopped` to the phone, and the
+        /// user's real `claude` would keep running with nothing watching it.
+        /// The phone would show a stopped session that isn't. Detaching is a
+        /// Mac-side decision (revoke sharing, close the window); an op whose
+        /// only honest outcome is a false status has no business succeeding.
+        case refuseAttached
+    }
+
+    /// True when `policy` forbids acting on `rec`. Caller MUST hold `lock`.
+    /// A nil/non-attached record is never refused — the policy only ever
+    /// narrows access to ATTACHED sessions.
+    private func attachedPolicyRefuses(_ policy: AttachedPolicy, _ rec: ManagedSessionRecord?) -> Bool {
+        guard let rec, rec.attached else { return false }
+        switch policy {
+        case .allow: return false
+        case .requireCloudShared: return !rec.cloudShared
+        case .refuseAttached: return true
+        }
+    }
+
+    /// True when this record's frames must never leave the machine: an attached
+    /// session the user hasn't opted into the cloud. Caller MUST hold `lock`.
+    private func isLocalOnly(_ rec: ManagedSessionRecord) -> Bool {
+        rec.attached && !rec.cloudShared
     }
 
     public init(
@@ -449,10 +528,10 @@ public final class ManagedSessionManager: @unchecked Sendable {
     /// `transportOverride`), and `TmuxTransport.terminate`/`close` no-op the
     /// kill-session for `owns_session=false`, so stop/detach NEVER kills the
     /// user's real `claude`. Unlike a spawn we do NOT inject auth, mint a
-    /// capability token, or write a cloud row — `realtimePrivate = nil` (UNKNOWN
-    /// privacy) so the fail-closed broadcast gate never mirrors it publicly; the
-    /// phone plane opts it in separately (M4.4d). Returns false on any failure
-    /// (the UDS layer maps that to `attach_failed`).
+    /// capability token, or write a cloud row: the session starts LOCAL-ONLY
+    /// (`cloudShared == false`) and stays that way until the user explicitly
+    /// opts it in (M4.4d, `setCloudShared`). Returns false on any failure (the
+    /// UDS layer maps that to `attach_failed`).
     @discardableResult
     public func attachWrappedSession(
         sessionId: String,
@@ -488,15 +567,29 @@ public final class ManagedSessionManager: @unchecked Sendable {
             return false
         }
 
+        lock.lock()
+        attachEpochCounter += 1
+        let epoch = attachEpochCounter
+        lock.unlock()
+
         let record = ManagedSessionRecord(
             sessionId: sessionId,
             provider: provider,
             clientLabel: clientLabel,
             handle: handle,
             transportOverride: transport,   // route all I/O through the tmux transport
-            attached: true,                 // LOCAL-ONLY: the cloud observer skips it
+            attached: true,                 // local-only until the user opts in (M4.4d)
+            attachEpoch: epoch,
             spawnedAtMono: ProcessInfo.processInfo.systemUptime,
-            realtimePrivate: nil            // UNKNOWN → never public-broadcast/mint
+            // M4.4d: PRIVATE, positively. Pre-M4.4d this was `nil` (UNKNOWN),
+            // which the fail-closed gate mutes identically — but once we can
+            // mint a cloud row we pass `p_realtime_private = true` alongside,
+            // and the helper's in-memory flag must MATCH the column it wrote.
+            // A disagreement is a silent blackhole: the phone picks its topic
+            // from the column (`pterm:` vs `term:`) while the helper picks its
+            // producer from this flag, and a mismatch means the phone joins a
+            // topic nobody publishes to.
+            realtimePrivate: true
         )
         // Build the drain thread pre-publication (same discipline as spawn).
         let drain = Thread { [weak self] in
@@ -522,22 +615,95 @@ public final class ManagedSessionManager: @unchecked Sendable {
             "provider": provider,
             "client_label": clientLabel ?? NSNull(),
             "attached": true,          // distinguishes an attach from a spawn
+            // Fresh attach ⇒ not yet opted in ⇒ the cloud observer must skip
+            // this frame. Opting in later doesn't republish this frame (see
+            // `setCloudShared`); the cloud arm registers its own state directly,
+            // and every SUBSEQUENT frame latches the new value.
+            "local_only": true,
         ])
         drain.start()
         return true
     }
 
-    /// `refuseAttached` (cloud callers pass true): refuse to act on an ATTACHED
-    /// wrapped session ATOMICALLY under the lock — closes the TOCTOU where a
-    /// cloud command checks not-attached, a local attach then registers the
-    /// same id, and the op would otherwise tear down the user's real session
-    /// (review: codex). The LOCAL app path leaves it false so it can drive
-    /// attached sessions normally.
+    /// M4.4d: what an attached session is, and which attach it is.
+    public struct AttachedInfo: Sendable {
+        public let provider: String
+        public let clientLabel: String?
+        /// Identifies THIS attach, so a caller that suspends can tell on resume
+        /// whether it's still talking about the same one. See `attachEpoch`.
+        public let epoch: Int
+    }
+
+    /// M4.4d: read an ATTACHED session's identity without flipping anything, so
+    /// the cloud arm can mint its row BEFORE opting it in. Returns nil when the
+    /// id is unknown or isn't attached.
+    public func attachedSessionInfo(_ sessionId: String) -> AttachedInfo? {
+        lock.lock(); defer { lock.unlock() }
+        guard let rec = sessions[sessionId], rec.attached else { return nil }
+        return AttachedInfo(provider: rec.provider, clientLabel: rec.clientLabel, epoch: rec.attachEpoch)
+    }
+
+    /// M4.4d: the outcome of a `setCloudShared` call.
+    public struct CloudShareChange: Sendable {
+        public let provider: String
+        public let clientLabel: String?
+        /// What the flag was BEFORE this call. Lets the caller skip work that
+        /// only makes sense for a session that really was shared — notably
+        /// posting a `stopped` status, which would otherwise target a cloud row
+        /// that was never minted and WEDGE the uploader queue behind the
+        /// resulting 'Session not found for device' (review: codex).
+        public let previouslyShared: Bool
+    }
+
+    /// M4.4d: flip an ATTACHED session's cloud opt-in. Returns nil when the id
+    /// is unknown, is NOT attached (a spawned session is already cloud-wired,
+    /// and flipping this flag on one would imply an opt-in surface that doesn't
+    /// actually govern it), or when `expectedEpoch` doesn't match the live
+    /// attach.
+    ///
+    /// `expectedEpoch` (review: codex): ids are DETERMINISTIC per tmux name, so
+    /// an attach that exits and is re-attached reuses the SAME id. A share that
+    /// suspended on its register RPC would otherwise resume and opt the
+    /// REPLACEMENT session in — consent given for one session, applied to
+    /// another. Pass the epoch from `attachedSessionInfo` to bind the flip to
+    /// the attach the user actually consented to; pass nil to skip the check
+    /// (the local revoke path, which is fail-safe in any direction).
+    ///
+    /// Deliberately publishes NOTHING. The broker feeds the app's local
+    /// `subscribe_events` stream as well as the cloud observer, so a synthetic
+    /// `session_started`/`session_stopped` here would tell the app's own
+    /// terminal window that the user's session restarted or ended — it didn't;
+    /// only the cloud's view of it changed. `RemoteAgentCloud` updates its own
+    /// per-session state directly instead, which it can do safely because
+    /// share/unshare is a synchronous call into the actor rather than a
+    /// deferred broker frame (the #362 ordering hazard doesn't apply).
+    ///
+    /// From the instant this returns, the drain loop latches the new
+    /// `local_only` onto every subsequent frame.
     @discardableResult
-    public func stopSession(_ sessionId: String, refuseAttached: Bool = false) -> Bool {
+    public func setCloudShared(
+        _ sessionId: String, _ shared: Bool, expectedEpoch: Int? = nil
+    ) -> CloudShareChange? {
+        lock.lock(); defer { lock.unlock() }
+        guard let rec = sessions[sessionId], rec.attached else { return nil }
+        if let expectedEpoch, rec.attachEpoch != expectedEpoch { return nil }
+        let was = rec.cloudShared
+        rec.cloudShared = shared
+        return CloudShareChange(provider: rec.provider, clientLabel: rec.clientLabel, previouslyShared: was)
+    }
+
+    /// `attachedPolicy` governs whether this op may touch an ATTACHED wrapped
+    /// session; it is evaluated ATOMICALLY under the lock (review: codex —
+    /// closes the TOCTOU where a cloud command checks not-attached, a local
+    /// attach then registers the same id, and the op tears down the user's real
+    /// session). Cloud `stop` passes `.refuseAttached`: see the enum for why a
+    /// non-owning stop is never right, shared or not.
+    @discardableResult
+    public func stopSession(_ sessionId: String, attachedPolicy: AttachedPolicy = .allow) -> Bool {
         lock.lock()
-        if refuseAttached, sessions[sessionId]?.attached == true { lock.unlock(); return false }
+        if attachedPolicyRefuses(attachedPolicy, sessions[sessionId]) { lock.unlock(); return false }
         let rec = sessions.removeValue(forKey: sessionId)
+        let localOnly = rec.map(isLocalOnly) ?? true
         lock.unlock()
         guard let rec else { return false }
         sessTransport(rec).terminate(rec.handle)
@@ -547,7 +713,8 @@ public final class ManagedSessionManager: @unchecked Sendable {
         broker?.publish([
             "event": "session_stopped",
             "session_id": sessionId,
-            "attached": rec.attached,   // frame-latched (review: codex)
+            "attached": rec.attached,
+            "local_only": localOnly,   // frame-latched (review: codex)
         ])
         return true
     }
@@ -559,9 +726,9 @@ public final class ManagedSessionManager: @unchecked Sendable {
     /// doesn't own the id (caller marks the queued command
     /// `failed`).
     @discardableResult
-    public func interruptSession(_ sessionId: String, refuseAttached: Bool = false) -> Bool {
+    public func interruptSession(_ sessionId: String, attachedPolicy: AttachedPolicy = .allow) -> Bool {
         lock.lock()
-        if refuseAttached, sessions[sessionId]?.attached == true { lock.unlock(); return false }
+        if attachedPolicyRefuses(attachedPolicy, sessions[sessionId]) { lock.unlock(); return false }
         let rec = sessions[sessionId]
         lock.unlock()
         guard let rec else { return false }
@@ -590,15 +757,52 @@ public final class ManagedSessionManager: @unchecked Sendable {
         return sessions[sessionId]?.attached ?? false
     }
 
+    /// M4.4d: true while `sessionId` is an attached session the user opted into
+    /// the cloud plane. Safe for a COMMAND path (the record is live for the
+    /// duration of a command targeting it) but NOT for the broker-event path —
+    /// there the frame's own `local_only` is authoritative, because events are
+    /// handled on a deferred Task that races record removal (the #362 lesson).
+    public func isCloudShared(_ sessionId: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let rec = sessions[sessionId] else { return false }
+        return rec.attached && rec.cloudShared
+    }
+
+    /// M4.4d: clear the cloud opt-in on EVERY attached session at once, under a
+    /// single lock acquisition, and return the ids that were actually flipped.
+    ///
+    /// This is the part of "turn it all off" that must NOT depend on the network:
+    /// the flag is what the drain loop latches, so once this returns, nothing
+    /// further uploads — no matter how long the cloud-side row cleanup takes or
+    /// whether it succeeds at all. Callers then retire the returned rows
+    /// best-effort.
+    public func revokeAllCloudShares() -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        var revoked: [String] = []
+        for (sid, rec) in sessions where rec.attached && rec.cloudShared {
+            rec.cloudShared = false
+            revoked.append(sid)
+        }
+        return revoked.sorted()
+    }
+
+    /// M4.4d: ids of every attached session currently opted into the cloud.
+    /// One round-trip for the app's per-session toggle state, instead of an
+    /// `isCloudShared` call per row.
+    public func cloudSharedSessionIds() -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        return sessions.values.filter { $0.attached && $0.cloudShared }.map(\.sessionId).sorted()
+    }
+
     /// Write to the PTY master, normalising the trailing
     /// terminator to `\r` (matches the Python helper —
     /// Claude Code's TUI is a raw-mode app with bracketed-paste
     /// enabled; sending `\n` is treated as "more text being
     /// pasted" rather than as Enter, so we coerce to CR).
     @discardableResult
-    public func sendInput(sessionId: String, payload: String, refuseAttached: Bool = false) throws -> Bool {
+    public func sendInput(sessionId: String, payload: String, attachedPolicy: AttachedPolicy = .allow) throws -> Bool {
         lock.lock()
-        if refuseAttached, sessions[sessionId]?.attached == true { lock.unlock(); return false }
+        if attachedPolicyRefuses(attachedPolicy, sessions[sessionId]) { lock.unlock(); return false }
         let rec = sessions[sessionId]
         lock.unlock()
         guard let rec else { return false }
@@ -633,9 +837,9 @@ public final class ManagedSessionManager: @unchecked Sendable {
     /// sequences). The legacy `sendInput` CR-appends, which would
     /// corrupt these bytes (turning Ctrl-C into `0x03\r`).
     @discardableResult
-    public func sendInputRaw(sessionId: String, bytes: Data, refuseAttached: Bool = false) throws -> Bool {
+    public func sendInputRaw(sessionId: String, bytes: Data, attachedPolicy: AttachedPolicy = .allow) throws -> Bool {
         lock.lock()
-        if refuseAttached, sessions[sessionId]?.attached == true { lock.unlock(); return false }
+        if attachedPolicyRefuses(attachedPolicy, sessions[sessionId]) { lock.unlock(); return false }
         let rec = sessions[sessionId]
         lock.unlock()
         guard let rec else { return false }
@@ -655,9 +859,9 @@ public final class ManagedSessionManager: @unchecked Sendable {
     /// re-flow their layout. Returns false if `sessionId` isn't owned
     /// or the underlying ioctl failed.
     @discardableResult
-    public func resize(sessionId: String, cols: UInt16, rows: UInt16, refuseAttached: Bool = false) -> Bool {
+    public func resize(sessionId: String, cols: UInt16, rows: UInt16, attachedPolicy: AttachedPolicy = .allow) -> Bool {
         lock.lock()
-        if refuseAttached, sessions[sessionId]?.attached == true { lock.unlock(); return false }
+        if attachedPolicyRefuses(attachedPolicy, sessions[sessionId]) { lock.unlock(); return false }
         let rec = sessions[sessionId]
         lock.unlock()
         guard let rec else { return false }
@@ -682,10 +886,10 @@ public final class ManagedSessionManager: @unchecked Sendable {
     /// "catch-up snapshot." Redaction matches the `EventUploader` /
     /// `RemoteAgentCloud.swift:456` path so secrets never leak through
     /// this RPC.
-    public func getTailSnapshot(sessionId: String, maxBytes: Int, refuseAttached: Bool = false) -> Data? {
+    public func getTailSnapshot(sessionId: String, maxBytes: Int, attachedPolicy: AttachedPolicy = .allow) -> Data? {
         let cappedMax = max(0, min(maxBytes, 65536))
         lock.lock()
-        if refuseAttached, sessions[sessionId]?.attached == true { lock.unlock(); return nil }
+        if attachedPolicyRefuses(attachedPolicy, sessions[sessionId]) { lock.unlock(); return nil }
         let rec = sessions[sessionId]
         lock.unlock()
         guard let rec else { return nil }
@@ -774,17 +978,23 @@ public final class ManagedSessionManager: @unchecked Sendable {
                         Task { await publisher.submit(sessionId: sid, chunk: payload) }
                     }
                     let text = String(data: chunk, encoding: .utf8) ?? String(decoding: chunk, as: UTF8.self)
+                    // Latch local_only onto the FRAME (review: codex) — the cloud
+                    // observer handles events on a DEFERRED per-event Task, so it
+                    // can't reliably query live manager state (the record may be
+                    // removed by then). The flag travels with the event →
+                    // ordering-independent skip. Read under the lock: M4.4d made
+                    // `cloudShared` mutable, so a bare read would race
+                    // `setCloudShared`.
+                    lock.lock()
+                    let localOnly = isLocalOnly(record)
+                    lock.unlock()
                     broker?.publish([
                         "event": "output_delta",
                         "session_id": record.sessionId,
                         "payload": text,
                         "ts": Date().timeIntervalSince1970,
-                        // Latch attached onto the FRAME (review: codex) — the cloud
-                        // observer handles events on a DEFERRED per-event Task, so
-                        // it can't reliably query live manager state (the record may
-                        // be removed by then). The flag travels with the event →
-                        // ordering-independent skip.
                         "attached": record.attached,
+                        "local_only": localOnly,
                     ])
                 }
             } catch {
@@ -806,6 +1016,10 @@ public final class ManagedSessionManager: @unchecked Sendable {
                     return -1   // signaled / dumped
                 }
                 lock.lock()
+                // Latch BEFORE the removal — after it, `cloudShared` is still
+                // readable off `record` but the session is gone, and reading it
+                // outside the lock would race `setCloudShared`.
+                let localOnly = isLocalOnly(record)
                 if sessions[record.sessionId] === record {
                     record.status = (exitCode == 0) ? "stopped" : "errored"
                     sessions.removeValue(forKey: record.sessionId)
@@ -814,7 +1028,8 @@ public final class ManagedSessionManager: @unchecked Sendable {
                 var stoppedEvent: [String: Any] = [
                     "event": "session_stopped",
                     "session_id": record.sessionId,
-                    "attached": record.attached,   // frame-latched (review: codex)
+                    "attached": record.attached,
+                    "local_only": localOnly,   // frame-latched (review: codex)
                 ]
                 if let exitCode {
                     stoppedEvent["exit_code"] = Int(exitCode)

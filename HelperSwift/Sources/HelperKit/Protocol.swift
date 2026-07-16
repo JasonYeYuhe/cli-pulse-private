@@ -73,6 +73,14 @@ public enum SupportedMethod: String, CaseIterable, Sendable {
     // local-control gated like the other session-control verbs.
     case listWrappedSessions = "list_wrapped_sessions"
     case attachWrappedSession = "attach_wrapped_session"
+    // M4.4d: opt an ATTACHED wrapped session into / out of the cloud plane so
+    // the phone can see and drive it. An attached session is LOCAL-ONLY by
+    // default — the user launched it themselves, so shipping its output to the
+    // cloud needs their explicit, per-session, revocable say-so. `_state`
+    // reports which sessions are currently opted in (one round-trip for the
+    // app's toggles). App-auth + local-control gated like the verbs above.
+    case setWrappedSessionCloudShared = "set_wrapped_session_cloud_shared"
+    case wrappedSessionCloudState = "wrapped_session_cloud_state"
     // M4.3 shell integration: the opt-in toggle that writes/removes the shim in
     // the user's shell rc (a STANDING change → app-auth + local-control gated,
     // never automatic).
