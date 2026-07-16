@@ -330,10 +330,11 @@ final class WrappedSessionVerbsTests: XCTestCase {
     }
 
     func testCloudStopIsRefusedEvenForASharedSession() async throws {
-        // Sharing grants the phone read + input, never the power to end a session
-        // the user started themselves. Attach is NON-OWNING: terminate() no-ops
-        // the kill, so a "successful" cloud stop would detach us while the real
-        // claude kept running — and still tell the phone it stopped.
+        // A cloud stop on a non-owning attach can only lie: terminate() no-ops,
+        // so we'd detach, report `stopped`, and leave the user's real claude
+        // running unwatched behind a phone that shows it stopped. (This is NOT a
+        // protection against the phone ending the session — sharing grants input,
+        // and input includes C-c. See AttachedPolicy.refuseAttached.)
         guard let bin = tmuxBin else { throw XCTSkip("tmux not available") }
         let mgr = ManagedSessionManager(transport: PtyTransport())
         defer { mgr.shutdown() }
@@ -388,6 +389,75 @@ final class WrappedSessionVerbsTests: XCTestCase {
         XCTAssertFalse(share.ok, "a share superseded by an unshare must not report success")
         XCTAssertFalse(mgr.isCloudShared("att-r"),
                        "the user's LAST choice (unshare) must win over an in-flight share")
+    }
+
+    func testUnsharingASessionThatWasNeverSharedPostsNothing() async throws {
+        // review: codex — a never-shared session has NO cloud row, so a `stopped`
+        // status would raise 'Session not found for device'. A failed event does
+        // not drop: it sits at the head of that session's uploader queue and
+        // wedges everything behind it, including a later legitimate share. The
+        // CloudShareArm timeout path calls unshare exactly this way, so this is
+        // reachable, not theoretical.
+        guard let bin = tmuxBin else { throw XCTSkip("tmux not available") }
+        let mgr = ManagedSessionManager(transport: PtyTransport())
+        defer { mgr.shutdown() }
+        let sock = sockDir.appendingPathComponent("nevershared.sock").path
+        let owner = TmuxTransport(socketPath: sock, tmuxBin: bin)
+        let oh = try owner.start(sessionId: "clipulse-claude-82", argv: ["cat"])
+        defer { owner.close(oh); try? FileManager.default.removeItem(atPath: sock) }
+        XCTAssertTrue(mgr.attachWrappedSession(sessionId: "att-n", tmuxSessionName: "clipulse-claude-82",
+                                               tmuxBin: bin, socketPath: sock))
+        let rpc = CountingRPC()
+        let cfg = Self.testCfg
+        let uploader = EventUploader(helperConfig: { cfg }, rpcCaller: rpc)
+        let cloud = RemoteAgentCloud(helperConfig: { cfg }, rpcCaller: rpc,
+                                     sessionManager: mgr, uploader: uploader, broker: nil)
+
+        let r = await cloud.unshareAttachedSession(sessionId: "att-n")
+        XCTAssertTrue(r.ok, "unsharing an unshared session is a no-op, not an error: \(r.error)")
+        let queued = await uploader.queuedCount(sessionId: "att-n")
+        XCTAssertEqual(queued, 0, "nothing may be queued for a session that never had a cloud row")
+        _ = await uploader.flush()
+        XCTAssertEqual(rpc.postEventCount, 0, "no event may be posted for a session with no cloud row")
+    }
+
+    func testRevokingPurgesOutputStillQueuedForUpload() async throws {
+        // review: codex — dropping the actor's batcher isn't enough: chunks
+        // already handed to the EventUploader would keep draining after the user
+        // revoked. "Stop sharing" must mean stop, not "stop once the backlog
+        // drains".
+        guard let bin = tmuxBin else { throw XCTSkip("tmux not available") }
+        let mgr = ManagedSessionManager(transport: PtyTransport())
+        defer { mgr.shutdown() }
+        let sock = sockDir.appendingPathComponent("purge.sock").path
+        let owner = TmuxTransport(socketPath: sock, tmuxBin: bin)
+        let oh = try owner.start(sessionId: "clipulse-claude-83", argv: ["cat"])
+        defer { owner.close(oh); try? FileManager.default.removeItem(atPath: sock) }
+        XCTAssertTrue(mgr.attachWrappedSession(sessionId: "att-p", tmuxSessionName: "clipulse-claude-83",
+                                               tmuxBin: bin, socketPath: sock))
+        let rpc = CountingRPC()
+        let cfg = Self.testCfg
+        let uploader = EventUploader(helperConfig: { cfg }, rpcCaller: rpc)
+        let cloud = RemoteAgentCloud(helperConfig: { cfg }, rpcCaller: rpc,
+                                     sessionManager: mgr, uploader: uploader, broker: nil)
+        let sh = await cloud.shareAttachedSession(sessionId: "att-p")
+        XCTAssertTrue(sh.ok, "share failed: \(sh.error)")
+
+        // Queue output but do NOT pump it, so it's still in flight at revoke.
+        let big = String(repeating: "queued but unsent ", count: 400)
+        await cloud.handleBrokerEventForTesting([
+            "event": "output_delta", "session_id": "att-p", "payload": big,
+            "attached": true, "local_only": false])
+        let queuedBeforeRevoke = await uploader.queuedCount(sessionId: "att-p")
+        XCTAssertGreaterThan(queuedBeforeRevoke, 0, "precondition: output is queued and unsent")
+
+        _ = await cloud.unshareAttachedSession(sessionId: "att-p")
+        // The 'stopped' status is legitimately queued by the revoke itself; the
+        // OUTPUT must be gone.
+        let postsBefore = rpc.postEventCount
+        _ = await uploader.flush()
+        XCTAssertLessThanOrEqual(rpc.postEventCount - postsBefore, 1,
+                                 "revoked output must not upload — only the 'stopped' status may")
     }
 
     func testSetCloudSharedRefusesANonAttachedSession() throws {

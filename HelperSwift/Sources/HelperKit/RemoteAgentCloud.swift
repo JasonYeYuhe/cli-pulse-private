@@ -221,12 +221,14 @@ public actor RemoteAgentCloud {
             // local attach registered this id after the top-of-dispatch check,
             // stopSession refuses it ATOMICALLY.
             //
-            // M4.4d: an attached session is refused even when the user opted it
-            // into the cloud. Attach is NON-OWNING, so terminate() no-ops the
-            // kill: a cloud stop would DETACH us while the user's real claude
-            // kept running, and still report `stopped` to the phone. Sharing
-            // grants the phone read + input, never the power to end a session
-            // the user started themselves.
+            // M4.4d: an attached session is refused even when shared — but NOT
+            // as a protection (review: codex). Sharing grants input, and input
+            // includes interrupt (tmux C-c) and a raw 0x03, so a phone that can
+            // type into a session can already end it; that's what the user opted
+            // into. The refusal is because `stop` here can only LIE: terminate()
+            // no-ops on a non-owning attach, so we'd detach, report `stopped`,
+            // and leave the user's real claude running unwatched behind a phone
+            // that shows it stopped.
             if !sessionManager.ownsSession(sessionId) {
                 outcome = (false, "session not running on this helper")
             } else if !sessionManager.stopSession(sessionId, attachedPolicy: .refuseAttached) {
@@ -638,11 +640,17 @@ public actor RemoteAgentCloud {
             return (false, "superseded by a later change")
         }
 
-        guard sessionManager.setCloudShared(sessionId, true) != nil else {
-            // The session ended between the info read and the flip. We've
-            // already minted a 'running' row; mark it stopped so the phone
-            // doesn't offer a dead session for the ~60 s until it goes stale.
+        // Bind the flip to the SAME attach the user consented to (review: codex).
+        // Ids are deterministic per tmux name, so an attach that exited and was
+        // re-attached while we awaited reuses this id — opting THAT session in
+        // would apply consent given for one session to another.
+        guard sessionManager.setCloudShared(sessionId, true, expectedEpoch: info.epoch) != nil else {
+            // The session ended (or was replaced) between the info read and the
+            // flip. We've already minted a 'running' row; mark it stopped so the
+            // phone doesn't offer a dead session for the ~60 s until it goes
+            // stale. Safe to post: the row provably exists — we just minted it.
             await postStatus(sessionId: sessionId, status: "stopped")
+            await uploader.removeSession(sessionId)
             return (false, "the session ended before it could be shared")
         }
         // Register our own per-session state directly rather than waiting for a
@@ -670,7 +678,7 @@ public actor RemoteAgentCloud {
         // Claim the sequence FIRST so any share still awaiting its RPC resumes
         // into a superseded check and can't re-enable us (review: agy).
         _ = nextShareSeq(for: sessionId)
-        guard sessionManager.setCloudShared(sessionId, false) != nil else {
+        guard let change = sessionManager.setCloudShared(sessionId, false) else {
             return (false, "not an attached external session")
         }
         // Drop the batcher WITHOUT flushing — whatever it holds is output the
@@ -678,6 +686,20 @@ public actor RemoteAgentCloud {
         // below (review: agy): `postStatus` suspends, and the uploader's tick
         // would otherwise flush the batcher we meant to discard.
         sessions.removeValue(forKey: sessionId)
+
+        guard change.previouslyShared else {
+            // Never shared ⇒ no cloud row exists ⇒ posting a status would raise
+            // 'Session not found for device', and a failed event does not drop:
+            // it sits at the head of this session's uploader queue and wedges
+            // everything behind it, including a later legitimate share's output
+            // (review: codex). Nothing to revoke; nothing to say.
+            log("unshare(\(sessionId)): was not shared — nothing to revoke")
+            return (true, "")
+        }
+        // Revoke what's already queued but not yet sent. Output produced while
+        // consent was live is arguably fair game, but "stop sharing" should mean
+        // stop — not "stop after the backlog drains" (review: codex).
+        await uploader.removeSession(sessionId)
         // Mark the row stopped so the session leaves the phone's list, which
         // filters on status in ('pending','running').
         await postStatus(sessionId: sessionId, status: "stopped")
