@@ -78,6 +78,15 @@ public actor RemoteAgentCloud {
     /// its `stopped`.
     private var mintedRow: Set<String> = []
 
+    /// M4.4d: bumped whenever the user revokes EVERYTHING (Local Session Control
+    /// off). A per-session `shareSeq` can't cover that case (review: agy): a
+    /// share suspended on its register RPC still has `cloudShared == false`, so
+    /// `revokeAllCloudShares` doesn't see it, doesn't bump its seq, and it
+    /// resumes to flip sharing ON after the user turned the whole surface off —
+    /// with the toggle now hidden behind the very switch they closed. Every
+    /// share captures this at entry and refuses to apply if it moved.
+    private var revokeAllEpoch = 0
+
     /// Subscription to the broker for output_delta + lifecycle
     /// events. Held so we can unsubscribe on shutdown — even
     /// though EventBroker doesn't support weak refs, dropping it
@@ -619,6 +628,7 @@ public actor RemoteAgentCloud {
         // uploading against the user's LAST explicit choice. Claim a sequence
         // number now and refuse to apply if anything supersedes us.
         let mySeq = nextShareSeq(for: sessionId)
+        let myRevokeEpoch = revokeAllEpoch
 
         do {
             _ = try await rpcCaller.call(
@@ -650,7 +660,7 @@ public actor RemoteAgentCloud {
 
         // Superseded while we were awaiting → the user has since said something
         // else about this session. Their later word wins; do NOT flip the flag.
-        guard shareSeq[sessionId] == mySeq else {
+        guard shareSeq[sessionId] == mySeq, revokeAllEpoch == myRevokeEpoch else {
             log("share(\(sessionId)) superseded by a later opt-in change — not applying")
             // Don't leave the row we just minted sitting `running` — the earlier
             // comment here claimed "a concurrent unshare marks it stopped", which
@@ -738,6 +748,10 @@ public actor RemoteAgentCloud {
         // That is what actually stops the uploads, and it must not be hostage to
         // the network: the row cleanup below can be slow or fail entirely and
         // nothing will have uploaded in the meantime.
+        // Bump BEFORE reading the flags: a share suspended on its register RPC
+        // is invisible to `revokeAllCloudShares` (its flag is still false), and
+        // this epoch is what stops it applying when it resumes (review: agy).
+        revokeAllEpoch += 1
         let revoked = sessionManager.revokeAllCloudShares()
         for sid in revoked {
             _ = nextShareSeq(for: sid)   // supersede any share still in flight
@@ -764,10 +778,23 @@ public actor RemoteAgentCloud {
     /// Purge BEFORE the status post: `postStatus` suspends, and the uploader
     /// must not drain revoked output during that window.
     private func retireMintedRow(_ sessionId: String) async {
-        await uploader.removeSession(sessionId)
-        await postStatus(sessionId: sessionId, status: "stopped")
+        // Claim the sequence so a re-share starting during our awaits supersedes
+        // us, and drop the state SYNCHRONOUSLY before suspending (review: agy —
+        // otherwise we resume and blindly wipe the new share's SessionState,
+        // after which `handleOutputDelta`'s attached early-return silently drops
+        // all of its output).
+        let mySeq = nextShareSeq(for: sessionId)
         sessions.removeValue(forKey: sessionId)
         mintedRow.remove(sessionId)
+        await uploader.removeSession(sessionId)
+        // Re-shared while we were purging → the row is live again and belongs to
+        // that share. Marking it stopped now would kill a session the user just
+        // asked for.
+        guard shareSeq[sessionId] == mySeq else {
+            log("retire(\(sessionId)) superseded by a re-share — leaving the row alone")
+            return
+        }
+        await postStatus(sessionId: sessionId, status: "stopped")
     }
 
     /// Monotonic per-session opt-in sequence. Bumped synchronously at the START
@@ -896,6 +923,15 @@ public actor RemoteAgentCloud {
                 await postInfo(sessionId: sid, detail: "exit_code=\(code)")
             }
             sessions.removeValue(forKey: sid)
+            // The session has genuinely ENDED and its row is now stopped, so
+            // retire the per-session bookkeeping too (review: codex). Left
+            // behind, `mintedRow` both leaks for the daemon's lifetime and —
+            // because wrapped ids are DETERMINISTIC per tmux name — can make a
+            // later, never-shared re-attach of the same name look as though it
+            // already has a cloud row.
+            mintedRow.remove(sid)
+            shareSeq.removeValue(forKey: sid)
+            await uploader.forgetSession(sid)
             exited += 1
         }
         return exited

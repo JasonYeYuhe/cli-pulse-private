@@ -1859,6 +1859,40 @@ def test_share_does_not_opt_in_when_the_row_cannot_be_minted(monkeypatch):
     assert not [c for c in rpc if c[0] == "remote_helper_post_event"]
 
 
+def test_never_shared_attached_session_posts_no_status_on_exit(monkeypatch):
+    """review: agy — a never-shared attached session has no cloud row, so a
+    lifecycle status is a guaranteed-to-fail RPC on every wrapped-session exit.
+    (Python's `_post_event` catches and drops it, so this is noise rather than
+    the queue-wedge it would be in Swift — but it contradicts the stdout gate,
+    and one rule should govern both paths.)"""
+    mgr, _shared, rpc = _make_manager()
+    _attach_fake_tmux(mgr, monkeypatch)
+
+    mgr._post_status("ext-c", "stopped")
+    assert not [c for c in rpc if c[0] == "remote_helper_post_event"], \
+        "no status may be posted for a session that never had a cloud row"
+
+
+def test_revoke_still_posts_its_stopped_status(monkeypatch):
+    """The gate must NOT suppress the revoke's own trailing status: unshare
+    clears `cloud_shared` FIRST (revocation must not depend on the network), so
+    gating on that flag would block the very post that retires the row. Gate on
+    the ROW, not the flag."""
+    mgr, _shared, rpc = _make_manager()
+    _attach_fake_tmux(mgr, monkeypatch)
+    mgr.set_wrapped_session_cloud_shared("ext-c", True)
+
+    mgr.set_wrapped_session_cloud_shared("ext-c", False)
+    statuses = [c for c in rpc if c[0] == "remote_helper_post_event"
+                and c[1].get("p_kind") == "status"]
+    assert statuses, "the revoke must still retire the row it minted"
+    # ...and a later natural exit must not post against the retired row again.
+    before = len([c for c in rpc if c[0] == "remote_helper_post_event"])
+    mgr._post_status("ext-c", "stopped")
+    after = len([c for c in rpc if c[0] == "remote_helper_post_event"])
+    assert after == before, "a retired row must not be posted against again"
+
+
 def test_cloud_share_refuses_a_non_attached_session():
     """The flag governs attached sessions only — a spawned session is already
     cloud-wired, so an opt-in surface over it would imply a control it lacks."""

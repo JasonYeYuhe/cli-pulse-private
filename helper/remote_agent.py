@@ -181,6 +181,13 @@ class _ManagedSession:
     # the machine by default. Meaningless for a spawned session (already
     # cloud-wired); only `attached` records ever flip it.
     cloud_shared: bool = False
+    # M4.4d: True once we have actually MINTED this session's cloud row. Distinct
+    # from `cloud_shared` on purpose (mirrors Swift's `mintedRow`): the flag says
+    # "the opt-in is applied", this says "a row exists". They diverge — a revoke
+    # clears the flag FIRST (revocation must not depend on the network) and only
+    # then posts the trailing `stopped`, so gating that post on `cloud_shared`
+    # would suppress the very status that retires the row.
+    cloud_row_minted: bool = False
     # iter-2: hold the un-uploaded tail in memory while the batcher fills.
     # On each tick we add freshly-read PTY bytes to the batcher and only
     # drain into `stdout_buffer` if the upload itself failed (so the
@@ -725,23 +732,28 @@ class RemoteAgentManager:
             if sess is None or not sess.attached:
                 raise LookupError(
                     f"the session ended before it could be shared: {session_id}")
+            sess.cloud_row_minted = True
             sess.cloud_shared = True
             logger.info("shared attached session %s with the cloud (private)", session_id)
             return True
 
-        was_shared = sess.cloud_shared
+        # Retire on EITHER signal: a share whose register RPC already committed
+        # but whose flag never flipped still left a row behind.
+        was_shared = sess.cloud_shared or sess.cloud_row_minted
         sess.cloud_shared = False
         # Drop anything the batcher still holds: it is output the user just
         # revoked consent for, so it must not be flushed on a later tick.
         sess.stdout_batcher.drain()
         sess.stdout_buffer.clear()
         if not was_shared:
-            logger.info("unshare(%s): was not shared — nothing to revoke", session_id)
+            logger.info("unshare(%s): nothing minted — nothing to revoke", session_id)
             return False
         # Mark the row stopped so the session leaves the phone's list (which
         # filters status in ('pending','running')). The REAL session keeps
         # running; this ends the CLOUD's view of it, not the session.
         self._post_status(session_id, "stopped")
+        # The row is retired; a later natural exit must not post against it again.
+        sess.cloud_row_minted = False
         logger.info(
             "unshared attached session %s — cloud view ended, session still running",
             session_id,
@@ -1831,6 +1843,22 @@ class RemoteAgentManager:
             )
             return False
 
+    def _post_status_allowed(self, session_id: str) -> bool:
+        """M4.4d: never post a lifecycle status for an ATTACHED session the user
+        hasn't opted into the cloud (review: agy).
+
+        No opt-in ⇒ no cloud row ⇒ the RPC raises 'Session not found for device'.
+        `_post_event` catches and drops that (unlike the Swift EventUploader,
+        which would wedge its queue head), so this is noise rather than
+        corruption — but it's a guaranteed-to-fail network round-trip on every
+        wrapped-session exit, and it contradicts the egress gate in
+        `_post_stdout_chunk`. One rule, both paths.
+        """
+        sess = self._sessions.get(session_id)
+        if sess is None or not sess.attached:
+            return True
+        return sess.cloud_row_minted
+
     def _post_status(self, session_id: str, status: str) -> None:
         """Post a lifecycle status event so the SQL gate transitions
         `remote_sessions.status`.
@@ -1852,7 +1880,11 @@ class RemoteAgentManager:
                 session_id, status,
             )
             return
-        self._post_event(session_id, "status", status)
+        # M4.4d: gate the CLOUD post only — the local broker mirror below still
+        # fires, because the app's own terminal must learn the session ended
+        # whether or not it was ever shared.
+        if self._post_status_allowed(session_id):
+            self._post_event(session_id, "status", status)
         # Mirror the lifecycle change onto the local broker so a
         # subscribed macOS row updates without waiting for the next
         # snapshot poll. Best-effort.

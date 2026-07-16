@@ -161,7 +161,17 @@ public actor EventUploader {
         let sids = Array(queues.keys)
         for sid in sids {
             let purgeAtEntry = purgeGen[sid]
-            while true {
+            // BOUND the work to what was queued when we got here (review: codex).
+            // Re-reading live is what makes a concurrent purge/ingest correct,
+            // but it must not turn into chasing a live tail: on a session
+            // producing output as fast as we post it, an unbounded loop would
+            // never empty this sid — starving every other session's queue AND
+            // never returning, so `tick` would stop polling for commands
+            // entirely. The pre-M4.4d loop was bounded by its snapshot's length;
+            // keep that property.
+            var budget = queues[sid]?.count ?? 0
+            while budget > 0 {
+                budget -= 1
                 // Re-read live: an earlier session's await may have let
                 // removeSession purge this one.
                 guard let live = queues[sid], let event = live.first else { break }
@@ -175,10 +185,13 @@ public actor EventUploader {
                     // Leave the failing event at the front for retry.
                     break
                 }
-                // Drop the event we just posted from the LIVE queue — it's
-                // still at the front (only this pump removes, and pumps don't
-                // overlap: see `isPumping`).
-                if var cur = queues[sid], !cur.isEmpty {
+                // Drop the event we just posted — but only if it's STILL the
+                // front. At queue capacity an ingest during the await can
+                // drop-oldest the very event we were posting (review: codex), in
+                // which case the front is now a DIFFERENT, unposted event and
+                // removing it would lose it silently, beyond the drop-oldest
+                // policy's one.
+                if var cur = queues[sid], cur.first == event {
                     cur.removeFirst()
                     if cur.isEmpty {
                         queues.removeValue(forKey: sid)
@@ -292,6 +305,23 @@ public actor EventUploader {
     /// a collision is cosmetic rather than corrupting — but there's no reason to
     /// emit one, and the counter outliving the queue is what this type's doc
     /// always promised.
+    /// Retire ALL per-session bookkeeping for a session that has genuinely
+    /// ENDED and had its final status posted. Distinct from `removeSession`,
+    /// which revokes a session that is still ALIVE and may still post a trailing
+    /// status — that one must keep the seq counter.
+    ///
+    /// Without this the seq/purge maps grow for the daemon's whole lifetime, one
+    /// entry per session id ever seen (review: agy, codex).
+    ///
+    /// Deliberately does NOT touch `queues`: the caller has just INGESTED the
+    /// final status, which is sitting in that queue waiting to be pumped.
+    /// Dropping it here would delete the very event that retires the session's
+    /// cloud row. The queue entry removes itself once drained.
+    public func forgetSession(_ sessionId: String) {
+        sessionSeq.removeValue(forKey: sessionId)
+        purgeGen.removeValue(forKey: sessionId)
+    }
+
     public func removeSession(_ sessionId: String) {
         purgeGenCounter += 1
         purgeGen[sessionId] = purgeGenCounter
