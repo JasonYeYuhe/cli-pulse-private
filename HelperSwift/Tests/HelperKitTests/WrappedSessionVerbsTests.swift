@@ -504,6 +504,73 @@ final class WrappedSessionVerbsTests: XCTestCase {
                                  "revoked output must not upload — only the 'stopped' status may")
     }
 
+    func testRevokeDuringAnInFlightPumpStopsTheUpload() async throws {
+        // review: audit workflow — the finding agy and codex BOTH missed.
+        // `pumpOnce` used to bind a value-type COPY of a session's queue and
+        // hold it across `await postEvent` (an HTTPS RPC that releases the
+        // actor), then write that copy back. So `uploader.removeSession` — the
+        // whole mechanism of M4.4d's revoke — was invisible to a pump already in
+        // flight: the pump resumed from its stale copy and posted every revoked
+        // event anyway, then resurrected them by writing the copy back.
+        //
+        // With a ~1 s tick and ~200 ms RPCs on a chatty session, "a pump is in
+        // flight" is the ORDINARY case, so the revoke fix was close to a no-op.
+        //
+        // This drives the interleave deterministically: the RPC parks on a gate,
+        // the revoke runs inside that suspension, then the RPC is released.
+        let gate = RegisterGate()
+        let rpc = GatedPostRPC(gate: gate)
+        let cfg = Self.testCfg
+        let uploader = EventUploader(helperConfig: { cfg }, rpcCaller: rpc)
+
+        // Queue several events, as a shared session's output would be.
+        for i in 0..<5 {
+            await uploader.ingest(sessionId: "sess-r", kind: .stdout, payload: "secret chunk \(i)")
+        }
+        let queuedBefore = await uploader.queuedCount(sessionId: "sess-r")
+        XCTAssertEqual(queuedBefore, 5)
+
+        async let pumped = uploader.pumpOnce()
+        // Wait until the pump is genuinely suspended inside the first post.
+        await gate.waitUntilRegisterEntered()
+        // The user revokes while that post is in flight.
+        await uploader.removeSession("sess-r")
+        await gate.release()
+        _ = await pumped
+
+        let posts = rpc.postCount
+        XCTAssertEqual(posts, 1,
+                       "only the post already in flight may land — the other 4 were revoked")
+        let queuedAfter = await uploader.queuedCount(sessionId: "sess-r")
+        XCTAssertEqual(queuedAfter, 0,
+                       "the purged queue must not be resurrected by the pump's stale copy")
+    }
+
+    func testIngestDuringAnInFlightPumpIsNotLost() async throws {
+        // Same root cause, opposite direction: the stale copy written back at
+        // the end of a pump DISCARDED anything ingested during it — silent
+        // output loss on any session busy enough to produce output while an
+        // upload was in flight.
+        let gate = RegisterGate()
+        let rpc = GatedPostRPC(gate: gate)
+        let cfg = Self.testCfg
+        let uploader = EventUploader(helperConfig: { cfg }, rpcCaller: rpc)
+
+        await uploader.ingest(sessionId: "sess-i", kind: .stdout, payload: "first")
+        async let pumped = uploader.pumpOnce()
+        await gate.waitUntilRegisterEntered()
+        // Output arrives while the first post is in flight.
+        await uploader.ingest(sessionId: "sess-i", kind: .stdout, payload: "arrived mid-pump")
+        await gate.release()
+        _ = await pumped
+
+        // "first" posted; "arrived mid-pump" must still be queued (or posted) —
+        // never silently dropped.
+        let remaining = await uploader.queuedCount(sessionId: "sess-i")
+        XCTAssertEqual(remaining + rpc.postCount, 2,
+                       "an event ingested during a pump must not be discarded")
+    }
+
     func testSetCloudSharedRefusesANonAttachedSession() throws {
         // The flag governs attached sessions only. A spawned session is already
         // cloud-wired; letting this flip on one would imply an opt-in surface
@@ -628,6 +695,28 @@ private final class GatedRPC: RPCCallable, @unchecked Sendable {
         if rpcName == "remote_helper_register_session" {
             await gate.noteEntered()
             await gate.waitForRelease()
+        }
+        return [String: Any]()
+    }
+}
+
+/// Parks inside `remote_helper_post_event` so a test can drive the exact
+/// interleave where the uploader is suspended mid-post.
+private final class GatedPostRPC: RPCCallable, @unchecked Sendable {
+    private let gate: RegisterGate
+    private let lock = NSLock()
+    private var _posts = 0
+    var postCount: Int { lock.lock(); defer { lock.unlock() }; return _posts }
+    init(gate: RegisterGate) { self.gate = gate }
+    func call(_ rpcName: String, params: [String: Any]) async throws -> Any {
+        if rpcName == "remote_helper_post_event" {
+            lock.lock(); _posts += 1; lock.unlock()
+            // Only the FIRST post parks — later ones run free, so the test
+            // observes whether any of them happen at all.
+            if postCount == 1 {
+                await gate.noteEntered()
+                await gate.waitForRelease()
+            }
         }
         return [String: Any]()
     }
