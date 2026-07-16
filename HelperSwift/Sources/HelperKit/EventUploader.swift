@@ -98,9 +98,16 @@ public actor EventUploader {
 
     /// `pumpOnce` re-reads live state across its awaits, which is only sound if
     /// pumps don't overlap — two concurrent pumps would both see the same event
-    /// at the front and post it twice. `flush` and the daemon tick can both
-    /// reach `pumpOnce`, so serialize them.
+    /// at the front and post it TWICE. (The pre-M4.4d copy-based loop had the
+    /// same hazard: both pumps copied the same array and both drained it.)
+    /// `flush` and the daemon tick can both reach `pumpOnce`, so serialize them.
+    ///
+    /// A second caller WAITS rather than no-opping: `flush` loops on `pumpOnce`
+    /// and reads a 0 return as "no progress was possible", so a no-op would make
+    /// a shutdown flush racing an in-flight pump bail early and DROP the queue —
+    /// the exact thing flush exists to prevent.
     private var isPumping = false
+    private var pumpWaiters: [CheckedContinuation<Void, Never>] = []
 
     public init(
         helperConfig: @escaping @Sendable () -> HelperConfigStore.CloudConfig,
@@ -136,9 +143,18 @@ public actor EventUploader {
     /// flight, i.e. the common case on a chatty session.)
     @discardableResult
     public func pumpOnce() async -> Int {
-        if isPumping { return 0 }
+        // Re-check in a loop: several callers can be parked, and each resumes
+        // into a fresh race for the flag.
+        while isPumping {
+            await withCheckedContinuation { pumpWaiters.append($0) }
+        }
         isPumping = true
-        defer { isPumping = false }
+        defer {
+            isPumping = false
+            let waiters = pumpWaiters
+            pumpWaiters.removeAll()
+            for w in waiters { w.resume() }
+        }
         var posted = 0
         // Snapshot the keys first so a parallel ingest doesn't
         // shift iteration. (We're an actor; this is sequential.)

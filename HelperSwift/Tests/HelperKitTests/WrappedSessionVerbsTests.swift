@@ -685,6 +685,39 @@ final class WrappedSessionVerbsTests: XCTestCase {
         XCTAssertEqual(mgr.revokeAllCloudShares(), [], "no attached sessions → nothing to revoke")
     }
 
+    func testConcurrentPumpsNeitherDoublePostNorDropTheQueue() async throws {
+        // Two hazards in one test, because the fix for the first nearly caused
+        // the second:
+        //  * Overlapping pumps must not post the same event twice — both would
+        //    otherwise see it at the front of the queue while the other is
+        //    suspended in its RPC.
+        //  * The loser must WAIT, not no-op. `flush` loops on pumpOnce and reads
+        //    a 0 return as "no progress possible", so a no-op return would make a
+        //    shutdown flush racing an in-flight pump bail and DROP the queue —
+        //    the exact data loss flush exists to prevent.
+        let gate = RegisterGate()
+        let rpc = GatedPostRPC(gate: gate)
+        let cfg = Self.testCfg
+        let uploader = EventUploader(helperConfig: { cfg }, rpcCaller: rpc)
+
+        for i in 0..<4 {
+            await uploader.ingest(sessionId: "sess-c", kind: .stdout, payload: "chunk \(i)")
+        }
+        // Pump A parks inside its first post.
+        async let pumpA = uploader.pumpOnce()
+        await gate.waitUntilRegisterEntered()
+        // Pump B starts while A is suspended: it must block, not race A.
+        async let pumpB = uploader.pumpOnce()
+        await gate.release()
+        let a = await pumpA
+        let b = await pumpB
+
+        XCTAssertEqual(rpc.postCount, 4, "each queued event must post exactly once")
+        XCTAssertEqual(a + b, 4, "the two pumps must account for exactly the 4 events between them")
+        let left = await uploader.queuedCount(sessionId: "sess-c")
+        XCTAssertEqual(left, 0, "the queue must drain, not be dropped or stranded")
+    }
+
     func testSetCloudSharedRefusesANonAttachedSession() throws {
         // The flag governs attached sessions only. A spawned session is already
         // cloud-wired; letting this flip on one would imply an opt-in surface
