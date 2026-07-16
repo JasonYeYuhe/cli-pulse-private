@@ -167,14 +167,17 @@ final class WrappedSessionVerbsTests: XCTestCase {
             helperConfig: { cfg },
             rpcCaller: rpc, sessionManager: mgr, uploader: uploader, broker: nil)
 
-        // Frames carry the LATCHED attached flag (the manager stamps it on every
-        // frame). The observer skips from the FRAME, not manager state.
+        // Frames carry the LATCHED local_only flag (the manager stamps it on
+        // every frame). The observer skips from the FRAME, not manager state.
         await cloud.handleBrokerEventForTesting([
-            "event": "session_started", "session_id": "att-c", "provider": "codex", "attached": true])
+            "event": "session_started", "session_id": "att-c", "provider": "codex",
+            "attached": true, "local_only": true])
         await cloud.handleBrokerEventForTesting([
-            "event": "output_delta", "session_id": "att-c", "payload": "secret wrapped output", "attached": true])
+            "event": "output_delta", "session_id": "att-c", "payload": "secret wrapped output",
+            "attached": true, "local_only": true])
         await cloud.handleBrokerEventForTesting([
-            "event": "session_stopped", "session_id": "att-c", "exit_code": 0, "attached": true])
+            "event": "session_stopped", "session_id": "att-c", "exit_code": 0,
+            "attached": true, "local_only": true])
 
         // The RACE codex flagged: a DEFERRED output_delta Task runs AFTER the
         // manager already removed the record (so a state query would say
@@ -182,7 +185,8 @@ final class WrappedSessionVerbsTests: XCTestCase {
         // detaching first, then delivering a late frame.
         _ = mgr.stopSession("att-c")
         await cloud.handleBrokerEventForTesting([
-            "event": "output_delta", "session_id": "att-c", "payload": "late secret", "attached": true])
+            "event": "output_delta", "session_id": "att-c", "payload": "late secret",
+            "attached": true, "local_only": true])
         _ = await uploader.pumpOnce()
 
         let cloudTracked = await cloud.trackedSessionCountForTesting
@@ -215,6 +219,162 @@ final class WrappedSessionVerbsTests: XCTestCase {
         // The real wrapped session must still be alive (the stop was rejected).
         XCTAssertTrue(mgr.isAttached("att-cmd"), "a cloud stop must NOT tear down a local-only attached session")
         XCTAssertTrue(owner.isAlive(oh))
+    }
+
+    // MARK: - M4.4d: explicit, per-session opt-in into the cloud plane
+
+    func testShareMintsAPrivateRowAndUnshareRevokes() async throws {
+        // The opt-in must (a) mint the cloud row the phone routes on, (b) mint it
+        // PRIVATE — an external session must never be advertised on the public
+        // `term:` topic, which bypasses RLS by design.
+        guard let bin = tmuxBin else { throw XCTSkip("tmux not available") }
+        let mgr = ManagedSessionManager(transport: PtyTransport())
+        defer { mgr.shutdown() }
+        let sock = sockDir.appendingPathComponent("share.sock").path
+        let owner = TmuxTransport(socketPath: sock, tmuxBin: bin)
+        let oh = try owner.start(sessionId: "clipulse-claude-77", argv: ["cat"])
+        defer { owner.close(oh); try? FileManager.default.removeItem(atPath: sock) }
+        XCTAssertTrue(mgr.attachWrappedSession(sessionId: "att-share", tmuxSessionName: "clipulse-claude-77",
+                                               provider: "claude", tmuxBin: bin, socketPath: sock))
+
+        let rpc = CountingRPC()
+        let cloud = Self.makeCloud(rpc: rpc, mgr: mgr)
+
+        XCTAssertFalse(mgr.isCloudShared("att-share"), "an attach must start LOCAL-ONLY")
+
+        let shared = await cloud.shareAttachedSession(sessionId: "att-share")
+        XCTAssertTrue(shared.ok, "share failed: \(shared.error)")
+        XCTAssertTrue(mgr.isCloudShared("att-share"))
+        XCTAssertEqual(mgr.cloudSharedSessionIds(), ["att-share"])
+
+        XCTAssertEqual(rpc.registerParams.count, 1, "share must mint exactly one cloud row")
+        let params = try XCTUnwrap(rpc.registerParams.first)
+        XCTAssertEqual(params["p_session_id"] as? String, "att-share")
+        XCTAssertEqual(params["p_provider"] as? String, "claude")
+        XCTAssertEqual(params["p_realtime_private"] as? Bool, true,
+                       "an external session must be minted PRIVATE — the public term: topic bypasses RLS")
+
+        // Revoking is local-first: the flag drops even though the row lingers.
+        let un = await cloud.unshareAttachedSession(sessionId: "att-share")
+        XCTAssertTrue(un.ok, "unshare failed: \(un.error)")
+        XCTAssertFalse(mgr.isCloudShared("att-share"))
+        XCTAssertEqual(mgr.cloudSharedSessionIds(), [])
+        // ...and the session itself is untouched: revoking sharing is not stopping.
+        XCTAssertTrue(mgr.isAttached("att-share"))
+        XCTAssertTrue(owner.isAlive(oh))
+    }
+
+    func testShareDoesNotOptInWhenTheRowCannotBeMinted() async throws {
+        // If register fails, flipping the flag anyway would latch local_only:false
+        // onto frames whose post_event then raises 'Session not found for device'
+        // — which doesn't drop, it STALLS the uploader queue behind it.
+        guard let bin = tmuxBin else { throw XCTSkip("tmux not available") }
+        let mgr = ManagedSessionManager(transport: PtyTransport())
+        defer { mgr.shutdown() }
+        let sock = sockDir.appendingPathComponent("sharefail.sock").path
+        let owner = TmuxTransport(socketPath: sock, tmuxBin: bin)
+        let oh = try owner.start(sessionId: "clipulse-claude-78", argv: ["cat"])
+        defer { owner.close(oh); try? FileManager.default.removeItem(atPath: sock) }
+        XCTAssertTrue(mgr.attachWrappedSession(sessionId: "att-f", tmuxSessionName: "clipulse-claude-78",
+                                               tmuxBin: bin, socketPath: sock))
+        let rpc = CountingRPC()
+        rpc.failRegister = true
+        let cloud = Self.makeCloud(rpc: rpc, mgr: mgr)
+
+        let r = await cloud.shareAttachedSession(sessionId: "att-f")
+        XCTAssertFalse(r.ok, "share must fail when the row can't be minted")
+        XCTAssertFalse(mgr.isCloudShared("att-f"), "the opt-in must NOT flip without a cloud row behind it")
+    }
+
+    func testSharedSessionUploadsOutputAndUnsharedStops() async throws {
+        // The whole point of M4.4d: once opted in, the wrapped session's output
+        // reaches the phone — and once revoked, it stops.
+        guard let bin = tmuxBin else { throw XCTSkip("tmux not available") }
+        let mgr = ManagedSessionManager(transport: PtyTransport())
+        defer { mgr.shutdown() }
+        let sock = sockDir.appendingPathComponent("upl.sock").path
+        let owner = TmuxTransport(socketPath: sock, tmuxBin: bin)
+        let oh = try owner.start(sessionId: "clipulse-claude-79", argv: ["cat"])
+        defer { owner.close(oh); try? FileManager.default.removeItem(atPath: sock) }
+        XCTAssertTrue(mgr.attachWrappedSession(sessionId: "att-u", tmuxSessionName: "clipulse-claude-79",
+                                               tmuxBin: bin, socketPath: sock))
+        let rpc = CountingRPC()
+        let cfg = Self.testCfg
+        let uploader = EventUploader(helperConfig: { cfg }, rpcCaller: rpc)
+        let cloud = RemoteAgentCloud(helperConfig: { cfg }, rpcCaller: rpc,
+                                     sessionManager: mgr, uploader: uploader, broker: nil)
+
+        let sharedu = await cloud.shareAttachedSession(sessionId: "att-u")
+        XCTAssertTrue(sharedu.ok, "share failed: \(sharedu.error)")
+        // A frame emitted while shared carries local_only:false. Oversize on
+        // purpose: EventBatcher only yields a chunk once it trips its 4096-char
+        // cutoff, so a short payload would sit in the batcher and prove nothing.
+        let bigPayload = String(repeating: "consented output ", count: 400)
+        await cloud.handleBrokerEventForTesting([
+            "event": "output_delta", "session_id": "att-u", "payload": bigPayload,
+            "attached": true, "local_only": false])
+        _ = await uploader.flush()
+        XCTAssertGreaterThan(rpc.postEventCount, 0, "a SHARED wrapped session's output must reach the cloud")
+
+        let before = rpc.postEventCount
+        _ = await cloud.unshareAttachedSession(sessionId: "att-u")
+        // After revocation the manager latches local_only:true again; such a
+        // frame must upload nothing.
+        await cloud.handleBrokerEventForTesting([
+            "event": "output_delta", "session_id": "att-u", "payload": bigPayload,
+            "attached": true, "local_only": true])
+        _ = await uploader.flush()
+        // unshare posts one status row ('stopped'); no STDOUT may follow it.
+        XCTAssertLessThanOrEqual(rpc.postEventCount - before, 1,
+                                 "no output may upload after the user revokes sharing")
+    }
+
+    func testCloudStopIsRefusedEvenForASharedSession() async throws {
+        // Sharing grants the phone read + input, never the power to end a session
+        // the user started themselves. Attach is NON-OWNING: terminate() no-ops
+        // the kill, so a "successful" cloud stop would detach us while the real
+        // claude kept running — and still tell the phone it stopped.
+        guard let bin = tmuxBin else { throw XCTSkip("tmux not available") }
+        let mgr = ManagedSessionManager(transport: PtyTransport())
+        defer { mgr.shutdown() }
+        let sock = sockDir.appendingPathComponent("stopshared.sock").path
+        let owner = TmuxTransport(socketPath: sock, tmuxBin: bin)
+        let oh = try owner.start(sessionId: "clipulse-claude-80", argv: ["cat"])
+        defer { owner.close(oh); try? FileManager.default.removeItem(atPath: sock) }
+        XCTAssertTrue(mgr.attachWrappedSession(sessionId: "att-s", tmuxSessionName: "clipulse-claude-80",
+                                               tmuxBin: bin, socketPath: sock))
+        let rpc = CountingRPC()
+        let cloud = Self.makeCloud(rpc: rpc, mgr: mgr)
+        let shareds = await cloud.shareAttachedSession(sessionId: "att-s")
+        XCTAssertTrue(shareds.ok, "share failed: \(shareds.error)")
+
+        await cloud.dispatchOneForTesting(["id": "c9", "kind": "stop", "session_id": "att-s"])
+        XCTAssertTrue(mgr.isAttached("att-s"), "a cloud stop must never end a shared external session")
+        XCTAssertTrue(owner.isAlive(oh), "the user's real session must survive a cloud stop")
+    }
+
+    func testSetCloudSharedRefusesANonAttachedSession() throws {
+        // The flag governs attached sessions only. A spawned session is already
+        // cloud-wired; letting this flip on one would imply an opt-in surface
+        // that doesn't actually govern it.
+        let mgr = ManagedSessionManager(transport: PtyTransport())
+        defer { mgr.shutdown() }
+        XCTAssertNil(mgr.setCloudShared("no-such-session", true))
+        XCTAssertNil(mgr.attachedSessionInfo("no-such-session"))
+        XCTAssertFalse(mgr.isCloudShared("no-such-session"))
+    }
+
+    private static var testCfg: HelperConfigStore.CloudConfig {
+        HelperConfigStore.CloudConfig(
+            deviceId: "11111111-2222-3333-4444-555555555555", helperSecret: "s",
+            supabaseURL: "https://x.supabase.co", supabaseAnonKey: "anon")
+    }
+
+    private static func makeCloud(rpc: CountingRPC, mgr: ManagedSessionManager) -> RemoteAgentCloud {
+        let cfg = testCfg
+        return RemoteAgentCloud(
+            helperConfig: { cfg }, rpcCaller: rpc, sessionManager: mgr,
+            uploader: EventUploader(helperConfig: { cfg }, rpcCaller: rpc), broker: nil)
     }
 
     func testAttachWrappedSessionAttachFailedForMissingSession() throws {
@@ -285,10 +445,19 @@ final class WrappedSessionVerbsTests: XCTestCase {
 private final class CountingRPC: RPCCallable, @unchecked Sendable {
     private let lock = NSLock()
     private var _postEvents = 0
+    private var _registerParams: [[String: Any]] = []
+    /// Set to make every `remote_helper_register_session` throw, so a test can
+    /// prove the opt-in flag never flips without a cloud row behind it.
+    var failRegister = false
     var postEventCount: Int { lock.lock(); defer { lock.unlock() }; return _postEvents }
+    var registerParams: [[String: Any]] { lock.lock(); defer { lock.unlock() }; return _registerParams }
     func call(_ rpcName: String, params: [String: Any]) async throws -> Any {
         if rpcName == "remote_helper_post_event" {
             lock.lock(); _postEvents += 1; lock.unlock()
+        }
+        if rpcName == "remote_helper_register_session" {
+            lock.lock(); _registerParams.append(params); lock.unlock()
+            if failRegister { throw SupabaseRPCError.transport("register boom") }
         }
         return [String: Any]()
     }

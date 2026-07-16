@@ -183,14 +183,18 @@ public actor RemoteAgentCloud {
 
         log("dispatch kind=\(kind) session=\(sessionId) cmd=\(cmdId) payload_chars=\(payload.count)")
 
-        // M4.4a defense-in-depth (review: codex): an ATTACHED wrapped session is
-        // LOCAL-ONLY and was never uploaded, so the cloud has no legitimate way
-        // to command it — reject ANY inbound cloud command for it (a `stop`
-        // would otherwise drive the user's real external session + post a cloud
-        // status). isAttached is reliable here: a command targets a LIVE session,
-        // so the record is present. The phone plane wires attached sessions in
-        // deliberately (M4.4d), at which point this gate is revisited.
-        if !sessionId.isEmpty, sessionManager.isAttached(sessionId) {
+        // M4.4a defense-in-depth (review: codex): an attached wrapped session the
+        // user has NOT opted in was never uploaded, so the cloud has no
+        // legitimate way to command it — reject any inbound command for it. A
+        // SHARED one (M4.4d) falls through to the per-kind policies below, which
+        // re-check ATOMICALLY under the manager's lock; this check is the cheap
+        // outer gate, not the authority.
+        //
+        // Querying live manager state is reliable HERE (unlike the broker path):
+        // a command targets a live session, so the record is present.
+        if !sessionId.isEmpty,
+           sessionManager.isAttached(sessionId),
+           !sessionManager.isCloudShared(sessionId) {
             log("dispatch rejected: \(sessionId) is a local-only attached session")
             await completeCommand(cmdId: cmdId, ok: false, error: "attached session is local-only")
             return
@@ -207,14 +211,20 @@ public actor RemoteAgentCloud {
             // rather than silently `delivered`. The macOS app
             // distinguishes stale-row no-ops from real
             // successful stops via this status.
-            // refuseAttached:true closes the TOCTOU (review: codex) — even if a
+            // `.refuseAttached` closes the TOCTOU (review: codex) — even if a
             // local attach registered this id after the top-of-dispatch check,
-            // stopSession refuses it ATOMICALLY, so a cloud stop can never tear
-            // down a local-only wrapped session.
+            // stopSession refuses it ATOMICALLY.
+            //
+            // M4.4d: an attached session is refused even when the user opted it
+            // into the cloud. Attach is NON-OWNING, so terminate() no-ops the
+            // kill: a cloud stop would DETACH us while the user's real claude
+            // kept running, and still report `stopped` to the phone. Sharing
+            // grants the phone read + input, never the power to end a session
+            // the user started themselves.
             if !sessionManager.ownsSession(sessionId) {
                 outcome = (false, "session not running on this helper")
-            } else if !sessionManager.stopSession(sessionId, refuseAttached: true) {
-                outcome = (false, "session is local-only or already gone")
+            } else if !sessionManager.stopSession(sessionId, attachedPolicy: .refuseAttached) {
+                outcome = (false, "an attached external session cannot be stopped from the phone")
             } else {
                 await postStatus(sessionId: sessionId, status: "stopped")
                 sessions.removeValue(forKey: sessionId)
@@ -223,7 +233,7 @@ public actor RemoteAgentCloud {
         case "interrupt":
             if !sessionManager.ownsSession(sessionId) {
                 outcome = (false, "session not running on this helper")
-            } else if !sessionManager.interruptSession(sessionId, refuseAttached: true) {
+            } else if !sessionManager.interruptSession(sessionId, attachedPolicy: .requireCloudShared) {
                 outcome = (false, "session is local-only or already gone")
             } else {
                 outcome = (true, "")
@@ -378,7 +388,7 @@ public actor RemoteAgentCloud {
         }
         let ok: Bool
         do {
-            ok = try sessionManager.sendInput(sessionId: sessionId, payload: payload, refuseAttached: true)
+            ok = try sessionManager.sendInput(sessionId: sessionId, payload: payload, attachedPolicy: .requireCloudShared)
         } catch {
             return (false, "child exited")
         }
@@ -404,7 +414,7 @@ public actor RemoteAgentCloud {
         }
         let ok: Bool
         do {
-            ok = try sessionManager.sendInputRaw(sessionId: sessionId, bytes: bytes, refuseAttached: true)
+            ok = try sessionManager.sendInputRaw(sessionId: sessionId, bytes: bytes, attachedPolicy: .requireCloudShared)
         } catch {
             return (false, "child exited")
         }
@@ -475,7 +485,7 @@ public actor RemoteAgentCloud {
         guard let (cols, rows) = Self.decodeResizePayload(payload) else {
             return (false, "resize payload must be '<cols>x<rows>' (1..32767 each)")
         }
-        let ok = sessionManager.resize(sessionId: sessionId, cols: cols, rows: rows, refuseAttached: true)
+        let ok = sessionManager.resize(sessionId: sessionId, cols: cols, rows: rows, attachedPolicy: .requireCloudShared)
         return ok ? (true, "") : (false, "resize failed (ioctl)")
     }
 
@@ -553,23 +563,125 @@ public actor RemoteAgentCloud {
         }
     }
 
+    // MARK: - M4.4d: opting an attached external session into the cloud
+
+    /// Opt an ATTACHED wrapped (external) session into the cloud plane so the
+    /// phone can see and drive it. Explicit, per-session, and reversible — the
+    /// design's hard requirement for anything that touches a session the user
+    /// launched themselves (DEV_PLAN §4: "explicit opt-in + consent + one-click
+    /// uninstall. Never silent").
+    ///
+    /// Ordering is load-bearing: mint the row FIRST, flip the opt-in only once
+    /// it exists. The reverse would let the drain loop latch `local_only:false`
+    /// onto frames whose `remote_helper_post_event` then raises 'Session not
+    /// found for device' — and a failed event doesn't just drop, it stays at the
+    /// head of the uploader's queue and stalls every later event behind it.
+    ///
+    /// The row is minted PRIVATE (`p_realtime_private = true`, v0.69). An
+    /// external session must never be advertised on the public `term:<uuid>`
+    /// topic, which bypasses RLS by design (v0.56) — anyone who learns the UUID
+    /// could read the stream. The phone therefore joins the RLS-governed
+    /// `pterm:` topic; since the Swift helper ships no `pterm:` producer
+    /// (DEV_PLAN §2 gap 2), output reaches it through the durable event tail at
+    /// ~3 s poll latency instead of a live stream. Private and correct, just not
+    /// live — the honest trade until that gap closes.
+    public func shareAttachedSession(sessionId: String) async -> (ok: Bool, error: String) {
+        let cfg = helperConfig()
+        guard cfg.isPaired else {
+            return (false, "this Mac is not paired with your account")
+        }
+        guard let info = sessionManager.attachedSessionInfo(sessionId) else {
+            return (false, "not an attached external session")
+        }
+
+        do {
+            _ = try await rpcCaller.call(
+                "remote_helper_register_session",
+                params: [
+                    "p_device_id": cfg.deviceId,
+                    "p_helper_secret": cfg.helperSecret,
+                    "p_session_id": sessionId,
+                    "p_provider": info.provider,
+                    // No cwd: we didn't spawn this session, so we never learned
+                    // its working directory. Sending a wrong one is worse than
+                    // sending none — the phone renders it as the session's
+                    // identity.
+                    "p_cwd_basename": "",
+                    "p_cwd_hmac": NSNull(),
+                    "p_client_label": info.clientLabel ?? NSNull(),
+                    "p_realtime_private": true,
+                ]
+            )
+        } catch {
+            log("share(\(sessionId)) register_session failed: \(error)")
+            return (false, "could not register the session with the cloud: \(error)")
+        }
+
+        guard sessionManager.setCloudShared(sessionId, true) != nil else {
+            // The session ended between the info read and the flip. We've
+            // already minted a 'running' row; mark it stopped so the phone
+            // doesn't offer a dead session for the ~60 s until it goes stale.
+            await postStatus(sessionId: sessionId, status: "stopped")
+            return (false, "the session ended before it could be shared")
+        }
+        // Register our own per-session state directly rather than waiting for a
+        // broker frame: share is a synchronous call, so there's no deferred-Task
+        // ordering hazard here, and doing it now means the very next output_delta
+        // has a batcher to land in.
+        if sessions[sessionId] == nil {
+            sessions[sessionId] = SessionState(
+                sessionId: sessionId,
+                provider: info.provider,
+                clientLabel: info.clientLabel
+            )
+        }
+        log("shared attached session \(sessionId) with the cloud (private)")
+        return (true, "")
+    }
+
+    /// Revoke a previously granted opt-in. The REAL session keeps running — this
+    /// ends the CLOUD's view of it, not the session.
+    ///
+    /// Flip the flag FIRST: from that instant the drain loop latches
+    /// `local_only:true` and nothing further uploads, even if the steps after it
+    /// fail. Revocation must never depend on the network.
+    public func unshareAttachedSession(sessionId: String) async -> (ok: Bool, error: String) {
+        guard sessionManager.setCloudShared(sessionId, false) != nil else {
+            return (false, "not an attached external session")
+        }
+        // Mark the row stopped so the session leaves the phone's list, which
+        // filters on status in ('pending','running').
+        await postStatus(sessionId: sessionId, status: "stopped")
+        // Drop the batcher WITHOUT flushing — whatever it still holds is output
+        // the user just revoked consent for.
+        sessions.removeValue(forKey: sessionId)
+        log("unshared attached session \(sessionId) — cloud view ended, session still running")
+        return (true, "")
+    }
+
     // MARK: - broker event handling
 
     private func handleBrokerEvent(_ event: [String: Any]) async {
         guard let kind = event["event"] as? String else { return }
         guard let sessionId = event["session_id"] as? String else { return }
-        // M4.4a: an ATTACHED wrapped (external) session is LOCAL-ONLY — never
-        // mint a cloud row nor upload its output/status (review: codex —
-        // `realtimePrivate=nil` only mutes the PUBLIC Realtime sink, NOT this
-        // cloud-upload path). The `attached` flag is LATCHED onto every frame by
-        // the manager, so we reject from the FRAME ITSELF — NOT from live manager
-        // state. This is ordering-independent: broker frames are handled on a
-        // DEFERRED per-event Task (see `installBrokerSubscription`), so by the
-        // time this runs the manager may already have removed the record; a
-        // state query would then return false and let a delayed output_delta slip
-        // a row in. The flag travels with the event and can't. The phone plane
-        // opts an external session in deliberately (M4.4d).
-        if (event["attached"] as? Bool) == true { return }
+        // M4.4a/M4.4d: an ATTACHED wrapped (external) session is LOCAL-ONLY
+        // until the user explicitly opts it into the cloud — never mint a cloud
+        // row nor upload its output/status (review: codex — the record's
+        // `realtimePrivate` only mutes the PUBLIC Realtime sink, NOT this
+        // cloud-upload path). The manager LATCHES `local_only` onto every frame,
+        // so we reject from the FRAME ITSELF — NOT from live manager state. That
+        // is what makes this ordering-independent: broker frames are handled on a
+        // DEFERRED per-event Task (see `startObservingBroker`), so by the time
+        // this runs the manager may already have removed the record; a state
+        // query would then return false and let a delayed output_delta slip a row
+        // in. The flag travels with the event and can't.
+        //
+        // Fail-closed on a MISSING flag would break every spawned session (whose
+        // frames predate the key), so absent ⇒ false ⇒ upload. That's safe
+        // because only the manager publishes here and it stamps the key on all
+        // four attached-session frames; an attached frame can never arrive
+        // without it.
+        if (event["local_only"] as? Bool) == true { return }
         switch kind {
         case "session_started":
             // We register state on `start` dispatch; this branch

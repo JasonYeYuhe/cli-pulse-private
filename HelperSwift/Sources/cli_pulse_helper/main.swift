@@ -293,6 +293,10 @@ case "daemon":
         getHelperArgv0: { ExecutablePath.current() },
         broadcastPublisher: broadcastPublisher
     )
+    // M4.4d: late-bound because RemoteAgentCloud is built AFTER the server, and
+    // only when the helper is paired. Stays inert (verb → not_implemented) until
+    // `attach` below runs.
+    let cloudShareArm = CloudShareArm()
     let server = LocalSessionServer(
         config: LocalSessionServer.Configuration(socketPath: socketPath),
         hooks: LocalSessionServer.Hooks(
@@ -303,7 +307,10 @@ case "daemon":
             sessionManager: sessionManager,
             listDetectedSessions: { [] },
             approvalRegistry: registry,
-            eventBroker: broker
+            eventBroker: broker,
+            setWrappedSessionCloudShared: { sid, shared in
+                cloudShareArm.setShared(sid, shared)
+            }
         )
     )
     do {
@@ -359,6 +366,9 @@ case "daemon":
             uploader: eventUploader,
             broker: broker
         )
+        // M4.4d: light up `set_wrapped_session_cloud_shared` now that a cloud
+        // arm exists to serve it.
+        cloudShareArm.attach(remoteCloud)
         let nanos = UInt64(daemonConfig.cloudTickSeconds * 1_000_000_000)
         let pullMax = daemonConfig.cloudPullMax
         cloudTask = Task { [remoteCloud, eventUploader] in
