@@ -171,6 +171,16 @@ class _ManagedSession:
     # `TmuxTransport` here so one manager can drive heterogeneous sessions
     # (PTY-spawned + tmux-attached) through the same drain / input / reap loops.
     transport: SessionTransport | None = None
+    # M4.4a: True for an ATTACHED wrapped (external) session — one the USER
+    # launched in their own terminal that the shell integration parked in a
+    # CLI-Pulse tmux. The helper does not own its lifecycle.
+    attached: bool = False
+    # M4.4d: the user EXPLICITLY opted this attached session into the cloud
+    # plane. Default False — an attached session is LOCAL-ONLY until they say
+    # otherwise, so output from a session CLI Pulse didn't start never leaves
+    # the machine by default. Meaningless for a spawned session (already
+    # cloud-wired); only `attached` records ever flip it.
+    cloud_shared: bool = False
     # iter-2: hold the un-uploaded tail in memory while the batcher fills.
     # On each tick we add freshly-read PTY bytes to the batcher and only
     # drain into `stdout_buffer` if the upload itself failed (so the
@@ -622,14 +632,22 @@ class RemoteAgentManager:
             return False
         params = SessionStartParams(
             session_id=session_id, provider=provider, client_label=client_label,
-            # UNKNOWN-privacy for the cloud plane → never mint / broadcast until
-            # the phone plane opts it in (M4.4d).
-            realtime_private=None,
+            # M4.4d: PRIVATE, positively. An external session must never be
+            # advertised on the PUBLIC `term:<uuid>` topic, which bypasses RLS by
+            # design — anyone who learns the UUID could read it. When the user
+            # opts this session in we pass `p_realtime_private=True`, and this
+            # in-memory flag must MATCH the column we wrote: the phone picks its
+            # topic from the column while the helper picks its producer from the
+            # flag, so a disagreement is a silent blackhole. (Pre-M4.4d this was
+            # None/UNKNOWN, which the fail-closed gate mutes identically.)
+            realtime_private=True,
         )
         now = time.monotonic()
         self._sessions[session_id] = _ManagedSession(
             params=params, handle=handle, transport=transport,
             spawned_at=now, last_activity_at=now,
+            # LOCAL-ONLY until the user explicitly opts in (M4.4d).
+            attached=True,
         )
         if self._event_broker is not None:
             try:
@@ -647,6 +665,99 @@ class RemoteAgentManager:
             session_id, tmux_session_name, provider,
         )
         return True
+
+    def set_wrapped_session_cloud_shared(self, session_id: str, shared: bool) -> bool:
+        return self._dispatch(
+            self._set_wrapped_session_cloud_shared_impl, session_id, shared)
+
+    def _set_wrapped_session_cloud_shared_impl(self, session_id: str, shared: bool) -> bool:
+        """M4.4d: opt an ATTACHED wrapped session into / out of the cloud plane so
+        the phone can see and drive it. Explicit, per-session, reversible.
+
+        Raises LookupError when the id is unknown or is NOT attached (a spawned
+        session is already cloud-wired; letting this flip on one would imply an
+        opt-in surface that doesn't govern it).
+
+        Ordering mirrors the Swift helper (see `RemoteAgentCloud`):
+          * share → mint the row FIRST, flip only on success. The reverse would
+            let the drain loop upload chunks whose `post_event` then raises
+            'Session not found for device'.
+          * unshare → flip FIRST (revocation must never depend on the network),
+            and post a `stopped` status ONLY if a row was ever minted — posting
+            for a never-shared session would raise against a row that does not
+            exist.
+
+        The row is minted PRIVATE (`p_realtime_private=True`, migrate_v0.69): an
+        external session must never land on the public `term:` topic, which
+        bypasses RLS by design.
+
+        No explicit paired check: an unpaired helper has no device_id/secret, so
+        the register RPC raises 'Device not found or unauthorized' and that
+        propagates to the caller — the same posture as every other RPC in this
+        file. The flag is only flipped AFTER the RPC returns, so an unpaired
+        share can never leave a session opted in.
+        """
+        sess = self._sessions.get(session_id)
+        if sess is None or not sess.attached:
+            raise LookupError(f"not an attached external session: {session_id}")
+
+        if shared:
+            if sess.cloud_shared:
+                return True
+            self.rpc_caller(
+                "remote_helper_register_session",
+                {
+                    "p_device_id": self.helper_config.device_id,
+                    "p_helper_secret": self.helper_config.helper_secret,
+                    "p_session_id": session_id,
+                    "p_provider": sess.params.provider,
+                    # We did not spawn this session, so we never learned its cwd.
+                    # Sending a wrong one is worse than sending none — the phone
+                    # renders it as the session's identity.
+                    "p_cwd_basename": "",
+                    "p_cwd_hmac": None,
+                    "p_client_label": sess.params.client_label,
+                    "p_realtime_private": True,
+                },
+            )
+            # Re-read: the RPC above is I/O and the session may have ended.
+            sess = self._sessions.get(session_id)
+            if sess is None or not sess.attached:
+                raise LookupError(
+                    f"the session ended before it could be shared: {session_id}")
+            sess.cloud_shared = True
+            logger.info("shared attached session %s with the cloud (private)", session_id)
+            return True
+
+        was_shared = sess.cloud_shared
+        sess.cloud_shared = False
+        # Drop anything the batcher still holds: it is output the user just
+        # revoked consent for, so it must not be flushed on a later tick.
+        sess.stdout_batcher.drain()
+        sess.stdout_buffer.clear()
+        if not was_shared:
+            logger.info("unshare(%s): was not shared — nothing to revoke", session_id)
+            return False
+        # Mark the row stopped so the session leaves the phone's list (which
+        # filters status in ('pending','running')). The REAL session keeps
+        # running; this ends the CLOUD's view of it, not the session.
+        self._post_status(session_id, "stopped")
+        logger.info(
+            "unshared attached session %s — cloud view ended, session still running",
+            session_id,
+        )
+        return False
+
+    def wrapped_session_cloud_state(self) -> list[str]:
+        return self._dispatch(self._wrapped_session_cloud_state_impl)
+
+    def _wrapped_session_cloud_state_impl(self) -> list[str]:
+        """M4.4d: ids of every attached session currently opted into the cloud —
+        one round-trip for the app's per-session toggles."""
+        return sorted(
+            sid for sid, sess in self._sessions.items()
+            if sess.attached and sess.cloud_shared
+        )
 
     def stop_session(self, session_id: str) -> None:
         return self._dispatch(self._stop_session_impl, session_id)
@@ -1890,6 +2001,17 @@ class RemoteAgentManager:
                     })
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("broker output_raw publish failed: %s", exc)
+        # M4.4d LOCAL-ONLY gate: an ATTACHED wrapped (external) session the user
+        # has not opted into the cloud must never be uploaded. Before M4.4d this
+        # held only ACCIDENTALLY — the chunk reached `_post_event`, which failed
+        # with 'Session not found for device' because attach mints no row. M4.4d
+        # makes that row EXIST for shared sessions, so the property has to become
+        # intentional or the first opt-in would retroactively start uploading
+        # every attached session. Checked here, at the single cloud egress point
+        # for stdout, so it cannot be bypassed by a caller.
+        sess = self._sessions.get(session_id)
+        if sess is not None and sess.attached and not sess.cloud_shared:
+            return True
         # Cloud post only when there's stripped content — never upload an empty
         # payload (pure-ANSI chunk), and never upload the raw stream.
         if capped:

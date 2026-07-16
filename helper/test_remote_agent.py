@@ -1756,6 +1756,118 @@ def test_attach_wrapped_session_routes_io_to_per_session_transport(monkeypatch):
     assert "ext-1" not in mgr._sessions
 
 
+def _attach_fake_tmux(mgr, monkeypatch, session_id="ext-c", tmux="clipulse-claude-9"):
+    made = []
+
+    def _factory(socket_path, tmux_bin=None, **kw):
+        t = _FakeTmuxTransport(socket_path, tmux_bin)
+        made.append(t)
+        return t
+
+    import transports.tmux as tmux_mod
+    monkeypatch.setattr(tmux_mod, "TmuxTransport", _factory)
+    assert mgr.attach_wrapped_session(
+        session_id, tmux, provider="claude", socket_path="/tmp/x.sock") is True
+    return made[0]
+
+
+def test_attached_session_output_is_not_uploaded_until_opted_in(monkeypatch):
+    """M4.4d: an ATTACHED wrapped session is LOCAL-ONLY by default.
+
+    Before M4.4d this held only ACCIDENTALLY — the chunk reached _post_event and
+    failed because attach mints no cloud row. M4.4d makes the row EXIST once
+    shared, so the property has to be intentional or the first opt-in would
+    retroactively start uploading every attached session.
+    """
+    mgr, _shared, rpc = _make_manager()
+    _attach_fake_tmux(mgr, monkeypatch)
+
+    posted = mgr._post_stdout_chunk("ext-c", "secret external output")
+    assert posted is True, "the gate reports success — it drops, it does not error"
+    assert not [c for c in rpc if c[0] == "remote_helper_post_event"], \
+        "a NOT-opted-in attached session's output must never reach the cloud"
+
+
+def test_share_mints_a_private_row_then_output_uploads(monkeypatch):
+    mgr, _shared, rpc = _make_manager()
+    _attach_fake_tmux(mgr, monkeypatch)
+
+    assert mgr.wrapped_session_cloud_state() == []
+    assert mgr.set_wrapped_session_cloud_shared("ext-c", True) is True
+    assert mgr.wrapped_session_cloud_state() == ["ext-c"]
+
+    regs = [c for c in rpc if c[0] == "remote_helper_register_session"]
+    assert len(regs) == 1, "share must mint exactly one cloud row"
+    params = regs[0][1]
+    assert params["p_session_id"] == "ext-c"
+    assert params["p_realtime_private"] is True, (
+        "an external session must be minted PRIVATE — the public term: topic "
+        "bypasses RLS"
+    )
+    # Now that consent exists, output flows.
+    assert mgr._post_stdout_chunk("ext-c", "consented output") is True
+    assert [c for c in rpc if c[0] == "remote_helper_post_event"], \
+        "a SHARED wrapped session's output must reach the cloud"
+
+
+def test_unshare_revokes_and_stops_upload(monkeypatch):
+    mgr, _shared, rpc = _make_manager()
+    _attach_fake_tmux(mgr, monkeypatch)
+    mgr.set_wrapped_session_cloud_shared("ext-c", True)
+
+    assert mgr.set_wrapped_session_cloud_shared("ext-c", False) is False
+    assert mgr.wrapped_session_cloud_state() == []
+    # The row is marked stopped so it leaves the phone's list...
+    statuses = [c for c in rpc if c[0] == "remote_helper_post_event"
+                and c[1].get("p_kind") == "status"]
+    assert statuses, "revoke must mark the cloud row stopped"
+    # ...but the REAL session keeps running — revoking sharing is not stopping.
+    assert "ext-c" in mgr._sessions
+
+    before = len([c for c in rpc if c[0] == "remote_helper_post_event"])
+    assert mgr._post_stdout_chunk("ext-c", "post-revocation secret") is True
+    after = len([c for c in rpc if c[0] == "remote_helper_post_event"])
+    assert after == before, "no output may upload after the user revokes sharing"
+
+
+def test_unsharing_a_never_shared_session_posts_nothing(monkeypatch):
+    """A never-shared session has NO cloud row, so posting a status would raise
+    'Session not found for device' against a row that does not exist."""
+    mgr, _shared, rpc = _make_manager()
+    _attach_fake_tmux(mgr, monkeypatch)
+
+    assert mgr.set_wrapped_session_cloud_shared("ext-c", False) is False
+    assert not [c for c in rpc if c[0] == "remote_helper_post_event"], \
+        "nothing may be posted for a session that never had a cloud row"
+
+
+def test_share_does_not_opt_in_when_the_row_cannot_be_minted(monkeypatch):
+    """If register fails, flipping the flag anyway would start uploading against
+    a row that doesn't exist."""
+    def _boom(_params):
+        raise RuntimeError("register boom")
+
+    mgr, _shared, rpc = _make_manager(
+        rpc_responses={"remote_helper_register_session": _boom})
+    _attach_fake_tmux(mgr, monkeypatch)
+
+    with pytest.raises(RuntimeError):
+        mgr.set_wrapped_session_cloud_shared("ext-c", True)
+    assert mgr.wrapped_session_cloud_state() == [], \
+        "the opt-in must NOT flip without a cloud row behind it"
+    assert mgr._post_stdout_chunk("ext-c", "still secret") is True
+    assert not [c for c in rpc if c[0] == "remote_helper_post_event"]
+
+
+def test_cloud_share_refuses_a_non_attached_session():
+    """The flag governs attached sessions only — a spawned session is already
+    cloud-wired, so an opt-in surface over it would imply a control it lacks."""
+    mgr, _shared, _rpc = _make_manager()
+    with pytest.raises(LookupError):
+        mgr.set_wrapped_session_cloud_shared("no-such-session", True)
+    assert mgr.wrapped_session_cloud_state() == []
+
+
 def test_attach_wrapped_session_is_idempotent(monkeypatch):
     mgr, _shared, _rpc = _make_manager()
     import transports.tmux as tmux_mod

@@ -914,6 +914,20 @@ def daemon(args: argparse.Namespace) -> None:
             _complete_machine_command_local = _mc_complete
             _report_machine_control_state_local = _mc_report
 
+        def _set_wrapped_cloud_shared_local(session_id: str, shared: bool) -> bool:
+            # M4.4d: opt an attached wrapped session into / out of the cloud
+            # plane. Mirrors the Swift helper's CloudShareArm.
+            if remote_agent_manager is None:
+                raise RuntimeError("helper not paired — cloud sharing unavailable until pairing completes")
+            return remote_agent_manager.set_wrapped_session_cloud_shared(session_id, shared)
+
+        def _wrapped_cloud_state_local() -> list[str]:
+            if remote_agent_manager is None:
+                # Unpaired: nothing can be shared, so an empty list is the
+                # truthful answer — not an error.
+                return []
+            return remote_agent_manager.wrapped_session_cloud_state()
+
         local_uds_server = LocalSessionServer(
             socket_path=default_socket_path(),
             get_auth_token=_get_token,
@@ -931,6 +945,9 @@ def daemon(args: argparse.Namespace) -> None:
             # wrapped sessions into the manager's normal terminal surface.
             list_wrapped_sessions=_list_wrapped_local,
             attach_wrapped_session=_attach_wrapped_local,
+            # M4.4d: the per-session cloud opt-in for attached wrapped sessions.
+            set_wrapped_session_cloud_shared=_set_wrapped_cloud_shared_local,
+            wrapped_session_cloud_state=_wrapped_cloud_state_local,
             get_machine_snapshot=_machine_snapshot_local,
             kill_process=_kill_process_local,
             signal_process=_signal_process_local,
