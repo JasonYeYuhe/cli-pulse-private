@@ -519,6 +519,12 @@ public final class AppState: ObservableObject {
     /// M4.4c: CLI-Pulse-wrapped tmux sessions discovered on this Mac (names the
     /// helper's `list_wrapped_sessions` returned) — the app offers to attach each.
     @Published public var wrappedSessions: [String] = []
+    /// M4.4d: session ids of attached wrapped sessions the user opted into the
+    /// cloud plane, so the phone can see and drive them. Empty by default — an
+    /// external session the user launched themselves stays local-only until they
+    /// say otherwise. Keyed by session id (see `WrappedSessionID`), not tmux
+    /// name, because that's what the helper and the cloud row both key on.
+    @Published public var wrappedCloudSharedSessionIds: Set<String> = []
 
     // MARK: - Local Session Control (Phase 3 Iter 2B, macOS-only)
 
