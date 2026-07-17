@@ -125,10 +125,15 @@ argument that the simpler design is the right one.
   stalled process (plain `sample` misses it — the watchdog `os._exit`s every 12s;
   raise `_CONTAINER_ACCESS_WATCHDOG_S` temporarily to catch it), and check whether
   the stall is in the entitlement-mediated container vend rather than plain file IO.
-- **The Swift helper has no equivalent guard**, and its entitlements are empty — it
-  works today only because it's launched with inherited FDA. Worth auditing.
-
-## Not done here
+- ~~**The Swift helper has no equivalent guard**~~ — **DONE**, and it turned out to be
+  the bug actually biting the owner. The bundled Swift helper called
+  `AuthToken.rotateToken()` straight on the MAIN thread with only a `try/catch`;
+  the catch encodes the right policy but a HANG never throws, so it hung forever —
+  observed live 2026-07-17, blocked in `open` (2564/2564 samples) holding a TCC
+  prompt open and re-asking on every dismissal. Worse than the Python loop, since
+  launchd cannot recover a hung process. Fixed by `ContainerAccess
+  .rotateTokenBestEffort` + a `containerStalled` bind guard mirroring the Python
+  side.
 - **The `_get_token()` read is still unguarded.** It does an unbounded
   `read_text()` from the container on every authenticated request (codex). Today
   that's fine — the token is only re-read on a start whose canary SUCCEEDED, so

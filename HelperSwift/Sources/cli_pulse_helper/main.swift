@@ -217,10 +217,32 @@ case "daemon":
     // auth-free (liveness only) and gated RPCs fail closed when the token
     // doesn't match, so it's safe to start the server with an empty token and
     // loudly surface the rotation error instead of dying.
+    //
+    // The catch below has always encoded the right policy — but it only covers a
+    // rotateToken that THROWS. A stalled container access never throws: it blocks
+    // in `open(2)` inside a TCC consult, and this call used to run straight on the
+    // MAIN thread, so the daemon hung there forever. Observed live 2026-07-17 on
+    // the bundled helper: blocked for minutes (2564/2564 samples in `open`),
+    // holding a "CLI Pulse would like to access data from other apps" prompt open
+    // and re-asking every time it was dismissed. That's the permanent silent hang,
+    // which is worse than the restart loop above — launchd cannot recover a hung
+    // process. `rotateTokenBestEffort` bounds the wait and NEVER exits; see
+    // ContainerAccess for the measured root cause.
     var token: String = ""
+    var containerStalled = false
     do {
-        token = try AuthToken.rotateToken()
+        if let rotated = try ContainerAccess.rotateTokenBestEffort(log: { line in
+            FileHandle.standardError.write(Data((line + "\n").utf8))
+        }) {
+            token = rotated
+        } else {
+            // Deadline passed: the container is stalled RIGHT NOW. Do not touch
+            // it again this start (see the bind site below).
+            containerStalled = true
+        }
     } catch {
+        // A raise is NOT a stall — the container answered, so binding is still
+        // safe and the pre-existing best-effort behaviour is correct.
         FileHandle.standardError.write(Data(
             "error: rotateToken failed (continuing with empty token; gated RPCs will be unauthenticated until the next successful rotation): \(error)\n".utf8
         ))
@@ -322,27 +344,50 @@ case "daemon":
             }
         )
     )
-    do {
-        try server.start()
-    } catch LocalSessionServer.ServerError.alreadyRunning(let p) {
-        // Another LIVE helper already owns the socket (update/restart overlap).
-        // Defer to it and exit CLEANLY (exit 0) so we don't throttle-loop and,
-        // critically, so we don't unlink the live instance's socket — that one
-        // keeps serving and the app keeps detecting it.
+    if containerStalled {
+        // CRITICAL: do NOT bind. `socketPath` is inside the app-group container
+        // (AuthToken.containerPath()), and we only reach here because an access to
+        // that container just blocked past its deadline. `server.start()` does
+        // mkdir / stat / unlink / bind / chmod on that same path, on the main
+        // thread, unguarded — so binding now would hang the daemon on exactly the
+        // access that just timed out. That is the failure this change exists to
+        // remove, and it is worse than dying: launchd cannot restart a hung
+        // process. (Python learned this the same way — the equivalent guard is
+        // `container_stalled` in helper/cli_pulse_helper.py.)
+        //
+        // So skip the local surface and keep the cloud loop: heartbeat, sync and
+        // remote sessions all still work. Only the same-machine fast path is out,
+        // and it returns on the next start.
         FileHandle.standardError.write(Data(
-            "cli_pulse_helper: another live instance already owns \(p); exiting cleanly.\n".utf8
+            ("error: NOT starting the local UDS server: the app-group container is "
+             + "stalled and the socket lives inside it (\(socketPath.path)), so binding "
+             + "would hang this daemon on the same access that just timed out. Cloud "
+             + "sync continues. The macOS app will report this helper as not running "
+             + "until the container recovers and the helper is restarted.\n").utf8
         ))
-        exit(0)
-    } catch {
+    } else {
+        do {
+            try server.start()
+        } catch LocalSessionServer.ServerError.alreadyRunning(let p) {
+            // Another LIVE helper already owns the socket (update/restart overlap).
+            // Defer to it and exit CLEANLY (exit 0) so we don't throttle-loop and,
+            // critically, so we don't unlink the live instance's socket — that one
+            // keeps serving and the app keeps detecting it.
+            FileHandle.standardError.write(Data(
+                "cli_pulse_helper: another live instance already owns \(p); exiting cleanly.\n".utf8
+            ))
+            exit(0)
+        } catch {
+            FileHandle.standardError.write(Data(
+                "error: server.start failed: \(error)\n".utf8
+            ))
+            exit(1)
+        }
+        let pid = getpid()
         FileHandle.standardError.write(Data(
-            "error: server.start failed: \(error)\n".utf8
+            "cli_pulse_helper (Swift): listening on \(socketPath.path) (pid=\(pid))\n".utf8
         ))
-        exit(1)
     }
-    let pid = getpid()
-    FileHandle.standardError.write(Data(
-        "cli_pulse_helper (Swift): listening on \(socketPath.path) (pid=\(pid))\n".utf8
-    ))
 
     // Phase 4E Slice 4: cloud-sync wiring. Constructs
     // RemoteAgentCloud + EventUploader + SupabaseRPCCaller and
