@@ -493,53 +493,170 @@ def _swarm_heartbeat(config: "HelperConfig") -> None:
         logger.debug("swarm heartbeat soft-failed (S2 may be undeployed): %s", exc)
 
 
-# macOS 26.5 cold-login containermanagerd race — see
-# PROJECT_FIX_2026-07-11_helper-launchd-container-watchdog.md.
-# The app-group container (~/Library/Group Containers/group.yyh.CLI-Pulse/) is
-# vended by containermanagerd. When the LaunchAgent fires at LOGIN (RunAtLoad)
-# before containermanagerd has provisioned that container for this Developer-ID
-# (non-sandboxed) helper, the FIRST access — rotate_token()'s os.open — can
-# block INSIDE containermanagerd and never return. The daemon then hangs
-# silently: the UDS socket never binds, the app shows the helper "not
-# installed" forever, and KeepAlive can't help because a hung process never
-# exits. The app-group entitlement (shipped 1.18.1) fixed the older in-kernel
-# variant but does NOT cover this cold-login consult on 26.5. Guard the first
-# container touch with a watchdog: if it exceeds the ceiling, hard-exit so
-# launchd KeepAlive respawns us against a now-warmer containermanagerd.
-# Empirically the access completes in ~2s once warm, so the ceiling is a
-# generous multiple; this converts a permanent silent hang into a self-healing
-# respawn that clears within a few seconds of login.
+# The first app-group-container access (rotate_token's os.open of
+# ~/Library/Group Containers/group.yyh.CLI-Pulse/helper-auth-token.tmp) can
+# block for far longer than its ~40ms warm cost, under launchd, for reasons we
+# have NOT root-caused. See PROJECT_FIX_2026-07-11 (original) and
+# PROJECT_FIX_2026-07-17 (this revision).
+#
+# 1.29.0 guarded it with a watchdog that hard-exits so launchd's KeepAlive
+# respawns the helper "against a now-warmer containermanagerd", on the premise
+# that the stall is a cold-login race which "self-clears within seconds of
+# login". OBSERVED 2026-07-17: that premise is wrong. On a warm, awake, lightly
+# loaded machine the helper tripped the watchdog **2,816 times over 10h07m**,
+# respawning every ~13s and never once binding its socket. The user's helper was
+# simply DOWN for ten hours, with the only symptom in a log file nobody reads.
+# An unbounded respawn is not self-healing — it is an invisible outage plus a
+# battery drain (each cycle re-execs a PyInstaller binary that re-parses the
+# whole OpenSSL CA bundle at startup).
+#
+# What we actually know, measured on the affected machine:
+#   * The container is NOT slow per se: a launchd-spawned process lists it and
+#     creates files in it in ~40ms.
+#   * The helper's app-group entitlement is present and correct.
+#   * containermanagerd was running and logged no errors during the failures.
+#   * The same binary run from a shell binds in ~2s — but a shell inherits the
+#     terminal's Full Disk Access, so that path never exercises the entitlement.
+#   * It was NOT a second live helper (tested: 0 trips with one running) and NOT
+#     machine sleep (the trips are evenly spaced 13s apart for the full 10h).
+# So the "cold-login containermanagerd race" label is a hypothesis, not a
+# finding, and the code must not stake availability on it being right.
+#
+# Policy now: bound the optimism. Keep the respawn for the first few attempts —
+# it is cheap and it genuinely fixes a transient stall — then FALL BACK to the
+# behaviour this call site already documents for a token failure: bind the
+# socket anyway. `hello` is unauthenticated, so detection works and the app can
+# tell the user something is wrong; authenticated methods fail closed. A helper
+# that is visibly degraded beats one that is invisibly dead.
 _CONTAINER_ACCESS_WATCHDOG_S = 12.0
 
+# How many consecutive hard-exit respawns to spend before giving up on the
+# token and starting degraded. 3 × ~13s ≈ 40s of retrying, which covers a real
+# transient stall while capping a pathological loop at under a minute (vs the
+# observed 10 hours).
+_MAX_CONTAINER_RESPAWNS = 3
 
-def _rotate_token_or_respawn(rotate_token, timeout: float = _CONTAINER_ACCESS_WATCHDOG_S) -> str:
-    """Call ``rotate_token()`` under a watchdog. If the app-group container
-    access hangs past ``timeout`` (macOS cold-login containermanagerd race),
-    hard-exit the process so the LaunchAgent's KeepAlive respawns it against a
-    warm container instead of hanging silently forever. Returns the rotated
-    token on success; re-raises any exception rotate_token itself raises.
+# Consecutive-respawn counter. Deliberately NOT in the app-group container —
+# that is the resource we cannot reliably touch, and a counter we cannot read is
+# a counter that never stops the loop. The log directory is already proven
+# writable by this process (launchd writes the helper's stdout/stderr there).
+_RESPAWN_COUNTER_PATH = (
+    Path.home() / "Library" / "Logs" / "CLI-Pulse-Helper" / ".container-respawn-count"
+)
+
+
+def _read_respawn_count(counter_path: Path) -> int:
+    """Consecutive watchdog respawns so far. Unreadable/absent/corrupt → 0:
+    a counter we can't read must never be the reason we keep looping.
     """
-    def _bail() -> None:
+    try:
+        return int(counter_path.read_text().strip() or "0")
+    except Exception:  # noqa: BLE001 — missing, corrupt, or unreadable
+        return 0
+
+
+def _write_respawn_count(counter_path: Path, value: int) -> None:
+    try:
+        counter_path.parent.mkdir(parents=True, exist_ok=True)
+        counter_path.write_text(str(value))
+    except Exception as exc:  # noqa: BLE001
+        # Can't persist → we lose the ability to bound the loop across restarts.
+        # Say so loudly rather than looping silently.
+        logger.warning(
+            "could not persist the container-respawn counter at %s (%s); "
+            "the startup watchdog cannot bound its respawns across restarts",
+            counter_path, exc,
+        )
+
+
+def _rotate_token_or_respawn(
+    rotate_token,
+    timeout: float = _CONTAINER_ACCESS_WATCHDOG_S,
+    counter_path: Path | None = None,
+    max_respawns: int = _MAX_CONTAINER_RESPAWNS,
+) -> str | None:
+    """Call ``rotate_token()`` under a deadline.
+
+    Fast path (the overwhelming norm, ~40ms warm): return the token and reset
+    the respawn counter.
+
+    Slow path: the container access is stalled. For the first ``max_respawns``
+    consecutive attempts, hard-exit ``75`` (EX_TEMPFAIL) so launchd's KeepAlive
+    retries — that genuinely clears a transient stall and costs ~13s a go. After
+    that, STOP: return ``None`` so the caller binds the socket without a token.
+    Looping forever is strictly worse than running degraded (observed: 2,816
+    respawns / 10h07m of total invisible downtime, see the note above the
+    constants).
+
+    Any exception ``rotate_token`` raises propagates untouched — the caller
+    already treats that as best-effort.
+
+    Returns the token, or ``None`` when the deadline passed and we've exhausted
+    our respawns.
+    """
+    counter_path = counter_path or _RESPAWN_COUNTER_PATH
+
+    # Run the (possibly stalled) container touch OFF the main thread so a stall
+    # can't pin us: the thread is a daemon, so even if it never returns it can't
+    # keep the interpreter alive. The 1.29.0 version called rotate_token on the
+    # main thread and could only escape via os._exit from a Timer — which is
+    # exactly why it had no option but to die.
+    box: dict[str, object] = {}
+
+    def _run() -> None:
+        try:
+            box["token"] = rotate_token()
+        except BaseException as exc:  # noqa: BLE001 — re-raised on the main thread
+            box["exc"] = exc
+
+    worker = threading.Thread(target=_run, name="rotate-token", daemon=True)
+    worker.start()
+    worker.join(timeout)
+
+    if not worker.is_alive():
+        if "exc" in box:
+            raise box["exc"]  # type: ignore[misc]
+        _write_respawn_count(counter_path, 0)
+        return box.get("token")  # type: ignore[return-value]
+
+    # Deadline passed and the worker is still stuck inside the container access.
+    attempts = _read_respawn_count(counter_path) + 1
+    for handler in list(logging.getLogger().handlers):
+        try:
+            handler.flush()
+        except Exception:  # noqa: BLE001 — best-effort flush
+            pass
+
+    if attempts <= max_respawns:
+        _write_respawn_count(counter_path, attempts)
         logger.error(
-            "app-group container access exceeded %.0fs at startup (macOS "
-            "cold-login containermanagerd race) — exiting so launchd respawns "
-            "the helper against a warm container",
-            timeout,
+            "app-group container access still stalled after %.0fs at startup "
+            "(attempt %d/%d) — exiting so launchd retries; if this keeps up the "
+            "helper will start WITHOUT a local auth token rather than loop",
+            timeout, attempts, max_respawns,
         )
         for handler in list(logging.getLogger().handlers):
             try:
                 handler.flush()
-            except Exception:  # noqa: BLE001 — best-effort flush before hard exit
+            except Exception:  # noqa: BLE001
                 pass
         os._exit(75)  # EX_TEMPFAIL — LaunchAgent KeepAlive respawns us
+        return None   # unreachable in production; os._exit never returns. Kept
+        # so this branch cannot fall through into the give-up path below if
+        # _exit is ever stubbed (tests) or fails — falling through would reset
+        # the counter and silently un-bound the respawn budget.
 
-    watchdog = threading.Timer(timeout, _bail)
-    watchdog.daemon = True
-    watchdog.start()
-    try:
-        return rotate_token()
-    finally:
-        watchdog.cancel()
+    _write_respawn_count(counter_path, 0)  # reset: we're done retrying this run
+    logger.error(
+        "app-group container access stalled past %.0fs on %d consecutive "
+        "startups — GIVING UP on the auth token and starting DEGRADED: the UDS "
+        "socket will bind (so the app can detect this helper and surface the "
+        "problem) but every authenticated method will fail closed until the "
+        "container recovers. This is deliberate — an unbounded respawn loop "
+        "left the helper invisibly dead for 10h in the field.",
+        timeout, max_respawns,
+    )
+    return None
 
 
 def daemon(args: argparse.Namespace) -> None:
@@ -697,10 +814,18 @@ def daemon(args: argparse.Namespace) -> None:
         from local_auth_token import rotate_token, token_path
         from local_session_server import LocalSessionServer, default_socket_path
         try:
-            # Watchdog-guarded: a cold-login containermanagerd hang on the
-            # app-group container becomes a fast launchd respawn instead of a
-            # permanent silent hang (macOS 26.5). See _rotate_token_or_respawn.
+            # Deadline-guarded: a stalled app-group container access becomes a
+            # BOUNDED launchd respawn and then a degraded start, instead of the
+            # permanent silent hang (pre-1.29) or the unbounded respawn loop
+            # (1.29.0). See _rotate_token_or_respawn. `None` = we gave up on the
+            # token; fall through to the same best-effort handling as a raise.
             local_auth_token = _rotate_token_or_respawn(rotate_token)
+            if local_auth_token is None:
+                logger.warning(
+                    "starting without a local auth token — the socket binds so "
+                    "the app can detect this helper, but authenticated methods "
+                    "fail closed until the container recovers"
+                )
         except Exception as exc:  # noqa: BLE001
             # Token rotation is best-effort: `hello` is unauthenticated, so a
             # token failure must NOT stop the socket from binding (that would
