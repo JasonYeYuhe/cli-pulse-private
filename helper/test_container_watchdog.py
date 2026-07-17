@@ -17,6 +17,7 @@ authenticates.
 from __future__ import annotations
 
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -153,6 +154,42 @@ def test_rotation_exception_propagates(monkeypatch, counter):
 
     time.sleep(0.35)
     assert codes == [], "must not exit when rotation raises — the caller handles it"
+
+
+def test_degraded_mode_self_heals_when_the_stalled_write_lands(monkeypatch, counter, tmp_path):
+    """Documented guarantee: abandoning the stalled worker is SAFE because the
+    server re-reads the token from disk on every request. So if the stalled
+    open ever completes, auth starts working with no restart.
+
+    Pins the two halves that make that true: (1) we return None but the worker
+    keeps running, and (2) `load_token()` sees whatever it eventually writes.
+    """
+    monkeypatch.setattr(h.os, "_exit", lambda code: None)
+    counter.write_text("3")  # budget spent → this boot goes degraded
+    token_file = tmp_path / "helper-auth-token"
+    released = threading.Event()
+
+    def slow_rotate():
+        released.wait(5.0)              # the stalled container open
+        token_file.write_text("HEALED-TOKEN")   # ...eventually completes
+        return "HEALED-TOKEN"
+
+    token = h._rotate_token_or_respawn(slow_rotate, timeout=0.15,
+                                       counter_path=counter, max_respawns=3)
+    assert token is None, "degraded start: no token yet"
+
+    # The worker was abandoned, not killed. Let its stalled write land.
+    released.set()
+    for _ in range(50):
+        if token_file.exists():
+            break
+        time.sleep(0.05)
+
+    from local_auth_token import load_token
+    assert load_token(token_file) == "HEALED-TOKEN", (
+        "the abandoned worker must still land its token, and load_token must see "
+        "it — this is what makes degraded mode self-healing rather than a dead end"
+    )
 
 
 def test_empty_token_never_authenticates():

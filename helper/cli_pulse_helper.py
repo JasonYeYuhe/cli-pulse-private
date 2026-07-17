@@ -591,6 +591,15 @@ def _rotate_token_or_respawn(
     Any exception ``rotate_token`` raises propagates untouched — the caller
     already treats that as best-effort.
 
+    Degraded mode SELF-HEALS, which is why abandoning the worker is safe rather
+    than merely tolerable: the thread keeps waiting on the stalled open, and if
+    it ever completes it writes the token to disk. `daemon()`'s `_get_token()`
+    re-reads the file on EVERY request (`load_token() or local_auth_token or ""`),
+    so the next authenticated call picks the new token up and auth starts working
+    — no restart, no user action. The app reads the same file, so the two can't
+    disagree. A degraded start is therefore a temporary state that repairs itself
+    the moment the container does, instead of a dead process that never retries.
+
     Returns the token, or ``None`` when the deadline passed and we've exhausted
     our respawns.
     """
