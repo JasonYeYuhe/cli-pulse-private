@@ -217,10 +217,40 @@ case "daemon":
     // auth-free (liveness only) and gated RPCs fail closed when the token
     // doesn't match, so it's safe to start the server with an empty token and
     // loudly surface the rotation error instead of dying.
+    //
+    // The catch below has always encoded the right policy — but it only covers a
+    // rotateToken that THROWS. A stalled container access never throws: it blocks
+    // in `open(2)` inside a TCC consult, and this call used to run straight on the
+    // MAIN thread, so the daemon hung there forever. Observed live 2026-07-17 on
+    // the bundled helper: blocked for minutes (2564/2564 samples in `open`),
+    // holding a "CLI Pulse would like to access data from other apps" prompt open
+    // and re-asking every time it was dismissed. That's the permanent silent hang,
+    // which is worse than the restart loop above — launchd cannot recover a hung
+    // process. `rotateTokenBestEffort` bounds the wait and NEVER exits; see
+    // ContainerAccess for the measured root cause.
     var token: String = ""
     do {
-        token = try AuthToken.rotateToken()
+        // Waits out a TCC-stalled container instead of hanging the MAIN thread
+        // inside open(2), which is what the pre-fix code did — it blocked there
+        // for minutes (2564/2564 samples), unkillable-by-launchd and silent.
+        //
+        // It WAITS rather than retries, and rather than degrading onward, because
+        // (review: agy + codex, independently) everything below touches the same
+        // container: `socketPath`, and `configStore.cloudConfigSnapshot()`, whose
+        // AppGroupConfigReader opens `UserDefaults(suiteName: "group.yyh.CLI-Pulse")`.
+        // My first draft skipped only the bind and claimed "cloud sync keeps
+        // running" — false twice: that read hangs identically, AND the pairing it
+        // returns lives in the container, so there is no cloud config to sync with.
+        // See ContainerAccess for why retrying (a second dialog + a fixed-tmp race)
+        // and exiting (a 30s KeepAlive respawn loop) are both worse.
+        token = try ContainerAccess.rotateTokenWaitingForContainer(log: { line in
+            FileHandle.standardError.write(Data((line + "\n").utf8))
+        })
     } catch {
+        // A throw is NOT a stall — the container ANSWERED, it just refused or
+        // failed. So binding is safe and the long-standing policy applies: start
+        // anyway with an empty token and surface the error loudly. hello() is
+        // auth-free and gated RPCs fail closed when the token doesn't match.
         FileHandle.standardError.write(Data(
             "error: rotateToken failed (continuing with empty token; gated RPCs will be unauthenticated until the next successful rotation): \(error)\n".utf8
         ))
