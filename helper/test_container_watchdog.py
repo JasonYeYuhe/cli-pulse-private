@@ -127,19 +127,64 @@ def test_respawn_budget_is_actually_bounded(monkeypatch, counter):
     assert len(before) <= 3, f"gave up only after {len(before)} respawns, want <=3"
 
 
-def test_unreadable_counter_still_bounds_the_loop(monkeypatch, tmp_path):
-    """A counter we can't persist must not resurrect the infinite loop: the
-    read falls back to 0, so we spend the budget on every boot but STILL exit
-    the stall path — never an unbounded hang."""
+def test_unpersistable_counter_refuses_to_respawn(monkeypatch, tmp_path):
+    """review: agy + codex — my first version of this test was FICTION.
+
+    It ran a single boot and asserted `codes == [75] or token is None`, which is
+    satisfied by the very bug it was named after. If the counter can't be
+    written, every boot re-reads 0 → attempts=1 → 1 <= max → exit, forever: the
+    unbounded loop, resurrected through the mechanism meant to bound it.
+
+    An uncountable respawn IS an unbounded one, so we now refuse to respawn at
+    all and go straight to degraded. This drives SIX consecutive boots and
+    asserts we never exit.
+    """
     codes: list[int] = []
     monkeypatch.setattr(h.os, "_exit", lambda code: codes.append(code))
-    unwritable = tmp_path / "nope" / "deep" / ".count"
-    monkeypatch.setattr(h.Path, "mkdir", lambda *a, **k: (_ for _ in ()).throw(OSError("ro")))
+    monkeypatch.setattr(h.Path, "mkdir",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("read-only")))
+    monkeypatch.setattr(h.Path, "write_text",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("read-only")))
+    unwritable = tmp_path / "nope" / ".count"
 
-    token = h._rotate_token_or_respawn(lambda: time.sleep(0.5), timeout=0.1,
-                                       counter_path=unwritable, max_respawns=1)
-    # Budget=1 and count reads 0 → this boot respawns; it never hangs.
-    assert codes == [75] or token is None
+    for _ in range(6):
+        token = h._rotate_token_or_respawn(lambda: time.sleep(0.4), timeout=0.1,
+                                           counter_path=unwritable, max_respawns=3)
+        assert token is None, "must start degraded when the budget can't be tracked"
+    assert codes == [], (
+        f"an uncountable respawn is an unbounded one — must not exit at all, got {codes}"
+    )
+
+
+def test_corrupt_counter_cannot_reopen_the_loop(monkeypatch, counter):
+    """review: codex — int() parses '-1000000' happily, and a negative count
+    keeps `attempts <= max_respawns` true for a million restarts. Out-of-range
+    values must read as 'budget spent', failing toward degraded, not toward a
+    loop."""
+    monkeypatch.setattr(h.os, "_exit", lambda code: None)
+    for bad in ("-1000000", "-1", "999999"):
+        counter.write_text(bad)
+        assert h._read_respawn_count(counter) == h._MAX_CONTAINER_RESPAWNS, (
+            f"{bad!r} must clamp to 'spent', not reopen the respawn budget"
+        )
+    counter.write_text("2")
+    assert h._read_respawn_count(counter) == 2, "sane values pass through"
+    counter.write_text("garbage")
+    assert h._read_respawn_count(counter) == 0, "unparseable → 0"
+
+
+def test_rotation_exception_resets_the_consecutive_run(monkeypatch, counter):
+    """review: codex — a raise is NOT a stall: the container answered inside the
+    deadline. Leaving the count set would let an unrelated later stall skip its
+    retries and drop straight to degraded."""
+    monkeypatch.setattr(h.os, "_exit", lambda code: None)
+    counter.write_text("2")
+
+    with pytest.raises(ValueError):
+        h._rotate_token_or_respawn(lambda: (_ for _ in ()).throw(ValueError("boom")),
+                                   timeout=1.0, counter_path=counter)
+
+    assert counter.read_text() == "0", "a fast raise must end the stall run"
 
 
 def test_rotation_exception_propagates(monkeypatch, counter):
@@ -156,13 +201,17 @@ def test_rotation_exception_propagates(monkeypatch, counter):
     assert codes == [], "must not exit when rotation raises — the caller handles it"
 
 
-def test_degraded_mode_self_heals_when_the_stalled_write_lands(monkeypatch, counter, tmp_path):
-    """Documented guarantee: abandoning the stalled worker is SAFE because the
-    server re-reads the token from disk on every request. So if the stalled
-    open ever completes, auth starts working with no restart.
+def test_abandoned_worker_still_lands_its_token_for_the_next_start(monkeypatch, counter, tmp_path):
+    """Abandoning the stalled worker must not lose the token permanently: if the
+    open ever completes, the token lands on disk and the NEXT helper start uses
+    it.
 
-    Pins the two halves that make that true: (1) we return None but the worker
-    keeps running, and (2) `load_token()` sees whatever it eventually writes.
+    Note this is NOT a claim that a degraded helper heals itself in place — it
+    doesn't. Degraded skips the socket entirely (it lives in the stalled
+    container), so nothing is re-reading the token; the local surface returns
+    only on restart. An earlier draft of this test asserted in-place self-heal,
+    which was true only of a design that bound the socket anyway — the design
+    agy showed would hang the daemon.
     """
     monkeypatch.setattr(h.os, "_exit", lambda code: None)
     counter.write_text("3")  # budget spent → this boot goes degraded

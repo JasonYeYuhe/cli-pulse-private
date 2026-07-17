@@ -546,27 +546,49 @@ _RESPAWN_COUNTER_PATH = (
 
 
 def _read_respawn_count(counter_path: Path) -> int:
-    """Consecutive watchdog respawns so far. Unreadable/absent/corrupt → 0:
-    a counter we can't read must never be the reason we keep looping.
+    """Consecutive watchdog respawns so far, CLAMPED to a sane range.
+
+    Unreadable/absent/corrupt → 0: a counter we can't read must never be the
+    reason we keep looping.
+
+    The clamp is not defensive garnish (review: codex): `int()` happily parses
+    "-1000000", and a negative count keeps `attempts <= max_respawns` true for a
+    million restarts — an unbounded loop smuggled in through the very file that
+    exists to bound it. Anything outside [0, _MAX_CONTAINER_RESPAWNS] is treated
+    as "budget spent", which fails toward a degraded start rather than a loop.
     """
     try:
-        return int(counter_path.read_text().strip() or "0")
+        raw = int(counter_path.read_text().strip() or "0")
     except Exception:  # noqa: BLE001 — missing, corrupt, or unreadable
         return 0
+    if raw < 0 or raw > _MAX_CONTAINER_RESPAWNS:
+        logger.warning(
+            "container-respawn counter at %s is out of range (%d) — treating it "
+            "as spent so a corrupt value can't reopen the respawn loop",
+            counter_path, raw,
+        )
+        return _MAX_CONTAINER_RESPAWNS
+    return raw
 
 
-def _write_respawn_count(counter_path: Path, value: int) -> None:
+def _write_respawn_count(counter_path: Path, value: int) -> bool:
+    """Persist the counter. Returns False if it could not be written.
+
+    The caller MUST treat False as "we cannot count" and refuse to respawn
+    (review: agy). Otherwise every boot re-reads 0, computes attempt 1, sees
+    1 <= max, and exits — the unbounded loop, resurrected through the back door
+    by the very mechanism meant to bound it.
+    """
     try:
         counter_path.parent.mkdir(parents=True, exist_ok=True)
         counter_path.write_text(str(value))
+        return True
     except Exception as exc:  # noqa: BLE001
-        # Can't persist → we lose the ability to bound the loop across restarts.
-        # Say so loudly rather than looping silently.
         logger.warning(
-            "could not persist the container-respawn counter at %s (%s); "
-            "the startup watchdog cannot bound its respawns across restarts",
+            "could not persist the container-respawn counter at %s (%s)",
             counter_path, exc,
         )
+        return False
 
 
 def _rotate_token_or_respawn(
@@ -591,14 +613,20 @@ def _rotate_token_or_respawn(
     Any exception ``rotate_token`` raises propagates untouched — the caller
     already treats that as best-effort.
 
-    Degraded mode SELF-HEALS, which is why abandoning the worker is safe rather
-    than merely tolerable: the thread keeps waiting on the stalled open, and if
-    it ever completes it writes the token to disk. `daemon()`'s `_get_token()`
-    re-reads the file on EVERY request (`load_token() or local_auth_token or ""`),
-    so the next authenticated call picks the new token up and auth starts working
-    — no restart, no user action. The app reads the same file, so the two can't
-    disagree. A degraded start is therefore a temporary state that repairs itself
-    the moment the container does, instead of a dead process that never retries.
+    Abandoning the worker is safe: the thread is a daemon, so a permanently
+    stalled open cannot keep the interpreter alive, and if the open ever DOES
+    complete it simply writes a fresh token to disk — which the next helper start
+    picks up.
+
+    What a degraded start does NOT do is restore the local surface by itself. An
+    earlier revision of this comment claimed it self-heals via `_get_token()`'s
+    per-request re-read; that was written when degraded still bound the socket.
+    It no longer does — the socket lives INSIDE the stalled container, so binding
+    would hang (see the `container_stalled` branch in `daemon()`). With no server
+    there is nothing re-reading the token, so the same-machine fast path stays
+    down until the helper is restarted (next login, `.pkg` upgrade, or a crash +
+    KeepAlive). Cloud sync — heartbeat, sync, remote sessions — keeps running
+    throughout, which is the whole point of not exiting.
 
     Returns the token, or ``None`` when the deadline passed and we've exhausted
     our respawns.
@@ -623,9 +651,13 @@ def _rotate_token_or_respawn(
     worker.join(timeout)
 
     if not worker.is_alive():
+        # Either outcome ends the consecutive-stall run: the container ANSWERED
+        # inside the deadline. A raise is not a stall (review: codex) — leaving
+        # the count set would let an unrelated later stall skip its retries and
+        # drop straight to degraded.
+        _write_respawn_count(counter_path, 0)
         if "exc" in box:
             raise box["exc"]  # type: ignore[misc]
-        _write_respawn_count(counter_path, 0)
         return box.get("token")  # type: ignore[return-value]
 
     # Deadline passed and the worker is still stuck inside the container access.
@@ -636,8 +668,7 @@ def _rotate_token_or_respawn(
         except Exception:  # noqa: BLE001 — best-effort flush
             pass
 
-    if attempts <= max_respawns:
-        _write_respawn_count(counter_path, attempts)
+    if attempts <= max_respawns and _write_respawn_count(counter_path, attempts):
         logger.error(
             "app-group container access still stalled after %.0fs at startup "
             "(attempt %d/%d) — exiting so launchd retries; if this keeps up the "
@@ -657,7 +688,7 @@ def _rotate_token_or_respawn(
 
     _write_respawn_count(counter_path, 0)  # reset: we're done retrying this run
     logger.error(
-        "app-group container access stalled past %.0fs on %d consecutive "
+        "app-group container access stalled past %.0fs on up to %d consecutive "
         "startups — GIVING UP on the auth token and starting DEGRADED: the UDS "
         "socket will bind (so the app can detect this helper and surface the "
         "problem) but every authenticated method will fail closed until the "
@@ -822,19 +853,15 @@ def daemon(args: argparse.Namespace) -> None:
     try:
         from local_auth_token import rotate_token, token_path
         from local_session_server import LocalSessionServer, default_socket_path
+        container_stalled = False
         try:
             # Deadline-guarded: a stalled app-group container access becomes a
             # BOUNDED launchd respawn and then a degraded start, instead of the
             # permanent silent hang (pre-1.29) or the unbounded respawn loop
-            # (1.29.0). See _rotate_token_or_respawn. `None` = we gave up on the
-            # token; fall through to the same best-effort handling as a raise.
+            # (1.29.0). See _rotate_token_or_respawn. `None` = the access
+            # STALLED and we've spent our respawns.
             local_auth_token = _rotate_token_or_respawn(rotate_token)
-            if local_auth_token is None:
-                logger.warning(
-                    "starting without a local auth token — the socket binds so "
-                    "the app can detect this helper, but authenticated methods "
-                    "fail closed until the container recovers"
-                )
+            container_stalled = local_auth_token is None
         except Exception as exc:  # noqa: BLE001
             # Token rotation is best-effort: `hello` is unauthenticated, so a
             # token failure must NOT stop the socket from binding (that would
@@ -1112,11 +1139,44 @@ def daemon(args: argparse.Namespace) -> None:
             # pair to activate" rather than the misleading "not installed".
             get_paired=lambda: remote_agent_manager is not None,
         )
-        local_uds_server.start()
-        logger.info(
-            "local UDS server started (paired=%s); auth token at %s",
-            remote_agent_manager is not None, token_path(),
-        )
+        if container_stalled:
+            # CRITICAL (review: agy): do NOT bind. The socket lives INSIDE the
+            # app-group container (`default_socket_path()` == container_dir() /
+            # SOCK_FILENAME), and we only got here because an access to that
+            # container just stalled past its deadline. `start()` does mkdir /
+            # exists / unlink / bind / chmod on that same path, on the MAIN
+            # thread, unguarded — so binding now would hang the daemon forever
+            # on the very access that just timed out. That is the pre-1.29
+            # permanent silent hang, which is WORSE than the respawn loop this
+            # change exists to kill: launchd can't even restart a hung process.
+            #
+            # (1.29.0 left bind unguarded on the stated grounds that "once
+            # rotate_token — the canary — succeeds the container is warm". That
+            # reasoning is sound and still holds on every path where the canary
+            # SUCCEEDS. It simply does not extend to the path where the canary
+            # FAILED, which is exactly this one.)
+            #
+            # So skip the local surface entirely and keep the cloud loop alive —
+            # the behaviour this block's own preamble already prescribes: "the
+            # daemon still services Supabase-routed sessions even if the local
+            # socket can't bind". Heartbeat, sync and remote sessions keep
+            # working; only the same-machine fast path is out.
+            local_uds_server = None
+            logger.error(
+                "NOT starting the local UDS server: the app-group container is "
+                "stalled and the socket lives inside it (%s), so binding would "
+                "hang this daemon on the same access that just timed out. Cloud "
+                "sync continues — heartbeat, sync and remote sessions still "
+                "work. The macOS app will report this helper as not running "
+                "until the container recovers and the helper is restarted.",
+                default_socket_path(),
+            )
+        else:
+            local_uds_server.start()
+            logger.info(
+                "local UDS server started (paired=%s); auth token at %s",
+                remote_agent_manager is not None, token_path(),
+            )
     except Exception as exc:
         logger.warning("local UDS server init failed: %s", exc)
         local_uds_server = None
