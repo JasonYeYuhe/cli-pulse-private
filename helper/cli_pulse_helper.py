@@ -493,109 +493,53 @@ def _swarm_heartbeat(config: "HelperConfig") -> None:
         logger.debug("swarm heartbeat soft-failed (S2 may be undeployed): %s", exc)
 
 
-# macOS TCC gates the app-group container, and the gate is SLOW under launchd.
-# See PROJECT_FIX_2026-07-17_helper-launchd-tcc-appdata-consult.md — it
-# supersedes the containermanagerd diagnosis in the 2026-07-11 doc, which was
-# wrong.
-#
-# ~/Library/Group Containers/group.yyh.CLI-Pulse/ is protected by TCC's
-# kTCCServiceSystemPolicyAppData ("access data from other apps"). The FIRST
-# open(2) for write in that directory blocks on a tccd consult that must
-# attribute + code-sign-validate the calling process. Measured on 26.5:
-#
-#   * From a shell:   ~0.03s. The responsible process (Terminal/iTerm) already
-#                     holds the grant, so attribution short-circuits.
-#   * Under launchd:  1-10s, and highly variable run to run. There is no
-#                     responsible app to inherit from, so tccd does the full
-#                     evaluation every time.
-#   * No grant row:   instant EPERM (not a hang) — so this is TCC, not
-#                     containermanagerd, and NOT the app-group entitlement:
-#                     an unrelated, unentitled interpreter reproduces the exact
-#                     same 1-10s stall on the same path.
-#
-# The cost is per-PROCESS and is never shared: os.stat() is free (TCC doesn't
-# gate it), the first open() pays in full, and every subsequent open() in that
-# process is ~0.02s. Nothing about the machine gets "warmer", which is why the
-# old 12s-then-os._exit(75) watchdog could not work: each respawn started a
-# fresh full-price consult and killed it at the same ceiling, so a machine
-# whose consult ran long looped forever instead of self-healing. Mid-session
-# restarts and fresh .pkg installs both landed in that loop.
-#
-# So: never exit, and never wait unbounded. Rotate on a background thread and
-# give it a bounded, generous slice. If the consult outruns that, the daemon
-# proceeds token-less — which the call site already treats as a supported
-# best-effort outcome — and the socket still binds. The rotation thread keeps
-# going, and because `_get_token()` re-reads the token from disk on every
-# request, authentication starts working the moment the write lands, with no
-# restart and no respawn.
-#
-# The socket bind() is this process's second gated touch, so on a cold process
-# it waits on the same in-flight consult and the daemon still takes ~1-10s to
-# bind. That is unavoidable and correct — the point here is that startup now
-# always CONVERGES instead of looping.
-_CONTAINER_ACCESS_WAIT_S = 25.0
-
-# Above this, log the elapsed consult so a pathological tccd is visible in the
-# log without having to reproduce it.
-_CONTAINER_ACCESS_SLOW_S = 3.0
+# macOS 26.5 cold-login containermanagerd race — see
+# PROJECT_FIX_2026-07-11_helper-launchd-container-watchdog.md.
+# The app-group container (~/Library/Group Containers/group.yyh.CLI-Pulse/) is
+# vended by containermanagerd. When the LaunchAgent fires at LOGIN (RunAtLoad)
+# before containermanagerd has provisioned that container for this Developer-ID
+# (non-sandboxed) helper, the FIRST access — rotate_token()'s os.open — can
+# block INSIDE containermanagerd and never return. The daemon then hangs
+# silently: the UDS socket never binds, the app shows the helper "not
+# installed" forever, and KeepAlive can't help because a hung process never
+# exits. The app-group entitlement (shipped 1.18.1) fixed the older in-kernel
+# variant but does NOT cover this cold-login consult on 26.5. Guard the first
+# container touch with a watchdog: if it exceeds the ceiling, hard-exit so
+# launchd KeepAlive respawns us against a now-warmer containermanagerd.
+# Empirically the access completes in ~2s once warm, so the ceiling is a
+# generous multiple; this converts a permanent silent hang into a self-healing
+# respawn that clears within a few seconds of login.
+_CONTAINER_ACCESS_WATCHDOG_S = 12.0
 
 
-def _rotate_token_best_effort(rotate_token, timeout: float = _CONTAINER_ACCESS_WAIT_S) -> str | None:
-    """Call ``rotate_token()`` on a background thread and wait up to ``timeout``.
-
-    Returns the rotated token, or None if the TCC consult on the app-group
-    container outran ``timeout`` — in which case the rotation is left running
-    and will still write the token, so `_get_token()`'s per-request disk read
-    picks it up shortly. Re-raises any exception rotate_token itself raises.
-    Never exits the process.
+def _rotate_token_or_respawn(rotate_token, timeout: float = _CONTAINER_ACCESS_WATCHDOG_S) -> str:
+    """Call ``rotate_token()`` under a watchdog. If the app-group container
+    access hangs past ``timeout`` (macOS cold-login containermanagerd race),
+    hard-exit the process so the LaunchAgent's KeepAlive respawns it against a
+    warm container instead of hanging silently forever. Returns the rotated
+    token on success; re-raises any exception rotate_token itself raises.
     """
-    outcome: dict[str, Any] = {}
-
-    def _run() -> None:
-        try:
-            outcome["token"] = rotate_token()
-        except BaseException as exc:  # noqa: BLE001 — replayed on the caller's thread
-            outcome["exc"] = exc
-
-    worker = threading.Thread(target=_run, name="cli-pulse-token-rotate", daemon=True)
-    started = time.monotonic()
-    worker.start()
-    worker.join(timeout)
-    elapsed = time.monotonic() - started
-
-    if worker.is_alive():
-        logger.warning(
-            "app-group container still not writable after %.0fs — macOS (tccd) "
-            "is still authorising this helper's access to %s. Continuing "
-            "WITHOUT a cached auth token: the socket binds, `hello` answers "
-            "unauthenticated, and authenticated methods fail closed until the "
-            "rotation lands (it is still running, and is re-read from disk per "
-            "request). Not exiting — respawning cannot speed this up.",
-            timeout, _token_path_for_log(),
+    def _bail() -> None:
+        logger.error(
+            "app-group container access exceeded %.0fs at startup (macOS "
+            "cold-login containermanagerd race) — exiting so launchd respawns "
+            "the helper against a warm container",
+            timeout,
         )
-        return None
+        for handler in list(logging.getLogger().handlers):
+            try:
+                handler.flush()
+            except Exception:  # noqa: BLE001 — best-effort flush before hard exit
+                pass
+        os._exit(75)  # EX_TEMPFAIL — LaunchAgent KeepAlive respawns us
 
-    if "exc" in outcome:
-        raise outcome["exc"]
-
-    if elapsed >= _CONTAINER_ACCESS_SLOW_S:
-        logger.warning(
-            "app-group container access took %.1fs (macOS TCC "
-            "SystemPolicyAppData consult; slow under launchd)", elapsed,
-        )
-    return outcome.get("token")
-
-
-def _token_path_for_log() -> str:
-    """Token path for diagnostics, without importing at module scope (the
-    frozen binary resolves `local_auth_token` lazily) and without letting a
-    logging call raise.
-    """
+    watchdog = threading.Timer(timeout, _bail)
+    watchdog.daemon = True
+    watchdog.start()
     try:
-        from local_auth_token import token_path
-        return str(token_path())
-    except Exception:  # noqa: BLE001 — diagnostics must never raise
-        return "<app-group container>"
+        return rotate_token()
+    finally:
+        watchdog.cancel()
 
 
 def daemon(args: argparse.Namespace) -> None:
@@ -753,11 +697,10 @@ def daemon(args: argparse.Namespace) -> None:
         from local_auth_token import rotate_token, token_path
         from local_session_server import LocalSessionServer, default_socket_path
         try:
-            # Bounded wait, never a respawn: the first container write blocks on
-            # a 1-10s TCC consult under launchd. See _rotate_token_best_effort.
-            # None here just means the consult outran the wait — the rotation is
-            # still in flight and `_get_token()` picks it up off disk.
-            local_auth_token = _rotate_token_best_effort(rotate_token)
+            # Watchdog-guarded: a cold-login containermanagerd hang on the
+            # app-group container becomes a fast launchd respawn instead of a
+            # permanent silent hang (macOS 26.5). See _rotate_token_or_respawn.
+            local_auth_token = _rotate_token_or_respawn(rotate_token)
         except Exception as exc:  # noqa: BLE001
             # Token rotation is best-effort: `hello` is unauthenticated, so a
             # token failure must NOT stop the socket from binding (that would

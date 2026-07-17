@@ -1,16 +1,5 @@
 # PROJECT_FIX 2026-07-11 — helper launchd cold-login container hang → watchdog respawn
 
-> **SUPERSEDED 2026-07-17 — THE DIAGNOSIS BELOW IS WRONG. DO NOT BUILD ON IT.**
-> The hang is not a containermanagerd cold-login race. It is a TCC
-> `kTCCServiceSystemPolicyAppData` consult on the first container `open(2)`,
-> which costs 1–10s in *any* launchd-spawned process (reproduced with an
-> unrelated, unentitled interpreter) and is **per-process — nothing ever gets
-> "warm"**. The 12s watchdog + `os._exit(75)` respawn therefore could not work:
-> each respawn restarted a full-price consult and killed it at the same ceiling,
-> turning a slow-but-completing operation into an infinite respawn loop that also
-> broke fresh installs and every mid-session restart.
-> See **`PROJECT_FIX_2026-07-17_helper-launchd-tcc-appdata-consult.md`**.
-
 ## Symptom (P0, held the helper .pkg 1.29.0 rollout)
 On **macOS 26.5.0** the `.pkg`-installed Python helper (`yyh.cli-pulse.helper`
 LaunchAgent, `RunAtLoad=true`) would, **at login**, block forever on its first
