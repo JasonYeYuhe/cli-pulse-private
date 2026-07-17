@@ -493,53 +493,100 @@ def _swarm_heartbeat(config: "HelperConfig") -> None:
         logger.debug("swarm heartbeat soft-failed (S2 may be undeployed): %s", exc)
 
 
-# macOS 26.5 cold-login containermanagerd race — see
-# PROJECT_FIX_2026-07-11_helper-launchd-container-watchdog.md.
-# The app-group container (~/Library/Group Containers/group.yyh.CLI-Pulse/) is
-# vended by containermanagerd. When the LaunchAgent fires at LOGIN (RunAtLoad)
-# before containermanagerd has provisioned that container for this Developer-ID
-# (non-sandboxed) helper, the FIRST access — rotate_token()'s os.open — can
-# block INSIDE containermanagerd and never return. The daemon then hangs
-# silently: the UDS socket never binds, the app shows the helper "not
-# installed" forever, and KeepAlive can't help because a hung process never
-# exits. The app-group entitlement (shipped 1.18.1) fixed the older in-kernel
-# variant but does NOT cover this cold-login consult on 26.5. Guard the first
-# container touch with a watchdog: if it exceeds the ceiling, hard-exit so
-# launchd KeepAlive respawns us against a now-warmer containermanagerd.
-# Empirically the access completes in ~2s once warm, so the ceiling is a
-# generous multiple; this converts a permanent silent hang into a self-healing
-# respawn that clears within a few seconds of login.
-_CONTAINER_ACCESS_WATCHDOG_S = 12.0
+# The helper's first app-group-container access (rotate_token's os.open of
+# ~/Library/Group Containers/group.yyh.CLI-Pulse/helper-auth-token.tmp) stalls
+# under launchd. ROOT CAUSE, measured on macOS 26.5 (2026-07-17): it is a **TCC
+# `kTCCServiceSystemPolicyAppData` consult**, not containermanagerd and not the
+# app-group entitlement.
+#
+#   * shell:   ~0.03s — the responsible process (Terminal/iTerm) already holds
+#              the grant, so attribution short-circuits.
+#   * launchd: 1–10s, wildly variable, with a >20s tail — no responsible app, so
+#              tccd does full attribution + code-sign validation every time.
+#   * no grant row at all: instant EPERM (a fast deny, not a hang) — the tell
+#              that pins this to TCC.
+#   * reproduced with an unrelated, UNENTITLED anaconda python under launchd
+#     (7.8s / 9.9s / 1.3s), so it is neither our binary nor our entitlement.
+#
+# THE DECISIVE PROPERTY: **the cost is per-PROCESS and is never shared.** The
+# first open(2) pays in full; later opens in that process are ~0.02s; os.stat()
+# is free and cannot pre-warm it. Nothing about the machine ever gets "warmer".
+#
+# That is why 1.29.0's design could not work. It waited 12s, then os._exit(75)
+# so launchd's KeepAlive would respawn "against a now-warmer containermanagerd"
+# — but a respawn starts a FRESH full-price consult and meets the same ceiling.
+# It was a coin flip against a 1–10s variable cost, re-flipped forever. On the
+# owner's Mac it lost 2,816 times across 10h07m: the helper was invisibly dead
+# all night, burning a PyInstaller re-exec (which re-parses the whole OpenSSL CA
+# bundle) every 13s. It broke mid-session restarts AND fresh .pkg installs.
+#
+# So: never respawn to escape this stall. WAIT it out, bounded. The ceiling is
+# sized to the measured distribution (1–10s typical, >20s tail) rather than to
+# 1.29.0's imagined ~2s warm cost — most starts now simply succeed where 12s
+# would have tripped on the tail.
+_CONTAINER_ACCESS_WAIT_S = 25.0
 
 
-def _rotate_token_or_respawn(rotate_token, timeout: float = _CONTAINER_ACCESS_WATCHDOG_S) -> str:
-    """Call ``rotate_token()`` under a watchdog. If the app-group container
-    access hangs past ``timeout`` (macOS cold-login containermanagerd race),
-    hard-exit the process so the LaunchAgent's KeepAlive respawns it against a
-    warm container instead of hanging silently forever. Returns the rotated
-    token on success; re-raises any exception rotate_token itself raises.
+def _rotate_token_best_effort(
+    rotate_token,
+    timeout: float = _CONTAINER_ACCESS_WAIT_S,
+) -> str | None:
+    """Rotate the local auth token, bounded by ``timeout``. NEVER exits.
+
+    Runs the (possibly TCC-stalled) container write on a DAEMON thread and waits
+    up to ``timeout``. 1.29.0 ran it on the main thread, where the only escape
+    from a stall was ``os._exit`` from a Timer — which is precisely why it had no
+    option but to die, and why dying became a 10-hour loop. A daemon thread can
+    simply be abandoned: it cannot keep the interpreter alive, and if the stalled
+    open ever completes it just writes the token, which the next start picks up.
+
+    Returns the token, or ``None`` if the deadline passed. ``None`` means the
+    container is stalled RIGHT NOW — the caller must not touch it again this
+    start (see the `container_stalled` branch in `daemon()`; the UDS socket lives
+    inside that same container, so binding would hang the daemon outright).
+
+    Any exception ``rotate_token`` raises propagates: the caller already treats
+    that as best-effort, and a raise is not a stall — the container answered.
     """
-    def _bail() -> None:
+    box: dict[str, object] = {}
+
+    def _run() -> None:
+        try:
+            box["token"] = rotate_token()
+        except BaseException as exc:  # noqa: BLE001 — re-raised on the main thread
+            box["exc"] = exc
+
+    worker = threading.Thread(target=_run, name="rotate-token", daemon=True)
+    started = time.monotonic()
+    worker.start()
+    worker.join(timeout)
+
+    if worker.is_alive():
         logger.error(
-            "app-group container access exceeded %.0fs at startup (macOS "
-            "cold-login containermanagerd race) — exiting so launchd respawns "
-            "the helper against a warm container",
-            timeout,
+            "app-group container access still stalled after %.0fs — starting "
+            "WITHOUT the local UDS surface. This is a TCC SystemPolicyAppData "
+            "consult under launchd (see the note above %s); it is per-process, "
+            "so respawning cannot help and we deliberately do not. Cloud sync "
+            "keeps running; the same-machine fast path returns on the next "
+            "helper start.",
+            timeout, "_CONTAINER_ACCESS_WAIT_S",
         )
         for handler in list(logging.getLogger().handlers):
             try:
                 handler.flush()
-            except Exception:  # noqa: BLE001 — best-effort flush before hard exit
+            except Exception:  # noqa: BLE001 — best-effort flush
                 pass
-        os._exit(75)  # EX_TEMPFAIL — LaunchAgent KeepAlive respawns us
+        return None
 
-    watchdog = threading.Timer(timeout, _bail)
-    watchdog.daemon = True
-    watchdog.start()
-    try:
-        return rotate_token()
-    finally:
-        watchdog.cancel()
+    if "exc" in box:
+        raise box["exc"]  # type: ignore[misc]
+    waited = time.monotonic() - started
+    if waited > 1.0:
+        # Worth a line: this is the TCC consult being slow but COMPLETING, which
+        # is the normal launchd case and exactly what 1.29.0's 12s ceiling kept
+        # killing.
+        logger.info("app-group container access took %.1fs (TCC consult)", waited)
+    return box.get("token")  # type: ignore[return-value]
 
 
 def daemon(args: argparse.Namespace) -> None:
@@ -696,11 +743,13 @@ def daemon(args: argparse.Namespace) -> None:
     try:
         from local_auth_token import rotate_token, token_path
         from local_session_server import LocalSessionServer, default_socket_path
+        container_stalled = False
         try:
-            # Watchdog-guarded: a cold-login containermanagerd hang on the
-            # app-group container becomes a fast launchd respawn instead of a
-            # permanent silent hang (macOS 26.5). See _rotate_token_or_respawn.
-            local_auth_token = _rotate_token_or_respawn(rotate_token)
+            # Bounded wait, never exit. `None` = the container is stalled right
+            # now (a TCC consult under launchd), so we must not touch it again
+            # this start. See _rotate_token_best_effort.
+            local_auth_token = _rotate_token_best_effort(rotate_token)
+            container_stalled = local_auth_token is None
         except Exception as exc:  # noqa: BLE001
             # Token rotation is best-effort: `hello` is unauthenticated, so a
             # token failure must NOT stop the socket from binding (that would
@@ -978,11 +1027,44 @@ def daemon(args: argparse.Namespace) -> None:
             # pair to activate" rather than the misleading "not installed".
             get_paired=lambda: remote_agent_manager is not None,
         )
-        local_uds_server.start()
-        logger.info(
-            "local UDS server started (paired=%s); auth token at %s",
-            remote_agent_manager is not None, token_path(),
-        )
+        if container_stalled:
+            # CRITICAL (review: agy): do NOT bind. The socket lives INSIDE the
+            # app-group container (`default_socket_path()` == container_dir() /
+            # SOCK_FILENAME), and we only got here because an access to that
+            # container just stalled past its deadline. `start()` does mkdir /
+            # exists / unlink / bind / chmod on that same path, on the MAIN
+            # thread, unguarded — so binding now would hang the daemon forever
+            # on the very access that just timed out. That is the pre-1.29
+            # permanent silent hang, which is WORSE than the respawn loop this
+            # change exists to kill: launchd can't even restart a hung process.
+            #
+            # (1.29.0 left bind unguarded on the stated grounds that "once
+            # rotate_token — the canary — succeeds the container is warm". That
+            # reasoning is sound and still holds on every path where the canary
+            # SUCCEEDS. It simply does not extend to the path where the canary
+            # FAILED, which is exactly this one.)
+            #
+            # So skip the local surface entirely and keep the cloud loop alive —
+            # the behaviour this block's own preamble already prescribes: "the
+            # daemon still services Supabase-routed sessions even if the local
+            # socket can't bind". Heartbeat, sync and remote sessions keep
+            # working; only the same-machine fast path is out.
+            local_uds_server = None
+            logger.error(
+                "NOT starting the local UDS server: the app-group container is "
+                "stalled and the socket lives inside it (%s), so binding would "
+                "hang this daemon on the same access that just timed out. Cloud "
+                "sync continues — heartbeat, sync and remote sessions still "
+                "work. The macOS app will report this helper as not running "
+                "until the container recovers and the helper is restarted.",
+                default_socket_path(),
+            )
+        else:
+            local_uds_server.start()
+            logger.info(
+                "local UDS server started (paired=%s); auth token at %s",
+                remote_agent_manager is not None, token_path(),
+            )
     except Exception as exc:
         logger.warning("local UDS server init failed: %s", exc)
         local_uds_server = None
