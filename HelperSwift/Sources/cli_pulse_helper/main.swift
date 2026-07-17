@@ -176,10 +176,26 @@ case "daemon":
     // auth-free (liveness only) and gated RPCs fail closed when the token
     // doesn't match, so it's safe to start the server with an empty token and
     // loudly surface the rotation error instead of dying.
+    //
+    // The catch below encodes the right policy — but it only covers a rotateToken
+    // that THROWS. A stalled container access never throws: it blocks in `open(2)`
+    // inside a TCC `kTCCServiceSystemPolicyAppData` consult, and calling rotateToken
+    // straight on the MAIN thread parked the daemon there forever (observed live:
+    // 2564/2564 samples in `open`, holding a "CLI Pulse would like to access data
+    // from other apps" prompt open). `rotateTokenWaitingForContainer` runs it on a
+    // worker thread and waits, so the main thread is never parked in the kernel and
+    // the stall is logged instead of silent. See ContainerAccess for the measured
+    // root cause and why waiting (not retrying, not exiting) is correct.
     var token: String = ""
     do {
-        token = try AuthToken.rotateToken()
+        token = try ContainerAccess.rotateTokenWaitingForContainer(log: { line in
+            FileHandle.standardError.write(Data((line + "\n").utf8))
+        })
     } catch {
+        // A throw is NOT a stall — the container ANSWERED, it just refused or
+        // failed. Binding is therefore safe, and the long-standing policy applies:
+        // start with an empty token and surface the error. hello() is auth-free and
+        // gated RPCs fail closed when the token doesn't match.
         FileHandle.standardError.write(Data(
             "error: rotateToken failed (continuing with empty token; gated RPCs will be unauthenticated until the next successful rotation): \(error)\n".utf8
         ))
