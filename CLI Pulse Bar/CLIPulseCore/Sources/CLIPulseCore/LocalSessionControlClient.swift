@@ -460,9 +460,9 @@ public final class LocalSessionControlClient: SessionControlClient, MachineContr
 
     /// Cheap liveness probe: can we actually establish a connection?
     static func socketHasLiveListener(atPath path: String) -> Bool {
-        let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
-        if fd < 0 { return false }
-        defer { Darwin.close(fd) }
+        let sockFD = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        if sockFD < 0 { return false }
+        defer { Darwin.close(sockFD) }
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         let cPath = (path as NSString).fileSystemRepresentation
@@ -472,12 +472,12 @@ public final class LocalSessionControlClient: SessionControlClient, MachineContr
         withUnsafeMutableBytes(of: &addr.sun_path) { raw in
             _ = memcpy(raw.baseAddress!, cPath, strlen(cPath) + 1)
         }
-        let rc = withUnsafePointer(to: &addr) { p -> Int32 in
-            p.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        let result = withUnsafePointer(to: &addr) { addrPtr -> Int32 in
+            addrPtr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(sockFD, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        return rc == 0
+        return result == 0
     }
 
     public static let protocolVersion = 1

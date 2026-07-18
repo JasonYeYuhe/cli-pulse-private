@@ -95,7 +95,7 @@ public enum ClaudeHelperContract {
     /// Both directories a helper may have written to, in fallback order.
     public static var helperDirCandidates: [String] {
         var out: [String] = []
-        if let g = appGroupHelperDir { out.append(g) }
+        if let groupDir = appGroupHelperDir { out.append(groupDir) }
         if !out.contains(legacyHelperDir) { out.append(legacyHelperDir) }
         return out
     }
@@ -122,21 +122,6 @@ public enum ClaudeHelperContract {
     public static var snapshotPath: String {
         return snapshotCandidatePaths.first
             ?? (helperDir as NSString).appendingPathComponent("claude_snapshot.json")
-    }
-
-    /// The most recently modified copy of `name` across the candidate dirs.
-    static func freshestPath(named name: String) -> String {
-        let fm = FileManager.default
-        var best: (path: String, mtime: Date)?
-        for dir in helperDirCandidates {
-            let candidate = (dir as NSString).appendingPathComponent(name)
-            guard let attrs = try? fm.attributesOfItem(atPath: candidate),
-                  let mtime = attrs[.modificationDate] as? Date else { continue }
-            if best == nil || mtime > best!.mtime {
-                best = (candidate, mtime)
-            }
-        }
-        return best?.path ?? (helperDir as NSString).appendingPathComponent(name)
     }
 
     /// Path to the session key file.
@@ -194,16 +179,16 @@ public enum ClaudeHelperContract {
     /// Sort paths newest-first by mtime; non-existent paths keep their relative
     /// order at the end.
     static func orderedByFreshness(_ paths: [String]) -> [String] {
-        let fm = FileManager.default
-        func mtime(_ p: String) -> Date? {
-            (try? fm.attributesOfItem(atPath: p))?[.modificationDate] as? Date
+        let fileManager = FileManager.default
+        func modifiedAt(_ path: String) -> Date? {
+            (try? fileManager.attributesOfItem(atPath: path))?[.modificationDate] as? Date
         }
-        return paths.enumerated().sorted { a, b in
-            switch (mtime(a.element), mtime(b.element)) {
-            case let (x?, y?): return x > y            // both exist → newest first
-            case (_?, nil):    return true             // existing beats missing
-            case (nil, _?):    return false
-            case (nil, nil):   return a.offset < b.offset   // stable
+        return paths.enumerated().sorted { lhs, rhs in
+            switch (modifiedAt(lhs.element), modifiedAt(rhs.element)) {
+            case let (lhsDate?, rhsDate?): return lhsDate > rhsDate   // both exist → newest first
+            case (_?, nil):                return true                // existing beats missing
+            case (nil, _?):                return false
+            case (nil, nil):               return lhs.offset < rhs.offset   // stable
             }
         }.map(\.element)
     }
