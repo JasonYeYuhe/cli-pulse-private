@@ -6,7 +6,7 @@
 |---|---|---|
 | iOS (App Store) | ✅ Waiting for Review | Build 33, submitted 2026-04-22 14:41 local |
 | macOS (Mac App Store) | ✅ Waiting for Review | Build 33, submitted 2026-04-22 14:40 local |
-| macOS (GitHub DMG) | ✅ Published | Notarized + stapled, in [GitHub release v1.10.0](https://github.com/JasonYeYuhe/cli-pulse/releases/tag/v1.10.0) (7.5M DMG) |
+| macOS (GitHub DMG) | ✅ Published | Notarized + stapled, in [GitHub release v1.10.0](https://github.com/cli-pulse/cli-pulse/releases/tag/v1.10.0) (7.5M DMG) |
 | Android (GitHub APK) | ✅ Published | In same GitHub release (3.8M APK) |
 | Android (Google Play) | ⏳ Pending manual AAB upload | AAB at `/tmp/CLI-Pulse-v1.10.0.aab` (7.1M). Play Console extension blocks file upload; drag manually into open browser tab. Production access still blocked 5 more days (12 testers × 14-day requirement; currently 9 days) |
 
@@ -21,7 +21,7 @@
 ```
 570997b  v1.10.0: bump version for public release
 3833d9a  ci: unblock swift/helper/android workflows (layer 1)
-tag v1.10.0 → pushed to JasonYeYuhe/cli-pulse + cli-pulse-private
+tag v1.10.0 → pushed to cli-pulse/cli-pulse + cli-pulse-private
 ```
 
 ## Production Supabase

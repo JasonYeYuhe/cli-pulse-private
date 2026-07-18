@@ -132,7 +132,7 @@
 
 | 渠道 | 状态 | 详情 |
 |------|------|------|
-| **GitHub Release** | 已发布 | https://github.com/JasonYeYuhe/cli-pulse/releases/tag/v1.8 |
+| **GitHub Release** | 已发布 | https://github.com/cli-pulse/cli-pulse/releases/tag/v1.8 |
 | **GitHub Pages** | 已更新 | docs/index.html v1.8 + assetlinks.json |
 | **App Store Connect (macOS)** | build 26 已上传 | 等待处理后可提交审核 |
 | **App Store Connect (iOS)** | build 26 已上传 | 等待处理后可提交审核 |

@@ -1,4 +1,4 @@
-# GitHub Support — GC request for `JasonYeYuhe/cli-pulse`
+# GitHub Support — GC request for `cli-pulse/cli-pulse`
 
 **Status:** **submitted 2026-04-28 as ticket #4333827** (open).
 **Drafted:** 2026-04-28
@@ -15,7 +15,7 @@ asks follow-up questions.
 
 ## Suggested fields
 
-- **Subject:** `Request server-side GC of unreachable objects after public-history rebuild — JasonYeYuhe/cli-pulse`
+- **Subject:** `Request server-side GC of unreachable objects after public-history rebuild — cli-pulse/cli-pulse`
 - **Category:** Repository / Sensitive data exposure
 - **Severity:** Medium (no credentials known to be exposed; product source code was)
 
@@ -26,7 +26,7 @@ asks follow-up questions.
 ```
 Hi GitHub Support,
 
-I run the public repository JasonYeYuhe/cli-pulse, which is the
+I run the public repository cli-pulse/cli-pulse, which is the
 distribution and trust-documentation site for CLI Pulse (commercial app).
 GitHub Pages is enabled at https://jasonyeyuhe.github.io/cli-pulse/.
 
@@ -67,18 +67,18 @@ reachable from any branch or tag, but they still appear to be fetchable
 by SHA, and any cached source archives generated before the rewrite may
 still be served. Could you please:
 
-1. Run server-side `git gc` / object pruning on JasonYeYuhe/cli-pulse so
+1. Run server-side `git gc` / object pruning on cli-pulse/cli-pulse so
    the now-unreachable commits, trees, and blobs are dropped.
 
 2. Invalidate any cached auto-generated source archives (zipball /
    tarball) for the 18 retagged tags listed above, so the regenerated
    archives reflect the current tag SHAs.
 
-3. If your team can identify and notify forks of JasonYeYuhe/cli-pulse
+3. If your team can identify and notify forks of cli-pulse/cli-pulse
    created before 2026-04-28, that would help; I understand if it is not
    feasible.
 
-The private source repository (JasonYeYuhe/cli-pulse-private) is and
+The private source repository (cli-pulse/cli-pulse-private) is and
 remains private and was not affected by this remediation.
 
 Happy to provide any additional details — affected SHAs, retagged tag
@@ -97,7 +97,7 @@ Thanks very much.
 - ✅ **Ticket #4333827 — open as of 2026-04-28**, awaiting GitHub
   Support response.
 - Once GitHub confirms GC has run, re-run
-  `gh api repos/JasonYeYuhe/cli-pulse/pages` and the source-archive
+  `gh api repos/cli-pulse/cli-pulse/pages` and the source-archive
   smoke test (`unzip -l` of the v1.10.7 zipball) to verify no stale
   objects are still being served.
 - Update `PUBLIC_EXPOSURE_ROTATION_CHECKLIST.md` with the resulting

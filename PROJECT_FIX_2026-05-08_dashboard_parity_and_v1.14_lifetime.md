@@ -8,7 +8,7 @@ Branch: `dashboard-parity-and-v1.14-lifetime` (to create)
 This change set covers three independent threads landing together because
 they touch overlapping client surfaces:
 
-1. **Mission 1 audit** — Codex P1 from PR [#39](https://github.com/JasonYeYuhe/cli-pulse-private/pull/39) (LoginItem app-sandbox verifier hardening).
+1. **Mission 1 audit** — Codex P1 from PR [#39](https://github.com/cli-pulse/cli-pulse-private/pull/39) (LoginItem app-sandbox verifier hardening).
 2. **Mission 1.5** — iPhone↔macOS dashboard parity bug (timezone-aware
    `dashboard_summary` / `provider_summary` RPCs) + iOS Cost Forecast
    feature parity.

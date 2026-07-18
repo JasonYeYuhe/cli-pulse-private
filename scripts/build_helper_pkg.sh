@@ -472,6 +472,8 @@ if [[ $DRY_RUN -eq 0 ]]; then
     SHA256="$(shasum -a 256 "$PKG_OUT" | awk '{print $1}')"
     echo "$SHA256  $PKG_NAME" > "$PKG_OUT.sha256"
 
+    # NOTE: keep the LEGACY JasonYeYuhe/ path in the JSON below — shipped apps pin it
+    # in HelperPkgVerifier.allowedURLPrefix. See that file before changing.
     cat > "$OUTPUT_DIR/manifest-fragment-${ARCH}.json" <<EOF
 {
   "version": "$HELPER_VERSION",

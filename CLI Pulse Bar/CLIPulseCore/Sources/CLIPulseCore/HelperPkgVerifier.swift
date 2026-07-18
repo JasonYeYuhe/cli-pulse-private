@@ -77,6 +77,13 @@ public struct HelperPkgVerifier {
     /// Developer ID *Installer* certificate of the same team.
     public static let teamID = "KHMK6Q3L3K"
     /// Only this exact prefix is an official helper-release artifact.
+    ///
+    /// - Important: Repo moved to the `cli-pulse` org on 2026-07-18; this anchor
+    ///   intentionally still pins the LEGACY `JasonYeYuhe/…` path. Shipped apps have
+    ///   it compiled in and `latest.json` must keep matching (GitHub redirects the old
+    ///   path). Do not "clean up" this string or the `url` written by
+    ///   `scripts/build_helper_pkg.sh` on its own — shipped apps would reject helper
+    ///   updates. See UpdateVerifier.allowedURLPrefix for the migration order.
     public static let allowedURLPrefix =
         "https://github.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/"
     /// Helper .pkg is ~13 MB today; a generous ceiling that still rejects an

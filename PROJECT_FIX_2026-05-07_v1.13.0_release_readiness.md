@@ -6,14 +6,14 @@
 
 ## Summary
 
-v1.13.0 closes Phase 4E. The macOS app's LaunchAgent surface now drives cloud-side managed-session sync entirely in Swift via the `RemoteAgentCloud` actor wired into `cli_pulse_helper daemon` (Slice 4 — PR [#34](https://github.com/JasonYeYuhe/cli-pulse-private/pull/34)). The cloud-sync layer of `helper/remote_agent.py` has been ported to Swift (Slice 3 — PR [#33](https://github.com/JasonYeYuhe/cli-pulse-private/pull/33)).
+v1.13.0 closes Phase 4E. The macOS app's LaunchAgent surface now drives cloud-side managed-session sync entirely in Swift via the `RemoteAgentCloud` actor wired into `cli_pulse_helper daemon` (Slice 4 — PR [#34](https://github.com/cli-pulse/cli-pulse-private/pull/34)). The cloud-sync layer of `helper/remote_agent.py` has been ported to Swift (Slice 3 — PR [#33](https://github.com/cli-pulse/cli-pulse-private/pull/33)).
 
 ## Phase 4E delta vs v1.12.3
 
 | Slice | PR | What |
 |---|---|---|
-| 3 | [#33](https://github.com/JasonYeYuhe/cli-pulse-private/pull/33) | `RemoteAgentCloud` actor + `EventUploader` (256-event bounded queue, drop-oldest, 5 s flush budget) + `SupabaseRPCCaller` (2.5 s per-request timeout) + extracted `Redactor` module |
-| 4 | [#34](https://github.com/JasonYeYuhe/cli-pulse-private/pull/34) | `DaemonConfig` argv parser + cloud-sync wiring inside `cli_pulse_helper daemon` (1 s tick) + `--legacy-python` opt-out flag + bounded 4.5 s SIGTERM drain |
+| 3 | [#33](https://github.com/cli-pulse/cli-pulse-private/pull/33) | `RemoteAgentCloud` actor + `EventUploader` (256-event bounded queue, drop-oldest, 5 s flush budget) + `SupabaseRPCCaller` (2.5 s per-request timeout) + extracted `Redactor` module |
+| 4 | [#34](https://github.com/cli-pulse/cli-pulse-private/pull/34) | `DaemonConfig` argv parser + cloud-sync wiring inside `cli_pulse_helper daemon` (1 s tick) + `--legacy-python` opt-out flag + bounded 4.5 s SIGTERM drain |
 
 Combined: 49 new Swift tests (HelperKit 258 → 307), 0 new test failures, 0 P0/P1 Gemini findings unresolved.
 

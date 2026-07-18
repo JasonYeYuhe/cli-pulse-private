@@ -423,6 +423,11 @@ if [[ $DRY_RUN -eq 0 ]]; then
     SHA256="$(shasum -a 256 "$DMG_OUT" | awk '{print $1}')"
     echo "$SHA256  $DMG_NAME" > "$DMG_OUT.sha256"
 
+    # NOTE: keep the LEGACY JasonYeYuhe/ path in the JSON below. The repo moved to the
+    # cli-pulse org 2026-07-18, but every SHIPPED app pins this exact prefix in
+    # UpdateVerifier.allowedURLPrefix — emitting the new org path would make shipped
+    # apps REJECT the update. GitHub redirects the old URL so downloads still resolve.
+    # Migration order: ship a dual-prefix verifier -> wait for adoption -> flip this.
     cat > "$OUTPUT_DIR/manifest-fragment-${ARCH}.json" <<EOF
 {
   "version": "$APP_VERSION",

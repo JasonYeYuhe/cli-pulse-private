@@ -9,10 +9,10 @@ previously describing a stale 2-version-old macOS-only flow).
 
 | Remote | URL | Visibility | Role |
 |---|---|---|---|
-| `origin` | `JasonYeYuhe/cli-pulse-private` | Private | All source: app, helper, backend, tests, internal docs |
-| `public` | `JasonYeYuhe/cli-pulse` | Public | `README.md`, `PRIVACY.md`, `TERMS.md`, `docs/` (Pages), release notes — NO source |
-| (n/a) | `JasonYeYuhe/cli-pulse-distrib` | Public | DEVID DMG release artifacts (`app-vX.Y.Z` tag) + `latest.json` manifest |
-| (n/a) | `JasonYeYuhe/cli-pulse-helper-releases` | Public | Helper `.pkg` release artifacts + `latest.json` manifest |
+| `origin` | `cli-pulse/cli-pulse-private` | Private | All source: app, helper, backend, tests, internal docs |
+| `public` | `cli-pulse/cli-pulse` | Public | `README.md`, `PRIVACY.md`, `TERMS.md`, `docs/` (Pages), release notes — NO source |
+| (n/a) | `cli-pulse/cli-pulse-distrib` | Public | DEVID DMG release artifacts (`app-vX.Y.Z` tag) + `latest.json` manifest |
+| (n/a) | `cli-pulse/cli-pulse-helper-releases` | Public | Helper `.pkg` release artifacts + `latest.json` manifest |
 
 Never push product source to `public`. The pre-push hook
 (`.githooks/pre-push`) blocks accidents.
@@ -88,7 +88,7 @@ Android:
 # Edit project.pbxproj + build.gradle.kts + commit
 ./scripts/build_devid_dmg.sh   # → ~/Library/Caches/CLI-Pulse-Bar-release/CLI-Pulse-Bar-vX.Y.Z-<arch>.dmg
 # Upload to cli-pulse-distrib
-gh release create "app-vX.Y.Z" "<dmg-path>" -R JasonYeYuhe/cli-pulse-distrib \
+gh release create "app-vX.Y.Z" "<dmg-path>" -R cli-pulse/cli-pulse-distrib \
     --title "CLI Pulse Bar vX.Y.Z" --notes-file docs/release-notes/vX.Y.Z.md
 # Promote to latest (after clean-Mac smoke!)
 # update cli-pulse-distrib's latest.json to point to the new tag
@@ -123,7 +123,7 @@ to v1.22 — R-F1).
 # Notarize + staple
 xcrun notarytool submit ... && xcrun stapler staple ...
 # Upload to cli-pulse-helper-releases
-gh release create "v1.18.0" "<pkg-path>" -R JasonYeYuhe/cli-pulse-helper-releases \
+gh release create "v1.18.0" "<pkg-path>" -R cli-pulse/cli-pulse-helper-releases \
     --title "Helper v1.18.0"
 # Update releases/download/latest/latest.json to point at the new tag
 ```
@@ -147,7 +147,7 @@ After the release artifacts are uploaded:
 1. `docs/release-notes/vX.Y.Z.md` committed to private repo.
 2. Public repo (`public` remote) gets release notes published (and
    any `docs/` updates that should ship publicly).
-3. Public GitHub Release on `JasonYeYuhe/cli-pulse` if we want a
+3. Public GitHub Release on `cli-pulse/cli-pulse` if we want a
    discoverable changelog separate from the channel-specific repos.
 
 ## Post-ship verification

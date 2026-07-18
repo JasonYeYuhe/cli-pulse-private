@@ -33,7 +33,7 @@ If you installed CLI Pulse Bar from the **Mac App Store**:
 - **No** "New Terminal — Claude" menu in the Mac Bar app.
 - **Yes** "Show live terminal" toggle in the iOS Sessions screen,
   provided you've installed the helper from the latest [helper
-  releases](https://github.com/JasonYeYuhe/cli-pulse-helper-releases)
+  releases](https://github.com/cli-pulse/cli-pulse-helper-releases)
   page and paired it with the Mac app. The MAS Mac app + helper +
   iOS-side terminal stack still gives you the full read/write
   terminal experience on your iPhone.

@@ -14,16 +14,16 @@ The release content reflects 9 PRs merged to `main` since v1.12.0:
 
 | PR | Sprint | Customer-visible? | Summary |
 |---|---|---|---|
-| [#21](https://github.com/JasonYeYuhe/cli-pulse-private/pull/21) | A — v1.12.1 | **Yes (privacy)** | M1 redaction +5 patterns (Stripe / Slack / NPM / PyPI) + M4 user_settings PATCH→UPSERT (privacy toggle no longer silently lies for first-time togglers) |
-| [#22](https://github.com/JasonYeYuhe/cli-pulse-private/pull/22) | B — v1.12.2 | Indirect | M2 per-request 2.5s HTTP timeout + M3 token-level Bash risk classifier (`rm  -rf` / `rm\t-rf` / `rm -r -f` now correctly classified HIGH) |
-| [#20](https://github.com/JasonYeYuhe/cli-pulse-private/pull/20) | Phase 4D | No (internal) | Swift HelperKit base — 14 modules, 132 tests |
-| [#23](https://github.com/JasonYeYuhe/cli-pulse-private/pull/23) | Phase 4E plan | No (docs) | Phase 4E dev plan v2.1 (Gemini-double-reviewed) |
-| [#24](https://github.com/JasonYeYuhe/cli-pulse-private/pull/24) | Slice 1 | No (internal) | `GitCollector.swift` Swift port + 13 tests |
-| [#25](https://github.com/JasonYeYuhe/cli-pulse-private/pull/25) | prep | No (test fix) | fake_rpc kwargs hotfix + Slice 2 sub-slicing amendment |
-| [#26](https://github.com/JasonYeYuhe/cli-pulse-private/pull/26) | Slice 2a | No (internal) | DeviceSnapshotCollector + SessionDetector + SubprocessRunner |
-| [#27](https://github.com/JasonYeYuhe/cli-pulse-private/pull/27) | Slice 2b | No (internal) | AlertGenerator + OAuthBackoff + KeychainReader |
-| [#28](https://github.com/JasonYeYuhe/cli-pulse-private/pull/28) | Slice 2c | No (internal) | 3 Quota fetchers (Claude/Codex/Gemini) + QuotaProvenance |
-| [#29](https://github.com/JasonYeYuhe/cli-pulse-private/pull/29) | Slice 2d | No (internal) | SystemCollector facade + ClaudeSnapshotWriter |
+| [#21](https://github.com/cli-pulse/cli-pulse-private/pull/21) | A — v1.12.1 | **Yes (privacy)** | M1 redaction +5 patterns (Stripe / Slack / NPM / PyPI) + M4 user_settings PATCH→UPSERT (privacy toggle no longer silently lies for first-time togglers) |
+| [#22](https://github.com/cli-pulse/cli-pulse-private/pull/22) | B — v1.12.2 | Indirect | M2 per-request 2.5s HTTP timeout + M3 token-level Bash risk classifier (`rm  -rf` / `rm\t-rf` / `rm -r -f` now correctly classified HIGH) |
+| [#20](https://github.com/cli-pulse/cli-pulse-private/pull/20) | Phase 4D | No (internal) | Swift HelperKit base — 14 modules, 132 tests |
+| [#23](https://github.com/cli-pulse/cli-pulse-private/pull/23) | Phase 4E plan | No (docs) | Phase 4E dev plan v2.1 (Gemini-double-reviewed) |
+| [#24](https://github.com/cli-pulse/cli-pulse-private/pull/24) | Slice 1 | No (internal) | `GitCollector.swift` Swift port + 13 tests |
+| [#25](https://github.com/cli-pulse/cli-pulse-private/pull/25) | prep | No (test fix) | fake_rpc kwargs hotfix + Slice 2 sub-slicing amendment |
+| [#26](https://github.com/cli-pulse/cli-pulse-private/pull/26) | Slice 2a | No (internal) | DeviceSnapshotCollector + SessionDetector + SubprocessRunner |
+| [#27](https://github.com/cli-pulse/cli-pulse-private/pull/27) | Slice 2b | No (internal) | AlertGenerator + OAuthBackoff + KeychainReader |
+| [#28](https://github.com/cli-pulse/cli-pulse-private/pull/28) | Slice 2c | No (internal) | 3 Quota fetchers (Claude/Codex/Gemini) + QuotaProvenance |
+| [#29](https://github.com/cli-pulse/cli-pulse-private/pull/29) | Slice 2d | No (internal) | SystemCollector facade + ClaudeSnapshotWriter |
 
 The customer-visible delta from v1.12.0 → v1.12.3 is:
 - **Privacy toggle no longer lies** for users who hadn't toggled `remote_control_enabled` or `track_git_activity` before (M4 fix in v1.12.1).

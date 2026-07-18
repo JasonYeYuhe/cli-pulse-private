@@ -4,7 +4,7 @@
 #
 # Asserts that a given git tree (a ref, a commit SHA, or the working tree)
 # contains ONLY files allowed in the public CLI Pulse distribution repo
-# (JasonYeYuhe/cli-pulse). Refuses anything that would expose product source,
+# (cli-pulse/cli-pulse). Refuses anything that would expose product source,
 # helper internals, backend schema, internal planning docs, or test fixtures.
 #
 # Run before pushing public/main, before creating public release tags, and

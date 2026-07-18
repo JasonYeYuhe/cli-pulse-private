@@ -3,7 +3,7 @@
 # .githooks/pre-push
 #
 # Refuses any push to the public CLI Pulse distribution repo
-# (JasonYeYuhe/cli-pulse) if the pushed commit/tag tree contains forbidden
+# (cli-pulse/cli-pulse) if the pushed commit/tag tree contains forbidden
 # private paths. Pushes to private remotes (origin / cli-pulse-private) are
 # never blocked.
 #
@@ -12,7 +12,7 @@
 #
 # Standard git pre-push args:
 #   $1  remote name (e.g. "public", "origin")
-#   $2  remote URL  (e.g. "https://github.com/JasonYeYuhe/cli-pulse.git")
+#   $2  remote URL  (e.g. "https://github.com/cli-pulse/cli-pulse.git")
 #
 # Standard git pre-push stdin (one line per pushed ref):
 #   <local-ref> <local-sha> <remote-ref> <remote-sha>
@@ -31,7 +31,7 @@ remote_url="${2:-}"
 
 # Identify the public repo. Match by remote name OR by exact URL shape.
 # Patterns are anchored at the end with `.git`, `.git/...`, or end-of-URL,
-# so `JasonYeYuhe/cli-pulse-private` (the PRIVATE source repo) cannot
+# so `cli-pulse/cli-pulse-private` (the PRIVATE source repo) cannot
 # match the `cli-pulse` public-repo patterns.
 is_public_remote() {
     case "$remote_name" in
@@ -39,13 +39,22 @@ is_public_remote() {
     esac
     case "$remote_url" in
         # HTTPS, with or without `.git`, with or without trailing path.
-        *JasonYeYuhe/cli-pulse.git)        return 0 ;;
-        *JasonYeYuhe/cli-pulse.git/*)      return 0 ;;
-        *JasonYeYuhe/cli-pulse)            return 0 ;;
-        *JasonYeYuhe/cli-pulse/*)          return 0 ;;
-        # SSH (`git@github.com:JasonYeYuhe/cli-pulse[.git]`).
-        *:JasonYeYuhe/cli-pulse.git)       return 0 ;;
-        *:JasonYeYuhe/cli-pulse)           return 0 ;;
+        *cli-pulse/cli-pulse.git)        return 0 ;;
+        *cli-pulse/cli-pulse.git/*)      return 0 ;;
+        *cli-pulse/cli-pulse)            return 0 ;;
+        *cli-pulse/cli-pulse/*)          return 0 ;;
+        # SSH (`git@github.com:cli-pulse/cli-pulse[.git]`).
+        *:cli-pulse/cli-pulse.git)       return 0 ;;
+        *:cli-pulse/cli-pulse)           return 0 ;;
+        # LEGACY owner (repo moved to the `cli-pulse` org 2026-07-18). GitHub
+        # still REDIRECTS these to the same public repo, so a push via an old
+        # URL must not bypass the distribution-clean scan.
+        *JasonYeYuhe/cli-pulse.git)      return 0 ;;
+        *JasonYeYuhe/cli-pulse.git/*)    return 0 ;;
+        *JasonYeYuhe/cli-pulse)          return 0 ;;
+        *JasonYeYuhe/cli-pulse/*)        return 0 ;;
+        *:JasonYeYuhe/cli-pulse.git)     return 0 ;;
+        *:JasonYeYuhe/cli-pulse)         return 0 ;;
     esac
     return 1
 }
@@ -106,7 +115,7 @@ fi
 if [ "$failed" = "1" ]; then
     echo "" >&2
     echo "Refusing push to public. CLI Pulse product source / helper / backend /" >&2
-    echo "internal docs / test fixtures must never reach JasonYeYuhe/cli-pulse." >&2
+    echo "internal docs / test fixtures must never reach cli-pulse/cli-pulse." >&2
     echo "" >&2
     echo "If you really meant to push to the private repo, push to 'origin' instead:" >&2
     echo "    git push origin <branch>" >&2

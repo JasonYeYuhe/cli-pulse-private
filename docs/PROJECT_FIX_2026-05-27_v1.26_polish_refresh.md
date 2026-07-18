@@ -14,14 +14,14 @@
 
 | Phase | PR | Title | Notes |
 |---|---|---|---|
-| **A0** | [#93](https://github.com/JasonYeYuhe/cli-pulse-private/pull/93) | `TerminalRingBuffer` internal locking | Codex HIGH — race in shipped v1.25 code; promoted ring buffer to fully self-locking via `NSLock` |
-| **A3** | [#94](https://github.com/JasonYeYuhe/cli-pulse-private/pull/94) | Alibaba Token Plan API drift | Upstream `3be413f` flipped from `bailian-cs.console.aliyun.com` BSP gateway to `BssOpenAPI-V3 GetSubscriptionSummary`; old endpoint silently empty |
-| **B1** | [#95](https://github.com/JasonYeYuhe/cli-pulse-private/pull/95) | iOS 500-line scrollback cap | `window.TERMINAL_CONFIG` JS hook + `WKUserScript` injection; Mac Bar stays at 5000 |
-| **C2** | [#96](https://github.com/JasonYeYuhe/cli-pulse-private/pull/96) | `workflow_dispatch` on every CI workflow | Codex LOW Q9 — recover from future GH Actions outages without empty-commit |
-| **B3** | [#97](https://github.com/JasonYeYuhe/cli-pulse-private/pull/97) | JS bridge crash defense | try/catch around `atob` + `term.write` in rAF batcher; pin contract via `@testable` HTML reads |
-| **C1** | [#98](https://github.com/JasonYeYuhe/cli-pulse-private/pull/98) | `docs/IN_APP_TERMINAL_MAS.md` | Mac Bar vs iOS terminal MAS posture documented |
-| **B2** | [#99](https://github.com/JasonYeYuhe/cli-pulse-private/pull/99) | `fetchTailSnapshot` foreground-recovery | Subscribe-first-buffer state machine + Realtime broadcast `tail_snapshot_result`; migration v0.51 owner-gated |
-| **chore** | [#100](https://github.com/JasonYeYuhe/cli-pulse-private/pull/100) | version bump 1.25.0→1.26.0 | Apple build 66→67 / Android code 34→35 |
+| **A0** | [#93](https://github.com/cli-pulse/cli-pulse-private/pull/93) | `TerminalRingBuffer` internal locking | Codex HIGH — race in shipped v1.25 code; promoted ring buffer to fully self-locking via `NSLock` |
+| **A3** | [#94](https://github.com/cli-pulse/cli-pulse-private/pull/94) | Alibaba Token Plan API drift | Upstream `3be413f` flipped from `bailian-cs.console.aliyun.com` BSP gateway to `BssOpenAPI-V3 GetSubscriptionSummary`; old endpoint silently empty |
+| **B1** | [#95](https://github.com/cli-pulse/cli-pulse-private/pull/95) | iOS 500-line scrollback cap | `window.TERMINAL_CONFIG` JS hook + `WKUserScript` injection; Mac Bar stays at 5000 |
+| **C2** | [#96](https://github.com/cli-pulse/cli-pulse-private/pull/96) | `workflow_dispatch` on every CI workflow | Codex LOW Q9 — recover from future GH Actions outages without empty-commit |
+| **B3** | [#97](https://github.com/cli-pulse/cli-pulse-private/pull/97) | JS bridge crash defense | try/catch around `atob` + `term.write` in rAF batcher; pin contract via `@testable` HTML reads |
+| **C1** | [#98](https://github.com/cli-pulse/cli-pulse-private/pull/98) | `docs/IN_APP_TERMINAL_MAS.md` | Mac Bar vs iOS terminal MAS posture documented |
+| **B2** | [#99](https://github.com/cli-pulse/cli-pulse-private/pull/99) | `fetchTailSnapshot` foreground-recovery | Subscribe-first-buffer state machine + Realtime broadcast `tail_snapshot_result`; migration v0.51 owner-gated |
+| **chore** | [#100](https://github.com/cli-pulse/cli-pulse-private/pull/100) | version bump 1.25.0→1.26.0 | Apple build 66→67 / Android code 34→35 |
 
 ---
 
