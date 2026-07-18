@@ -47,14 +47,14 @@ User taps / types in xterm.js
 
 | # | PR | Phase | Item |
 |---|---|---|---|
-| 1 | [#85](https://github.com/JasonYeYuhe/cli-pulse-private/pull/85) | 2c-3 | `SupabaseRealtimeBroadcastSink` — helper-side broadcast POST |
-| 2 | [#86](https://github.com/JasonYeYuhe/cli-pulse-private/pull/86) | 2c-4 | daemon wires sink behind `remote_realtime_enabled` kill switch (default ON) |
-| 3 | [#87](https://github.com/JasonYeYuhe/cli-pulse-private/pull/87) | 2c-4b | `RemoteSessionEventStream` — Phoenix vsn-2.0.0 WS subscriber |
-| 4 | [#88](https://github.com/JasonYeYuhe/cli-pulse-private/pull/88) | 4-1 | iOS `RemoteTerminalView` (UIView WKWebView host) + SwiftUI representable (read-only) |
-| 5 | [#89](https://github.com/JasonYeYuhe/cli-pulse-private/pull/89) | 4-2 | Interactive: `input_raw` + `resize` command kinds + migration v0.50 |
-| 6 | [#90](https://github.com/JasonYeYuhe/cli-pulse-private/pull/90) | 4-3 | `RemoteTerminalKeyBar` soft-keyboard bar (`Esc / Ctrl-C / ↑↓←→ / PgUp/Dn`) |
-| 7 | [#91](https://github.com/JasonYeYuhe/cli-pulse-private/pull/91) | 4-4 | scenePhase lifecycle + jittered exponential backoff reconnect |
-| 8 | [#92](https://github.com/JasonYeYuhe/cli-pulse-private/pull/92) | chore | 1.24.0 → 1.25.0 / Apple build 65→66 / Android code 33→34 |
+| 1 | [#85](https://github.com/cli-pulse/cli-pulse-private/pull/85) | 2c-3 | `SupabaseRealtimeBroadcastSink` — helper-side broadcast POST |
+| 2 | [#86](https://github.com/cli-pulse/cli-pulse-private/pull/86) | 2c-4 | daemon wires sink behind `remote_realtime_enabled` kill switch (default ON) |
+| 3 | [#87](https://github.com/cli-pulse/cli-pulse-private/pull/87) | 2c-4b | `RemoteSessionEventStream` — Phoenix vsn-2.0.0 WS subscriber |
+| 4 | [#88](https://github.com/cli-pulse/cli-pulse-private/pull/88) | 4-1 | iOS `RemoteTerminalView` (UIView WKWebView host) + SwiftUI representable (read-only) |
+| 5 | [#89](https://github.com/cli-pulse/cli-pulse-private/pull/89) | 4-2 | Interactive: `input_raw` + `resize` command kinds + migration v0.50 |
+| 6 | [#90](https://github.com/cli-pulse/cli-pulse-private/pull/90) | 4-3 | `RemoteTerminalKeyBar` soft-keyboard bar (`Esc / Ctrl-C / ↑↓←→ / PgUp/Dn`) |
+| 7 | [#91](https://github.com/cli-pulse/cli-pulse-private/pull/91) | 4-4 | scenePhase lifecycle + jittered exponential backoff reconnect |
+| 8 | [#92](https://github.com/cli-pulse/cli-pulse-private/pull/92) | chore | 1.24.0 → 1.25.0 / Apple build 65→66 / Android code 33→34 |
 
 ## Test totals
 

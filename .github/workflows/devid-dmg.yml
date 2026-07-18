@@ -27,7 +27,7 @@ name: DEVID DMG ship
 #   DEV_ID_APP                     — Identity name, e.g.
 #                                    "Developer ID Application: Yuhe Ye (KHMK6Q3L3K)"
 #   DISTRIB_REPO_PAT               — GitHub PAT with `repo` scope for
-#                                    JasonYeYuhe/cli-pulse-distrib pushes
+#                                    cli-pulse/cli-pulse-distrib pushes
 #                                    (only needed for upload-on-tag path)
 
 on:
@@ -252,14 +252,14 @@ jobs:
           SHA="${DMG}.sha256"
           MANIFEST=$(ls build/devid-dmg/manifest-fragment-*.json | head -1)
           # Create release if missing (idempotent)
-          if ! gh release view "$TAG" --repo JasonYeYuhe/cli-pulse-distrib >/dev/null 2>&1; then
+          if ! gh release view "$TAG" --repo cli-pulse/cli-pulse-distrib >/dev/null 2>&1; then
             gh release create "$TAG" \
-              --repo JasonYeYuhe/cli-pulse-distrib \
+              --repo cli-pulse/cli-pulse-distrib \
               --title "CLI Pulse Mac ${TAG#app-v} (Developer ID Beta)" \
               --notes "Built by GitHub Actions ($(date -u +%FT%TZ)). Awaiting clean-Mac smoke + manual promotion to \`latest\` manifest."
           fi
           gh release upload "$TAG" \
-            --repo JasonYeYuhe/cli-pulse-distrib \
+            --repo cli-pulse/cli-pulse-distrib \
             --clobber \
             "$DMG" \
             "$SHA" \
@@ -291,24 +291,24 @@ jobs:
           TAG="app-v${VERSION}"
           echo "Promoting $TAG (sha ${DMG_SHA:0:12}) to latest"
           # 1) ensure the versioned release carries the exact verified artifact
-          if ! gh release view "$TAG" --repo JasonYeYuhe/cli-pulse-distrib >/dev/null 2>&1; then
-            gh release create "$TAG" --repo JasonYeYuhe/cli-pulse-distrib \
+          if ! gh release view "$TAG" --repo cli-pulse/cli-pulse-distrib >/dev/null 2>&1; then
+            gh release create "$TAG" --repo cli-pulse/cli-pulse-distrib \
               --title "CLI Pulse Mac ${VERSION} (Developer ID Beta)" \
               --notes "Built + promoted by GitHub Actions ($(date -u +%FT%TZ))."
           fi
-          gh release upload "$TAG" --repo JasonYeYuhe/cli-pulse-distrib --clobber "$DMG" "$SHA_FILE" "$MANIFEST"
+          gh release upload "$TAG" --repo cli-pulse/cli-pulse-distrib --clobber "$DMG" "$SHA_FILE" "$MANIFEST"
           # 2) promote latest.json — upload a file literally named latest.json
           #    (NEVER `gh release create file#name`, whose rename is a no-op).
           cp "$MANIFEST" "$RUNNER_TEMP/latest.json"
-          if ! gh release view latest --repo JasonYeYuhe/cli-pulse-distrib >/dev/null 2>&1; then
-            gh release create latest --repo JasonYeYuhe/cli-pulse-distrib --prerelease \
+          if ! gh release view latest --repo cli-pulse/cli-pulse-distrib >/dev/null 2>&1; then
+            gh release create latest --repo cli-pulse/cli-pulse-distrib --prerelease \
               --title "Latest app manifest" \
               --notes "Points to the current Developer ID Beta build."
           fi
-          gh release upload latest --repo JasonYeYuhe/cli-pulse-distrib --clobber "$RUNNER_TEMP/latest.json"
+          gh release upload latest --repo cli-pulse/cli-pulse-distrib --clobber "$RUNNER_TEMP/latest.json"
           # 3) re-verify the promoted manifest matches the built artifact (API, no CDN cache)
           rm -rf "$RUNNER_TEMP/verify" && mkdir -p "$RUNNER_TEMP/verify"
-          gh release download latest --repo JasonYeYuhe/cli-pulse-distrib --pattern latest.json --dir "$RUNNER_TEMP/verify" --clobber
+          gh release download latest --repo cli-pulse/cli-pulse-distrib --pattern latest.json --dir "$RUNNER_TEMP/verify" --clobber
           PUB_VER=$(jq -r .version "$RUNNER_TEMP/verify/latest.json")
           PUB_SHA=$(jq -r .sha256 "$RUNNER_TEMP/verify/latest.json")
           if [[ "$PUB_VER" != "$VERSION" || "$PUB_SHA" != "$DMG_SHA" ]]; then

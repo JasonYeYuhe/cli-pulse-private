@@ -2,8 +2,8 @@
 
 **Date:** 2026-05-12 14:35 JST
 **Branch:** `v1.18.2-impl`
-**Public release:** https://github.com/JasonYeYuhe/cli-pulse-helper-releases/releases/tag/v1.17.3
-**Latest manifest:** https://github.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/latest/latest.json (points to v1.17.3)
+**Public release:** https://github.com/cli-pulse/cli-pulse-helper-releases/releases/tag/v1.17.3
+**Latest manifest:** https://github.com/cli-pulse/cli-pulse-helper-releases/releases/download/latest/latest.json (points to v1.17.3)
 **Reviewers:** Gemini 3.1 Pro plan + diff review on every item (in archive
 docs `PROJECT_FIX_2026-05-12_v1.18.2_codex_exec_p1.md` and
 `PROJECT_FIX_2026-05-12_v1.18.2_items_ABCD.md`) + self-review on publish plan
@@ -60,7 +60,7 @@ Per `reference_helper_releases_repo.md`:
 ```bash
 # 1. Versioned release (immutable artifact host)
 gh release create v1.17.3 \
-  --repo JasonYeYuhe/cli-pulse-helper-releases \
+  --repo cli-pulse/cli-pulse-helper-releases \
   --title "Companion CLI Helper v1.17.3 (arm64)" \
   --notes-file /tmp/release-notes-1.17.3.md \
   cli-pulse-helper-1.17.3-arm64.pkg \
@@ -68,9 +68,9 @@ gh release create v1.17.3 \
 
 # 2. Replace latest manifest (delete + recreate; --clobber not used per spec)
 cp manifest-fragment-arm64.json /tmp/latest.json
-gh release delete latest --repo JasonYeYuhe/cli-pulse-helper-releases --yes
+gh release delete latest --repo cli-pulse/cli-pulse-helper-releases --yes
 gh release create latest \
-  --repo JasonYeYuhe/cli-pulse-helper-releases \
+  --repo cli-pulse/cli-pulse-helper-releases \
   --title "Latest helper manifest" \
   --notes "Currently points to v1.17.3." \
   --prerelease \
@@ -170,9 +170,9 @@ Rollback sequence if Sentry +1h or +24h shows regression:
 SNAP=~/Library/Application\ Support/CLI-Pulse-Secrets/helper-manifest-1.17.2-snapshot.json
 jq -e '.version == "1.17.2"' "$SNAP"   # sanity
 cp "$SNAP" /tmp/latest.json
-gh release delete latest --repo JasonYeYuhe/cli-pulse-helper-releases --yes
+gh release delete latest --repo cli-pulse/cli-pulse-helper-releases --yes
 gh release create latest \
-  --repo JasonYeYuhe/cli-pulse-helper-releases \
+  --repo cli-pulse/cli-pulse-helper-releases \
   --title "Latest helper manifest" \
   --notes "Reverted to v1.17.2 from v1.17.3 due to <reason>." \
   --prerelease \

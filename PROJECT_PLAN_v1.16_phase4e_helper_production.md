@@ -31,7 +31,7 @@ The ROAD NOT TAKEN — for posterity:
 
 1. User opens MAS app → Pairing tab → sees "Managed CLI: Not Installed" + `[Install Companion CLI]` button
 2. Click button → in-app progress: "Downloading helper installer (~30 MB)..."
-3. App fetches `cli-pulse-helper-1.16.0.pkg` from `https://github.com/JasonYeYuhe/cli-pulse-private/releases/download/helper-v1.16.0/cli-pulse-helper-1.16.0.pkg`
+3. App fetches `cli-pulse-helper-1.16.0.pkg` from `https://github.com/cli-pulse/cli-pulse-private/releases/download/helper-v1.16.0/cli-pulse-helper-1.16.0.pkg`
 4. App saves to `NSTemporaryDirectory()` → `NSWorkspace.shared.open(pkgURL)`
 5. macOS Gatekeeper validates Developer ID + notarization ticket → standard one-time "downloaded from Internet, sure?" dialog → **user clicks Open** (1 click, only on first download per file)
 6. macOS Installer.app launches → "Continue" → "Install for me only" (default for user-domain pkg) → **user clicks Install** (2 clicks, no admin password)
@@ -281,18 +281,18 @@ Existing 38 UDS server tests still pass.
 
 ### §1.7 — Hosting and manifest
 
-GitHub Releases on `JasonYeYuhe/cli-pulse-private` (private repo) with a separate release tag pattern `helper-v1.16.0` (so it doesn't collide with the macOS app's `v1.16.0` ASC tag).
+GitHub Releases on `cli-pulse/cli-pulse-private` (private repo) with a separate release tag pattern `helper-v1.16.0` (so it doesn't collide with the macOS app's `v1.16.0` ASC tag).
 
-Manifest endpoint: `https://api.github.com/repos/JasonYeYuhe/cli-pulse-private/releases/tags/helper-latest`
+Manifest endpoint: `https://api.github.com/repos/cli-pulse/cli-pulse-private/releases/tags/helper-latest`
 
 But wait — private repo means MAS app users can't fetch directly. Options:
-- **D-host-1**: Move helper releases to a public mirror repo (e.g., `JasonYeYuhe/cli-pulse-helper-releases`) with only the .pkg artifacts and a `latest.json` file. **Recommended.**
+- **D-host-1**: Move helper releases to a public mirror repo (e.g., `cli-pulse/cli-pulse-helper-releases`) with only the .pkg artifacts and a `latest.json` file. **Recommended.**
 - D-host-2: Use cli-pulse.com hosting (not yet set up; cost: ~$5/mo).
 - D-host-3: Use GitHub Pages static hosting on the public repo.
 
 D-host-1 chosen for simplicity. The public mirror repo holds only:
 - `cli-pulse-helper-1.16.0.pkg`
-- `latest.json` with `{"version":"1.16.0","sha256":"...","url":"https://github.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/v1.16.0/cli-pulse-helper-1.16.0.pkg","release_notes_url":"..."}`
+- `latest.json` with `{"version":"1.16.0","sha256":"...","url":"https://github.com/cli-pulse/cli-pulse-helper-releases/releases/download/v1.16.0/cli-pulse-helper-1.16.0.pkg","release_notes_url":"..."}`
 
 CI pushes to this mirror via a deploy key.
 
@@ -315,7 +315,7 @@ final class HelperInstaller: ObservableObject {
         case error(String)
     }
 
-    private let manifestURL = URL(string: "https://github.com/JasonYeYuhe/cli-pulse-helper-releases/releases/download/latest/latest.json")!
+    private let manifestURL = URL(string: "https://github.com/cli-pulse/cli-pulse-helper-releases/releases/download/latest/latest.json")!
     private let udsPath: String = {
         let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.yyh.CLI-Pulse")!
         return groupURL.appendingPathComponent("clipulse-helper.sock").path

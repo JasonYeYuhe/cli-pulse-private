@@ -89,6 +89,15 @@ public struct UpdateVerifier {
     public static let teamID = "KHMK6Q3L3K"
     public static let appBundleID = "yyh.CLI-Pulse"
     /// Only this exact prefix is an official release artifact.
+    ///
+    /// - Important: The repo moved to the `cli-pulse` org on 2026-07-18, but this
+    ///   anchor intentionally still pins the LEGACY `JasonYeYuhe/…` path. Every
+    ///   already-shipped app has this exact prefix compiled in, and `latest.json`
+    ///   must keep emitting URLs those builds accept (GitHub redirects the old path,
+    ///   so downloads still resolve). Changing this string — or the matching `url`
+    ///   written by `scripts/build_devid_dmg.sh` — on its own will make every shipped
+    ///   app REJECT updates. Migration order: ship a build that accepts BOTH prefixes
+    ///   → wait for adoption → only then flip the manifest.
     public static let allowedURLPrefix =
         "https://github.com/JasonYeYuhe/cli-pulse-distrib/releases/download/"
     public static let maxArtifactBytes = 200_000_000

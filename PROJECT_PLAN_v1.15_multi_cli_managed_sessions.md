@@ -312,7 +312,7 @@ how many sessions hit Gemini reviews.
 ## References
 
 - PR #41 (v1.14 lifetime IAP + dashboard parity + session formatter
-  hardening): https://github.com/JasonYeYuhe/cli-pulse-private/pull/41
+  hardening): https://github.com/cli-pulse/cli-pulse-private/pull/41
 - `feedback_remote_session_scroll_bug.md` — live-tail scroll trigger
   fix
 - Codex's product proposal (received 2026-05-08) — three-layer output

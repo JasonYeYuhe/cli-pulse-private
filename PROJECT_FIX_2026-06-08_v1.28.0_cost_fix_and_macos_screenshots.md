@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-07 → 2026-06-08 JST
 **Train:** v1.28.0 (Apple build 72, Android code 38) — **the 1.28.0 slot was consumed by an urgent cost-bug re-ship, NOT the planned Android-parity W1–W7** (those slide to v1.29+).
-**Status:** macOS 1.28.0 build 72 **SUBMITTED → WAITING_FOR_REVIEW** with a fully refreshed, PII-clean screenshot set. Screenshot assets merged to `main` ([PR #157](https://github.com/JasonYeYuhe/cli-pulse-private/pull/157), gate ✅). iOS deferred (owner: "ios没什么变化 下一次弄吧"). DEVID DMG (build 72) + Android AAB (code 38) prepared, publish owner-gated.
+**Status:** macOS 1.28.0 build 72 **SUBMITTED → WAITING_FOR_REVIEW** with a fully refreshed, PII-clean screenshot set. Screenshot assets merged to `main` ([PR #157](https://github.com/cli-pulse/cli-pulse-private/pull/157), gate ✅). iOS deferred (owner: "ios没什么变化 下一次弄吧"). DEVID DMG (build 72) + Android AAB (code 38) prepared, publish owner-gated.
 
 ---
 

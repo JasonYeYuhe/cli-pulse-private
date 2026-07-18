@@ -135,9 +135,9 @@ Contains:
 This migration is complete:
 
 1. `origin` now points to the private source repository:
-   - `JasonYeYuhe/cli-pulse-private`
+   - `cli-pulse/cli-pulse-private`
 2. `public` now points to the public distribution repository:
-   - `JasonYeYuhe/cli-pulse`
+   - `cli-pulse/cli-pulse`
 3. The public `main` branch has been rewritten to contain only
    distribution-facing files.
 4. Public release tags were recreated on the distribution-only history so that

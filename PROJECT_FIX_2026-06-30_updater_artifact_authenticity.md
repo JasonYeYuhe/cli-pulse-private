@@ -15,7 +15,7 @@ codesign/notarization re-check. A compromised/MITM'd manifest could push a troja
 A layered, **fail-closed** verifier; `download()` now proves the artifact is a genuine,
 current, Jason-notarized CLI Pulse build before `.readyToInstall`:
 1. **Manifest hardening** (`fetchManifest`, runs on every refresh): require `https`, a
-   strict `github.com/JasonYeYuhe/cli-pulse-distrib/releases/download/` prefix, and a sane
+   strict `github.com/cli-pulse/cli-pulse-distrib/releases/download/` prefix, and a sane
    `size_bytes` (0 < n ≤ 200 MB). Untrusted `release_notes_url` ignored unless allowlisted.
 2. **Download** to a fresh private 0700 dir (not a predictable temp path); assert byte
    size == manifest; SHA-256 == manifest (kept).

@@ -7,9 +7,9 @@ patch (`fa5722c`) and the v1.21 first batch (`6fece44` + `5c408e9`).
 
 | Commit | Day | Block | Files | Notes |
 |---|---|---|---|---|
-| [`5b225d8`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/5b225d8) | 1 | F + G (backend + CI) | 7 | Deployed to prod Supabase |
-| [`32c8919`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/32c8919) | 2 | E (Android) | 17 | Awaits v1.21.0 AAB ship |
-| [`9026b7f`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/9026b7f) | 3+4 | D + M + G6 (Apple + cross-cutting + CI) | 17 | Awaits v1.21.0 ASC submit |
+| [`5b225d8`](https://github.com/cli-pulse/cli-pulse-private/commit/5b225d8) | 1 | F + G (backend + CI) | 7 | Deployed to prod Supabase |
+| [`32c8919`](https://github.com/cli-pulse/cli-pulse-private/commit/32c8919) | 2 | E (Android) | 17 | Awaits v1.21.0 AAB ship |
+| [`9026b7f`](https://github.com/cli-pulse/cli-pulse-private/commit/9026b7f) | 3+4 | D + M + G6 (Apple + cross-cutting + CI) | 17 | Awaits v1.21.0 ASC submit |
 
 **Plan reference**: [`PLAN_v1.21_2026-05-14.md`](PLAN_v1.21_2026-05-14.md) §3 + §6.
 **Handoff reference**: `CLAUDE_HANDOFF_v1.21_long_tail_2026-05-15.txt`.

@@ -10,16 +10,16 @@ this train.
 **Handoff reference**: `CLAUDE_HANDOFF_v1.22_swarm_observability_2026-05-16.txt`.
 **Review gate**: Gemini R1 GO-WITH-CHANGES + R2 GO-WITH-MINOR-CHANGES,
 all 11 findings adopted; user scope sign-off 2026-05-16 (commit
-[`1d57fb4`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/1d57fb4)).
+[`1d57fb4`](https://github.com/cli-pulse/cli-pulse-private/commit/1d57fb4)).
 
 **Commits this archive covers** (all on `main`):
 
 | Commit | Work item | Files | Notes |
 |---|---|---|---|
-| [`1d57fb4`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/1d57fb4) | review+sign-off | 2 | PLAN dispositioned, scope locked |
-| [`75ef646`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/75ef646) | H-F1 | 10 | helper-only; no schema; 537 pytest green |
-| [`2cd824f`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/2cd824f) | S1 + S1b | 6 | helper-only; no schema; **dark by default**; 558 pytest green |
-| [`b9f3686`](https://github.com/JasonYeYuhe/cli-pulse-private/commit/b9f3686) | S2 (file) | 2 | migration authored; CI-green |
+| [`1d57fb4`](https://github.com/cli-pulse/cli-pulse-private/commit/1d57fb4) | review+sign-off | 2 | PLAN dispositioned, scope locked |
+| [`75ef646`](https://github.com/cli-pulse/cli-pulse-private/commit/75ef646) | H-F1 | 10 | helper-only; no schema; 537 pytest green |
+| [`2cd824f`](https://github.com/cli-pulse/cli-pulse-private/commit/2cd824f) | S1 + S1b | 6 | helper-only; no schema; **dark by default**; 558 pytest green |
+| [`b9f3686`](https://github.com/cli-pulse/cli-pulse-private/commit/b9f3686) | S2 (file) | 2 | migration authored; CI-green |
 | _(prod action)_ | S2 **APPLIED** | — | user-approved 2026-05-16; `apply_migration` → prod Supabase; ledger `v0_48_remote_swarms`; advisor-clean |
 | _(this commit)_ | S3 | 13 | Mac Swarm tab; Bar app BUILD SUCCEEDED; 21 swift tests green; no schema |
 

@@ -26,7 +26,7 @@ It is **NOT** an open-source license. CLI Pulse is a commercial product distribu
 - **Mac App Store** — [CLI Pulse Bar](https://apps.apple.com/app/id6761163709)
 - **App Store** (iPhone / iPad / Apple Watch) — same listing
 - **Google Play** — [CLI Pulse for Android](https://play.google.com/store/apps/details?id=com.clipulse.android)
-- **Signed & notarized DMG** — [GitHub Releases](https://github.com/JasonYeYuhe/cli-pulse/releases)
+- **Signed & notarized DMG** — [GitHub Releases](https://github.com/cli-pulse/cli-pulse/releases)
 
 Any binaries or installers obtained from other sources are **not** authentic and may be modified.
 

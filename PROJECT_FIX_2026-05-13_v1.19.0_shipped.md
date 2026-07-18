@@ -4,7 +4,7 @@
 
 First public release of the CLI Pulse Mac Developer ID Beta channel.
 DMG signed with Developer ID Application, notarized + stapled, hosted
-on the brand-new `JasonYeYuhe/cli-pulse-distrib` public repo. Manifest
+on the brand-new `cli-pulse/cli-pulse-distrib` public repo. Manifest
 endpoint live at `releases/download/latest/latest.json` for the
 in-app `AppUpdater` to poll. App Store path remains the primary
 channel; this is a parallel Beta channel.
@@ -59,7 +59,7 @@ Pipeline completed end-to-end in ~6 min:
 
 ### Public surface
 
-- `JasonYeYuhe/cli-pulse-distrib` — new public repo (created earlier
+- `cli-pulse/cli-pulse-distrib` — new public repo (created earlier
   same day; this session was first to push commits)
 - `main` branch — seeded README explaining the Beta channel
 - `app-v1.19.0` release — DMG + sha256 (immutable archive)
@@ -82,7 +82,7 @@ operations). Smoke considered PASS on that signal.
 `latest` promotion proceeded without further user intervention. If
 smoke retroactively reveals a launch bug, the rollback path is:
 
-1. `gh release delete latest --repo JasonYeYuhe/cli-pulse-distrib --yes`
+1. `gh release delete latest --repo cli-pulse/cli-pulse-distrib --yes`
 2. `gh release edit app-v1.19.0 --repo … --prerelease=true` (demote)
 3. Edit notes with YANKED banner
 4. No latest manifest exists → AppUpdater clients see no update offered

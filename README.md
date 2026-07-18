@@ -13,7 +13,7 @@ between devices:
 | ------------------------------- | --------------------------------------------------------------------------- | ------------------- |
 | macOS · iOS · iPadOS · watchOS  | this repo (`CLI Pulse Bar/`)                                                | App Store           |
 | Android                         | this repo (`android/`)                                                      | Google Play         |
-| **Windows · Linux**             | **[JasonYeYuhe/cli-pulse-desktop](https://github.com/JasonYeYuhe/cli-pulse-desktop)** (separate repo, Rust + Tauri 2) | GitHub Releases     |
+| **Windows · Linux**             | **[cli-pulse/cli-pulse-desktop](https://github.com/cli-pulse/cli-pulse-desktop)** (separate repo, Rust + Tauri 2) | GitHub Releases     |
 
 The Windows / Linux build lives in its own repository because it shares no
 client code with the Apple/Android apps (Rust + Tauri vs Swift/Kotlin) and has

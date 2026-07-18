@@ -1,7 +1,7 @@
 # Public Exposure Rotation Checklist
 
 **Trigger:** 2026-04-28 — discovered that the public repo
-`JasonYeYuhe/cli-pulse` had carried full product source for an extended
+`cli-pulse/cli-pulse` had carried full product source for an extended
 period, including the most recent commit `b462fed…` before the rewrite.
 Public refs are now distribution-only (`5d15080`, with all release tags
 on `4f72f82` or earlier clean SHAs). This checklist tracks credential
@@ -208,14 +208,14 @@ The targeted scan was run against the worst-case contaminated commit
   GC runs. See `PUBLIC_REPO_GITHUB_SUPPORT_GC_REQUEST.md`.
 - **Third-party clones / local downloads** of the previously-public
   archives cannot be revoked. Anyone who fetched
-  `https://github.com/JasonYeYuhe/cli-pulse/archive/refs/tags/v1.10.7.zip`
+  `https://github.com/cli-pulse/cli-pulse/archive/refs/tags/v1.10.7.zip`
   before 2026-04-28 still has the source. There is no mitigation; this
   is the cost of having pushed source publicly. Treat the contained code
   as "publicly available historical leak" for any future
   threat-modelling.
 - **Forks made before today** keep the source. Quick periodic check:
   ```bash
-  gh api repos/JasonYeYuhe/cli-pulse/forks --jq '.[].full_name'
+  gh api repos/cli-pulse/cli-pulse/forks --jq '.[].full_name'
   ```
   As of 2026-04-28 the public repo has **0 forks**.
 

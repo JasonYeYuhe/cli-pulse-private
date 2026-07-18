@@ -138,11 +138,11 @@ Manifest sample output:
   "build": "57",
   "channel": "devid",
   "arch": "arm64",
-  "url": "https://github.com/JasonYeYuhe/cli-pulse-distrib/releases/download/app-v1.18.1/CLI-Pulse-1.18.1-arm64.dmg",
+  "url": "https://github.com/cli-pulse/cli-pulse-distrib/releases/download/app-v1.18.1/CLI-Pulse-1.18.1-arm64.dmg",
   "sha256": "752e018a1f34af463616a705e18530723de851f390d84b9996dda3cedbb11fab",
   "size_bytes": 16939442,
   "min_os_version": "13.0",
-  "release_notes_url": "https://github.com/JasonYeYuhe/cli-pulse-distrib/releases/tag/app-v1.18.1"
+  "release_notes_url": "https://github.com/cli-pulse/cli-pulse-distrib/releases/tag/app-v1.18.1"
 }
 ```
 

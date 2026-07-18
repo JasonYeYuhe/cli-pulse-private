@@ -161,7 +161,7 @@ knowingly collect data from children.
 
 We will update the "Last Updated" date above when this policy changes and
 note material changes in release notes. The authoritative version lives at
-<https://github.com/JasonYeYuhe/cli-pulse/blob/main/PRIVACY.md>.
+<https://github.com/cli-pulse/cli-pulse/blob/main/PRIVACY.md>.
 
 ---
 
@@ -181,4 +181,4 @@ guess.
 ## Contact
 
 - Email: yyyyy.yeyuhe@gmail.com
-- GitHub issues: <https://github.com/JasonYeYuhe/cli-pulse/issues>
+- GitHub issues: <https://github.com/cli-pulse/cli-pulse/issues>

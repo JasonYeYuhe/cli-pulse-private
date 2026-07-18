@@ -128,7 +128,7 @@ Pushed to `origin/v1.18.2-impl` (private). Not on `main`. Not in
 
 1. Bump `HELPER_VERSION` 1.17.2 → 1.17.3 in `helper/system_collector.py` + `helper/cli_pulse_helper.py` (`--helper-version` default), commit + push.
 2. Run `./scripts/build_helper_pkg.sh` (full sign + notarize); outputs `cli-pulse-helper-1.17.3-arm64.pkg` + `manifest-fragment-arm64.json`.
-3. `gh release create v1.17.3 --repo JasonYeYuhe/cli-pulse-helper-releases …` with the .pkg attached.
+3. `gh release create v1.17.3 --repo cli-pulse/cli-pulse-helper-releases …` with the .pkg attached.
 4. Replace `latest.json` asset on the `latest` release with the new manifest fragment.
 5. Confirm `curl -sL .../latest/latest.json` shows v1.17.3.
 6. Merge `v1.18.2-impl` → `main` (or keep as carry-along into next ASC train; user's call).

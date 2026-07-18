@@ -47,7 +47,7 @@ TEAM_ID="${ASC_TEAM_ID:?Set ASC_TEAM_ID environment variable}"
 APP_ID="${ASC_APP_ID:?Set ASC_APP_ID environment variable}"
 
 # Public repo for Android releases
-PUBLIC_REPO="JasonYeYuhe/cli-pulse"
+PUBLIC_REPO="cli-pulse/cli-pulse"
 
 # Java for Android builds
 export JAVA_HOME="${JAVA_HOME:-/opt/homebrew/opt/openjdk}"
