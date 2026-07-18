@@ -22,14 +22,21 @@ public struct ClaudeSnapshotWriter: Sendable {
 
     public typealias FileWriteHook = @Sendable (URL, Data) throws -> Void
 
-    private let groupContainerPath: URL
+    private let groupContainerPath: URL?
     private let legacyPath: URL
     private let fileWrite: FileWriteHook
     private let now: @Sendable () -> Date
 
     public init(
-        groupContainerPath: URL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Group Containers/group.yyh.CLI-Pulse/claude_snapshot.json"),
+        // NO app-group container destination by default. Writing there made every
+        // launchd start of this unsandboxed helper a TCC SystemPolicyAppData
+        // consult — the recurring "CLI Pulse would like to access data from other
+        // apps" prompt, whose answer this binary never gets persisted, so it asks
+        // forever. The app now reads whichever copy is FRESHEST
+        // (ClaudeHelperContract.snapshotPath), so dropping this destination costs
+        // nothing: the `.pkg` helper still writes the container for its own
+        // machines. Injectable so tests can still exercise a two-destination write.
+        groupContainerPath: URL? = nil,
         legacyPath: URL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".clipulse/claude_snapshot.json"),
         fileWrite: @escaping FileWriteHook = ClaudeSnapshotWriter.liveWrite,
@@ -56,7 +63,9 @@ public struct ClaudeSnapshotWriter: Sendable {
             withJSONObject: dict,
             options: [.prettyPrinted, .sortedKeys]
         ) else { return }
-        for url in [groupContainerPath, legacyPath] {
+        // compactMap drops the container destination when it's nil (the default
+        // now) without changing the write logic itself.
+        for url in [groupContainerPath, legacyPath].compactMap({ $0 }) {
             try? FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true
