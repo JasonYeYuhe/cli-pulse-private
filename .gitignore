@@ -87,3 +87,17 @@ HelperSwift/Package.resolved
 # Gemini review raw dumps (provenance kept local; canonical record is the PLAN disposition tables)
 .gemini-review-*.txt
 /art-src/
+
+# ── Internal working documents ─────────────────────────────────────────────
+# This repo is PUBLIC (the -private suffix is historical). Internal material —
+# dev plans, handoffs, audits, review packets — belongs in cli-pulse-internal,
+# per the partner handover doc. These patterns keep a stray `git add -A` from
+# publishing the untracked working set at the repo root permanently.
+# Root-anchored so docs/ content is unaffected. Already-tracked files are
+# unaffected by gitignore (e.g. historical DEV_PLAN/PROJECT_FIX commits stay).
+/HANDOFF_*.md
+/DEV_PLAN_*.md
+/CODEX_*.md
+/PROJECT_REVIEW*.md
+/ART_ASSET_LIST*.md
+/CLI_PULSE_ACTION_CHECKLIST*.md
