@@ -108,3 +108,76 @@ final class ContainerAccessTests: XCTestCase {
         XCTAssertTrue(AuthToken.compare(expected: "real-token", supplied: "real-token"))
     }
 }
+
+/// `RuntimeRoot` — the private runtime root that replaces the app-group container.
+final class RuntimeRootTests: XCTestCase {
+
+    private func scratch() -> URL {
+        URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("clipulse-rr-\(UUID().uuidString.prefix(8))")
+    }
+
+    func testCreatesRootAt0700WhenAbsent() throws {
+        let root = scratch()
+        defer { try? FileManager.default.removeItem(at: root) }
+        setenv(RuntimeRoot.overrideEnvVar, root.path, 1)
+        defer { unsetenv(RuntimeRoot.overrideEnvVar) }
+
+        let resolved = try RuntimeRoot.secureRoot()
+        XCTAssertEqual(resolved.path, root.path)
+        var st = stat()
+        XCTAssertEqual(lstat(root.path, &st), 0)
+        XCTAssertEqual(st.st_mode & 0o777, 0o700, "a fresh root must be created private")
+    }
+
+    func testTightensAPreExistingLooseRootInsteadOfRefusing() throws {
+        // THE REGRESSION THIS PINS. ~/.clipulse already exists at 0755 on real
+        // machines (ClaudeSnapshotWriter has written there for ages). Refusing it
+        // would fail token rotation on every existing install — the helper would
+        // run with an empty token and every gated RPC would fail closed, i.e.
+        // local session control silently dead.
+        let root = scratch()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        chmod(root.path, 0o755)
+        defer { try? FileManager.default.removeItem(at: root) }
+        setenv(RuntimeRoot.overrideEnvVar, root.path, 1)
+        defer { unsetenv(RuntimeRoot.overrideEnvVar) }
+
+        XCTAssertNoThrow(try RuntimeRoot.secureRoot(),
+                         "a loose root we OWN must be tightened, never refused")
+        var st = stat()
+        XCTAssertEqual(lstat(root.path, &st), 0)
+        XCTAssertEqual(st.st_mode & 0o777, 0o700, "it must end up private")
+    }
+
+    func testRefusesASymlinkedRoot() throws {
+        // A symlink lets another user redirect our auth token to a path they
+        // control. No chmod fixes that, so it must be refused.
+        let real = scratch(); let link = scratch()
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        defer { try? FileManager.default.removeItem(at: link); try? FileManager.default.removeItem(at: real) }
+        setenv(RuntimeRoot.overrideEnvVar, link.path, 1)
+        defer { unsetenv(RuntimeRoot.overrideEnvVar) }
+
+        XCTAssertThrowsError(try RuntimeRoot.secureRoot(),
+                             "a symlinked runtime root must be refused")
+    }
+
+    func testRefusesANonDirectory() throws {
+        let file = scratch()
+        try "x".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: file) }
+        setenv(RuntimeRoot.overrideEnvVar, file.path, 1)
+        defer { unsetenv(RuntimeRoot.overrideEnvVar) }
+        XCTAssertThrowsError(try RuntimeRoot.secureRoot())
+    }
+
+    func testDefaultRootIsTheHomeDotdirNotTheContainer() {
+        unsetenv(RuntimeRoot.overrideEnvVar)
+        let p = RuntimeRoot.path().path
+        XCTAssertTrue(p.hasSuffix("/.clipulse"), "got \(p)")
+        XCTAssertFalse(p.contains("Group Containers"),
+                       "the runtime root must NOT be under the TCC-protected container prefix")
+    }
+}

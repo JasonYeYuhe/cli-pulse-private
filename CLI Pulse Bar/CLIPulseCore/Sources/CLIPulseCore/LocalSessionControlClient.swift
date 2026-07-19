@@ -410,6 +410,76 @@ public final class LocalSessionControlClient: SessionControlClient, MachineContr
         return (realHome as NSString)
             .appendingPathComponent("Library/Group Containers/\(appGroupID)")
     }
+    /// The bundled DEVID helper's private runtime root, `~/.clipulse`.
+    ///
+    /// The bundled helper moved its socket + token here because binding inside the
+    /// app-group container made every launchd start a
+    /// `kTCCServiceSystemPolicyAppData` consult — the recurring "CLI Pulse would
+    /// like to access data from other apps" prompt. This path is under no
+    /// TCC-protected prefix, so no consult is ever generated. Mirrors
+    /// `HelperKit.RuntimeRoot` (including the `CLIPULSE_HELPER_ROOT` override) —
+    /// the two ends MUST agree.
+    public static func runtimeRootBasePath() -> String {
+        let env = ProcessInfo.processInfo.environment["CLIPULSE_HELPER_ROOT"]
+        if let env, !env.isEmpty { return env }
+        let realHome: String = passwdHomeDirectory()
+            ?? NSHomeDirectoryForUser(NSUserName()) ?? NSHomeDirectory()
+        return (realHome as NSString).appendingPathComponent(".clipulse")
+    }
+
+    /// Base paths to look for a live helper, in priority order:
+    /// 1. `~/.clipulse` — the bundled DEVID helper (post-prompt-fix)
+    /// 2. the app-group container — the `.pkg` Python helper, and older bundled
+    ///    helpers that predate the move
+    public static func candidateBasePaths() -> [String] {
+        var out = [runtimeRootBasePath()]
+        let container = groupContainerBasePath()
+        if container != out[0] { out.append(container) }
+        return out
+    }
+
+    /// Pick the base whose socket has a LIVE listener.
+    ///
+    /// Probes by `connect(2)`, never by checking whether the socket file exists
+    /// (review: design pass). An AF_UNIX node outlives the process that bound it —
+    /// a SIGKILLed or disabled helper leaves the node behind — so an
+    /// existence-check would happily pin the app to a dead socket and hide a
+    /// perfectly healthy helper at the other candidate. `connect` on an unbound
+    /// node fails ECONNREFUSED, which is exactly the discrimination we want.
+    ///
+    /// Falls back to the FIRST candidate when nothing answers, so a
+    /// not-yet-started helper still gets a sensible path to bind against later.
+    public static func resolveBasePath() -> String {
+        let candidates = candidateBasePaths()
+        for base in candidates {
+            let sock = (base as NSString).appendingPathComponent(socketFilename)
+            if socketHasLiveListener(atPath: sock) { return base }
+        }
+        return candidates.first ?? groupContainerBasePath()
+    }
+
+    /// Cheap liveness probe: can we actually establish a connection?
+    static func socketHasLiveListener(atPath path: String) -> Bool {
+        let sockFD = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        if sockFD < 0 { return false }
+        defer { Darwin.close(sockFD) }
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let cPath = (path as NSString).fileSystemRepresentation
+        // Refuse to overflow sun_path rather than truncate into a wrong path.
+        let capacity = MemoryLayout.size(ofValue: addr.sun_path)
+        if strlen(cPath) >= capacity { return false }
+        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+            _ = memcpy(raw.baseAddress!, cPath, strlen(cPath) + 1)
+        }
+        let result = withUnsafePointer(to: &addr) { addrPtr -> Int32 in
+            addrPtr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(sockFD, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        return result == 0
+    }
+
     public static let protocolVersion = 1
 
     /// v1.34 R1d: the minimum helper version that injects the user's Claude
@@ -438,7 +508,9 @@ public final class LocalSessionControlClient: SessionControlClient, MachineContr
             self.socketPath = socketPath
             self.tokenPath = tokenPath
         } else {
-            let base = Self.groupContainerBasePath()
+            // One base for BOTH: each helper rotates its own token next to its own
+            // socket, so mixing bases would authenticate against the wrong one.
+            let base = Self.resolveBasePath()
             self.socketPath = socketPath ?? (base as NSString)
                 .appendingPathComponent(Self.socketFilename)
             self.tokenPath = tokenPath ?? (base as NSString)

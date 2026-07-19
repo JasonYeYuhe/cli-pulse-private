@@ -30,6 +30,10 @@ public enum AuthToken {
     public static let appGroupID = "group.yyh.CLI-Pulse"
     public static let tokenFilename = "helper-auth-token"
 
+    /// The app-group container. **No longer where this helper keeps its token** —
+    /// retained because the app-side migration still needs to find and clean up
+    /// the legacy location. Touching this path from the unsandboxed helper is what
+    /// generated the `kTCCServiceSystemPolicyAppData` prompt; see `RuntimeRoot`.
     public static func containerPath() -> URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home
@@ -38,8 +42,16 @@ public enum AuthToken {
             .appendingPathComponent(appGroupID, isDirectory: true)
     }
 
-    public static func tokenPath() -> URL {
+    /// Legacy token location (inside the app-group container). Read only by the
+    /// app's migration/cleanup path, never by the daemon.
+    public static func legacyTokenPath() -> URL {
         return containerPath().appendingPathComponent(tokenFilename)
+    }
+
+    /// Where the token lives now: the helper's private runtime root, which is not
+    /// under any TCC-protected prefix, so writing it never triggers a consult.
+    public static func tokenPath() -> URL {
+        return RuntimeRoot.path().appendingPathComponent(tokenFilename)
     }
 
     /// Generate a fresh token, write it (mode 0600) at `path`, and
@@ -53,7 +65,14 @@ public enum AuthToken {
     /// before the user opens the app).
     @discardableResult
     public static func rotateToken(at path: URL? = nil) throws -> String {
-        let target = path ?? tokenPath()
+        // Validate/create the runtime root before writing a secret into it. When
+        // the caller supplies an explicit path (tests) we honour it verbatim.
+        let target: URL
+        if let path {
+            target = path
+        } else {
+            target = try RuntimeRoot.secureRoot().appendingPathComponent(tokenFilename)
+        }
         let parent = target.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
 
@@ -69,7 +88,10 @@ public enum AuthToken {
         // Atomic-replace pattern matches the Python implementation:
         // write tmp, fchmod, rename. POSIX rename is atomic so a
         // concurrent reader never sees a half-written token.
-        let tmp = target.appendingPathExtension("tmp")
+        // PID-suffixed, not a fixed ".tmp" (review: codex): with a fixed name two
+        // concurrent rotations rename each other's temporary file, so the token
+        // returned in memory need not be the one that landed on disk.
+        let tmp = target.appendingPathExtension("\(getpid()).tmp")
         // Clean up any leftover from a previous failed run.
         try? FileManager.default.removeItem(at: tmp)
         try Data(bytes).write(to: tmp, options: .atomic)
