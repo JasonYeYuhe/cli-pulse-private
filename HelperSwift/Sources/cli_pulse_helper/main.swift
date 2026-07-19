@@ -156,7 +156,7 @@ case "daemon":
     // reach it: the helper shows "running" in Activity Monitor but is
     // undetectable. Fail loudly + diagnosably rather than binding a dead path.
     FileHandle.standardError.write(Data(
-        "cli_pulse_helper daemon starting: uid=\(getuid()) home=\(NSHomeDirectory()) socketContainer=\(AuthToken.containerPath().path)\n".utf8
+        "cli_pulse_helper daemon starting: uid=\(getuid()) home=\(NSHomeDirectory()) runtimeRoot=\(RuntimeRoot.path().path)\n".utf8
     ))
     if getuid() == 0 {
         FileHandle.standardError.write(Data(
@@ -200,7 +200,13 @@ case "daemon":
             "error: rotateToken failed (continuing with empty token; gated RPCs will be unauthenticated until the next successful rotation): \(error)\n".utf8
         ))
     }
-    let socketPath = AuthToken.containerPath().appendingPathComponent("clipulse-helper.sock")
+    // The rendezvous now lives in the helper's private runtime root, NOT the
+    // app-group container. Binding a UDS inside the container was a
+    // kTCCServiceSystemPolicyAppData consult on every launchd start — the source
+    // of the recurring "CLI Pulse would like to access data from other apps"
+    // prompt. `~/.clipulse` is under no protected prefix, so no consult is ever
+    // generated. See RuntimeRoot for the measurements and the security checks.
+    let socketPath = RuntimeRoot.path().appendingPathComponent("clipulse-helper.sock")
     let broker = EventBroker()
     let registry = ApprovalRegistry(broker: broker)
     // Phase 4D iter10 (Codex P1③.A): managed sessions inject the
@@ -241,11 +247,36 @@ case "daemon":
     // is fire-and-forget and rate-bounded; an unpaired or kill-
     // switched helper passes `nil` so the manager's drain loop
     // skips the broadcast hop entirely (no wasted redaction work).
-    let bootCloudCfg = configStore.cloudConfigSnapshot()
+    // PAIRING WITHOUT TOUCHING THE CONTAINER.
+    //
+    // `cloudConfigSnapshot()`'s default Layer-1 reader is
+    // `AppGroupConfigReader.readPairing`, which reads
+    // `UserDefaults(suiteName: "group.yyh.CLI-Pulse")` — i.e.
+    // `~/Library/Group Containers/.../Library/Preferences/...`. That is the SAME
+    // TCC-protected prefix as the socket we just moved, so leaving it in place
+    // would have kept the "CLI Pulse would like to access data from other apps"
+    // prompt alive no matter where the socket lives. Moving only the socket+token
+    // would have fixed nothing.
+    //
+    // Passing a nil reader is a FUNCTIONAL NO-OP for this binary: Layer 1 needs
+    // BOTH the UserDefaults deviceId AND the helperSecret from the app-group
+    // Keychain, and this helper ships with EMPTY entitlements (verified:
+    // `codesign -d --entitlements` prints an empty dict), so it has no app-group
+    // keychain access and Layer 1 can never succeed here. We therefore fall
+    // through to exactly where we already fell through to today — Layer 2, the
+    // legacy `~/.cli-pulse-helper.json`, which lives OUTSIDE the container and
+    // needs no consult — or Layer 3, unpaired.
+    //
+    // Deliberately NOT done: mirroring the pairing into `~/.clipulse`. That would
+    // put a cloud credential in plaintext outside the container to enable a code
+    // path this binary cannot use anyway.
+    let pairingWithoutContainer: () -> AppGroupConfigReader.AppPairing? = { nil }
+
+    let bootCloudCfg = configStore.cloudConfigSnapshot(appGroupReader: pairingWithoutContainer)
     let broadcastPublisher: TerminalBroadcastPublisher?
     if bootCloudCfg.isPaired && configStore.remoteRealtimeEnabled {
         let sink = SupabaseRealtimeBroadcastSink(
-            configProvider: { configStore.cloudConfigSnapshot() }
+            configProvider: { configStore.cloudConfigSnapshot(appGroupReader: pairingWithoutContainer) }
         )
         broadcastPublisher = TerminalBroadcastPublisher(sink: sink)
         FileHandle.standardError.write(Data(
@@ -317,18 +348,18 @@ case "daemon":
     // HelperDaemon.swift). Slice 4 is exclusively the cloud
     // managed-session port — the cloud-sync layer of
     // helper/remote_agent.py.
-    let cloudCfg = configStore.cloudConfigSnapshot()
+    let cloudCfg = configStore.cloudConfigSnapshot(appGroupReader: pairingWithoutContainer)
     let cloudTask: Task<Void, Never>?
     if cloudCfg.isPaired {
         let rpcCaller = SupabaseRPCCaller(
-            configProvider: { configStore.cloudConfigSnapshot() }
+            configProvider: { configStore.cloudConfigSnapshot(appGroupReader: pairingWithoutContainer) }
         )
         let eventUploader = EventUploader(
-            helperConfig: { configStore.cloudConfigSnapshot() },
+            helperConfig: { configStore.cloudConfigSnapshot(appGroupReader: pairingWithoutContainer) },
             rpcCaller: rpcCaller
         )
         let remoteCloud = RemoteAgentCloud(
-            helperConfig: { configStore.cloudConfigSnapshot() },
+            helperConfig: { configStore.cloudConfigSnapshot(appGroupReader: pairingWithoutContainer) },
             rpcCaller: rpcCaller,
             sessionManager: sessionManager,
             uploader: eventUploader,

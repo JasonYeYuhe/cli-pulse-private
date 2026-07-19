@@ -299,7 +299,15 @@ public final class ManagedSessionManager: @unchecked Sendable {
         if let capToken {
             env["CLI_PULSE_LOCAL_HOOK_TOKEN"] = capToken
             env["CLI_PULSE_LOCAL_SESSION_ID"] = sessionId
-            env["CLI_PULSE_LOCAL_HELPER_SOCK"] = AuthToken.containerPath()
+            // MUST match where the daemon actually binds (RuntimeRoot), not the
+            // app-group container (review: agy — CRITICAL). Pointing the hook at
+            // the container was doubly wrong: the hook is an unsandboxed binary,
+            // so connecting there re-triggers the very
+            // kTCCServiceSystemPolicyAppData prompt this change exists to
+            // eliminate — and it would fail to connect anyway, since the daemon
+            // now listens in the private root, silently breaking remote approvals
+            // for every managed session.
+            env["CLI_PULSE_LOCAL_HELPER_SOCK"] = RuntimeRoot.path()
                 .appendingPathComponent("clipulse-helper.sock").path
         }
 

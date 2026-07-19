@@ -85,13 +85,43 @@ public enum ClaudeHelperContract {
     }
 
     /// Directory where helper writes Claude data files.
+    ///
+    /// Kept for callers that need a single directory. Prefer `snapshotPath`,
+    /// which picks per-FILE by freshness — see below for why that matters.
     public static var helperDir: String {
         appGroupHelperDir ?? legacyHelperDir
     }
 
-    /// Path to the complete snapshot file.
+    /// Both directories a helper may have written to, in fallback order.
+    public static var helperDirCandidates: [String] {
+        var out: [String] = []
+        if let groupDir = appGroupHelperDir { out.append(groupDir) }
+        if !out.contains(legacyHelperDir) { out.append(legacyHelperDir) }
+        return out
+    }
+
+    /// Path to the complete snapshot file — **the freshest one that exists.**
+    ///
+    /// Two helpers write this file to two different places, and which one is
+    /// authoritative changed:
+    ///   * the `.pkg` Python helper writes the app-group container;
+    ///   * the bundled Swift helper now writes `~/.clipulse`, because writing
+    ///     inside the container made every launchd start a TCC
+    ///     `SystemPolicyAppData` consult — the recurring "CLI Pulse would like to
+    ///     access data from other apps" prompt.
+    ///
+    /// A fixed preference is wrong in both directions: preferring the container
+    /// (the old behaviour) makes a machine served only by the bundled helper read
+    /// a frozen snapshot forever — and since snapshots older than 10 minutes are
+    /// rejected, the Claude quota UI would just go silently empty. Preferring
+    /// `~/.clipulse` breaks the `.pkg`-only machines the same way.
+    ///
+    /// Modification time answers it directly: whichever helper actually ran most
+    /// recently wrote the newer file, so pick that. Falls back to `helperDir`'s
+    /// path when neither exists, so callers still get a stable path to watch.
     public static var snapshotPath: String {
-        (helperDir as NSString).appendingPathComponent("claude_snapshot.json")
+        return snapshotCandidatePaths.first
+            ?? (helperDir as NSString).appendingPathComponent("claude_snapshot.json")
     }
 
     /// Path to the session key file.
@@ -118,14 +148,49 @@ public enum ClaudeHelperContract {
         return Array(NSOrderedSet(array: paths)) as? [String] ?? paths
     }
 
-    /// Snapshot paths to probe in priority order.
+    /// Snapshot paths to probe, **freshest first**.
+    ///
+    /// Ordering by modification time rather than a fixed container-first order is
+    /// load-bearing (review: agy). Two helpers write this file to two places — the
+    /// `.pkg` Python helper to the app-group container, the bundled Swift helper
+    /// to `~/.clipulse` (it stopped writing the container because that touch
+    /// generated the TCC "access data from other apps" prompt). Every consumer
+    /// here iterates these candidates and takes the FIRST acceptable hit
+    /// (`readSnapshot`) or the first that merely EXISTS (`diagnosticSummary`), so
+    /// a fixed container-first order would let a stale container copy — possibly
+    /// years old — permanently mask a fresh `~/.clipulse` snapshot on a machine
+    /// served only by the bundled helper. Since snapshots older than the caller's
+    /// `maxAge` are rejected, that presents to the user as the Claude quota UI
+    /// simply going empty.
+    ///
+    /// Sorting here fixes every caller at once instead of patching each one.
+    /// Paths that do not exist sort last but are still returned, so callers that
+    /// want a path to watch/create still get one.
     public static var snapshotCandidatePaths: [String] {
         var paths: [String] = []
         if let appGroupHelperDir {
             paths.append((appGroupHelperDir as NSString).appendingPathComponent("claude_snapshot.json"))
         }
         paths.append((legacyHelperDir as NSString).appendingPathComponent("claude_snapshot.json"))
-        return Array(NSOrderedSet(array: paths)) as? [String] ?? paths
+        let unique = Array(NSOrderedSet(array: paths)) as? [String] ?? paths
+        return orderedByFreshness(unique)
+    }
+
+    /// Sort paths newest-first by mtime; non-existent paths keep their relative
+    /// order at the end.
+    static func orderedByFreshness(_ paths: [String]) -> [String] {
+        let fileManager = FileManager.default
+        func modifiedAt(_ path: String) -> Date? {
+            (try? fileManager.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+        }
+        return paths.enumerated().sorted { lhs, rhs in
+            switch (modifiedAt(lhs.element), modifiedAt(rhs.element)) {
+            case let (lhsDate?, rhsDate?): return lhsDate > rhsDate   // both exist → newest first
+            case (_?, nil):                return true                // existing beats missing
+            case (nil, _?):                return false
+            case (nil, nil):               return lhs.offset < rhs.offset   // stable
+            }
+        }.map(\.element)
     }
 
     /// Session key paths to probe in priority order.
