@@ -165,20 +165,36 @@ mkdir -p "$APP_PATH/Contents/Helpers"
 cp "$HELPER_BIN" "$APP_PATH/Contents/Helpers/cli_pulse_helper"
 chmod +x "$APP_PATH/Contents/Helpers/cli_pulse_helper"
 
-# 3b. Embed the bundled tmux (M4.4b) if it has been built. External-session
-#     control needs tmux and clean Macs have none. The binary is a universal,
-#     Developer-ID-signed, hardened-runtime artifact produced by
-#     `CLI Pulse Bar/scripts/build-tmux-universal.sh` (git-ignored). Guarded so
-#     a build without it still succeeds (the binary is optional until the
-#     feature ships). Sits next to the helper so the helper resolves it via
+# 3b. Embed the bundled tmux (M4.4b). External-session control needs tmux and
+#     clean Macs have none. The binary is a universal, Developer-ID-signed,
+#     hardened-runtime artifact produced by
+#     `CLI Pulse Bar/scripts/build-tmux-universal.sh`, and is git-ignored — so a
+#     checkout that has never run that script silently has no tmux.
+#
+#     Since 1.42.0 tmux-wrap is a SHIPPED feature, so a distributable build
+#     (DEVID_BUILD_FLAG=1) without tmux is a defect, not a variation: the app
+#     looks fine, the UI renders, and wrapping just never works on any Mac
+#     without Homebrew tmux. That failure is invisible in CI and in every
+#     automated check — it only shows up as a dead button on a user's machine,
+#     which is exactly why this must be a hard error rather than a notice.
+#     Local dev builds stay unblocked.
+#
+#     Sits next to the helper so the helper resolves it via
 #     `shell_integration.resolve_tmux_bin()`.
 TMUX_BUNDLED="$PROJECT_ROOT/CLI Pulse Bar/Resources/bin/tmux"
 if [[ -f "$TMUX_BUNDLED" ]]; then
     echo "==> [3b] Embedding bundled tmux at Contents/Helpers/tmux ..."
     cp "$TMUX_BUNDLED" "$APP_PATH/Contents/Helpers/tmux"
     chmod +x "$APP_PATH/Contents/Helpers/tmux"
+elif [[ "${DEVID_BUILD_FLAG:-0}" == "1" ]]; then
+    echo "error: no bundled tmux at $TMUX_BUNDLED" >&2
+    echo "       A distributable build MUST embed tmux — tmux-wrap (shipped in 1.42.0)" >&2
+    echo "       silently does nothing on Macs without Homebrew tmux." >&2
+    echo "       Build it first: 'CLI Pulse Bar/scripts/build-tmux-universal.sh'" >&2
+    exit 6
 else
-    echo "    (no bundled tmux at $TMUX_BUNDLED — run scripts/build-tmux-universal.sh to include it)"
+    echo "    (no bundled tmux at $TMUX_BUNDLED — run 'CLI Pulse Bar/scripts/build-tmux-universal.sh' to include it)"
+    echo "    NOTE: tmux-wrap will not work in this build. Distributable builds hard-fail here."
 fi
 
 # 4. Copy LaunchAgent plist into Contents/Library/LaunchAgents/.
