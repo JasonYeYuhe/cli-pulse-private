@@ -23,6 +23,8 @@ on:
       - 'scripts/embed_helper_in_archive.sh'
       - 'scripts/PHASE4D_XCODE_SETUP.md'
       - 'CLI Pulse Bar/scripts/build-appstore.sh'
+      - 'scripts/check_helper_no_container_touch.sh'
+      - 'scripts/check_helper_version_sync.sh'
       - '.github/workflows/swift-ci.yml'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -39,6 +41,8 @@ on:
       - 'scripts/embed_helper_in_archive.sh'
       - 'scripts/PHASE4D_XCODE_SETUP.md'
       - 'CLI Pulse Bar/scripts/build-appstore.sh'
+      - 'scripts/check_helper_no_container_touch.sh'
+      - 'scripts/check_helper_version_sync.sh'
       - '.github/workflows/swift-ci.yml'
   workflow_dispatch:
 
@@ -103,6 +107,22 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - run: bash scripts/check-versions.sh
+
+  check-helper-guards:
+    name: Helper guards (TCC container-touch + version sync)
+    # Pure-grep guards over the helper sources. Both defend against failures
+    # that are INVISIBLE in CI and unit tests and only surface on a user's
+    # Mac: a container touch re-arms the recurring TCC permission dialog
+    # (PROJECT_FIX_2026-07-19), and helper-version drift produces a perpetual
+    # unclearable "Update available" nag (1.42.0 post-release audit). The
+    # container-touch guard existed since #372 but was wired into NOTHING —
+    # it caught three real holes when run by hand and then sat idle.
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - run: bash scripts/check_helper_no_container_touch.sh
+      - run: bash scripts/check_helper_version_sync.sh
 
   test-core:
     name: CLIPulseCore unit tests

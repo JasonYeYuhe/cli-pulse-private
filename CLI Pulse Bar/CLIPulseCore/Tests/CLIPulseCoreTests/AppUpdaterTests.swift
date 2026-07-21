@@ -11,6 +11,68 @@ import XCTest
 /// paths are exercised in the v1.19 ship E2E checklist (plan §D8).
 final class AppUpdaterTests: XCTestCase {
 
+    // MARK: - refreshIfStale (passive discovery, post-1.42.0 audit)
+
+    /// A manifest URL that fails fast with no network: nonexistent local file.
+    private static let deadManifestURL = URL(
+        fileURLWithPath: "/nonexistent-cli-pulse-test/latest.json")
+
+    /// Regression for the codex-review P1: `state`'s INITIAL value is
+    /// `.checking` with no request behind it. A refreshIfStale that gates on
+    /// state would return early on every fresh launch and passive discovery
+    /// would never run. It must gate on `inFlight` instead and attempt the
+    /// fetch (which here fails fast → .error, proving it TRIED).
+    @MainActor
+    func test_refreshIfStale_attemptsFetchOnFreshLaunch() async {
+        let updater = AppUpdater(manifestURL: Self.deadManifestURL)
+        XCTAssertNil(updater.lastChecked)
+        await updater.refreshIfStale()
+        XCTAssertNotNil(updater.lastChecked, "fresh launch must attempt a check")
+        guard case .error = updater.state else {
+            return XCTFail("expected .error from dead manifest URL, got \(updater.state)")
+        }
+    }
+
+    @MainActor
+    func test_refreshIfStale_throttlesWithinMaxAge() async {
+        let updater = AppUpdater(manifestURL: Self.deadManifestURL)
+        await updater.refreshIfStale()
+        let first = updater.lastChecked
+        XCTAssertNotNil(first)
+        await updater.refreshIfStale()  // immediately again — must be a no-op
+        XCTAssertEqual(updater.lastChecked, first, "second call within maxAge must not re-fetch")
+    }
+
+    @MainActor
+    func test_refreshIfStale_refetchesAfterMaxAge() async {
+        let updater = AppUpdater(manifestURL: Self.deadManifestURL)
+        await updater.refreshIfStale()
+        let first = updater.lastChecked
+        XCTAssertNotNil(first)
+        // Pretend 25h passed by moving `now` forward instead of the clock.
+        await updater.refreshIfStale(now: Date().addingTimeInterval(25 * 60 * 60))
+        XCTAssertNotEqual(updater.lastChecked, first, "stale check must re-fetch")
+    }
+
+    /// Regression for the #377 independent-review finding: a user's Download
+    /// click racing a background refresh must WAIT for it, never be silently
+    /// dropped. If `download()` bailed on seeing the in-flight task, `state`
+    /// would still be the pristine initial `.checking` afterwards; because it
+    /// joins and then runs, the dead manifest URL drives it to `.error`.
+    @MainActor
+    func test_download_waitsOutInFlightRefresh_neverSilentlyDropped() async {
+        let updater = AppUpdater(manifestURL: Self.deadManifestURL)
+        updater.refreshTask = Task { try? await Task.sleep(nanoseconds: 200_000_000) }
+        let started = Date()
+        await updater.download()
+        XCTAssertGreaterThanOrEqual(
+            Date().timeIntervalSince(started), 0.15,
+            "download must await the in-flight refresh, not bail early")
+        guard case .error = updater.state else {
+            return XCTFail("download must run after the join; state is \(updater.state)")
+        }
+    }
+
     func test_compareVersions_equalReturnsZero() {
         XCTAssertEqual(AppUpdater.compareVersions("1.19.0", "1.19.0"), 0)
         XCTAssertEqual(AppUpdater.compareVersions("1.0.0", "1.0.0"), 0)

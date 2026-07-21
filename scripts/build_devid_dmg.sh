@@ -97,9 +97,17 @@ case "$ARCH" in
     arm64|x86_64) ;;
     *) echo "error: unsupported arch: $ARCH (expected arm64 or x86_64)" >&2; exit 1 ;;
 esac
-# v1.19.0 ships arm64-only — same constraint as helper .pkg (see
-# feedback_v116_helper_pkg_shipped.md §3). Universal binary in v1.19.x
-# if needed.
+# The RELEASE LABEL (DMG name + manifest `arch`) is the build host's arch —
+# in practice always arm64. NOTE the label describes the manifest contract,
+# not the binary: xcodebuild's Release config never sets ARCHS, so the main
+# app + LoginItem are actually UNIVERSAL (arm64+x86_64), while the embedded
+# helpers (cli_pulse_helper, machine-root-helper) are arm64-only — Intel is
+# not a supported DEVID configuration (docs/v1.19_DEVID_CHANNEL.md).
+# Do NOT "fix" the label to match lipo output: shipped apps compare the
+# manifest `arch` against their compile-time host arch
+# (AppUpdater.assertArchitectureMatches), so any value other than "arm64"
+# makes every existing arm64 install REJECT the manifest — same pinned-
+# contract situation as the legacy JasonYeYuhe/ URL prefix below.
 if [[ "$ARCH" != "$HOST_ARCH" ]]; then
     echo "error: requested --arch $ARCH but host is $HOST_ARCH." >&2
     echo "       xcodebuild produces host-arch output unless ARCHS is overridden;" >&2
