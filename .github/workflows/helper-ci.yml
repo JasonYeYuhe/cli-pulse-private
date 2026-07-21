@@ -4,10 +4,14 @@ on:
   push:
     paths:
       - 'helper/**'
+      - 'scripts/check_helper_version_sync.sh'
+      - 'HelperSwift/Sources/HelperKit/Protocol.swift'
       - '.github/workflows/helper-ci.yml'
   pull_request:
     paths:
       - 'helper/**'
+      - 'scripts/check_helper_version_sync.sh'
+      - 'HelperSwift/Sources/HelperKit/Protocol.swift'
       - '.github/workflows/helper-ci.yml'
   # v1.26 C2: manual retrigger trigger so a future Actions outage
   # can be unstuck without an empty-commit push.
@@ -18,6 +22,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  version-sync:
+    name: Helper version sync (Swift kHelperVersion == Python HELPER_VERSION)
+    # Duplicated from swift-ci's check-helper-guards ON PURPOSE: a Python-only
+    # HELPER_VERSION bump touches helper/** which does NOT trigger swift-ci,
+    # so without this job the exact 1.23.0->1.29.1 drift the guard exists to
+    # prevent would land unchecked again (codex review on the guard's own PR).
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - run: bash scripts/check_helper_version_sync.sh
+
   test:
     runs-on: ubuntu-latest
     # v1.21 G4: cap CI minutes. Pytest PTY subprocess tests can hang on a

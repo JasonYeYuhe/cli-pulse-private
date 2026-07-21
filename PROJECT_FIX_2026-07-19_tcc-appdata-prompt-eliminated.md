@@ -79,10 +79,15 @@ both directories; a fixed preference is wrong in both directions.
 
 ### CI guard
 
-`scripts/check_helper_no_container_touch.sh` fails the build if the daemon path can touch a
-protected prefix again — including **indirect** access via `AuthToken.containerPath()`. This failure
-class is invisible in CI and unit tests; it only appears as a dialog on a user's Mac. **It found two
-real holes on its first run**, and a third (the P0 below) after being hardened.
+`scripts/check_helper_no_container_touch.sh` fails if the daemon path can touch a protected prefix
+again — including **indirect** access via `AuthToken.containerPath()`. This failure class is
+invisible in CI and unit tests; it only appears as a dialog on a user's Mac. **It found two real
+holes on its first run**, and a third (the P0 below) after being hardened.
+
+**Correction (2026-07-21):** the sentence above originally claimed the guard "fails the build" —
+it did not. The script existed but was wired into no workflow; nothing executed it after #372
+merged. The 1.42.0 post-release audit caught the gap. It now runs on every push/PR as the
+`check-helper-guards` job in `swift-ci.yml`, alongside `check_helper_version_sync.sh`.
 
 ## Review
 
@@ -132,7 +137,10 @@ sufficient.
 
 - The `.pkg` Python helper still uses the container. It is entitled, has a working path-based grant,
   and serves the sandboxed MAS app which genuinely needs the container. Out of scope.
-- The bundled helper's `hello` reports its own version line (`kHelperVersion`, currently 1.23.0), not
-  the app version. Expected; do not "fix".
+- The bundled helper's `hello` reports the shared HELPER version line (`kHelperVersion`), not the
+  app version. Expected; do not "fix" it to the app version. (2026-07-21: the constant HAD silently
+  drifted to 1.23.0 while the Python line reached 1.29.1 — producing the perpetual "Update
+  available" nag the post-release audit caught. Re-synced; `check_helper_version_sync.sh` now
+  enforces it in CI.)
 
 See memory `feedback_launchd_tcc_appdata_consult`, `project_devid_1_41_1_shipped`.

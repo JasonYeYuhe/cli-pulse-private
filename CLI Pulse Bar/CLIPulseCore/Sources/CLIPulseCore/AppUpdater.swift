@@ -1,7 +1,5 @@
-// v1.21 D5: gate AppUpdater on `#if DEVID_BUILD` in addition to os(macOS).
-// MAS builds never construct AppUpdater (consumers in AppState/SettingsTab
-// already wrap their access in `#if DEVID_BUILD`), so the class was dead code
-// in MAS binaries. AppUpdaterTests is similarly gated below.
+// v1.21 D5: DEVID_BUILD-only — MAS builds never construct AppUpdater (every
+// consumer is #if DEVID_BUILD gated); MAS updates flow through the App Store.
 #if os(macOS) && DEVID_BUILD
 import Foundation
 import os
@@ -104,6 +102,12 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
     @Published public private(set) var state: State = .checking
     @Published public private(set) var lastChecked: Date?
 
+    /// Single-flight guard: `refresh()`/`download()` SUSPEND on network work,
+    /// so a queued second entry could interleave and overwrite the first's
+    /// state/cached manifest. Also how `refreshIfStale()` tells a real check
+    /// from the initial `.checking` placeholder (codex review).
+    private(set) var inFlight = false
+
     private let manifestURL: URL
     private let urlSession: URLSession
     /// Manifest captured by the most recent `refresh()`. `download()`
@@ -133,11 +137,14 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
 
     // MARK: - Public API
 
-    /// Refresh by fetching the latest manifest and comparing to the
-    /// installed version. Called on app launch, once per 24h while
-    /// running, and on user-clicked "Check for Updates".
+    /// Refresh by fetching the latest manifest and comparing to the installed
+    /// version. Called on user-clicked "Check for Updates", on the Settings
+    /// Updates section appearing, and via `refreshIfStale()` (popover focus).
     @MainActor
     public func refresh() async {
+        guard !inFlight else { return }
+        inFlight = true
+        defer { inFlight = false }
         state = .checking
         let installed = Self.installedVersion()
         let manifest: Manifest?
@@ -183,6 +190,9 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
     /// without a prior `refresh()`).
     @MainActor
     public func download() async {
+        guard !inFlight else { return }
+        inFlight = true
+        defer { inFlight = false }
         // Detach any volume left mounted by a prior download/verify pass.
         detachVerifiedMount()
         state = .downloading(progress: 0)
@@ -371,16 +381,20 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
         host = "unknown"
         #endif
         if manifest.arch != host {
+            // No x86_64 DMG has ever been published and the embedded helpers
+            // are arm64-only — never promise a build that will not exist.
+            let msg = "Automatic updates aren't available for \(host) Macs "
+                + "(updates are published for \(manifest.arch)). Download the "
+                + "latest DMG manually from the releases page, or use the "
+                + "App Store version."
             throw NSError(
                 domain: "AppUpdater",
                 code: 5,
-                userInfo: [NSLocalizedDescriptionKey: "Manifest is for \(manifest.arch) but this Mac is \(host). Wait for \(host) build."]
+                userInfo: [NSLocalizedDescriptionKey: msg]
             )
         }
     }
 
 }
-// v1.21 D4: removed local sha256(of:) — callers route through CryptoHelpers.
-// CommonCrypto import removed; CryptoKit is the single SHA-256 path now.
 
 #endif

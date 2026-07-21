@@ -27,7 +27,15 @@ public let kProtocolVersion: Int = 1
 /// ancient one. Kept on the SAME version line as the Python helper
 /// (`helper/system_collector.py:HELPER_VERSION`) so the app's single
 /// floor comparison works for whichever helper owns the socket.
-public let kHelperVersion: String = "1.23.0"
+///
+/// Drift here is user-visible: `HelperInstaller.refresh()` compares the
+/// socket owner's hello version against the published .pkg manifest, so
+/// a stale value produces a PERPETUAL "Update available" nag that the
+/// Update button cannot clear (installing the .pkg does not evict a
+/// bundled helper that owns `~/.clipulse`). This slipped 1.23.0→1.29.1
+/// unnoticed across six helper releases; CI now asserts the two lines
+/// match (`scripts/check_helper_version_sync.sh`).
+public let kHelperVersion: String = "1.29.1"
 
 /// Methods this revision of the helper advertises in `hello`. Must
 /// match `helper/local_session_server.py:SUPPORTED_METHODS`
