@@ -73,7 +73,9 @@ def conf_path(home: str | None = None) -> str:
 
 def _bundled_tmux_path() -> str | None:
     """Path to a tmux bundled ALONGSIDE the FROZEN helper executable, if present
-    + executable — `Contents/Helpers/tmux` in the shipped .app. `None` otherwise.
+    + executable — `Contents/Helpers/tmux` in the shipped .app,
+    `~/Library/CLI-Pulse-Helper/tmux` in the helper .pkg install (embedded by
+    scripts/build_helper_pkg.sh step 3d since helper 1.30.0). `None` otherwise.
 
     Only consulted when running as the PyInstaller-frozen helper (`sys.frozen`):
       * in a dev checkout `sys.executable` is the python interpreter, whose dir
@@ -250,6 +252,29 @@ def install(home: str | None = None, tmux_bin: str | None = None,
         with open(rc, "w", encoding="utf-8") as f:
             f.write(new)
     return status(h, rc_files=targets)
+
+
+def refresh(home: str | None = None, tmux_bin: str | None = None,
+            rc_files: list[str] | None = None) -> IntegrationStatus:
+    """Re-render the managed init + conf files with the CURRENT tmux
+    resolution, ONLY if the integration is already present (init file exists).
+    Never touches the shell rc files and never creates anything on a Mac where
+    the user hasn't opted in — so unlike install() it is safe to call from
+    automation. The .pkg postinstall runs it so a shim whose baked tmux path
+    went stale (e.g. written by a pre-1.30.0 helper before tmux was bundled —
+    on a Homebrew-less Mac that baked the absent /opt/homebrew fallback)
+    starts wrapping again once the upgrade delivers a tmux (review: codex)."""
+    h = _home(home)
+    init_p = init_path(h)
+    if not os.path.exists(init_p):
+        return status(h, rc_files=rc_files)
+    tb = resolve_tmux_bin(tmux_bin)
+    conf_p = conf_path(h)
+    with open(conf_p, "w", encoding="utf-8") as f:
+        f.write(render_tmux_conf())
+    with open(init_p, "w", encoding="utf-8") as f:
+        f.write(render_shell_init(tb, sock_path(h), conf_p))
+    return status(h, rc_files=rc_files)
 
 
 def uninstall(home: str | None = None, rc_files: list[str] | None = None,

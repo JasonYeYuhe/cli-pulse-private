@@ -58,6 +58,41 @@ def test_install_is_idempotent(tmp_path):
     assert body2.count(si.MARKER_BEGIN) == 1
 
 
+def test_refresh_rebakes_stale_tmux_path(tmp_path):
+    # A shim installed when tmux resolution gave a now-stale path (e.g. a
+    # pre-1.30.0 .pkg baked the absent Homebrew fallback) must be re-rendered
+    # by refresh() with the CURRENT resolution — without touching the rc file.
+    home = str(tmp_path)
+    rc = os.path.join(home, ".zshrc")
+    with open(rc, "w") as f:
+        f.write("export FOO=1\n")
+    si.install(home=home, tmux_bin="/stale/tmux", rc_files=[rc])
+    rc_before = open(rc).read()
+    init_p = os.path.join(home, ".clipulse", "shell-init.sh")
+    assert "/stale/tmux" in open(init_p).read()
+
+    st = si.refresh(home=home, tmux_bin="/fresh/tmux", rc_files=[rc])
+    body = open(init_p).read()
+    assert "/fresh/tmux" in body
+    assert "/stale/tmux" not in body
+    assert open(rc).read() == rc_before          # rc untouched: refresh ≠ install
+    assert st.init_present and st.installed
+
+
+def test_refresh_is_noop_when_not_installed(tmp_path):
+    # refresh() must NEVER opt a user in: with no existing init file it writes
+    # nothing (postinstall runs it unconditionally on every .pkg install).
+    home = str(tmp_path)
+    rc = os.path.join(home, ".zshrc")
+    with open(rc, "w") as f:
+        f.write("export FOO=1\n")
+    st = si.refresh(home=home, tmux_bin="/fresh/tmux", rc_files=[rc])
+    assert not st.init_present and not st.installed
+    assert not os.path.exists(os.path.join(home, ".clipulse", "shell-init.sh"))
+    assert not os.path.exists(os.path.join(home, ".clipulse", "tmux.conf"))
+    assert open(rc).read() == "export FOO=1\n"   # rc untouched
+
+
 def test_uninstall_removes_block_and_files(tmp_path):
     home = str(tmp_path)
     rc = os.path.join(home, ".zshrc")
