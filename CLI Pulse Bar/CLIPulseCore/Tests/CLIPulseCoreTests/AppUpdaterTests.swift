@@ -54,6 +54,25 @@ final class AppUpdaterTests: XCTestCase {
         XCTAssertNotEqual(updater.lastChecked, first, "stale check must re-fetch")
     }
 
+    /// Regression for the #377 independent-review finding: a user's Download
+    /// click racing a background refresh must WAIT for it, never be silently
+    /// dropped. If `download()` bailed on seeing the in-flight task, `state`
+    /// would still be the pristine initial `.checking` afterwards; because it
+    /// joins and then runs, the dead manifest URL drives it to `.error`.
+    @MainActor
+    func test_download_waitsOutInFlightRefresh_neverSilentlyDropped() async {
+        let updater = AppUpdater(manifestURL: Self.deadManifestURL)
+        updater.refreshTask = Task { try? await Task.sleep(nanoseconds: 200_000_000) }
+        let started = Date()
+        await updater.download()
+        XCTAssertGreaterThanOrEqual(
+            Date().timeIntervalSince(started), 0.15,
+            "download must await the in-flight refresh, not bail early")
+        guard case .error = updater.state else {
+            return XCTFail("download must run after the join; state is \(updater.state)")
+        }
+    }
+
     func test_compareVersions_equalReturnsZero() {
         XCTAssertEqual(AppUpdater.compareVersions("1.19.0", "1.19.0"), 0)
         XCTAssertEqual(AppUpdater.compareVersions("1.0.0", "1.0.0"), 0)

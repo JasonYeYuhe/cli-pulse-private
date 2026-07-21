@@ -102,11 +102,14 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
     @Published public private(set) var state: State = .checking
     @Published public private(set) var lastChecked: Date?
 
-    /// Single-flight guard: `refresh()`/`download()` SUSPEND on network work,
-    /// so a queued second entry could interleave and overwrite the first's
-    /// state/cached manifest. Also how `refreshIfStale()` tells a real check
-    /// from the initial `.checking` placeholder (codex review).
-    private(set) var inFlight = false
+    /// In-flight refresh, if any. A second `refresh()` JOINS it (the
+    /// `APIClient.inFlightRefresh` idiom) and `download()` AWAITS it before
+    /// proceeding — a user's Download click must never be silently dropped
+    /// because a background `refreshIfStale()` landed first (#377 review).
+    /// Internal (not private) so tests can plant a slow task.
+    var refreshTask: Task<Void, Never>?
+    /// True while `download()` runs; refresh paths yield to it.
+    private(set) var downloading = false
 
     private let manifestURL: URL
     private let urlSession: URLSession
@@ -142,9 +145,19 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
     /// Updates section appearing, and via `refreshIfStale()` (popover focus).
     @MainActor
     public func refresh() async {
-        guard !inFlight else { return }
-        inFlight = true
-        defer { inFlight = false }
+        if let running = refreshTask {
+            await running.value  // join the in-flight check, don't double-fetch
+            return
+        }
+        guard !downloading else { return }
+        let task = Task { await self.performRefresh() }
+        refreshTask = task
+        defer { refreshTask = nil }
+        await task.value
+    }
+
+    @MainActor
+    private func performRefresh() async {
         state = .checking
         let installed = Self.installedVersion()
         let manifest: Manifest?
@@ -190,9 +203,12 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
     /// without a prior `refresh()`).
     @MainActor
     public func download() async {
-        guard !inFlight else { return }
-        inFlight = true
-        defer { inFlight = false }
+        if let running = refreshTask {
+            await running.value  // wait out a background check — never drop the click
+        }
+        guard !downloading else { return }
+        downloading = true
+        defer { downloading = false }
         // Detach any volume left mounted by a prior download/verify pass.
         detachVerifiedMount()
         state = .downloading(progress: 0)
@@ -358,42 +374,7 @@ public final class AppUpdater: ObservableObject, @unchecked Sendable {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
     }
 
-    static func compareVersions(_ a: String, _ b: String) -> Int {
-        let aParts = a.split(separator: ".").compactMap { Int($0) }
-        let bParts = b.split(separator: ".").compactMap { Int($0) }
-        let count = max(aParts.count, bParts.count)
-        for i in 0..<count {
-            let av = i < aParts.count ? aParts[i] : 0
-            let bv = i < bParts.count ? bParts[i] : 0
-            if av < bv { return -1 }
-            if av > bv { return 1 }
-        }
-        return 0
-    }
-
-    static func assertArchitectureMatches(_ manifest: Manifest) throws {
-        let host: String
-        #if arch(arm64)
-        host = "arm64"
-        #elseif arch(x86_64)
-        host = "x86_64"
-        #else
-        host = "unknown"
-        #endif
-        if manifest.arch != host {
-            // No x86_64 DMG has ever been published and the embedded helpers
-            // are arm64-only — never promise a build that will not exist.
-            let msg = "Automatic updates aren't available for \(host) Macs "
-                + "(updates are published for \(manifest.arch)). Download the "
-                + "latest DMG manually from the releases page, or use the "
-                + "App Store version."
-            throw NSError(
-                domain: "AppUpdater",
-                code: 5,
-                userInfo: [NSLocalizedDescriptionKey: msg]
-            )
-        }
-    }
+    // compareVersions / assertArchitectureMatches: AppUpdaterVersionChecks.swift
 
 }
 
