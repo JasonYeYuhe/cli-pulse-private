@@ -51,7 +51,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 # system block (uptime/load/memory-pressure/swap/disk) + Low Power Mode so the
 # phone/watch Machine view shows live system state. Snapshot-uplink only; the
 # per-process table is still never synced.
-HELPER_VERSION = "1.29.1"
+HELPER_VERSION = "1.30.0"
 
 logger = logging.getLogger("cli_pulse.collector")
 

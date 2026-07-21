@@ -73,7 +73,9 @@ def conf_path(home: str | None = None) -> str:
 
 def _bundled_tmux_path() -> str | None:
     """Path to a tmux bundled ALONGSIDE the FROZEN helper executable, if present
-    + executable — `Contents/Helpers/tmux` in the shipped .app. `None` otherwise.
+    + executable — `Contents/Helpers/tmux` in the shipped .app,
+    `~/Library/CLI-Pulse-Helper/tmux` in the helper .pkg install (embedded by
+    scripts/build_helper_pkg.sh step 3d since helper 1.30.0). `None` otherwise.
 
     Only consulted when running as the PyInstaller-frozen helper (`sys.frozen`):
       * in a dev checkout `sys.executable` is the python interpreter, whose dir

@@ -36,6 +36,8 @@
 #   3  signing failure
 #   4  pkg build failure
 #   5  notarization failure
+#   6  bundled-binary failure (no tmux in a distributable build, or an
+#      embedded binary failed its post-sign launch smoke)
 
 set -euo pipefail
 
@@ -293,6 +295,39 @@ else
     _sensor_missing "swift toolchain or SensorProbe/Package.swift missing"
 fi
 
+# === Step 3d: Embed bundled tmux (external-session control M4.4b) ===
+# tmux-wrap (shipped in app 1.42.0) needs a tmux binary, and clean Macs have
+# none. When the .pkg Python helper owns the socket,
+# helper/shell_integration.py `_bundled_tmux_path()` probes ONLY alongside the
+# frozen executable — so the universal Developer-ID-signed tmux (built by
+# `CLI Pulse Bar/scripts/build-tmux-universal.sh`, git-ignored) must sit at
+# the payload root next to cli_pulse_helper. A missing tmux is invisible to
+# every automated check — wrap silently falls back to the raw provider binary
+# on Macs without Homebrew tmux — so a distributable (signed) .pkg without it
+# is a defect, not a variation, and hard-fails, mirroring
+# build_signed_app.sh step 3b (#376). Dev builds (--skip-sign / --dry-run)
+# stay unblocked with a warning.
+echo
+echo "--- Step 3d: Embed bundled tmux ---"
+TMUX_BUNDLED="$PROJECT_ROOT/CLI Pulse Bar/Resources/bin/tmux"
+if [[ -f "$TMUX_BUNDLED" ]]; then
+    run cp "$TMUX_BUNDLED" "$STAGING/tmux"
+    if [[ $DRY_RUN -eq 0 ]]; then
+        chmod 755 "$STAGING/tmux"
+    fi
+    echo "embedded tmux (archs: $(lipo -archs "$TMUX_BUNDLED" 2>/dev/null || echo '?'))"
+elif [[ $SKIP_SIGN -eq 0 && $DRY_RUN -eq 0 ]]; then
+    echo "error: no bundled tmux at $TMUX_BUNDLED" >&2
+    echo "       A distributable .pkg MUST embed tmux — tmux-wrap silently does" >&2
+    echo "       nothing on Macs without Homebrew tmux when the .pkg helper owns" >&2
+    echo "       the socket (same failure class as build_signed_app.sh #376)." >&2
+    echo "       Build it first: 'CLI Pulse Bar/scripts/build-tmux-universal.sh'" >&2
+    exit 6
+else
+    echo "WARN: no bundled tmux at $TMUX_BUNDLED — tmux-wrap will not work in this build." >&2
+    echo "      Distributable (signed) builds hard-fail here." >&2
+fi
+
 # === Step 4: Sign every Mach-O individually ===
 if [[ $SKIP_SIGN -eq 0 ]]; then
     echo
@@ -322,6 +357,22 @@ if [[ $SKIP_SIGN -eq 0 ]]; then
                 exit 6
             fi
             echo "signed clipulse-sensors passed JSON smoke"
+        fi
+        # M4.4b: re-sign the bundled tmux with THIS build's identity so every
+        # Mach-O in the payload notarizes under one certificate. The artifact
+        # arrives pre-signed by build-tmux-universal.sh; --force replaces it.
+        if [[ -f "$STAGING/tmux" ]]; then
+            codesign --force --timestamp --options runtime \
+                --sign "$DEV_ID_APP" "$STAGING/tmux"
+            codesign --verify --strict --verbose=2 "$STAGING/tmux"
+            # Smoke the SIGNED binary — it must still launch (same guard as
+            # clipulse-sensors above: a signature that breaks the binary
+            # otherwise only shows up on a user's Mac).
+            if ! "$STAGING/tmux" -V >/dev/null; then
+                echo "error: signed tmux failed to launch (tmux -V)." >&2
+                exit 6
+            fi
+            echo "signed tmux passed launch smoke ($("$STAGING/tmux" -V))"
         fi
         # Sign the entry executable LAST — WITH the app-group entitlement.
         # v1.30.2: without `com.apple.security.application-groups`, a launchd
