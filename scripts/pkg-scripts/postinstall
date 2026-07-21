@@ -200,7 +200,16 @@ launchctl bootstrap "gui/$(id -u)" "$PLIST" || {
 }
 launchctl kickstart -k "gui/$(id -u)/$LABEL" || true
 
-# === Step 5: wait for UDS bind ===
+# === Step 4b: refresh an existing shell-integration shim ===
+# A shim installed by an older helper may have baked a tmux path that no
+# longer exists (pre-1.30.0 .pkgs bundled no tmux, so a Homebrew-less Mac
+# baked the absent /opt/homebrew fallback — silently-dead wrap). Re-render
+# it against THIS install's bundled tmux so wrap starts working without a
+# re-toggle. Only rewrites when the user already opted in; never opts
+# anyone in (refresh is a no-op without an existing init file). Touches
+# only ~/.clipulse — no TCC-protected paths. Best-effort: an install must
+# never fail on it.
+"$HELPER_BIN" shell-integration refresh || true
 # Helper's local_session_server binds the UDS in the daemon's startup
 # path (after manager init). Typical bind delay: 1-3s. 10s is safe.
 mkdir -p "$GROUP_CONTAINER" 2>/dev/null || true

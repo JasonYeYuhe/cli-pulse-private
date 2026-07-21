@@ -1456,6 +1456,11 @@ def main() -> None:
     si_install.set_defaults(func=_shell_integration_install_cmd)
     si_uninstall = si_sub.add_parser("uninstall", help="remove the wrap shim from the shell rc")
     si_uninstall.set_defaults(func=_shell_integration_uninstall_cmd)
+    si_refresh = si_sub.add_parser(
+        "refresh",
+        help="re-render an EXISTING shim with the current tmux path (no-op if not installed)",
+    )
+    si_refresh.set_defaults(func=_shell_integration_refresh_cmd)
     si_print = si_sub.add_parser("print", help="print the shim init script WITHOUT writing anything")
     si_print.set_defaults(func=_shell_integration_print_cmd)
 
@@ -1720,6 +1725,17 @@ def _shell_integration_install_cmd(_: argparse.Namespace) -> None:
     print("  Open a NEW terminal (or `source` your rc) for it to take effect.")
     if not st.tmux_bin:
         print("  NOTE: tmux not found — the shim will run the real binary until tmux is available.")
+
+
+def _shell_integration_refresh_cmd(_: argparse.Namespace) -> None:
+    import shell_integration as si
+
+    st = si.refresh()
+    if st.init_present:
+        print("shell integration refreshed.")
+        print(f"  tmux:  {st.tmux_bin or '(not found — wrap will fail open to the real binary)'}")
+    else:
+        print("shell integration not installed — nothing to refresh.")
 
 
 def _shell_integration_uninstall_cmd(_: argparse.Namespace) -> None:
