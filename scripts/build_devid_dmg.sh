@@ -98,12 +98,13 @@ case "$ARCH" in
     *) echo "error: unsupported arch: $ARCH (expected arm64 or x86_64)" >&2; exit 1 ;;
 esac
 # The RELEASE LABEL (DMG name + manifest `arch`) is the build host's arch —
-# in practice always arm64. NOTE the label describes the manifest contract,
-# not the binary: xcodebuild's Release config never sets ARCHS, so the main
-# app + LoginItem are actually UNIVERSAL (arm64+x86_64), while the embedded
-# helpers (cli_pulse_helper, machine-root-helper) are arm64-only — Intel is
-# not a supported DEVID configuration (docs/v1.19_DEVID_CHANNEL.md).
-# Do NOT "fix" the label to match lipo output: shipped apps compare the
+# in practice always arm64, and since the post-1.42.0 audit the binary
+# matches it: build_signed_app.sh passes ARCHS=arm64 for DEVID builds and
+# hard-fails (exit 7) if lipo disagrees. (Through 1.42.0 the main binary
+# was silently UNIVERSAL while helpers were arm64-only — an app that
+# launched on Intel with its helper features dead.) Intel is not a
+# supported DEVID configuration (docs/v1.19_DEVID_CHANNEL.md); MAS stays
+# universal. Do NOT "fix" the label semantics: shipped apps compare the
 # manifest `arch` against their compile-time host arch
 # (AppUpdater.assertArchitectureMatches), so any value other than "arm64"
 # makes every existing arm64 install REJECT the manifest — same pinned-
