@@ -3,7 +3,8 @@
 # managed-CLI distribution. Output is consumed by the MAS app's
 # HelperInstaller.swift via download → NSWorkspace.open → Installer.app.
 #
-# See PROJECT_PLAN_v1.16_phase4e_helper_production.md §1.3 / §1.4 for the
+# See PROJECT_PLAN_v1.16_phase4e_helper_production.md (in cli-pulse-internal/
+# private-repo-root-docs/ since 2026-07-21) §1.3 / §1.4 for the
 # full pipeline narrative.
 #
 # Usage:

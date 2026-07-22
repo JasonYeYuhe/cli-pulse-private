@@ -176,10 +176,10 @@ There is no automated SQL test runner yet. When touching files in
 
 1. Read this file first.
 2. Read `/Users/jason/Documents/cli pulse/README.md`.
-3. Read `/Users/jason/Documents/cli pulse/REPO_VISIBILITY_STRATEGY.md`.
+3. Read `/Users/jason/Documents/cli pulse/REPO_VISIBILITY_STRATEGY.md` (untracked-local; canonical copy: cli-pulse-internal/private-repo-root-docs/).
 4. Read `/Users/jason/Documents/cli pulse/BRANCHING.md` before starting a new
    task branch or reusing an existing branch.
-5. Read `/Users/jason/Documents/cli pulse/RELEASE_WORKFLOW.md` before doing
+5. Read `/Users/jason/Documents/cli pulse/RELEASE_WORKFLOW.md` (untracked-local; canonical copy: cli-pulse-internal/private-repo-root-docs/) before doing
    release or distribution work.
 6. Treat the app/helper/backend logic as private product IP.
 7. Do not publish source changes to the public repo by default.

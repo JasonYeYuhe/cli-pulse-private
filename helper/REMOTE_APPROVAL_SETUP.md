@@ -171,5 +171,5 @@ Both are safe; the first is reversible without restarting Claude Code.
   interrupt of running tools.
 * Polling is refresh-based — no push notifications.
 
-These are tracked in `PROJECT_DEV_PLAN_2026-04-29_remote_agent_sessions.md`
+These are tracked in `PROJECT_DEV_PLAN_2026-04-29_remote_agent_sessions.md` (moved to cli-pulse-internal/private-repo-root-docs/, 2026-07-21)
 for Phase 2 follow-up.
