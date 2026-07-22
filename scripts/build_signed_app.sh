@@ -141,6 +141,17 @@ find . -name ".DS_Store" -exec rm -f {} + 2>/dev/null || true
 EXTRA_XCODEBUILD_SETTINGS=()
 if [[ -n "${DEVID_BUILD_FLAG:-}" ]]; then
     EXTRA_XCODEBUILD_SETTINGS+=("SWIFT_ACTIVE_COMPILATION_CONDITIONS=\$(inherited) DEVID_BUILD")
+    # DEVID ships arm64-only BY POLICY (post-1.42.0 audit): every published
+    # DMG has been arm64-labelled since v1.19, the manifest `arch` is pinned
+    # to "arm64" by shipped apps' AppUpdater.assertArchitectureMatches, and
+    # the embedded helpers (cli_pulse_helper, machine-root-helper) are
+    # arm64-only — a universal main binary just produced an app that LAUNCHED
+    # on Intel with its helper features silently dead, plus a binary/label
+    # mismatch. ARCHS here makes the artifact match the label; on Intel,
+    # macOS now says "requires Apple Silicon" up front instead. Scoped to
+    # DEVID on purpose — the MAS build stays universal for Intel App Store
+    # users (build-appstore.sh is untouched by this script).
+    EXTRA_XCODEBUILD_SETTINGS+=("ARCHS=arm64" "ONLY_ACTIVE_ARCH=NO")
 fi
 
 xcodebuild \
@@ -158,6 +169,20 @@ xcodebuild \
 APP_PATH="$DERIVED_DATA/Build/Products/$CONFIGURATION/CLI Pulse Bar.app"
 [[ -d "$APP_PATH" ]] || { echo "error: built .app not found at $APP_PATH" >&2; exit 1; }
 echo "    built: $APP_PATH"
+
+# DEVID arch gate: the artifact must MATCH the "arm64" release label. The
+# 1.42.0 audit found the binary was silently universal while the DMG name,
+# manifest arch, and helpers all said arm64 — a mismatch nobody could see
+# because nothing checked lipo output against the label. Fail loudly here.
+if [[ -n "${DEVID_BUILD_FLAG:-}" ]]; then
+    MAIN_ARCHS="$(lipo -archs "$APP_PATH/Contents/MacOS/CLI Pulse Bar" 2>/dev/null || true)"
+    if [[ "$MAIN_ARCHS" != "arm64" ]]; then
+        echo "error: DEVID build must be arm64-only to match the release label," >&2
+        echo "       but lipo reports: '${MAIN_ARCHS:-<unreadable>}'" >&2
+        exit 7
+    fi
+    echo "    arch gate: main binary is arm64-only (matches release label) ✓"
+fi
 
 # 3. Copy helper binary into Contents/Helpers/.
 echo "==> [3/7] Embedding helper at Contents/Helpers/ ..."
