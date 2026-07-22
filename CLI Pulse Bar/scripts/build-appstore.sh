@@ -548,10 +548,15 @@ echo "  Build Complete!"
 echo "================================================"
 echo ""
 echo "  Archives:"
-ls -1 "$BUILD_DIR"/*.xcarchive 2>/dev/null | while read f; do echo "    $f"; done
+# `|| true`: this is a cosmetic summary listing. On the `--upload` path
+# xcodebuild uploads directly and never creates a local `*-export` dir, so a
+# no-match `ls` exits non-zero and, under `set -euo pipefail`, would abort the
+# script with exit 1 *after a successful upload* — falsely tripping the caller
+# (sync-versions.sh) into rolling back the version bump. Never let the summary fail.
+{ ls -1 "$BUILD_DIR"/*.xcarchive 2>/dev/null || true; } | while read f; do echo "    $f"; done
 echo ""
 echo "  Exports:"
-ls -1d "$BUILD_DIR"/*-export 2>/dev/null | while read f; do echo "    $f"; done
+{ ls -1d "$BUILD_DIR"/*-export 2>/dev/null || true; } | while read f; do echo "    $f"; done
 echo ""
 if [[ "$UPLOAD" == false ]]; then
     echo "  To upload: $0 $PLATFORM --upload"

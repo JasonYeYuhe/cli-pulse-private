@@ -49,8 +49,17 @@ APP_ID="${ASC_APP_ID:?Set ASC_APP_ID environment variable}"
 # Public repo for Android releases
 PUBLIC_REPO="cli-pulse/cli-pulse"
 
-# Java for Android builds
-export JAVA_HOME="${JAVA_HOME:-/opt/homebrew/opt/openjdk}"
+# Java for Android builds.
+# Android Gradle Plugin's JdkImageTransform (jlink on core-for-system-modules.jar)
+# fails on JDK 26 (the /opt/homebrew/opt/openjdk symlink). Pin to JDK 17.
+if [[ -z "${JAVA_HOME:-}" ]]; then
+    for _jh in \
+        /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \
+        /Library/Java/JavaVirtualMachines/*17*/Contents/Home; do
+        if [[ -x "$_jh/bin/java" ]]; then export JAVA_HOME="$_jh"; break; fi
+    done
+    export JAVA_HOME="${JAVA_HOME:-/opt/homebrew/opt/openjdk}"
+fi
 export PATH="$JAVA_HOME/bin:$PATH"
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 

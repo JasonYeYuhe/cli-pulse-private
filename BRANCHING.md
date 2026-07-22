@@ -1,7 +1,9 @@
 # CLI Pulse Branching Guide
 
-This repository uses a private source repo for development and a separate public
-distribution repo for releases, downloads, and GitHub Pages.
+This project uses this source repo (`cli-pulse-private` — **PUBLIC despite the
+historical name**; never commit secrets or internal docs) for development and a
+separate public distribution repo for releases, downloads, and GitHub Pages.
+Internal material belongs in `cli-pulse-internal` (the only private repo).
 
 ## Core Rule
 
