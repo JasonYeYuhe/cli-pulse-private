@@ -11,8 +11,8 @@ another AI working in the private source repo.
 1. 先阅读项目上下文
 - /Users/jason/Documents/cli pulse/AGENTS.md
 - /Users/jason/Documents/cli pulse/README.md
-- /Users/jason/Documents/cli pulse/REPO_VISIBILITY_STRATEGY.md
-- /Users/jason/Documents/cli pulse/RELEASE_WORKFLOW.md
+- /Users/jason/Documents/cli pulse/REPO_VISIBILITY_STRATEGY.md (untracked-local; canonical copy: cli-pulse-internal/private-repo-root-docs/)
+- /Users/jason/Documents/cli pulse/RELEASE_WORKFLOW.md (untracked-local; canonical copy: cli-pulse-internal/private-repo-root-docs/)
 - /Users/jason/Documents/cli pulse/BRANCHING.md
 
 2. 先检查当前 git 状态
