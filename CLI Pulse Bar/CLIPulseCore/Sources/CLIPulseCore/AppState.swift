@@ -821,6 +821,28 @@ public final class AppState: ObservableObject {
             await MainActor.run {
                 self.helperAgentStatus = status
             }
+            #if DEVID_BUILD
+            // v1.43 controlled helper swap: `ensureRegistered()` is a no-op for
+            // an already-registered KeepAlive agent, so after an in-place app
+            // update launchd keeps the OLD bundled helper process alive (old
+            // binary) until re-login — leaving an upgraded user nagged. Detect
+            // the app-binary change via a persisted sentinel and kickstart OUR
+            // LaunchAgent once per new app version so the new bundle's helper
+            // takes over now. This clears the nag even for users upgrading from
+            // a pre-v1.43 helper whose hello can't be identified as stale (dual
+            // review codex+agy P1). No-op on same-version launches; failure-soft.
+            let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+            let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+            let didSwap = await self.helperLifecycle.kickstartBundledHelperIfAppUpdated(
+                currentAppVersion: "\(short)/\(build)"
+            )
+            if didSwap {
+                // Reconcile the installer UI once the respawned helper is up, so
+                // a refresh that ran against the pre-swap helper can't leave a
+                // stale update nag on screen (codex round-2 P2).
+                await self.helperInstaller.refreshAfterHelperRespawn()
+            }
+            #endif
         }
 
         // v1.19 G1: write a TCC permission snapshot to app-group

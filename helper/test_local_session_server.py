@@ -303,6 +303,12 @@ def test_hello_returns_caps_without_auth(short_sock_dir):
         parts = result["helper_version"].split(".")
         assert len(parts) >= 2
         assert all(p.isdigit() for p in parts[:2])
+        # v1.43 (additive): `implementation` identifies the socket owner so the
+        # macOS app suppresses the "update available" nag for the wrong owner.
+        # The Python helper only ever ships via the standalone `.pkg`, so it
+        # ALWAYS reports "python-pkg" (the bundled Swift helper reports
+        # "swift-bundled"). Wire-mirror of HelperSwift LocalSessionServer.
+        assert result["implementation"] == "python-pkg"
         # v1.30.2 RC-1: `paired` is advertised in hello. Default (no
         # get_paired wired) is True so legacy callers / a paired helper
         # are unaffected.

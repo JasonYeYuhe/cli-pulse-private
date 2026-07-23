@@ -58,6 +58,16 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
         case installing
         case running(version: String)
         case updateAvailable(installed: String, latest: String)
+        /// v1.43: the socket owner is the app-BUNDLED Swift helper (hello
+        /// `implementation == "swift-bundled"`). It ships inside the app
+        /// bundle and updates WITH the app — there is no standalone `.pkg` to
+        /// install/update/uninstall. The UI shows "built-in — updates with the
+        /// app" and hides the `.pkg`-only controls. The `.pkg` manifest is
+        /// NEVER consulted for this owner, which is the root fix for the
+        /// perpetual "update available" nag (a bundled owner cannot clear a
+        /// `.pkg` update by installing the `.pkg` — installing it does not
+        /// evict a bundled helper that owns the socket).
+        case bundled(version: String)
         case error(String)
     }
 
@@ -88,6 +98,14 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
     /// `.running` UI add a "pair to activate managed sessions" hint without
     /// regressing to a misleading "not installed".
     @Published public private(set) var helperPaired: Bool?
+
+    /// Monotonic token identifying the newest `refresh()` in flight. A refresh
+    /// that awaits network/UDS can finish AFTER a later refresh started (e.g. a
+    /// slow manifest fetch that captured the pre-swap helper); it must not
+    /// clobber the newer result. Each refresh captures this at entry and only
+    /// commits its state if it's still the latest at completion. `@MainActor`
+    /// access only, so plain-Int mutation is race-free. (codex round-2 P2.)
+    private var refreshEpoch: Int = 0
 
     private let manifestURL: URL
     private let udsPath: String
@@ -134,6 +152,8 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
     /// running + on user-clicked "Check for Updates".
     @MainActor
     public func refresh() async {
+        refreshEpoch &+= 1
+        let epoch = refreshEpoch
         state = .checking
         let helperRunning: SessionControlHello?
         do {
@@ -142,55 +162,121 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
             helperInstallerLog.info("hello failed (helper not running?): \(error.localizedDescription, privacy: .public)")
             helperRunning = nil
         }
+        // v1.43: a bundled (swift-bundled) owner resolves to `.bundled`
+        // without ever consulting the `.pkg` manifest — so skip the network
+        // fetch entirely for it. This is both correct (the manifest is
+        // irrelevant to a helper that updates with the app) and avoids a
+        // pointless round-trip on every launch for the common DEVID case.
         let manifest: Manifest?
-        do {
-            manifest = try await fetchManifest()
-        } catch {
-            helperInstallerLog.warning("manifest fetch failed: \(error.localizedDescription, privacy: .public)")
+        if helperRunning?.isSwiftBundled == true {
             manifest = nil
+        } else {
+            do {
+                manifest = try await fetchManifest()
+            } catch {
+                helperInstallerLog.warning("manifest fetch failed: \(error.localizedDescription, privacy: .public)")
+                manifest = nil
+            }
         }
+        // A newer refresh() started while we awaited the network/UDS — it now
+        // owns the displayed state. Discard our (possibly stale) snapshot rather
+        // than clobber the newer one. This is what makes a post-swap
+        // reconcile authoritative even if an earlier refresh's slow manifest
+        // fetch finishes later. (codex round-2 P2.)
+        guard epoch == refreshEpoch else { return }
         lastChecked = Date()
         // v1.30.2 (RC-1): record pairing state from this probe. nil when
         // hello failed (unknown) or the helper predates the `paired` field.
         helperPaired = helperRunning?.paired
+        state = Self.resolveState(
+            hello: helperRunning,
+            manifest: manifest,
+            socketExists: FileManager.default.fileExists(atPath: udsPath),
+            udsPath: udsPath
+        )
+    }
 
-        switch (helperRunning, manifest) {
-        case (nil, _):
+    /// Reconcile the UI after a controlled helper swap (see
+    /// `HelperLifecycleManager.kickstartBundledHelperIfAppUpdated`). The swap
+    /// SIGKILLs the old helper; the KeepAlive LaunchAgent respawns the new one,
+    /// which takes ~1–2s to rebind its socket. This waits for the respawn, then
+    /// refreshes — so a `refresh()` that ran against the pre-swap helper can't
+    /// leave a stale `.updateAvailable` nag on screen while Settings stays open.
+    /// The `refresh()` epoch guard ensures this refresh (started last) wins over
+    /// any still-in-flight earlier one.
+    @MainActor
+    public func refreshAfterHelperRespawn(timeout: TimeInterval = 20) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await probeHelperLiveness(timeout: 1.0) { break }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        await refresh()
+    }
+
+    /// Pure state resolution for `refresh()` — extracted so the owner-aware
+    /// branching (v1.43) is unit-testable without a live network / UDS.
+    ///
+    /// - `hello`: the socket owner's `hello` reply (nil = not answering).
+    /// - `manifest`: the published `.pkg` manifest (nil = unreachable, OR
+    ///   deliberately skipped for a bundled owner by the caller).
+    /// - `socketExists`: whether the UDS file is present — distinguishes
+    ///   "installed but not responding" (`.unreachable`) from "not installed"
+    ///   (`.notInstalled`) when hello fails.
+    /// - `udsPath`: only for the `.unreachable` diagnostic string.
+    ///
+    /// The bundled-owner branch is the nag root-fix: a `"swift-bundled"` owner
+    /// resolves to `.bundled` REGARDLESS of the manifest, so a future `.pkg`
+    /// release can never produce a spurious "update available" for a helper the
+    /// user can only update by updating the app. Every other path preserves the
+    /// pre-v1.43 behaviour exactly (`.pkg`/older-helper owners are unaffected).
+    static func resolveState(
+        hello: SessionControlHello?,
+        manifest: Manifest?,
+        socketExists: Bool,
+        udsPath: String
+    ) -> State {
+        guard let hello else {
             // hello() failed. Distinguish "installed but not responding" from
             // "not installed" using the SOCKET FILE in the group container —
             // NOT the helper binary under ~/Library/CLI-Pulse-Helper, which the
-            // sandboxed app cannot stat (FileManager.fileExists would falsely
-            // return false). The group container IS sandbox-accessible. A
-            // socket present + hello failing = ECONNREFUSED/timeout against a
-            // bound path → the helper is there but not answering
-            // (.unreachable); no socket = ENOENT → nothing bound here
-            // (.notInstalled). Showing .notInstalled for the former offered
-            // only "Install" (wrong) and hid a re-checkable state.
-            if FileManager.default.fileExists(atPath: udsPath) {
-                state = .unreachable(
+            // sandboxed app cannot stat. A socket present + hello failing =
+            // ECONNREFUSED/timeout against a bound path → the helper is there
+            // but not answering (.unreachable); no socket = ENOENT → nothing
+            // bound here (.notInstalled).
+            if socketExists {
+                return .unreachable(
                     "Companion CLI socket exists but isn't responding (\(udsPath)). The helper may be restarting or mis-bound — try Re-check, or Uninstall and reinstall."
                 )
-            } else {
-                state = .notInstalled
             }
-        case (let hello?, nil):
-            // Helper running but we couldn't reach the manifest — still
-            // a working state, just no update info.
-            state = .running(version: hello.helperVersion.isEmpty ? "older" : hello.helperVersion)
-        case (let hello?, let m?):
-            if hello.helperVersion.isEmpty {
-                // Helper answered hello but reported no version (older
-                // protocol that omits helper_version). We can't compare, and
-                // it IS running — don't show a spurious, permanent "update
-                // available" (the old `"0.0.0" < latest` path did exactly
-                // that, so a working helper never showed plain .running).
-                state = .running(version: "installed")
-            } else if Self.compareVersions(hello.helperVersion, m.version) < 0 {
-                state = .updateAvailable(installed: hello.helperVersion, latest: m.version)
-            } else {
-                state = .running(version: hello.helperVersion)
-            }
+            return .notInstalled
         }
+        // v1.43 ROOT FIX: the app-bundled Swift helper updates WITH the app, so
+        // it is never compared against the standalone `.pkg` manifest. Showing a
+        // `.pkg` update for it is both wrong and unclearable (installing the
+        // `.pkg` does not evict a bundled helper that owns the socket).
+        if hello.isSwiftBundled {
+            // Carry the raw reported version (the bundled helper always reports
+            // a real one); the UI renders an empty value as plain "Built-in".
+            return .bundled(version: hello.helperVersion)
+        }
+        // `.pkg` (python-pkg) owner OR an older helper that predates the
+        // `implementation` field → legacy `.pkg`-manifest compare (unchanged).
+        guard let manifest else {
+            // Helper running but we couldn't reach the manifest — still a
+            // working state, just no update info.
+            return .running(version: hello.helperVersion.isEmpty ? "older" : hello.helperVersion)
+        }
+        if hello.helperVersion.isEmpty {
+            // Answered hello but reported no version (older protocol that omits
+            // helper_version). We can't compare, and it IS running — don't show
+            // a spurious, permanent "update available".
+            return .running(version: "installed")
+        }
+        if compareVersions(hello.helperVersion, manifest.version) < 0 {
+            return .updateAvailable(installed: hello.helperVersion, latest: manifest.version)
+        }
+        return .running(version: hello.helperVersion)
     }
 
     /// Pure decision for the popover-reopen / app-active re-probe hook (RC-2).
@@ -212,7 +298,10 @@ public final class HelperInstaller: ObservableObject, @unchecked Sendable {
         switch state {
         case .downloading, .installing, .checking:
             return false
-        case .notInstalled, .unreachable, .error, .running, .updateAvailable:
+        case .notInstalled, .unreachable, .error, .running, .updateAvailable, .bundled:
+            // `.bundled` re-probes when stale too: a helper swap (app update)
+            // changes the reported version, and the socket can flap
+            // (.unreachable) briefly during a controlled restart.
             guard let lastChecked else { return true }
             return now.timeIntervalSince(lastChecked) >= maxAge
         }

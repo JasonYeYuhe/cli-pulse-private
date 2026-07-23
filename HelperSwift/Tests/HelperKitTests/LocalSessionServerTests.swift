@@ -93,6 +93,11 @@ final class LocalSessionServerTests: XCTestCase {
         // v1.34 R1d: hello must advertise helper_version so the app can gate
         // managed Claude sessions on the socket-owner being >= the OAuth floor.
         XCTAssertEqual(result?["helper_version"] as? String, kHelperVersion)
+        // v1.43 (additive): the bundled Swift helper always identifies itself as
+        // "swift-bundled" so the app shows "built-in — updates with the app"
+        // instead of a (wrong, unclearable) `.pkg` update nag. Wire-mirror of
+        // the Python helper's "python-pkg" (local_session_server.py).
+        XCTAssertEqual(result?["implementation"] as? String, "swift-bundled")
         let supported = (result?["supported_methods"] as? [String])?.sorted() ?? []
         // hello SHOULD be in the supported list; pick a few
         // representative methods to pin without requiring the

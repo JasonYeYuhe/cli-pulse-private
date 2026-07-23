@@ -107,6 +107,39 @@ final class HelperLifecycleManagerTests: XCTestCase {
             "non-.app bundle should return nil; if this fails, the test runtime is now somehow inside a real .app and the bundle-detection heuristic needs updating"
         )
     }
+
+    // MARK: - Controlled helper swap decision (v1.43, app-version sentinel)
+
+    func testShouldKickstart_firesWhenAppVersionChanged() {
+        // The core case: an in-place app update laid down a new bundle. The
+        // running (old, KeepAlive) helper must be swapped in → kickstart.
+        XCTAssertTrue(HelperLifecycleManager.shouldKickstartHelperForAppUpdate(
+            lastRecorded: "1.42.0/95", current: "1.43.0/96"))
+    }
+
+    func testShouldKickstart_firesOnFirstEverRun() {
+        // nil (never recorded) counts as changed. This deliberately covers BOTH
+        // a fresh install AND — critically — an upgrade from a pre-v1.43 app
+        // (e.g. v1.42) that never wrote the sentinel, which is exactly the
+        // population whose old helper omits the fields needed to detect it as
+        // stale. A redundant kickstart on a fresh install is harmless.
+        XCTAssertTrue(HelperLifecycleManager.shouldKickstartHelperForAppUpdate(
+            lastRecorded: nil, current: "1.43.0/96"))
+    }
+
+    func testShouldKickstart_noopOnSameVersionRelaunch() {
+        // Steady state: relaunching the same build must NOT restart the helper.
+        XCTAssertFalse(HelperLifecycleManager.shouldKickstartHelperForAppUpdate(
+            lastRecorded: "1.43.0/96", current: "1.43.0/96"))
+    }
+
+    func testShouldKickstart_firesOnBuildBumpEvenWithSameMarketingVersion() {
+        // The sentinel encodes shortVersion/build, so a build-only bump (helper
+        // binary changed without a marketing-version change) still triggers —
+        // this is what version-comparing the helper alone would have missed.
+        XCTAssertTrue(HelperLifecycleManager.shouldKickstartHelperForAppUpdate(
+            lastRecorded: "1.43.0/96", current: "1.43.0/97"))
+    }
 }
 
 #endif

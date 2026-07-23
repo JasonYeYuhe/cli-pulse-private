@@ -609,6 +609,11 @@ public final class LocalSessionControlClient: SessionControlClient, MachineContr
         // helpers → empty → no warning (the picker treats a missing entry as unknown).
         let providerPlanStatus =
             (result["provider_plan_status"] as? [String: String]) ?? [:]
+        // v1.43 (additive): optional `implementation` field ("swift-bundled" /
+        // "python-pkg"). Absent on older helpers → nil → HelperInstaller falls
+        // back to the legacy `.pkg`-manifest compare. Decoded as a raw String
+        // so an unknown future value passes through untouched.
+        let implementation = result["implementation"] as? String
         return SessionControlHello(
             protocolVersion: version,
             supportedMethods: Set(methods),
@@ -616,7 +621,8 @@ public final class LocalSessionControlClient: SessionControlClient, MachineContr
             providerAvailability: providerAvailability,
             helperVersion: helperVersion,
             paired: paired,
-            providerPlanStatus: providerPlanStatus
+            providerPlanStatus: providerPlanStatus,
+            implementation: implementation
         )
     }
 

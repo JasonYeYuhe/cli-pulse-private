@@ -4,9 +4,31 @@ import Foundation
 /// `helper/local_session_server.py`.
 ///
 /// Wire compatibility note: the JSON shapes here MUST match the
-/// Python implementation exactly. The macOS app's
-/// `LocalSessionControlClient` decodes against these envelopes;
-/// any drift breaks every existing client.
+/// Python implementation exactly, element-for-element. The macOS
+/// app's `LocalSessionControlClient` decodes against these
+/// envelopes; any drift breaks every existing client.
+///
+/// **Evolution rule — additive-only (long-standing practice, now
+/// written down).** New `hello`/response fields MUST be added as
+/// OPTIONAL on the decode side with a safe fallback, and both this
+/// Swift helper and the Python helper (`local_session_server.py`)
+/// MUST advertise them in lock-step. Never remove or repurpose an
+/// existing key, and never make a client REQUIRE a field a shipped
+/// helper predates — an older helper omits it entirely and a newer
+/// helper's extra keys must be ignored by an older client. See the
+/// optional `paired: Bool?` (v1.30.2) and `implementation: String?`
+/// (v1.43) precedents: absent ⇒ nil ⇒ legacy behaviour.
+///
+/// `implementation` (v1.43, additive): identifies WHICH helper owns
+/// the socket so the app stops nagging bundled users to "update" a
+/// helper they can't update independently. This Swift helper only
+/// ever ships EMBEDDED in the app bundle → it advertises
+/// `"swift-bundled"`; the Python helper only ever ships via the
+/// standalone `.pkg` → it advertises `"python-pkg"` (see
+/// `local_session_server.py` hello). The two values are language-
+/// tied ONLY because the distribution channels are today: if a Swift
+/// helper is ever shipped via `.pkg`, revisit `HelperInstaller`'s
+/// owner branching before flipping this string.
 
 /// Protocol version pinned at 1 by iter1; iter2A bumped feature
 /// surface but kept the version. Ports advertise this in `hello`.
@@ -28,13 +50,20 @@ public let kProtocolVersion: Int = 1
 /// (`helper/system_collector.py:HELPER_VERSION`) so the app's single
 /// floor comparison works for whichever helper owns the socket.
 ///
-/// Drift here is user-visible: `HelperInstaller.refresh()` compares the
-/// socket owner's hello version against the published .pkg manifest, so
-/// a stale value produces a PERPETUAL "Update available" nag that the
-/// Update button cannot clear (installing the .pkg does not evict a
-/// bundled helper that owns `~/.clipulse`). This slipped 1.23.0→1.29.1
-/// unnoticed across six helper releases; CI now asserts the two lines
-/// match (`scripts/check_helper_version_sync.sh`).
+/// Drift used to be user-visible: `HelperInstaller.refresh()` compared the
+/// socket owner's hello version against the published .pkg manifest, so a
+/// stale value produced a PERPETUAL "Update available" nag the Update button
+/// couldn't clear (installing the .pkg does not evict a bundled helper that
+/// owns `~/.clipulse`). This slipped 1.23.0→1.29.1 unnoticed across six helper
+/// releases; CI asserts the two lines match (`scripts/check_helper_version_sync.sh`).
+///
+/// v1.43: a `swift-bundled` hello owner now BYPASSES that manifest compare
+/// entirely (`HelperInstaller.resolveState` → `.bundled`), so this constant no
+/// longer drives the nag for the bundled helper. The compare still runs for a
+/// `python-pkg` / pre-v1.43 owner (against its OWN reported version), and the
+/// app's OAuth-injection floor gate reads `helper_version` for WHICHEVER helper
+/// owns the socket — so keeping this in lock-step with the Python
+/// `HELPER_VERSION` remains required (one version line across both channels).
 public let kHelperVersion: String = "1.30.0"
 
 /// Methods this revision of the helper advertises in `hello`. Must
