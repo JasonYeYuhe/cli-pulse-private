@@ -4,16 +4,23 @@
 # WHY THIS EXISTS
 # ---------------
 # The bundled Swift helper (HelperSwift, `kHelperVersion`) and the .pkg Python
-# helper (`helper/system_collector.py:HELPER_VERSION`) are documented as being
-# "on the SAME version line": the app does a single hello-version comparison
-# against the published .pkg manifest for whichever helper owns the socket.
+# helper (`helper/system_collector.py:HELPER_VERSION`) are kept "on the SAME
+# version line" so the app has one coherent notion of "the helper version"
+# regardless of which of the two owns the socket — the OAuth-injection floor
+# gate reads `helper_version` for WHICHEVER helper answered hello, and (for a
+# `python-pkg`/pre-v1.43 owner) refresh() compares that reported version against
+# the published .pkg manifest.
 #
-# When they drift, the user-visible symptom is a PERPETUAL "Update available:
-# <swift> → <python>" nag in Settings that the Update button cannot clear —
-# installing the .pkg does not evict a bundled helper that owns ~/.clipulse,
-# so the stale hello version keeps re-arming the nag. This drifted
+# Historically a drift produced a PERPETUAL "Update available: <swift> →
+# <python>" nag in Settings that the Update button couldn't clear — installing
+# the .pkg does not evict a bundled helper that owns ~/.clipulse. This drifted
 # 1.23.0 → 1.29.1 unnoticed across six helper releases (caught by the 1.42.0
 # post-release audit, live-reproduced on real hardware).
+#
+# (v1.43: a `swift-bundled` hello owner now BYPASSES the .pkg-manifest compare
+# entirely — HelperInstaller shows "built-in, updates with the app" — so this
+# pin no longer drives the bundled-owner nag. It is still required for the
+# python-pkg-owner compare and the floor gate above.)
 #
 # Like check_helper_no_container_touch.sh, the failure this guards against is
 # invisible in CI and unit tests — it only appears in a shipped app's Settings

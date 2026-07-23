@@ -103,6 +103,21 @@ extension SessionControlClient {
     }
 }
 
+/// Which helper implementation owns the local UDS socket, from the
+/// `hello` reply's additive `implementation` field (v1.43). Only two
+/// distribution channels exist today, so the value is language-tied:
+///   * `.swiftBundled` — the helper embedded in the macOS app bundle.
+///     It updates WITH the app, so the app must NOT nag the user to
+///     update it against the standalone `.pkg` manifest.
+///   * `.pythonPkg`   — the standalone `.pkg`-installed Python helper.
+///     The existing update flow (manifest compare) applies.
+/// A `nil`/absent field means an older helper that predates v1.43 →
+/// callers fall back to the legacy `.pkg`-compare path (unchanged).
+public enum HelperImplementation: String, Sendable {
+    case swiftBundled = "swift-bundled"
+    case pythonPkg = "python-pkg"
+}
+
 /// Reply payload for `hello`.
 public struct SessionControlHello: Sendable, Equatable {
     public let protocolVersion: Int
@@ -130,6 +145,15 @@ public struct SessionControlHello: Sendable, Equatable {
     /// silently launching an off-plan (billed) managed session (e.g. Codex with an api-key
     /// login). Absent providers / older helpers ⇒ no entry ⇒ no warning (treat unknown).
     public let providerPlanStatus: [String: String]
+    /// v1.43 (additive): which helper owns the socket ("swift-bundled" /
+    /// "python-pkg"), or `nil` for an older helper that predates the field.
+    /// Kept as a raw `String?` (not the enum) so an UNKNOWN future value
+    /// decodes without crashing — additive-only tolerance. Use
+    /// `isSwiftBundled` for the app's owner branching. Drives
+    /// `HelperInstaller`'s nag suppression: a bundled owner updates with the
+    /// app, so it must never be compared against the standalone `.pkg`
+    /// manifest.
+    public let implementation: String?
 
     public init(
         protocolVersion: Int,
@@ -138,7 +162,8 @@ public struct SessionControlHello: Sendable, Equatable {
         providerAvailability: [String] = [],
         helperVersion: String = "",
         paired: Bool? = nil,
-        providerPlanStatus: [String: String] = [:]
+        providerPlanStatus: [String: String] = [:],
+        implementation: String? = nil
     ) {
         self.protocolVersion = protocolVersion
         self.supportedMethods = supportedMethods
@@ -147,6 +172,14 @@ public struct SessionControlHello: Sendable, Equatable {
         self.helperVersion = helperVersion
         self.paired = paired
         self.providerPlanStatus = providerPlanStatus
+        self.implementation = implementation
+    }
+
+    /// True when the socket owner is the app-bundled Swift helper — the one
+    /// case where the app must NOT offer a `.pkg` update (it updates with the
+    /// app). `nil`/`"python-pkg"`/any unknown value ⇒ false ⇒ legacy path.
+    public var isSwiftBundled: Bool {
+        implementation == HelperImplementation.swiftBundled.rawValue
     }
 }
 

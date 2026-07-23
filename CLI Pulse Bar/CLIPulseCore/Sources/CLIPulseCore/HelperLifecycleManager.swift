@@ -107,6 +107,10 @@ public actor HelperLifecycleManager {
     /// to `Contents/Library/LaunchAgents/`.
     public static let plistResourceName = "yyh.CLI-Pulse.helper.agent"
 
+    /// v1.43 — UserDefaults key recording the app version at which we last
+    /// completed a bundled-helper swap (see `kickstartBundledHelperIfAppUpdated`).
+    public static let lastHelperSwapAppVersionKey = "cli_pulse_last_helper_swap_app_version"
+
     private var lastKnownStatus: Status = .notRegistered
 
     public init() {}
@@ -178,6 +182,87 @@ public actor HelperLifecycleManager {
     }
 
     public func currentStatus() -> Status { lastKnownStatus }
+
+    // MARK: - Controlled helper swap (v1.43)
+
+    /// Pure decision: does the app binary differ from the one at which we last
+    /// completed a bundled-helper swap? `nil` (never recorded) counts as
+    /// changed — that covers BOTH a fresh install AND, critically, an upgrade
+    /// from a pre-v1.43 app that never wrote the sentinel (e.g. v1.42), so the
+    /// one-time swap fires exactly when a new app bundle has been laid down.
+    static func shouldKickstartHelperForAppUpdate(
+        lastRecorded: String?,
+        current: String
+    ) -> Bool {
+        return lastRecorded != current
+    }
+
+    /// Complete a pending helper swap after an in-place app update.
+    ///
+    /// Why this is needed: `ensureRegistered()` is a no-op for an
+    /// already-registered agent, and the LaunchAgent is `KeepAlive`. So after
+    /// an in-place app update the OLD bundled-helper process keeps serving the
+    /// socket (old binary inode) until the user next logs in — which is exactly
+    /// what leaves an upgraded user staring at the stale "update available" nag.
+    ///
+    /// Why an APP-VERSION sentinel and not the running helper's version/owner:
+    /// the pre-v1.43 bundled helper reports neither the additive `implementation`
+    /// field nor a reliably-bumped version (v1.42 shipped 1.23.0), so the socket
+    /// owner cannot be identified as "our stale bundled helper" from its hello
+    /// alone — dual review (codex + agy) proved the version/owner-gated approach
+    /// leaves those users nagged. Instead we detect the app-binary change via a
+    /// persisted sentinel and `launchctl kickstart -k` OUR OWN LaunchAgent label
+    /// (`yyh.CLI-Pulse.helper.agent`) exactly once per new app version. That is
+    /// safe regardless of who currently owns the socket: it only ever restarts
+    /// the bundled helper we manage, NEVER the separately-labelled
+    /// (`yyh.cli-pulse.helper`) `.pkg` Python helper. The KeepAlive respawn then
+    /// picks up the new binary from the updated bundle. On a same-version launch
+    /// it is a no-op.
+    ///
+    /// DEVID-only: MAS strips the bundled agent (nothing to kickstart) and its
+    /// sandbox cannot exec `launchctl`; the exec path is `#if DEVID_BUILD`-guarded
+    /// so it never compiles into the App Store build. The sentinel is written
+    /// only AFTER a successful kickstart, so a transient `launchctl` failure
+    /// retries on the next launch. Returns true iff a kickstart was issued.
+    @discardableResult
+    public func kickstartBundledHelperIfAppUpdated(
+        currentAppVersion: String,
+        defaults: UserDefaults = .standard
+    ) async -> Bool {
+        let last = defaults.string(forKey: Self.lastHelperSwapAppVersionKey)
+        guard Self.shouldKickstartHelperForAppUpdate(lastRecorded: last, current: currentAppVersion) else {
+            return false
+        }
+        #if DEVID_BUILD
+        let target = "gui/\(getuid())/\(Self.agentLabel)"
+        logger.info(
+            "helper swap: app version changed (\(last ?? "none", privacy: .public) → \(currentAppVersion, privacy: .public)) — kickstarting \(target, privacy: .public) so the new bundle's helper takes over"
+        )
+        let ok = await Task.detached { () -> Bool in
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            proc.arguments = ["kickstart", "-k", target]
+            do {
+                try proc.run()
+                proc.waitUntilExit()
+                return proc.terminationStatus == 0
+            } catch {
+                return false
+            }
+        }.value
+        if ok {
+            // Record only on success so a transient failure retries next launch.
+            defaults.set(currentAppVersion, forKey: Self.lastHelperSwapAppVersionKey)
+        } else {
+            logger.error("helper swap: launchctl kickstart failed or non-zero for \(target, privacy: .public); will retry next launch")
+        }
+        return ok
+        #else
+        // MAS / non-DEVID: no bundled agent to swap. Not reached in practice
+        // (the AppState caller is DEVID-gated); no side effects.
+        return false
+        #endif
+    }
 
     // MARK: - Internals
 

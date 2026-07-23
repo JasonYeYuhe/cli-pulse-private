@@ -985,6 +985,15 @@ class LocalSessionServer:
                 "supported_methods": list(SUPPORTED_METHODS),
                 "helper_pid": os.getpid(),
                 "helper_version": helper_version,
+                # v1.43 (additive): identify the socket owner so the macOS app
+                # suppresses the "helper update available" nag for the wrong
+                # owner. This Python helper only ever ships via the standalone
+                # `.pkg` → always "python-pkg". The bundled Swift helper
+                # (LocalSessionServer.swift) reports "swift-bundled" and the app
+                # shows "built-in — updates with the app" instead of an update
+                # prompt. Older helpers omit the field ⇒ the app falls back to
+                # the legacy `.pkg`-manifest compare (unchanged for pkg users).
+                "implementation": "python-pkg",
                 # v1.30.2: paired=false ⇒ installed + running but no usable
                 # config yet. The macOS app renders "installed — pair to
                 # activate" instead of "not installed".

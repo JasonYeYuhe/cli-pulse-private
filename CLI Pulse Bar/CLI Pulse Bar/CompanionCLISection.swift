@@ -65,6 +65,17 @@ struct CompanionCLISection: View {
                     .foregroundStyle(.green)
                 Text("v\(v) running").font(.system(size: 10, weight: .medium)).foregroundStyle(.green)
             }
+        case .bundled(let v):
+            // v1.43: app-bundled helper — a distinct "built-in" badge (no
+            // update/uninstall affordance; it ships with the app).
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.green)
+                Text(v.isEmpty ? "Built-in" : "Built-in · v\(v)")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.green)
+            }
         case .updateAvailable(let installed, let latest):
             HStack(spacing: 4) {
                 Image(systemName: "arrow.up.circle.fill")
@@ -124,6 +135,18 @@ struct CompanionCLISection: View {
             } else {
                 EmptyView()
             }
+        case .bundled:
+            // v1.43: the bundled helper updates with the app — say so instead
+            // of offering a (wrong, unclearable) `.pkg` update. No pairing hint
+            // here: the bundled Swift helper's hello does not emit `paired`
+            // (only the Python helper does), so `helperPaired` is always nil for
+            // a bundled owner — a conditional pairing hint would be dead code.
+            // (Wiring `paired` into the Swift hello to enable it is a separate
+            // wire-mirror follow-up.)
+            Text("Built into CLI Pulse — updates automatically when you update the app. No separate install needed.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         case .updateAvailable(_, let latest):
             Text("A new helper version (\(latest)) is available. The update flow is identical to the install flow.")
                 .font(.system(size: 10))
@@ -140,6 +163,13 @@ struct CompanionCLISection: View {
     private var actionRow: some View {
         switch installer.state {
         case .checking, .downloading, .installing:
+            EmptyView()
+        case .bundled:
+            // v1.43: no action row for the app-bundled helper. "Check for
+            // Updates" and "Uninstall…" are `.pkg`-only affordances — the
+            // bundled helper updates with the app and its uninstaller lives in
+            // the `.pkg` install dir (HelperInstaller.uninstall()), which a
+            // bundled owner never has.
             EmptyView()
         case .notInstalled:
             Button {

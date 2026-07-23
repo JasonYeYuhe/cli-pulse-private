@@ -507,6 +507,15 @@ public final class LocalSessionServer: @unchecked Sendable {
                 // app couldn't distinguish this injection-capable Swift helper
                 // from a pre-injection one (both reported no version).
                 "helper_version": kHelperVersion,
+                // v1.43 (additive): identify the socket owner so the app
+                // suppresses the "helper update available" nag for a helper
+                // that ships EMBEDDED in the app bundle (it updates with the
+                // app, not via the standalone `.pkg`). This Swift helper is
+                // only ever bundled → always "swift-bundled". The Python
+                // `.pkg` helper reports "python-pkg". Older helpers omit the
+                // field → the app falls back to the legacy `.pkg`-compare
+                // path. See Protocol.swift head comment (additive-only rule).
+                "implementation": "swift-bundled",
                 "supported_methods": SupportedMethod.allCases.map(\.rawValue),
                 "helper_pid": Int(getpid()),
                 "capabilities": [
